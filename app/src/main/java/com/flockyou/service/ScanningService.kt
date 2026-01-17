@@ -261,6 +261,7 @@ class ScanningService : Service() {
         }
     }
     
+    /** BLE scan callback - handles scan results for surveillance device detection */
     private val bleScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: BleScanResult) {
