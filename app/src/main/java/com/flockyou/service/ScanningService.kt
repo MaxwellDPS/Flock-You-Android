@@ -9,8 +9,8 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
-import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
+import android.bluetooth.le.ScanResult as BleScanResult
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -261,15 +261,17 @@ class ScanningService : Service() {
     
     private val bleScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            serviceScope.launch {
-                processBleScanResult(result)
+        override fun onScanResult(callbackType: Int, result: BleScanResult?) {
+            result?.let {
+                serviceScope.launch {
+                    processBleScanResult(it)
+                }
             }
         }
         
-        override fun onBatchScanResults(results: List<ScanResult>) {
+        override fun onBatchScanResults(results: MutableList<BleScanResult>?) {
             serviceScope.launch {
-                results.forEach { processBleScanResult(it) }
+                results?.filterNotNull()?.forEach { processBleScanResult(it) }
             }
         }
         
@@ -279,7 +281,7 @@ class ScanningService : Service() {
     }
     
     @SuppressLint("MissingPermission")
-    private suspend fun processBleScanResult(result: ScanResult) {
+    private suspend fun processBleScanResult(result: BleScanResult) {
         val device = result.device
         val macAddress = device.address ?: return
         val deviceName = device.name
