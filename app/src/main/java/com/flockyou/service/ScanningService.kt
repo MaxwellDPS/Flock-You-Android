@@ -270,7 +270,7 @@ class ScanningService : Service() {
             }
         }
         
-        override fun onBatchScanResults(results: List<BleScanResult>) {
+        override fun onBatchScanResults(results: MutableList<BleScanResult>) {
             serviceScope.launch {
                 results.forEach { processBleScanResult(it) }
             }
