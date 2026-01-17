@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Flock You</string>
+    <string name="scanning">Scanning</string>
+    <string name="idle">Idle</string>
+    <string name="start_scan">Start Scanning</string>
+    <string name="stop_scan">Stop Scanning</string>
+    <string name="total_detections">Total Detections</string>
+    <string name="high_threats">High Threats</string>
+    <string name="no_detections">No detections yet</string>
+    <string name="scanning_for_devices">Scanning for surveillance devices...</string>
+    <string name="permission_required">Permissions Required</string>
+    <string name="grant_permissions">Grant Permissions</string>
+    
+    <!-- Device Types -->
+    <string name="flock_safety_camera">Flock Safety Camera</string>
+    <string name="penguin_surveillance">Penguin Surveillance</string>
+    <string name="pigvision_system">Pigvision System</string>
+    <string name="raven_gunshot_detector">Raven Gunshot Detector</string>
+    <string name="unknown_surveillance">Unknown Surveillance</string>
+    
+    <!-- Threat Levels -->
+    <string name="threat_critical">Critical</string>
+    <string name="threat_high">High</string>
+    <string name="threat_medium">Medium</string>
+    <string name="threat_low">Low</string>
+    <string name="threat_info">Info</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_name">Flock You Scanning</string>
+    <string name="notification_channel_description">Surveillance device detection notifications</string>
+    <string name="notification_scanning">Scanning for surveillance devices</string>
+    <string name="notification_detection">Surveillance Device Detected!</string>
+</resources>

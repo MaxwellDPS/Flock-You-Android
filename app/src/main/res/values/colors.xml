@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0D1117</color>
+    <color name="primary">#00E676</color>
+    <color name="background">#0D1117</color>
+    <color name="surface">#161B22</color>
+    <color name="threat_critical">#FF1744</color>
+    <color name="threat_high">#FF5722</color>
+    <color name="threat_medium">#FFB300</color>
+    <color name="threat_low">#8BC34A</color>
+    <color name="threat_info">#64B5F6</color>
+</resources>
