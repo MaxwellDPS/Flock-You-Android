@@ -263,17 +263,15 @@ class ScanningService : Service() {
     
     private val bleScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
-        override fun onScanResult(callbackType: Int, result: BleScanResult?) {
-            result?.let {
-                serviceScope.launch {
-                    processBleScanResult(it)
-                }
+        override fun onScanResult(callbackType: Int, result: BleScanResult) {
+            serviceScope.launch {
+                processBleScanResult(result)
             }
         }
         
-        override fun onBatchScanResults(results: MutableList<BleScanResult>?) {
+        override fun onBatchScanResults(results: List<BleScanResult>) {
             serviceScope.launch {
-                results?.filterNotNull()?.forEach { processBleScanResult(it) }
+                results.forEach { processBleScanResult(it) }
             }
         }
         
