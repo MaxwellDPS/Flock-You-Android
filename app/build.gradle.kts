@@ -71,8 +71,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     
     // Hilt
-    implementation("com.google.dagger:hilt-android:2.50")
-    ksp("com.google.dagger:hilt-android-compiler:2.50")
+    implementation("com.google.dagger:hilt-android:2.58")
+    ksp("com.google.dagger:hilt-android-compiler:2.58")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
     
     // Room
@@ -123,8 +123,8 @@ dependencies {
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     androidTestImplementation("io.mockk:mockk-android:1.13.9")
     androidTestImplementation("com.google.truth:truth:1.4.0")
-    androidTestImplementation("com.google.dagger:hilt-android-testing:2.50")
-    kspAndroidTest("com.google.dagger:hilt-android-compiler:2.50")
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.58")
+    kspAndroidTest("com.google.dagger:hilt-android-compiler:2.58")
     
     // Debug implementations for testing
     debugImplementation("androidx.compose.ui:ui-tooling")
