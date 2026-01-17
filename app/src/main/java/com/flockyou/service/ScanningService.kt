@@ -4,13 +4,15 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.*
 import android.bluetooth.*
-import android.bluetooth.le.*
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanSettings
+import android.bluetooth.le.ScanResult as BleScanResult
 import android.content.*
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
 import android.net.wifi.WifiManager
-import android.bluetooth.le.ScanResult as BleScanResult
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
