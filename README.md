@@ -9,20 +9,49 @@
 
 **Professional surveillance device detection for Android** 📡
 
-An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-you) ESP32 project, enabling mobile detection of Flock Safety surveillance cameras, Raven gunshot detectors, and similar surveillance devices using WiFi and Bluetooth LE scanning.
+An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-you) ESP32 project, enabling mobile detection of Flock Safety surveillance cameras, Raven gunshot detectors, police body cameras, IMSI catchers, and similar surveillance devices using WiFi and Bluetooth LE scanning.
 
 ## 🎯 What It Detects
+
+### Surveillance Cameras & ALPR
 
 | Device Type | Detection Methods | Threat Level |
 |-------------|-------------------|--------------|
 | **Flock Safety ALPR** | SSID, BLE Name, MAC OUI | 🔴 HIGH |
 | **Flock Falcon/Sparrow/Condor** | SSID patterns | 🔴 HIGH |
-| **Raven Gunshot Detector** | BLE Service UUIDs | 🔴 CRITICAL |
-| **ShotSpotter/SoundThinking** | BLE Name | 🔴 CRITICAL |
 | **Vigilant (Motorola)** | SSID pattern | 🔴 HIGH |
+| **Genetec AutoVu** | SSID pattern | 🔴 HIGH |
 | **Penguin Surveillance** | SSID, BLE Name | 🟠 MEDIUM |
 | **Pigvision System** | SSID, BLE Name | 🟠 MEDIUM |
+
+### Audio Surveillance
+
+| Device Type | Detection Methods | Threat Level |
+|-------------|-------------------|--------------|
+| **Raven Gunshot Detector** | BLE Service UUIDs | 🔴 CRITICAL |
+| **ShotSpotter/SoundThinking** | BLE Name | 🔴 CRITICAL |
+
+### Police Technology
+
+| Device Type | Detection Methods | Threat Level |
+|-------------|-------------------|--------------|
+| **StingRay/Hailstorm IMSI Catcher** | SSID pattern | 🔴 CRITICAL |
+| **Cellebrite UFED** | SSID, BLE Name | 🔴 CRITICAL |
+| **GrayKey** | SSID, BLE Name | 🔴 CRITICAL |
+| **Axon Body Cameras** | SSID, BLE Name | 🟠 MEDIUM |
+| **Motorola Body Cameras** | SSID, BLE Name | 🟠 MEDIUM |
+| **WatchGuard Cameras** | SSID, BLE Name | 🟠 MEDIUM |
+| **Digital Ally FirstVU** | SSID, BLE Name | 🟠 MEDIUM |
+| **Motorola APX Radios** | SSID, BLE Name | 🟡 LOW |
+| **L3Harris XG Radios** | SSID, BLE Name | 🟡 LOW |
+
+### Infrastructure
+
+| Device Type | Detection Methods | Threat Level |
+|-------------|-------------------|--------------|
 | **LTE Modems (Quectel, Telit, Sierra)** | MAC OUI | 🟡 LOW |
+| **Cradlepoint Routers** | MAC OUI | 🟡 LOW |
+| **Getac/Toughbook MDTs** | SSID pattern | ⚪ INFO |
 
 ## ✨ Features
 
@@ -34,10 +63,28 @@ An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-yo
 ### Rich Device Information
 When a device is detected, you'll see:
 - **What it is**: Device type, manufacturer, model
-- **What it does**: Capabilities (ALPR, audio surveillance, vehicle fingerprinting)
-- **Why it matters**: Privacy concerns (data retention, cross-jurisdiction sharing)
+- **What it does**: Capabilities (ALPR, audio surveillance, phone forensics)
+- **Why it matters**: Privacy concerns (data retention, warrantless access)
 - **How close**: Estimated distance based on signal strength
 - **Technical details**: MAC address, SSID, firmware version
+
+### Customizable Notifications
+- 🔔 Per-threat-level alert toggles (Critical/High/Medium/Low/Info)
+- 🔊 Sound and vibration options
+- 📳 Multiple vibration patterns (Default, Urgent, Gentle, Long, SOS)
+- 🌙 Quiet hours with configurable schedule (Critical alerts always come through)
+- 🔒 Lock screen notification control
+- 📌 Persistent scanning status notification
+
+### Detection Rule Management
+- 📁 Toggle entire rule categories on/off:
+  - Flock Safety (ALPR cameras, Ravens)
+  - Police Technology (body cams, radios, forensics)
+  - Acoustic Sensors (gunshot detectors)
+  - Generic Surveillance (other patterns)
+- ✏️ Add custom regex rules for local devices
+- 🎚️ Set custom threat scores (0-100)
+- 🔄 Enable/disable individual rules
 
 ### User Interface
 - 🎯 Animated radar scanning display
@@ -90,18 +137,59 @@ Capabilities:
 • Audio recordings may capture conversations
 ```
 
+**StingRay IMSI Catcher:**
+```
+📶 Cell Site Simulator
+━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 CRITICAL Threat (100/100)
+
+Capabilities:
+• Capture all phone identifiers in range
+• Track phone locations precisely
+• Intercept calls and SMS
+• Force phones to downgrade encryption
+• Deny cell service selectively
+
+⚠️ Privacy Concerns:
+• Mass surveillance of all phones nearby
+• Used under NDA - often hidden from courts
+• Can intercept content of calls/texts
+• No warrant required in many jurisdictions
+```
+
+**Cellebrite UFED:**
+```
+📱 Mobile Forensics Device
+━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 CRITICAL Threat (90/100)
+
+Capabilities:
+• Bypass phone lock screens
+• Extract deleted data
+• Access encrypted apps
+• Clone entire phone contents
+• Crack passwords/PINs
+
+⚠️ Privacy Concerns:
+• Complete phone data extraction
+• Often used without warrants
+• Can access encrypted messaging apps
+• Used at traffic stops in some jurisdictions
+```
+
 ## 🔍 Detection Patterns
 
-### SSID Patterns
-| Pattern | Device | Score |
-|---------|--------|-------|
-| `flock*`, `fs_*` | Flock Safety Camera | 95 |
-| `falcon*`, `sparrow*`, `condor*` | Flock Camera Models | 90 |
-| `raven*`, `shotspotter*` | Gunshot Detector | 100 |
-| `vigilant*` | Vigilant (Motorola) ALPR | 85 |
-| `penguin*` | Penguin Surveillance | 85 |
-| `pigvision*` | Pigvision System | 85 |
-| `alpr*`, `lpr*cam*` | Generic ALPR | 75-80 |
+### SSID Patterns (75+ patterns)
+
+| Category | Patterns | Devices |
+|----------|----------|---------|
+| **Flock Safety** | `flock*`, `fs_*`, `falcon*`, `sparrow*`, `condor*` | ALPR cameras |
+| **Audio Surveillance** | `raven*`, `shotspotter*`, `soundthinking*` | Gunshot detectors |
+| **Motorola** | `moto*`, `apx*`, `astro*`, `v300*`, `v500*`, `watchguard*`, `vigilant*` | Body cams, radios, ALPR |
+| **Axon** | `axon*`, `body*`, `flex*`, `taser*`, `evidence*` | Body cams, TASERs |
+| **L3Harris** | `l3harris*`, `stingray*`, `hailstorm*`, `xg*` | IMSI catchers, radios |
+| **Forensics** | `cellebrite*`, `ufed*`, `graykey*`, `magnet*` | Phone extraction |
+| **Other ALPR** | `genetec*`, `autovu*`, `alpr*`, `lpr*` | License plate readers |
 
 ### MAC Address OUI Prefixes
 Flock cameras use cellular LTE modems for connectivity:
@@ -135,6 +223,35 @@ Based on [GainSec research](https://github.com/GainSec):
 - **1.3.x**: Has Upload Statistics + Error services
 - **1.2.x**: Has GPS + Power + Network services
 - **1.1.x**: Uses legacy Health/Location services
+
+## ⚙️ Settings
+
+### Notification Settings
+| Setting | Description |
+|---------|-------------|
+| **Master Toggle** | Enable/disable all notifications |
+| **Threat Level Alerts** | Toggle alerts by severity |
+| **Sound** | Play alert sound on detection |
+| **Vibration Pattern** | Default, Urgent, Gentle, Long, or SOS |
+| **Quiet Hours** | Silence non-critical alerts (10 PM - 7 AM default) |
+| **Lock Screen** | Show alerts when phone is locked |
+
+### Detection Rules
+| Setting | Description |
+|---------|-------------|
+| **Flock Safety** | Toggle all Flock/Raven patterns |
+| **Police Tech** | Toggle body cams, radios, forensics |
+| **Acoustic Sensors** | Toggle gunshot detectors |
+| **Generic Surveillance** | Toggle other patterns |
+| **Custom Rules** | Add your own regex patterns |
+
+### Scan Settings
+| Setting | Description |
+|---------|-------------|
+| **WiFi Interval** | Time between WiFi scans (15-120s) |
+| **BLE Duration** | Bluetooth scan duration (5-30s) |
+| **Track Seen Devices** | Remember previously detected devices |
+| **Battery Optimization** | Disable for reliable background scanning |
 
 ## 📱 Installation
 
@@ -177,20 +294,26 @@ For map features, add your API key to `AndroidManifest.xml`:
 com.flockyou/
 ├── data/
 │   ├── model/
-│   │   ├── Detection.kt           # Detection data class
-│   │   └── DetectionPatterns.kt   # Device signatures database
-│   └── repository/
-│       ├── Database.kt            # Room database
-│       └── DetectionRepository.kt
+│   │   ├── Detection.kt              # Detection data class
+│   │   └── DetectionPatterns.kt      # Device signatures database (75+ patterns)
+│   ├── repository/
+│   │   ├── Database.kt               # Room database
+│   │   └── DetectionRepository.kt
+│   └── RuleAndNotificationSettings.kt # DataStore preferences
 ├── service/
-│   └── ScanningService.kt         # Foreground scanning service
+│   └── ScanningService.kt            # Foreground scanning service
 ├── ui/
-│   ├── components/Components.kt   # Reusable UI components
+│   ├── components/Components.kt      # Reusable UI components
 │   ├── screens/
-│   │   ├── MainScreen.kt          # Detection list + details
-│   │   └── MapScreen.kt           # Detection map
-│   └── theme/Theme.kt             # Dark tactical theme
-└── di/AppModule.kt                # Hilt dependency injection
+│   │   ├── MainScreen.kt             # Detection list + radar
+│   │   ├── MapScreen.kt              # Detection map
+│   │   ├── SettingsScreen.kt         # Main settings
+│   │   ├── NotificationSettingsScreen.kt # Alert customization
+│   │   ├── RuleSettingsScreen.kt     # Rule management
+│   │   ├── NearbyDevicesScreen.kt    # All nearby devices
+│   │   └── DetectionPatternsScreen.kt # View all patterns
+│   └── theme/Theme.kt                # Dark tactical theme
+└── di/AppModule.kt                   # Hilt dependency injection
 ```
 
 ## ⚠️ Limitations
@@ -199,6 +322,7 @@ com.flockyou/
 - **Background**: Battery optimization may affect scan frequency
 - **Range**: BLE detection ~50-100m depending on environment
 - **False Positives**: MAC OUI detection may flag non-surveillance LTE devices
+- **Police Tech**: Body cameras only detectable when WiFi/BLE is enabled (usually during sync)
 
 ## 🙏 Credits
 
