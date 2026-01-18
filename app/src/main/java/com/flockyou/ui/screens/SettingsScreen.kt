@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,10 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
@@ -31,15 +32,40 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToPatterns: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scanStats by ScanningService.scanStats.collectAsState()
     val errorLog by ScanningService.errorLog.collectAsState()
+    val currentConfig by ScanningService.currentSettings.collectAsState()
+    
     var showLogs by remember { mutableStateOf(false) }
+    var showScanSettings by remember { mutableStateOf(false) }
     var batteryOptimizationIgnored by remember { 
         mutableStateOf(isBatteryOptimizationIgnored(context)) 
     }
+    
+    // Re-check battery optimization when returning to screen
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryOptimizationIgnored = isBatteryOptimizationIgnored(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    
+    // Scan timing settings state
+    var wifiInterval by remember { mutableStateOf(currentConfig.wifiScanInterval / 1000) }
+    var bleDuration by remember { mutableStateOf(currentConfig.bleScanDuration / 1000) }
+    var enableBle by remember { mutableStateOf(currentConfig.enableBle) }
+    var enableWifi by remember { mutableStateOf(currentConfig.enableWifi) }
+    var trackSeenDevices by remember { mutableStateOf(currentConfig.trackSeenDevices) }
     
     Scaffold(
         topBar = {
@@ -75,12 +101,8 @@ fun SettingsScreen(
                             MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
                     )
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = if (batteryOptimizationIgnored) 
                                     Icons.Default.BatteryChargingFull 
@@ -113,28 +135,182 @@ fun SettingsScreen(
                         if (!batteryOptimizationIgnored) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "⚠️ Battery optimization is enabled. Android may stop " +
-                                    "the scanning service to save battery. For reliable detection, " +
-                                    "disable battery optimization for this app.",
+                                text = "⚠️ Battery optimization is enabled. Android may stop the scanning service to save battery.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = {
-                                    requestIgnoreBatteryOptimization(context)
-                                    // Check again after a delay
-                                    batteryOptimizationIgnored = isBatteryOptimizationIgnored(context)
+                                    openBatteryOptimizationSettings(context)
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Default.Settings, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Disable Battery Optimization")
+                                Text("Open Battery Settings")
                             }
                         }
                     }
                 }
+            }
+            
+            // Scan Configuration Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                SettingsSectionHeader(title = "Scan Configuration")
+            }
+            
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = "Scan Timing",
+                    subtitle = "WiFi: ${wifiInterval}s interval, BLE: ${bleDuration}s duration",
+                    onClick = { showScanSettings = !showScanSettings },
+                    trailing = {
+                        Icon(
+                            if (showScanSettings) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                )
+            }
+            
+            if (showScanSettings) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            // WiFi Scan Interval
+                            Text(
+                                text = "WiFi Scan Interval: ${wifiInterval.toInt()} seconds",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Android limits to 4 scans per 2 minutes. Minimum 30s recommended.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = wifiInterval.toFloat(),
+                                onValueChange = { wifiInterval = it.toLong() },
+                                valueRange = 30f..120f,
+                                steps = 8,
+                                onValueChangeFinished = {
+                                    updateScanSettings(
+                                        wifiInterval.toInt(), bleDuration.toInt(),
+                                        enableBle, enableWifi, trackSeenDevices
+                                    )
+                                }
+                            )
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            // BLE Scan Duration
+                            Text(
+                                text = "BLE Scan Duration: ${bleDuration.toInt()} seconds",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "How long to scan for BLE devices each cycle",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = bleDuration.toFloat(),
+                                onValueChange = { bleDuration = it.toLong() },
+                                valueRange = 5f..30f,
+                                steps = 4,
+                                onValueChangeFinished = {
+                                    updateScanSettings(
+                                        wifiInterval.toInt(), bleDuration.toInt(),
+                                        enableBle, enableWifi, trackSeenDevices
+                                    )
+                                }
+                            )
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Divider()
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            // Toggle switches
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Enable BLE Scanning")
+                                Switch(
+                                    checked = enableBle,
+                                    onCheckedChange = { 
+                                        enableBle = it
+                                        updateScanSettings(
+                                            wifiInterval.toInt(), bleDuration.toInt(),
+                                            enableBle, enableWifi, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Enable WiFi Scanning")
+                                Switch(
+                                    checked = enableWifi,
+                                    onCheckedChange = { 
+                                        enableWifi = it
+                                        updateScanSettings(
+                                            wifiInterval.toInt(), bleDuration.toInt(),
+                                            enableBle, enableWifi, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Track Seen Devices")
+                                    Text(
+                                        text = "Log non-matching devices",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = trackSeenDevices,
+                                    onCheckedChange = { 
+                                        trackSeenDevices = it
+                                        updateScanSettings(
+                                            wifiInterval.toInt(), bleDuration.toInt(),
+                                            enableBle, enableWifi, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Detection Patterns
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Pattern,
+                    title = "Detection Patterns",
+                    subtitle = "View SSIDs, BLE names, and MAC prefixes being scanned",
+                    onClick = onNavigateToPatterns
+                )
             }
             
             // Scan Statistics Section
@@ -177,39 +353,10 @@ fun SettingsScreen(
                 }
             }
             
-            // WiFi Throttling Info
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Android limits WiFi scanning to 4 scans per 2 minutes to save battery. " +
-                                "Throttled scans are expected behavior. BLE scanning is not throttled.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            
             // Advanced Logs Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "Advanced Logs")
+                SettingsSectionHeader(title = "Advanced")
             }
             
             item {
@@ -227,7 +374,6 @@ fun SettingsScreen(
                 )
             }
             
-            // Expandable error log
             if (showLogs) {
                 if (errorLog.isEmpty()) {
                     item {
@@ -265,7 +411,7 @@ fun SettingsScreen(
                         }
                     }
                     
-                    items(errorLog) { error ->
+                    items(errorLog.take(20)) { error ->
                         LogEntryCard(error = error)
                     }
                 }
@@ -292,7 +438,7 @@ fun SettingsScreen(
                     title = "Open Source",
                     subtitle = "View source code on GitHub",
                     onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MaxwellDPS/Flock-You-Android"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ANG13T/flock-you-android"))
                         context.startActivity(intent)
                     }
                 )
@@ -303,6 +449,22 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+private fun updateScanSettings(
+    wifiIntervalSeconds: Int,
+    bleDurationSeconds: Int,
+    enableBle: Boolean,
+    enableWifi: Boolean,
+    trackSeenDevices: Boolean
+) {
+    ScanningService.updateSettings(
+        wifiIntervalSeconds = wifiIntervalSeconds,
+        bleDurationSeconds = bleDurationSeconds,
+        enableBle = enableBle,
+        enableWifi = enableWifi,
+        trackSeenDevices = trackSeenDevices
+    )
 }
 
 @Composable
@@ -421,15 +583,6 @@ fun LogEntryCard(error: ScanningService.ScanError) {
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
                     }
-                    if (error.code != 0 && error.code != -1 && error.code != -2) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Code: ${error.code}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
                 Text(
                     text = dateFormat.format(Date(error.timestamp)),
@@ -453,11 +606,24 @@ private fun isBatteryOptimizationIgnored(context: Context): Boolean {
     return powerManager.isIgnoringBatteryOptimizations(context.packageName)
 }
 
-private fun requestIgnoreBatteryOptimization(context: Context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+private fun openBatteryOptimizationSettings(context: Context) {
+    try {
+        // Try the direct intent first
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:${context.packageName}")
         }
         context.startActivity(intent)
+    } catch (e: Exception) {
+        // Fall back to battery optimization list
+        try {
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            context.startActivity(intent)
+        } catch (e2: Exception) {
+            // Fall back to app settings
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+            context.startActivity(intent)
+        }
     }
 }

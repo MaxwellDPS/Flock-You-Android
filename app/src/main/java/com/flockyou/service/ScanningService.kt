@@ -42,11 +42,15 @@ class ScanningService : Service() {
         private const val TAG = "ScanningService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "flockyou_scanning"
-        // Android throttles WiFi scans to 4 per 2 minutes - use 35 second interval
-        private const val WIFI_SCAN_INTERVAL = 35000L // 35 seconds (complies with throttling)
-        private const val BLE_SCAN_DURATION = 10000L // 10 seconds
-        private const val INACTIVE_TIMEOUT = 60000L // 1 minute
-        private const val SEEN_DEVICE_TIMEOUT = 300000L // 5 minutes
+        
+        // Default values (can be overridden by settings)
+        private const val DEFAULT_WIFI_SCAN_INTERVAL = 35000L
+        private const val DEFAULT_BLE_SCAN_DURATION = 10000L
+        private const val DEFAULT_INACTIVE_TIMEOUT = 60000L
+        private const val DEFAULT_SEEN_DEVICE_TIMEOUT = 300000L
+        
+        // Current configured values
+        val currentSettings = MutableStateFlow(ScanConfig())
         
         val isScanning = MutableStateFlow(false)
         val lastDetection = MutableStateFlow<Detection?>(null)
@@ -77,7 +81,38 @@ class ScanningService : Service() {
             seenBleDevices.value = emptyList()
             seenWifiNetworks.value = emptyList()
         }
+        
+        fun updateSettings(
+            wifiIntervalSeconds: Int = 35,
+            bleDurationSeconds: Int = 10,
+            inactiveTimeoutSeconds: Int = 60,
+            seenDeviceTimeoutMinutes: Int = 5,
+            enableBle: Boolean = true,
+            enableWifi: Boolean = true,
+            trackSeenDevices: Boolean = true
+        ) {
+            currentSettings.value = ScanConfig(
+                wifiScanInterval = wifiIntervalSeconds * 1000L,
+                bleScanDuration = bleDurationSeconds * 1000L,
+                inactiveTimeout = inactiveTimeoutSeconds * 1000L,
+                seenDeviceTimeout = seenDeviceTimeoutMinutes * 60 * 1000L,
+                enableBle = enableBle,
+                enableWifi = enableWifi,
+                trackSeenDevices = trackSeenDevices
+            )
+        }
     }
+    
+    /** Runtime scan configuration */
+    data class ScanConfig(
+        val wifiScanInterval: Long = DEFAULT_WIFI_SCAN_INTERVAL,
+        val bleScanDuration: Long = DEFAULT_BLE_SCAN_DURATION,
+        val inactiveTimeout: Long = DEFAULT_INACTIVE_TIMEOUT,
+        val seenDeviceTimeout: Long = DEFAULT_SEEN_DEVICE_TIMEOUT,
+        val enableBle: Boolean = true,
+        val enableWifi: Boolean = true,
+        val trackSeenDevices: Boolean = true
+    )
     
     /** Seen device that didn't match surveillance patterns */
     data class SeenDevice(
@@ -254,6 +289,8 @@ class ScanningService : Service() {
         scanStatus.value = ScanStatus.Starting
         Log.d(TAG, "Starting scanning")
         
+        val config = currentSettings.value
+        
         // Check permissions first
         if (!hasBluetoothPermissions()) {
             bleStatus.value = SubsystemStatus.PermissionDenied("BLUETOOTH_SCAN")
@@ -273,27 +310,46 @@ class ScanningService : Service() {
         updateLocation()
         
         // Register WiFi scan receiver
-        registerWifiReceiver()
+        if (config.enableWifi) {
+            registerWifiReceiver()
+        }
         
         // Start continuous scanning
         scanJob = serviceScope.launch {
             while (isActive) {
+                val scanConfig = currentSettings.value // Re-read in case settings changed
                 try {
                     // Start BLE scan
-                    startBleScan()
-                    delay(BLE_SCAN_DURATION)
-                    stopBleScan()
+                    if (scanConfig.enableBle) {
+                        startBleScan()
+                        delay(scanConfig.bleScanDuration)
+                        stopBleScan()
+                    }
                     
                     // Start WiFi scan
-                    startWifiScan()
-                    delay(WIFI_SCAN_INTERVAL - BLE_SCAN_DURATION)
+                    if (scanConfig.enableWifi) {
+                        startWifiScan()
+                    }
+                    
+                    // Wait for the remainder of the interval
+                    val waitTime = if (scanConfig.enableBle) {
+                        scanConfig.wifiScanInterval - scanConfig.bleScanDuration
+                    } else {
+                        scanConfig.wifiScanInterval
+                    }
+                    delay(waitTime.coerceAtLeast(5000L))
                     
                     // Update location
                     updateLocation()
                     
                     // Mark old detections as inactive
-                    val inactiveThreshold = System.currentTimeMillis() - INACTIVE_TIMEOUT
+                    val inactiveThreshold = System.currentTimeMillis() - scanConfig.inactiveTimeout
                     repository.markOldInactive(inactiveThreshold)
+                    
+                    // Clean up old seen devices
+                    if (scanConfig.trackSeenDevices) {
+                        cleanupSeenDevices(scanConfig.seenDeviceTimeout)
+                    }
                     
                     // Update notification with status
                     val statusText = buildStatusText()
@@ -305,6 +361,12 @@ class ScanningService : Service() {
                 }
             }
         }
+    }
+    
+    private fun cleanupSeenDevices(timeout: Long) {
+        val cutoff = System.currentTimeMillis() - timeout
+        seenBleDevices.value = seenBleDevices.value.filter { it.lastSeen > cutoff }
+        seenWifiNetworks.value = seenWifiNetworks.value.filter { it.lastSeen > cutoff }
     }
     
     private fun buildStatusText(): String {
@@ -537,8 +599,10 @@ class ScanningService : Service() {
             return
         }
         
-        // No match - track as seen device
-        trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids)
+        // No match - track as seen device if enabled
+        if (currentSettings.value.trackSeenDevices) {
+            trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids)
+        }
     }
     
     private fun trackSeenBleDevice(macAddress: String, deviceName: String?, rssi: Int, serviceUuids: List<java.util.UUID>) {
@@ -577,9 +641,7 @@ class ScanningService : Service() {
             }
         }
         
-        // Remove stale devices
-        val cutoff = System.currentTimeMillis() - SEEN_DEVICE_TIMEOUT
-        seenBleDevices.value = currentList.filter { it.lastSeen > cutoff }
+        seenBleDevices.value = currentList
     }
     
     // ==================== WiFi Scanning ====================
@@ -751,8 +813,8 @@ class ScanningService : Service() {
                 }
             }
             
-            // Track unmatched networks
-            if (!matched && ssid.isNotEmpty()) {
+            // Track unmatched networks if enabled
+            if (!matched && ssid.isNotEmpty() && currentSettings.value.trackSeenDevices) {
                 trackSeenWifiNetwork(bssid, ssid, rssi)
             }
         }
@@ -789,8 +851,7 @@ class ScanningService : Service() {
             }
         }
         
-        val cutoff = System.currentTimeMillis() - SEEN_DEVICE_TIMEOUT
-        seenWifiNetworks.value = currentList.filter { it.lastSeen > cutoff }
+        seenWifiNetworks.value = currentList
     }
     
     // ==================== Detection Handling ====================
