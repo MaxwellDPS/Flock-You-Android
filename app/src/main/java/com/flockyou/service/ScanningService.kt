@@ -7,7 +7,7 @@ import android.bluetooth.*
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanSettings
-import android.bluetooth.le.ScanResult as BleScanResult
+import android.bluetooth.le.ScanResult
 import android.content.*
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -264,13 +264,13 @@ class ScanningService : Service() {
     /** BLE scan callback - handles scan results for surveillance device detection */
     private val bleScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
-        override fun onScanResult(callbackType: Int, result: BleScanResult) {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
             serviceScope.launch {
                 processBleScanResult(result)
             }
         }
         
-        override fun onBatchScanResults(results: MutableList<BleScanResult>) {
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
             serviceScope.launch {
                 results.forEach { processBleScanResult(it) }
             }
@@ -282,7 +282,7 @@ class ScanningService : Service() {
     }
     
     @SuppressLint("MissingPermission")
-    private suspend fun processBleScanResult(result: BleScanResult) {
+    private suspend fun processBleScanResult(result: ScanResult) {
         val device = result.device
         val macAddress = device.address ?: return
         val deviceName = device.name
