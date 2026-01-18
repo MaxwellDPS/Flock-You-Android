@@ -147,9 +147,15 @@ fun CellularStatusCard(
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     CellDetail("Cell ID", cellStatus.cellId.take(12))
-                    cellStatus.lac?.let { CellDetail("LAC", it.toString()) }
-                    cellStatus.mcc?.let { CellDetail("MCC", it.toString()) }
-                    cellStatus.mnc?.let { CellDetail("MNC", it.toString()) }
+                    if (cellStatus.lac != null) {
+                        CellDetail("LAC", cellStatus.lac.toString())
+                    }
+                    if (cellStatus.mcc != null) {
+                        CellDetail("MCC", cellStatus.mcc)
+                    }
+                    if (cellStatus.mnc != null) {
+                        CellDetail("MNC", cellStatus.mnc)
+                    }
                 }
                 
                 // Cell status
@@ -198,7 +204,7 @@ fun CellularStatusCard(
             // Anomalies section
             if (anomalies.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Divider()
+                HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(

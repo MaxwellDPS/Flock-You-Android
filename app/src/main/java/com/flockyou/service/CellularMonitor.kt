@@ -57,7 +57,14 @@ class CellularMonitor(private val context: Context) {
     private val _anomalies = MutableStateFlow<List<CellularAnomaly>>(emptyList())
     val anomalies: StateFlow<List<CellularAnomaly>> = _anomalies.asStateFlow()
     
+    // Current cell status flow
+    private val _cellStatus = MutableStateFlow<CellStatus?>(null)
+    val cellStatus: StateFlow<CellStatus?> = _cellStatus.asStateFlow()
+    
     private val detectedAnomalies = mutableListOf<CellularAnomaly>()
+    
+    // Track known cells
+    private val knownCells = mutableSetOf<String>()
     
     // Callback for cell info changes
     private var phoneStateListener: PhoneStateListener? = null
@@ -93,15 +100,33 @@ class CellularMonitor(private val context: Context) {
         val longitude: Double?
     )
     
-    enum class AnomalyType(val displayName: String, val baseThreatScore: Int) {
-        SIGNAL_SPIKE("Sudden Signal Spike", 70),
-        CELL_TOWER_CHANGE("Unexpected Cell Change", 60),
-        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 95),
-        SUSPICIOUS_NETWORK("Suspicious Network ID", 90),
-        UNKNOWN_CELL("Unknown Cell Tower", 50),
-        RAPID_CELL_SWITCHING("Rapid Cell Switching", 75),
-        LAC_TAC_ANOMALY("Location Area Anomaly", 65)
+    enum class AnomalyType(val displayName: String, val baseThreatScore: Int, val emoji: String) {
+        SIGNAL_SPIKE("Sudden Signal Spike", 70, "📶"),
+        CELL_TOWER_CHANGE("Unexpected Cell Change", 60, "🗼"),
+        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 95, "🔓"),
+        SUSPICIOUS_NETWORK("Suspicious Network ID", 90, "⚠️"),
+        UNKNOWN_CELL("Unknown Cell Tower", 50, "❓"),
+        RAPID_CELL_SWITCHING("Rapid Cell Switching", 75, "🔄"),
+        LAC_TAC_ANOMALY("Location Area Anomaly", 65, "📍")
     }
+    
+    /**
+     * Current cell tower status for UI display
+     */
+    data class CellStatus(
+        val cellId: String,
+        val lac: Int?,
+        val tac: Int?,
+        val mcc: String?,
+        val mnc: String?,
+        val operator: String?,
+        val networkType: String,
+        val networkGeneration: String,
+        val signalStrength: Int,
+        val signalBars: Int,
+        val isKnownCell: Boolean,
+        val isRoaming: Boolean
+    )
     
     fun startMonitoring() {
         if (isMonitoring) return
@@ -219,12 +244,61 @@ class CellularMonitor(private val context: Context) {
             cellHistory.removeAt(0)
         }
         
+        // Update cell status for UI
+        updateCellStatus(snapshot)
+        
         // Analyze for anomalies
         lastKnownCell?.let { previous ->
             analyzeForAnomalies(previous, snapshot)
         }
         
         lastKnownCell = snapshot
+    }
+    
+    @Suppress("MissingPermission")
+    private fun updateCellStatus(snapshot: CellSnapshot) {
+        val cellIdStr = snapshot.cellId?.toString() ?: "Unknown"
+        val isKnown = cellIdStr in knownCells
+        if (cellIdStr != "Unknown") {
+            knownCells.add(cellIdStr)
+        }
+        
+        val isRoaming = try {
+            telephonyManager.isNetworkRoaming
+        } catch (e: Exception) {
+            false
+        }
+        
+        val operator = try {
+            telephonyManager.networkOperatorName?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+        
+        _cellStatus.value = CellStatus(
+            cellId = cellIdStr,
+            lac = snapshot.lac,
+            tac = snapshot.tac,
+            mcc = snapshot.mcc,
+            mnc = snapshot.mnc,
+            operator = operator,
+            networkType = getNetworkTypeName(snapshot.networkType),
+            networkGeneration = "${getNetworkGeneration(snapshot.networkType)}G",
+            signalStrength = snapshot.signalStrength,
+            signalBars = signalDbmToBars(snapshot.signalStrength),
+            isKnownCell = isKnown,
+            isRoaming = isRoaming
+        )
+    }
+    
+    private fun signalDbmToBars(dbm: Int): Int {
+        return when {
+            dbm >= -70 -> 4
+            dbm >= -85 -> 3
+            dbm >= -100 -> 2
+            dbm >= -110 -> 1
+            else -> 0
+        }
     }
     
     private fun onSignalUpdate(signalStrength: android.telephony.SignalStrength?) {
