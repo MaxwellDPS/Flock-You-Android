@@ -61,6 +61,7 @@ class ScanningService : Service() {
         val bleStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
         val wifiStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
         val locationStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+        val cellularStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
         val errorLog = MutableStateFlow<List<ScanError>>(emptyList())
         
         // Seen but unmatched devices
@@ -89,6 +90,7 @@ class ScanningService : Service() {
             seenDeviceTimeoutMinutes: Int = 5,
             enableBle: Boolean = true,
             enableWifi: Boolean = true,
+            enableCellular: Boolean = true,
             trackSeenDevices: Boolean = true
         ) {
             currentSettings.value = ScanConfig(
@@ -98,6 +100,7 @@ class ScanningService : Service() {
                 seenDeviceTimeout = seenDeviceTimeoutMinutes * 60 * 1000L,
                 enableBle = enableBle,
                 enableWifi = enableWifi,
+                enableCellular = enableCellular,
                 trackSeenDevices = trackSeenDevices
             )
         }
@@ -111,6 +114,7 @@ class ScanningService : Service() {
         val seenDeviceTimeout: Long = DEFAULT_SEEN_DEVICE_TIMEOUT,
         val enableBle: Boolean = true,
         val enableWifi: Boolean = true,
+        val enableCellular: Boolean = true,
         val trackSeenDevices: Boolean = true
     )
     
@@ -191,6 +195,9 @@ class ScanningService : Service() {
     // Scan job
     private var scanJob: Job? = null
     
+    // Cellular monitor
+    private var cellularMonitor: CellularMonitor? = null
+    
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
@@ -214,6 +221,9 @@ class ScanningService : Service() {
             @Suppress("DEPRECATION")
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
+        
+        // Initialize Cellular Monitor
+        cellularMonitor = CellularMonitor(applicationContext)
         
         createNotificationChannel()
     }
@@ -239,6 +249,8 @@ class ScanningService : Service() {
         super.onDestroy()
         Log.d(TAG, "Service destroyed")
         stopScanning()
+        cellularMonitor?.destroy()
+        cellularMonitor = null
         serviceScope.cancel()
     }
     
@@ -312,6 +324,11 @@ class ScanningService : Service() {
         // Register WiFi scan receiver
         if (config.enableWifi) {
             registerWifiReceiver()
+        }
+        
+        // Start cellular monitoring
+        if (config.enableCellular) {
+            startCellularMonitoring()
         }
         
         // Start continuous scanning
@@ -413,14 +430,84 @@ class ScanningService : Service() {
         scanJob?.cancel()
         stopBleScan()
         unregisterWifiReceiver()
+        stopCellularMonitoring()
         
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
         wifiStatus.value = SubsystemStatus.Idle
         locationStatus.value = SubsystemStatus.Idle
+        cellularStatus.value = SubsystemStatus.Idle
         scanStatus.value = ScanStatus.Idle
         
         Log.d(TAG, "Stopped scanning")
+    }
+    
+    // ==================== Cellular Monitoring ====================
+    
+    private var cellularAnomalyJob: Job? = null
+    
+    private fun startCellularMonitoring() {
+        if (!hasTelephonyPermissions()) {
+            cellularStatus.value = SubsystemStatus.PermissionDenied("READ_PHONE_STATE")
+            Log.w(TAG, "Missing telephony permissions for cellular monitoring")
+            return
+        }
+        
+        cellularMonitor?.startMonitoring()
+        cellularStatus.value = SubsystemStatus.Active
+        Log.d(TAG, "Cellular monitoring started")
+        
+        // Collect cellular anomalies and convert to detections
+        cellularAnomalyJob = serviceScope.launch {
+            cellularMonitor?.anomalies?.collect { anomalies ->
+                for (anomaly in anomalies) {
+                    // Convert anomaly to detection
+                    val detection = cellularMonitor?.anomalyToDetection(anomaly)
+                    detection?.let { det ->
+                        // Check if we already have this detection
+                        val existing = repository.getDetectionByIdentifier(det.identifier)
+                        if (existing == null) {
+                            repository.insertDetection(det)
+                            
+                            // Alert and vibrate for high-severity anomalies
+                            if (anomaly.severity == ThreatLevel.CRITICAL || 
+                                anomaly.severity == ThreatLevel.HIGH) {
+                                alertOnDetection(det)
+                            }
+                            
+                            lastDetection.value = det
+                            detectionCount.value = repository.getTotalDetectionCount()
+                            
+                            Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Also update cellular location when we get GPS updates
+        serviceScope.launch {
+            while (isScanning.value) {
+                currentLocation?.let { loc ->
+                    cellularMonitor?.updateLocation(loc.latitude, loc.longitude)
+                }
+                delay(5000)
+            }
+        }
+    }
+    
+    private fun stopCellularMonitoring() {
+        cellularAnomalyJob?.cancel()
+        cellularAnomalyJob = null
+        cellularMonitor?.stopMonitoring()
+        Log.d(TAG, "Cellular monitoring stopped")
+    }
+    
+    private fun hasTelephonyPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
     }
     
     // ==================== BLE Scanning ====================

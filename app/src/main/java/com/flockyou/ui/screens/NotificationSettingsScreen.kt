@@ -489,6 +489,7 @@ private fun SettingsToggleRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuietHoursDialog(
     startHour: Int,

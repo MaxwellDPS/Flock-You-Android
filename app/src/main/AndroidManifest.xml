@@ -25,9 +25,12 @@
     <!-- Vibration for alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
     
+    <!-- Telephony for cellular monitoring (IMSI catcher detection) -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    
     <!-- Internet for maps -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     
     <!-- Feature declarations -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
