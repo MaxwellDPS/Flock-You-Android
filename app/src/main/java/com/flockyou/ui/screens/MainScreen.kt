@@ -11,9 +11,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import java.text.SimpleDateFormat
+import java.util.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import com.flockyou.ui.components.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -436,6 +443,8 @@ fun FilterBottomSheet(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetectionDetailSheet(
     detection: Detection,
@@ -443,89 +452,286 @@ fun DetectionDetailSheet(
     onDelete: () -> Unit
 ) {
     val threatColor = detection.threatLevel.toColor()
+    val deviceInfo = DetectionPatterns.getDeviceTypeInfo(detection.deviceType)
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault()) }
     
     ModalBottomSheet(
         onDismissRequest = onDismiss
     ) {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(horizontal = 16.dp)
         ) {
             // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = detection.deviceType.toIcon(),
-                    contentDescription = null,
-                    tint = threatColor,
-                    modifier = Modifier.size(32.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = detection.deviceType.name.replace("_", " "),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    detection.manufacturer?.let {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(threatColor.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            text = it,
+                            text = detection.deviceType.emoji,
+                            style = MaterialTheme.typography.headlineMedium
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = deviceInfo.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = deviceInfo.shortDescription,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.tertiary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                ThreatBadge(threatLevel = detection.threatLevel)
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Threat level banner
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = threatColor.copy(alpha = 0.15f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = when (detection.threatLevel) {
+                                ThreatLevel.CRITICAL -> Icons.Default.Warning
+                                ThreatLevel.HIGH -> Icons.Default.Error
+                                else -> Icons.Default.Info
+                            },
+                            contentDescription = null,
+                            tint = threatColor
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "${detection.threatLevel.displayName} Threat (${detection.threatScore}/100)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = threatColor
+                            )
+                            Text(
+                                text = detection.threatLevel.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            // Device Description
+            item {
+                Text(
+                    text = "About This Device",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = deviceInfo.fullDescription,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
             
-            // Details
-            DetailRow(label = "Protocol", value = detection.protocol.name)
-            DetailRow(label = "Detection Method", value = detection.detectionMethod.name.replace("_", " "))
-            detection.macAddress?.let { DetailRow(label = "MAC Address", value = it) }
-            detection.ssid?.let { DetailRow(label = "SSID", value = it) }
-            DetailRow(label = "Signal Strength", value = "${detection.rssi} dBm (${detection.signalStrength})")
-            DetailRow(label = "Threat Score", value = "${detection.threatScore}/100")
-            detection.firmwareVersion?.let { DetailRow(label = "Firmware", value = it) }
+            // Technical Details
+            item {
+                Text(
+                    text = "Detection Details",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
             
-            if (detection.latitude != null && detection.longitude != null) {
+            item {
                 DetailRow(
-                    label = "Location",
-                    value = "%.6f, %.6f".format(detection.latitude, detection.longitude)
+                    label = "Detected",
+                    value = dateFormat.format(Date(detection.timestamp))
                 )
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            item {
+                DetailRow(
+                    label = "Protocol",
+                    value = "${detection.protocol.icon} ${detection.protocol.displayName}"
+                )
+            }
             
-            // Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Delete")
-                }
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Close")
+            item {
+                DetailRow(
+                    label = "Method",
+                    value = detection.detectionMethod.displayName
+                )
+            }
+            
+            detection.macAddress?.let { mac ->
+                item {
+                    DetailRow(label = "MAC Address", value = mac)
                 }
             }
             
-            Spacer(modifier = Modifier.height(32.dp))
+            detection.ssid?.let { ssid ->
+                item {
+                    DetailRow(label = "SSID", value = ssid)
+                }
+            }
+            
+            detection.deviceName?.let { name ->
+                item {
+                    DetailRow(label = "Device Name", value = name)
+                }
+            }
+            
+            item {
+                DetailRow(
+                    label = "Signal",
+                    value = "${detection.rssi} dBm (${detection.signalStrength.displayName} - ${detection.signalStrength.description})"
+                )
+            }
+            
+            item {
+                DetailRow(
+                    label = "Est. Distance",
+                    value = rssiToDistance(detection.rssi)
+                )
+            }
+            
+            detection.manufacturer?.let { mfr ->
+                item {
+                    DetailRow(label = "Manufacturer", value = mfr)
+                }
+            }
+            
+            detection.firmwareVersion?.let { fw ->
+                item {
+                    DetailRow(label = "Firmware", value = fw)
+                }
+            }
+            
+            if (detection.latitude != null && detection.longitude != null) {
+                item {
+                    DetailRow(
+                        label = "Location",
+                        value = "%.6f, %.6f".format(detection.latitude, detection.longitude)
+                    )
+                }
+            }
+            
+            // Capabilities Section
+            if (deviceInfo.capabilities.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Known Capabilities",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                items(deviceInfo.capabilities.size) { index ->
+                    Row(
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = deviceInfo.capabilities[index],
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            
+            // Privacy Concerns Section
+            if (deviceInfo.privacyConcerns.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "⚠️ Privacy Concerns",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                items(deviceInfo.privacyConcerns.size) { index ->
+                    Row(
+                        modifier = Modifier.padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = deviceInfo.privacyConcerns[index],
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            
+            // Actions
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDelete,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Delete")
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Close")
+                    }
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+            }
         }
     }
 }
@@ -539,7 +745,7 @@ fun DetailRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
@@ -550,16 +756,17 @@ fun DetailRow(
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
+            fontFamily = if (label.contains("MAC") || label.contains("SSID")) FontFamily.Monospace else FontFamily.Default
         )
     }
 }
 
 @Composable
-private fun ThreatLevel.toColor() = when (this) {
-    ThreatLevel.CRITICAL -> com.flockyou.ui.theme.ThreatCritical
-    ThreatLevel.HIGH -> com.flockyou.ui.theme.ThreatHigh
-    ThreatLevel.MEDIUM -> com.flockyou.ui.theme.ThreatMedium
-    ThreatLevel.LOW -> com.flockyou.ui.theme.ThreatLow
-    ThreatLevel.INFO -> com.flockyou.ui.theme.ThreatInfo
+private fun ThreatLevel.toColor(): Color = when (this) {
+    ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+    ThreatLevel.HIGH -> Color(0xFFF57C00)
+    ThreatLevel.MEDIUM -> Color(0xFFFBC02D)
+    ThreatLevel.LOW -> Color(0xFF388E3C)
+    ThreatLevel.INFO -> Color(0xFF1976D2)
 }

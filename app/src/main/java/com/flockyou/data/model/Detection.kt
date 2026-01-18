@@ -1,5 +1,6 @@
 package com.flockyou.data.model
 
+import androidx.compose.ui.graphics.Color
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
@@ -31,43 +32,54 @@ data class Detection(
     val isActive: Boolean = true
 )
 
-enum class DetectionProtocol {
-    WIFI,
-    BLUETOOTH_LE
+enum class DetectionProtocol(val displayName: String, val icon: String) {
+    WIFI("WiFi", "📡"),
+    BLUETOOTH_LE("Bluetooth LE", "📶")
 }
 
-enum class DetectionMethod {
-    SSID_PATTERN,
-    MAC_PREFIX,
-    BLE_DEVICE_NAME,
-    BLE_SERVICE_UUID,
-    RAVEN_SERVICE_UUID,
-    PROBE_REQUEST,
-    BEACON_FRAME
+enum class DetectionMethod(val displayName: String, val description: String) {
+    SSID_PATTERN("SSID Match", "Device identified by WiFi network name pattern"),
+    MAC_PREFIX("MAC Address", "Device identified by manufacturer OUI prefix"),
+    BLE_DEVICE_NAME("BLE Name", "Device identified by Bluetooth advertised name"),
+    BLE_SERVICE_UUID("BLE Service", "Device identified by Bluetooth service UUIDs"),
+    RAVEN_SERVICE_UUID("Raven Services", "Raven gunshot detector identified by specific BLE services"),
+    PROBE_REQUEST("Probe Request", "Device detected via WiFi probe request"),
+    BEACON_FRAME("Beacon Frame", "Device detected via WiFi beacon broadcast")
 }
 
-enum class DeviceType {
-    FLOCK_SAFETY_CAMERA,
-    PENGUIN_SURVEILLANCE,
-    PIGVISION_SYSTEM,
-    RAVEN_GUNSHOT_DETECTOR,
-    UNKNOWN_SURVEILLANCE
+enum class DeviceType(val displayName: String, val emoji: String) {
+    FLOCK_SAFETY_CAMERA("Flock Safety ALPR", "📸"),
+    PENGUIN_SURVEILLANCE("Penguin Surveillance", "🐧"),
+    PIGVISION_SYSTEM("Pigvision System", "🐷"),
+    RAVEN_GUNSHOT_DETECTOR("Raven Gunshot Detector", "🦅"),
+    UNKNOWN_SURVEILLANCE("Unknown Surveillance", "❓")
 }
 
-enum class SignalStrength {
-    EXCELLENT,  // > -50 dBm
-    GOOD,       // -50 to -60 dBm
-    MEDIUM,     // -60 to -70 dBm
-    WEAK,       // -70 to -80 dBm
-    VERY_WEAK   // < -80 dBm
+enum class SignalStrength(val displayName: String, val description: String) {
+    EXCELLENT("Excellent", "Very close - within ~10m"),
+    GOOD("Good", "Close proximity - within ~25m"),
+    MEDIUM("Medium", "Moderate distance - within ~50m"),
+    WEAK("Weak", "Far - within ~75m"),
+    VERY_WEAK("Very Weak", "Edge of range - 75m+")
 }
 
-enum class ThreatLevel {
-    CRITICAL,   // Score 90-100
-    HIGH,       // Score 70-89
-    MEDIUM,     // Score 50-69
-    LOW,        // Score 30-49
-    INFO        // Score 0-29
+enum class ThreatLevel(val displayName: String, val description: String) {
+    CRITICAL("Critical", "Active acoustic/audio surveillance - recording sounds"),
+    HIGH("High", "Confirmed surveillance device - recording vehicle data"),
+    MEDIUM("Medium", "Likely surveillance equipment"),
+    LOW("Low", "Possible surveillance device"),
+    INFO("Info", "Device of interest - may not be surveillance")
+}
+
+/**
+ * Extension to get color for ThreatLevel
+ */
+fun ThreatLevel.toColor(): Color = when (this) {
+    ThreatLevel.CRITICAL -> Color(0xFFD32F2F) // Red
+    ThreatLevel.HIGH -> Color(0xFFF57C00) // Orange
+    ThreatLevel.MEDIUM -> Color(0xFFFBC02D) // Yellow
+    ThreatLevel.LOW -> Color(0xFF388E3C) // Green
+    ThreatLevel.INFO -> Color(0xFF1976D2) // Blue
 }
 
 /**
@@ -90,6 +102,24 @@ fun scoreToThreatLevel(score: Int): ThreatLevel = when {
     score >= 50 -> ThreatLevel.MEDIUM
     score >= 30 -> ThreatLevel.LOW
     else -> ThreatLevel.INFO
+}
+
+/**
+ * Get estimated distance from RSSI
+ */
+fun rssiToDistance(rssi: Int): String {
+    // Rough estimation based on free-space path loss
+    // Assumes 2.4GHz, reference RSSI of -40 at 1m
+    val distance = when {
+        rssi > -40 -> "< 1m"
+        rssi > -50 -> "~1-5m"
+        rssi > -60 -> "~5-15m"
+        rssi > -70 -> "~15-30m"
+        rssi > -80 -> "~30-50m"
+        rssi > -90 -> "~50-100m"
+        else -> "> 100m"
+    }
+    return distance
 }
 
 /**
