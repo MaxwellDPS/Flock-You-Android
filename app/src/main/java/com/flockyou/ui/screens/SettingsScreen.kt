@@ -33,7 +33,9 @@ import java.util.*
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
-    onNavigateToPatterns: () -> Unit
+    onNavigateToPatterns: () -> Unit,
+    onNavigateToNotifications: () -> Unit = {},
+    onNavigateToRules: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -311,6 +313,26 @@ fun SettingsScreen(
                     title = "Detection Patterns",
                     subtitle = "View SSIDs, BLE names, and MAC prefixes being scanned",
                     onClick = onNavigateToPatterns
+                )
+            }
+            
+            // Detection Rules
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Rule,
+                    title = "Detection Rules",
+                    subtitle = "Toggle built-in rules, add custom regex patterns",
+                    onClick = onNavigateToRules
+                )
+            }
+            
+            // Notification Settings
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Notifications,
+                    title = "Notifications",
+                    subtitle = "Alert sounds, vibration, quiet hours",
+                    onClick = onNavigateToNotifications
                 )
             }
             

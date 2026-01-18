@@ -62,6 +62,13 @@ fun DeviceType.toIcon(): ImageVector = when (this) {
     DeviceType.PENGUIN_SURVEILLANCE -> Icons.Default.Videocam
     DeviceType.PIGVISION_SYSTEM -> Icons.Default.RemoveRedEye
     DeviceType.RAVEN_GUNSHOT_DETECTOR -> Icons.Default.Mic
+    DeviceType.MOTOROLA_POLICE_TECH -> Icons.Default.SettingsInputAntenna
+    DeviceType.AXON_POLICE_TECH -> Icons.Default.ElectricBolt
+    DeviceType.L3HARRIS_SURVEILLANCE -> Icons.Default.SatelliteAlt
+    DeviceType.CELLEBRITE_FORENSICS -> Icons.Default.PhoneAndroid
+    DeviceType.BODY_CAMERA -> Icons.Default.Videocam
+    DeviceType.POLICE_RADIO -> Icons.Default.Radio
+    DeviceType.STINGRAY_IMSI -> Icons.Default.CellTower
     DeviceType.UNKNOWN_SURVEILLANCE -> Icons.Default.QuestionMark
 }
 

@@ -26,6 +26,8 @@ import com.flockyou.ui.screens.MapScreen
 import com.flockyou.ui.screens.SettingsScreen
 import com.flockyou.ui.screens.NearbyDevicesScreen
 import com.flockyou.ui.screens.DetectionPatternsScreen
+import com.flockyou.ui.screens.NotificationSettingsScreen
+import com.flockyou.ui.screens.RuleSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -109,7 +111,9 @@ fun AppNavigation() {
         composable("settings") {
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToPatterns = { navController.navigate("patterns") }
+                onNavigateToPatterns = { navController.navigate("patterns") },
+                onNavigateToNotifications = { navController.navigate("notifications") },
+                onNavigateToRules = { navController.navigate("rules") }
             )
         }
         composable("nearby") {
@@ -119,6 +123,16 @@ fun AppNavigation() {
         }
         composable("patterns") {
             DetectionPatternsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("notifications") {
+            NotificationSettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("rules") {
+            RuleSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

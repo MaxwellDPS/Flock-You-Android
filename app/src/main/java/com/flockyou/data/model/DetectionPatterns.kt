@@ -104,6 +104,210 @@ object DetectionPatterns {
             manufacturer = "Motorola Solutions",
             threatScore = 85,
             description = "Vigilant ALPR (Motorola) - competitor to Flock"
+        ),
+        
+        // ==================== Police Technology Patterns ====================
+        
+        // Motorola Solutions
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^moto[_-]?(body|cam|radio|apx).*",
+            deviceType = DeviceType.MOTOROLA_POLICE_TECH,
+            manufacturer = "Motorola Solutions",
+            threatScore = 80,
+            description = "Motorola police equipment (body camera, radio, APX)"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^apx[_-]?.*",
+            deviceType = DeviceType.POLICE_RADIO,
+            manufacturer = "Motorola Solutions",
+            threatScore = 75,
+            description = "Motorola APX Radio System"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^astro[_-]?.*",
+            deviceType = DeviceType.POLICE_RADIO,
+            manufacturer = "Motorola Solutions",
+            threatScore = 70,
+            description = "Motorola ASTRO Radio System"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^v[_-]?[35]00[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Motorola Solutions",
+            threatScore = 80,
+            description = "Motorola V300/V500 Body Camera"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^watchguard[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Motorola Solutions (WatchGuard)",
+            threatScore = 80,
+            description = "WatchGuard Body/Dash Camera System"
+        ),
+        
+        // Axon (formerly TASER)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^axon[_-]?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 85,
+            description = "Axon police equipment (body camera, TASER, etc.)"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(axon[_-]?)?(body|flex)[_-]?[234]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Axon Enterprise",
+            threatScore = 80,
+            description = "Axon Body Camera (Body 2/3/4, Flex)"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^taser[_-]?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 75,
+            description = "TASER device with connectivity"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^evidence[_-]?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 70,
+            description = "Axon Evidence.com sync device"
+        ),
+        
+        // L3Harris
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^l3harris[_-]?.*",
+            deviceType = DeviceType.L3HARRIS_SURVEILLANCE,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 85,
+            description = "L3Harris surveillance/communications equipment"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^stingray[_-]?.*",
+            deviceType = DeviceType.STINGRAY_IMSI,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 100,
+            description = "StingRay Cell Site Simulator (IMSI Catcher)"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(hail|king|queen)storm[_-]?.*",
+            deviceType = DeviceType.STINGRAY_IMSI,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 100,
+            description = "Hailstorm/Kingfish Cell Site Simulator"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(harris|xg)[_-]?[0-9]+.*",
+            deviceType = DeviceType.POLICE_RADIO,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 70,
+            description = "Harris XG Radio System"
+        ),
+        
+        // Digital Ally
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^digital[_-]?ally[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Digital Ally",
+            threatScore = 75,
+            description = "Digital Ally Body/Dash Camera"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^firstvu[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Digital Ally",
+            threatScore = 75,
+            description = "Digital Ally FirstVU Body Camera"
+        ),
+        
+        // Cellebrite
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^cellebrite[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Cellebrite",
+            threatScore = 90,
+            description = "Cellebrite mobile forensics device"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^ufed[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Cellebrite",
+            threatScore = 90,
+            description = "Cellebrite UFED (Universal Forensic Extraction Device)"
+        ),
+        
+        // Graykey/Magnet
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^graykey[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Grayshift",
+            threatScore = 90,
+            description = "GrayKey iPhone forensics device"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^magnet[_-]?forensic.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Magnet Forensics",
+            threatScore = 85,
+            description = "Magnet Forensics device"
+        ),
+        
+        // Genetec
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^genetec[_-]?.*",
+            deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+            manufacturer = "Genetec",
+            threatScore = 80,
+            description = "Genetec Security Center / AutoVu ALPR"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^autovu[_-]?.*",
+            deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+            manufacturer = "Genetec",
+            threatScore = 85,
+            description = "Genetec AutoVu ALPR System"
+        ),
+        
+        // Getac (ruggedized police computers)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^getac[_-]?.*",
+            deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+            manufacturer = "Getac",
+            threatScore = 60,
+            description = "Getac ruggedized computer (often used in patrol vehicles)"
+        ),
+        
+        // Panasonic Toughbook (common in police vehicles)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^toughbook[_-]?.*",
+            deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+            manufacturer = "Panasonic",
+            threatScore = 55,
+            description = "Panasonic Toughbook (commonly used by law enforcement)"
         )
     )
     
@@ -164,6 +368,106 @@ object DetectionPatterns {
             manufacturer = "Pigvision",
             threatScore = 85,
             description = "Pigvision BLE Device"
+        ),
+        
+        // ==================== Police Technology BLE Patterns ====================
+        
+        // Axon Body Cameras
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^axon[_-]?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 80,
+            description = "Axon device (body camera, TASER, etc.)"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(body|flex)[_-]?[234]?[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Axon Enterprise",
+            threatScore = 80,
+            description = "Axon Body Camera"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^ab[234][_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Axon Enterprise",
+            threatScore = 80,
+            description = "Axon Body Camera (AB2/AB3/AB4)"
+        ),
+        
+        // Motorola Body Cameras
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(moto|si)[_-]?[v][_-]?[0-9]+.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Motorola Solutions",
+            threatScore = 80,
+            description = "Motorola Body Camera"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^watchguard[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Motorola Solutions (WatchGuard)",
+            threatScore = 80,
+            description = "WatchGuard Body/Dash Camera"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^apx[_-]?.*",
+            deviceType = DeviceType.POLICE_RADIO,
+            manufacturer = "Motorola Solutions",
+            threatScore = 70,
+            description = "Motorola APX Radio"
+        ),
+        
+        // Digital Ally
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(da|firstvu)[_-]?.*",
+            deviceType = DeviceType.BODY_CAMERA,
+            manufacturer = "Digital Ally",
+            threatScore = 75,
+            description = "Digital Ally Body Camera"
+        ),
+        
+        // L3Harris
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(l3|harris|l3harris)[_-]?.*",
+            deviceType = DeviceType.L3HARRIS_SURVEILLANCE,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 80,
+            description = "L3Harris equipment"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^xg[_-]?[0-9]+.*",
+            deviceType = DeviceType.POLICE_RADIO,
+            manufacturer = "L3Harris Technologies",
+            threatScore = 70,
+            description = "L3Harris XG Radio"
+        ),
+        
+        // Cellebrite / Forensics
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(cellebrite|ufed)[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Cellebrite",
+            threatScore = 95,
+            description = "Cellebrite forensics device"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^graykey[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Grayshift",
+            threatScore = 95,
+            description = "GrayKey forensics device"
         )
     )
     
@@ -420,6 +724,150 @@ object DetectionPatterns {
                 fullDescription = "Pigvision surveillance camera network.",
                 capabilities = listOf("Video surveillance", "License plate capture"),
                 privacyConcerns = listOf("Mass surveillance", "Data retention unknown")
+            )
+            DeviceType.MOTOROLA_POLICE_TECH -> DeviceTypeInfo(
+                name = "Motorola Police Technology",
+                shortDescription = "Law Enforcement Equipment",
+                fullDescription = "Motorola Solutions provides extensive police technology including " +
+                    "body cameras (V300/V500), in-car video systems, APX radios, and the Vigilant ALPR platform. " +
+                    "Evidence is typically stored in their CommandCentral platform.",
+                capabilities = listOf(
+                    "Body-worn camera recording",
+                    "In-car video systems",
+                    "Two-way radio communications",
+                    "ALPR (Vigilant platform)",
+                    "Real-time video streaming",
+                    "GPS location tracking"
+                ),
+                privacyConcerns = listOf(
+                    "Continuous recording capability",
+                    "Cloud evidence storage",
+                    "Cross-agency data sharing",
+                    "Facial recognition integration potential"
+                )
+            )
+            DeviceType.AXON_POLICE_TECH -> DeviceTypeInfo(
+                name = "Axon Police Technology",
+                shortDescription = "Body Cameras & TASERs",
+                fullDescription = "Axon (formerly TASER International) is the dominant body camera provider " +
+                    "for US law enforcement. They also make TASERs, in-car cameras, and the Evidence.com " +
+                    "cloud storage platform. Axon has been expanding into AI-powered features.",
+                capabilities = listOf(
+                    "Body camera recording (Body 2/3/4)",
+                    "TASER deployment logging",
+                    "Automatic recording triggers",
+                    "Evidence.com cloud storage",
+                    "Real-time streaming (Axon Respond)",
+                    "AI-powered redaction and transcription"
+                ),
+                privacyConcerns = listOf(
+                    "Massive video evidence database",
+                    "AI/facial recognition features",
+                    "Third-party cloud storage",
+                    "Potential for covert recording",
+                    "Data retention policies vary by agency"
+                )
+            )
+            DeviceType.L3HARRIS_SURVEILLANCE -> DeviceTypeInfo(
+                name = "L3Harris Surveillance",
+                shortDescription = "Advanced Surveillance Systems",
+                fullDescription = "L3Harris Technologies manufactures advanced surveillance equipment " +
+                    "including cell site simulators (StingRay/Hailstorm), radio systems, and ISR " +
+                    "(Intelligence, Surveillance, and Reconnaissance) equipment.",
+                capabilities = listOf(
+                    "Radio communications systems",
+                    "Electronic surveillance",
+                    "SIGINT capabilities",
+                    "Tactical communications"
+                ),
+                privacyConcerns = listOf(
+                    "Military-grade surveillance tech",
+                    "Cell site simulator manufacturer",
+                    "Little public accountability"
+                )
+            )
+            DeviceType.CELLEBRITE_FORENSICS -> DeviceTypeInfo(
+                name = "Mobile Forensics Device",
+                shortDescription = "Phone Data Extraction",
+                fullDescription = "Cellebrite UFED and similar devices can extract data from locked " +
+                    "mobile phones, including deleted messages, call logs, photos, and app data. " +
+                    "Used by law enforcement to access suspects' phones, often without warrants.",
+                capabilities = listOf(
+                    "Bypass phone lock screens",
+                    "Extract deleted data",
+                    "Access encrypted apps",
+                    "Clone entire phone contents",
+                    "Crack passwords/PINs",
+                    "Extract cloud account data"
+                ),
+                privacyConcerns = listOf(
+                    "Complete phone data extraction",
+                    "Often used without warrants",
+                    "Can access encrypted messaging apps",
+                    "Recovers deleted content",
+                    "Used at traffic stops in some jurisdictions"
+                )
+            )
+            DeviceType.BODY_CAMERA -> DeviceTypeInfo(
+                name = "Body-Worn Camera",
+                shortDescription = "Police Body Camera",
+                fullDescription = "Body-worn cameras record officer interactions with the public. " +
+                    "While intended for accountability, they also create extensive surveillance footage " +
+                    "of everyone officers encounter.",
+                capabilities = listOf(
+                    "Video and audio recording",
+                    "GPS location logging",
+                    "Automatic activation triggers",
+                    "Real-time streaming capability",
+                    "Night vision/low-light recording"
+                ),
+                privacyConcerns = listOf(
+                    "Records bystanders without consent",
+                    "Footage retention varies (30 days to years)",
+                    "Can be used for facial recognition",
+                    "Officers can review before writing reports",
+                    "Release policies often favor police"
+                )
+            )
+            DeviceType.POLICE_RADIO -> DeviceTypeInfo(
+                name = "Police Radio System",
+                shortDescription = "Law Enforcement Communications",
+                fullDescription = "Modern police radios use encrypted digital protocols and often " +
+                    "include GPS tracking, emergency alerts, and data transmission capabilities.",
+                capabilities = listOf(
+                    "Encrypted voice communications",
+                    "GPS location tracking",
+                    "Data transmission",
+                    "Emergency signaling",
+                    "Inter-agency communication"
+                ),
+                privacyConcerns = listOf(
+                    "Encryption prevents public monitoring",
+                    "Location tracking of officers/suspects",
+                    "Interoperability with surveillance systems"
+                )
+            )
+            DeviceType.STINGRAY_IMSI -> DeviceTypeInfo(
+                name = "Cell Site Simulator (StingRay)",
+                shortDescription = "IMSI Catcher / Fake Cell Tower",
+                fullDescription = "Cell site simulators (StingRay, Hailstorm, etc.) impersonate cell towers " +
+                    "to intercept mobile phone communications. They capture IMSI numbers, location data, " +
+                    "and can intercept calls and texts from ALL phones in range, not just targets.",
+                capabilities = listOf(
+                    "Capture all phone identifiers in range",
+                    "Track phone locations precisely",
+                    "Intercept calls and SMS",
+                    "Force phones to downgrade encryption",
+                    "Deny cell service selectively",
+                    "Identify phone make/model"
+                ),
+                privacyConcerns = listOf(
+                    "Mass surveillance of all phones nearby",
+                    "Used under NDA - often hidden from courts",
+                    "Can intercept content of calls/texts",
+                    "No warrant required in many jurisdictions",
+                    "Disrupts cell service for everyone"
+                )
             )
             DeviceType.UNKNOWN_SURVEILLANCE -> DeviceTypeInfo(
                 name = "Unknown Surveillance Device",

@@ -54,6 +54,13 @@ enum class DeviceType(val displayName: String, val emoji: String) {
     PENGUIN_SURVEILLANCE("Penguin Surveillance", "🐧"),
     PIGVISION_SYSTEM("Pigvision System", "🐷"),
     RAVEN_GUNSHOT_DETECTOR("Raven Gunshot Detector", "🦅"),
+    MOTOROLA_POLICE_TECH("Motorola Police Tech", "📻"),
+    AXON_POLICE_TECH("Axon Police Tech", "⚡"),
+    L3HARRIS_SURVEILLANCE("L3Harris Surveillance", "🛰️"),
+    CELLEBRITE_FORENSICS("Cellebrite Forensics", "📱"),
+    BODY_CAMERA("Body Camera", "🎥"),
+    POLICE_RADIO("Police Radio System", "📡"),
+    STINGRAY_IMSI("Cell Site Simulator", "📶"),
     UNKNOWN_SURVEILLANCE("Unknown Surveillance", "❓")
 }
 
