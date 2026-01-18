@@ -2,6 +2,8 @@ package com.flockyou.data.repository
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.flockyou.data.model.*
 import kotlinx.coroutines.flow.Flow
 
@@ -115,7 +117,7 @@ interface DetectionDao {
 /**
  * Room database for storing detections
  */
-@Database(entities = [Detection::class], version = 3, exportSchema = false)
+@Database(entities = [Detection::class], version = 4, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
@@ -124,6 +126,20 @@ abstract class FlockYouDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: FlockYouDatabase? = null
         
+        // Migration from version 3 to 4 - adds indices
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Create indices for better query performance
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_macAddress ON detections(macAddress)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_ssid ON detections(ssid)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_threatLevel ON detections(threatLevel)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_deviceType ON detections(deviceType)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_timestamp ON detections(timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_lastSeenTimestamp ON detections(lastSeenTimestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_isActive ON detections(isActive)")
+            }
+        }
+        
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -131,7 +147,8 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     FlockYouDatabase::class.java,
                     "flockyou_database"
                 )
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_3_4)
+                    .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance
                 instance

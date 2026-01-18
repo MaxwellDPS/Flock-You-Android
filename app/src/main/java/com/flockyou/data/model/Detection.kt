@@ -1,13 +1,25 @@
 package com.flockyou.data.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
 
 /**
  * Represents a detected surveillance device
  */
-@Entity(tableName = "detections")
+@Entity(
+    tableName = "detections",
+    indices = [
+        Index(value = ["macAddress"]),
+        Index(value = ["ssid"]),
+        Index(value = ["threatLevel"]),
+        Index(value = ["deviceType"]),
+        Index(value = ["timestamp"]),
+        Index(value = ["lastSeenTimestamp"]),
+        Index(value = ["isActive"])
+    ]
+)
 data class Detection(
     @PrimaryKey
     val id: String = UUID.randomUUID().toString(),
@@ -15,19 +27,19 @@ data class Detection(
     val protocol: DetectionProtocol,
     val detectionMethod: DetectionMethod,
     val deviceType: DeviceType,
-    val deviceName: String?,
-    val macAddress: String?,
-    val ssid: String?,
+    val deviceName: String? = null,
+    val macAddress: String? = null,
+    val ssid: String? = null,
     val rssi: Int,
     val signalStrength: SignalStrength,
-    val latitude: Double?,
-    val longitude: Double?,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     val threatLevel: ThreatLevel,
-    val threatScore: Int,
-    val manufacturer: String?,
-    val firmwareVersion: String?,
-    val serviceUuids: String?, // JSON array of service UUIDs
-    val matchedPatterns: String?, // JSON array of matched patterns
+    val threatScore: Int = 0,
+    val manufacturer: String? = null,
+    val firmwareVersion: String? = null,
+    val serviceUuids: String? = null, // JSON array of service UUIDs
+    val matchedPatterns: String? = null, // JSON array of matched patterns
     val isActive: Boolean = true,
     val seenCount: Int = 1, // Number of times this device has been seen
     val lastSeenTimestamp: Long = System.currentTimeMillis() // When device was last seen
