@@ -20,6 +20,7 @@ import com.flockyou.ui.components.toIcon
 import com.flockyou.ui.theme.*
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -34,6 +35,7 @@ fun MapScreen(
     val uiState by viewModel.uiState.collectAsState()
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
     var mapView by remember { mutableStateOf<MapView?>(null) }
+    var hasZoomedToFit by remember { mutableStateOf(false) }
     
     // Initialize osmdroid configuration
     LaunchedEffect(Unit) {
@@ -50,11 +52,16 @@ fun MapScreen(
             // Clear existing markers
             map.overlays.removeAll { it is Marker }
             
+            val points = mutableListOf<GeoPoint>()
+            
             // Add markers for each detection
             uiState.detectionsWithLocation.forEach { detection ->
                 if (detection.latitude != null && detection.longitude != null) {
+                    val geoPoint = GeoPoint(detection.latitude, detection.longitude)
+                    points.add(geoPoint)
+                    
                     val marker = Marker(map).apply {
-                        position = GeoPoint(detection.latitude, detection.longitude)
+                        position = geoPoint
                         title = detection.deviceType.name.replace("_", " ")
                         snippet = detection.macAddress ?: detection.ssid ?: "Unknown"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -69,17 +76,10 @@ fun MapScreen(
                 }
             }
             
-            // Center on first detection
-            val firstWithLocation = uiState.detectionsWithLocation.firstOrNull {
-                it.latitude != null && it.longitude != null
-            }
-            
-            if (firstWithLocation != null) {
-                map.controller.animateTo(
-                    GeoPoint(firstWithLocation.latitude!!, firstWithLocation.longitude!!),
-                    14.0,
-                    1000L
-                )
+            // Auto-zoom to fit all markers
+            if (points.isNotEmpty() && !hasZoomedToFit) {
+                hasZoomedToFit = true
+                zoomToFitPoints(map, points)
             }
             
             map.invalidate()
@@ -96,21 +96,38 @@ fun MapScreen(
                     }
                 },
                 actions = {
+                    // Zoom to fit all markers
                     IconButton(onClick = {
                         mapView?.let { map ->
-                            val first = uiState.detectionsWithLocation.firstOrNull {
-                                it.latitude != null && it.longitude != null
+                            val points = uiState.detectionsWithLocation
+                                .filter { it.latitude != null && it.longitude != null }
+                                .map { GeoPoint(it.latitude!!, it.longitude!!) }
+                            
+                            if (points.isNotEmpty()) {
+                                zoomToFitPoints(map, points)
                             }
-                            if (first != null) {
+                        }
+                    }) {
+                        Icon(Icons.Default.ZoomOutMap, contentDescription = "Fit All")
+                    }
+                    
+                    // Center on user location (if available from detections)
+                    IconButton(onClick = {
+                        mapView?.let { map ->
+                            val latest = uiState.detectionsWithLocation
+                                .filter { it.latitude != null && it.longitude != null }
+                                .maxByOrNull { it.timestamp }
+                            
+                            if (latest != null) {
                                 map.controller.animateTo(
-                                    GeoPoint(first.latitude!!, first.longitude!!),
-                                    14.0,
+                                    GeoPoint(latest.latitude!!, latest.longitude!!),
+                                    16.0,
                                     500L
                                 )
                             }
                         }
                     }) {
-                        Icon(Icons.Default.MyLocation, contentDescription = "Center")
+                        Icon(Icons.Default.MyLocation, contentDescription = "Latest")
                     }
                 }
             )
@@ -219,6 +236,45 @@ fun MapScreen(
     }
 }
 
+private fun zoomToFitPoints(map: MapView, points: List<GeoPoint>) {
+    if (points.isEmpty()) return
+    
+    if (points.size == 1) {
+        // Single point - just center and zoom
+        map.controller.animateTo(points.first(), 16.0, 500L)
+        return
+    }
+    
+    // Calculate bounding box for all points
+    var north = -90.0
+    var south = 90.0
+    var east = -180.0
+    var west = 180.0
+    
+    for (point in points) {
+        if (point.latitude > north) north = point.latitude
+        if (point.latitude < south) south = point.latitude
+        if (point.longitude > east) east = point.longitude
+        if (point.longitude < west) west = point.longitude
+    }
+    
+    // Add padding (10%)
+    val latPadding = (north - south) * 0.1
+    val lonPadding = (east - west) * 0.1
+    
+    val boundingBox = BoundingBox(
+        north + latPadding,
+        east + lonPadding,
+        south - latPadding,
+        west - lonPadding
+    )
+    
+    // Zoom to bounding box
+    map.post {
+        map.zoomToBoundingBox(boundingBox, true, 50)
+    }
+}
+
 private fun createMarkerDrawable(context: Context, threatLevel: ThreatLevel): android.graphics.drawable.Drawable {
     val color = when (threatLevel) {
         ThreatLevel.CRITICAL -> Color.parseColor("#D32F2F")
@@ -305,7 +361,7 @@ private fun MapDetectionSheet(
             if (detection.latitude != null && detection.longitude != null) {
                 Text(
                     "Location: %.6f, %.6f".format(detection.latitude, detection.longitude),
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.titleMedium
                 )
             }
             
