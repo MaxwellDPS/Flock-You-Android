@@ -13,9 +13,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
@@ -116,6 +118,22 @@ fun MainScreen(
                     onClick = { viewModel.selectTab(1) }
                 )
                 NavigationBarItem(
+                    icon = { 
+                        BadgedBox(
+                            badge = {
+                                if (uiState.cellularAnomalies.isNotEmpty()) {
+                                    Badge { Text(uiState.cellularAnomalies.size.toString()) }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.CellTower, contentDescription = "Cellular")
+                        }
+                    },
+                    label = { Text("Cellular") },
+                    selected = uiState.selectedTab == 3,
+                    onClick = { viewModel.selectTab(3) }
+                )
+                NavigationBarItem(
                     icon = { Icon(Icons.Default.History, contentDescription = "History") },
                     label = { Text("History") },
                     selected = uiState.selectedTab == 2,
@@ -124,14 +142,29 @@ fun MainScreen(
             }
         }
     ) { paddingValues ->
-        // Calculate filtered detections outside LazyColumn
-        val filteredDetections = viewModel.getFilteredDetections()
-        val detections = when (uiState.selectedTab) {
-            1 -> filteredDetections.filter { 
-                it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
+        // Show different content based on selected tab
+        when (uiState.selectedTab) {
+            3 -> {
+                // Cellular tab content
+                CellularTabContent(
+                    modifier = Modifier.padding(paddingValues),
+                    cellStatus = uiState.cellStatus,
+                    cellularStatus = uiState.cellularStatus,
+                    cellularAnomalies = uiState.cellularAnomalies,
+                    isScanning = uiState.isScanning,
+                    onToggleScan = { viewModel.toggleScanning() }
+                )
             }
-            else -> filteredDetections
-        }
+            else -> {
+                // Home, Threats, History tabs
+                // Calculate filtered detections outside LazyColumn
+                val filteredDetections = viewModel.getFilteredDetections()
+                val detections = when (uiState.selectedTab) {
+                    1 -> filteredDetections.filter { 
+                        it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
+                    }
+                    else -> filteredDetections
+                }
         
         LazyColumn(
             modifier = Modifier
@@ -156,8 +189,8 @@ fun MainScreen(
                 )
             }
             
-            // Cellular status card (show when scanning or has anomalies)
-            if (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty()) {
+            // Cellular status card (show when scanning or has anomalies) - only on Home tab
+            if (uiState.selectedTab == 0 && (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty())) {
                 item(key = "cellular_status_card") {
                     CellularStatusCard(
                         cellStatus = uiState.cellStatus,
@@ -251,7 +284,8 @@ fun MainScreen(
                     )
                 }
             }
-        }
+            } // end else
+        } // end when
     }
     
     // Filter bottom sheet
@@ -917,4 +951,462 @@ private fun ThreatLevel.toColor(): Color = when (this) {
     ThreatLevel.MEDIUM -> Color(0xFFFBC02D)
     ThreatLevel.LOW -> Color(0xFF388E3C)
     ThreatLevel.INFO -> Color(0xFF1976D2)
+}
+
+@Composable
+private fun CellularTabContent(
+    modifier: Modifier = Modifier,
+    cellStatus: CellularMonitor.CellStatus?,
+    cellularStatus: ScanningService.SubsystemStatus,
+    cellularAnomalies: List<CellularMonitor.CellularAnomaly>,
+    isScanning: Boolean,
+    onToggleScan: () -> Unit
+) {
+    val seenCellTowers by ScanningService.seenCellTowers.collectAsState()
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Status card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = when (cellularStatus) {
+                        is ScanningService.SubsystemStatus.Active -> 
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        is ScanningService.SubsystemStatus.PermissionDenied -> 
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    }
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.CellTower,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Cellular Monitoring",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Button(
+                            onClick = onToggleScan,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isScanning) 
+                                    MaterialTheme.colorScheme.error 
+                                else 
+                                    MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text(if (isScanning) "Stop" else "Start")
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = when (cellularStatus) {
+                            is ScanningService.SubsystemStatus.Active -> Color(0xFF4CAF50)
+                            is ScanningService.SubsystemStatus.PermissionDenied -> Color(0xFFF44336)
+                            else -> Color(0xFF9E9E9E)
+                        }
+                    ) {
+                        Text(
+                            text = when (cellularStatus) {
+                                is ScanningService.SubsystemStatus.Active -> "🟢 Active"
+                                is ScanningService.SubsystemStatus.PermissionDenied -> "⛔ No Permission"
+                                is ScanningService.SubsystemStatus.Error -> "⚠️ Error"
+                                else -> "⚪ Idle"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    
+                    if (cellularStatus is ScanningService.SubsystemStatus.PermissionDenied) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "⚠️ READ_PHONE_STATE permission required for IMSI catcher detection",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+        
+        // Current cell info
+        if (cellStatus != null) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "📶 Current Cell Tower",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = when (cellStatus.networkGeneration) {
+                                    "5G" -> Color(0xFF2196F3)
+                                    "4G" -> Color(0xFF4CAF50)
+                                    "3G" -> Color(0xFFFFC107)
+                                    "2G" -> Color(0xFFF44336)
+                                    else -> Color(0xFF9E9E9E)
+                                }
+                            ) {
+                                Text(
+                                    text = cellStatus.networkGeneration,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = cellStatus.networkType,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                cellStatus.operator?.let { op ->
+                                    Text(
+                                        text = op,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "${cellStatus.signalStrength} dBm",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${cellStatus.signalBars}/4 bars",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Cell ID", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(cellStatus.cellId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                            cellStatus.mcc?.let {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("MCC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                            cellStatus.mnc?.let {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("MNC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Anomalies section
+        if (cellularAnomalies.isNotEmpty()) {
+            item {
+                Text(
+                    text = "⚠️ Detected Anomalies (${cellularAnomalies.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            
+            items(cellularAnomalies.take(10)) { anomaly ->
+                CellularAnomalyCard(anomaly = anomaly, dateFormat = dateFormat)
+            }
+        }
+        
+        // Cell tower history
+        if (seenCellTowers.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🗼 Cell Tower History (${seenCellTowers.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(onClick = { ScanningService.clearCellularHistory() }) {
+                        Text("Clear")
+                    }
+                }
+            }
+            
+            items(seenCellTowers) { tower ->
+                CellTowerHistoryCard(tower = tower, dateFormat = dateFormat)
+            }
+        }
+        
+        // Info card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "ℹ️ About IMSI Catcher Detection",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "This monitors for signs of cell site simulators (StingRay, Hailstorm, etc.):\n" +
+                            "• Encryption downgrades (4G/5G → 2G)\n" +
+                            "• Suspicious network identifiers\n" +
+                            "• Unexpected cell tower changes\n" +
+                            "• Signal anomalies",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CellularAnomalyCard(
+    anomaly: CellularMonitor.CellularAnomaly,
+    dateFormat: SimpleDateFormat
+) {
+    val severityColor = when (anomaly.severity) {
+        ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+        ThreatLevel.HIGH -> Color(0xFFF57C00)
+        ThreatLevel.MEDIUM -> Color(0xFFFBC02D)
+        else -> Color(0xFF9E9E9E)
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = severityColor.copy(alpha = 0.15f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(anomaly.type.emoji, style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = anomaly.type.displayName,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = severityColor
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = severityColor
+                ) {
+                    Text(
+                        text = anomaly.severity.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = anomaly.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = dateFormat.format(Date(anomaly.timestamp)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "${anomaly.signalStrength} dBm • ${anomaly.networkType}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CellTowerHistoryCard(
+    tower: CellularMonitor.SeenCellTower,
+    dateFormat: SimpleDateFormat
+) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = when (tower.networkGeneration) {
+                            "5G" -> Color(0xFF2196F3)
+                            "4G" -> Color(0xFF4CAF50)
+                            "3G" -> Color(0xFFFFC107)
+                            "2G" -> Color(0xFFF44336)
+                            else -> Color(0xFF9E9E9E)
+                        }
+                    ) {
+                        Text(
+                            text = tower.networkGeneration,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = tower.operator ?: "Unknown",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Cell ${tower.cellId}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${tower.lastSignal} dBm",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${tower.seenCount}x",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        tower.mcc?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("MCC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                        tower.mnc?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("MNC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                        tower.lac?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("LAC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it.toString(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "First: ${dateFormat.format(Date(tower.firstSeen))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Last: ${dateFormat.format(Date(tower.lastSeen))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

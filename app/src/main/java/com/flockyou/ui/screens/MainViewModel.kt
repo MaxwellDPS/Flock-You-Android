@@ -32,7 +32,8 @@ data class MainUiState(
     val recentErrors: List<ScanningService.ScanError> = emptyList(),
     // Cellular monitoring
     val cellStatus: CellularMonitor.CellStatus? = null,
-    val cellularAnomalies: List<CellularMonitor.CellularAnomaly> = emptyList()
+    val cellularAnomalies: List<CellularMonitor.CellularAnomaly> = emptyList(),
+    val seenCellTowers: List<CellularMonitor.SeenCellTower> = emptyList()
 )
 
 @HiltViewModel
@@ -133,6 +134,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             ScanningService.cellularAnomalies.collect { anomalies ->
                 _uiState.update { it.copy(cellularAnomalies = anomalies) }
+            }
+        }
+        
+        // Observe seen cell towers
+        viewModelScope.launch {
+            ScanningService.seenCellTowers.collect { towers ->
+                _uiState.update { it.copy(seenCellTowers = towers) }
             }
         }
     }
