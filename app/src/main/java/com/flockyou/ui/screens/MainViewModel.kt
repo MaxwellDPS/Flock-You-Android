@@ -29,6 +29,7 @@ data class MainUiState(
     val wifiStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val locationStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val cellularStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    val satelliteStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val recentErrors: List<ScanningService.ScanError> = emptyList(),
     // Cellular monitoring
     val cellStatus: CellularMonitor.CellStatus? = null,
@@ -121,6 +122,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             ScanningService.cellularStatus.collect { status ->
                 _uiState.update { it.copy(cellularStatus = status) }
+            }
+        }
+        
+        // Observe satellite status
+        viewModelScope.launch {
+            ScanningService.satelliteStatus.collect { status ->
+                _uiState.update { it.copy(satelliteStatus = status) }
             }
         }
         

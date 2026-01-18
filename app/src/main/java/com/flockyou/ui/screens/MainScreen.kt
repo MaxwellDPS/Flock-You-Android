@@ -184,6 +184,8 @@ fun MainScreen(
                             bleStatus = uiState.bleStatus,
                             wifiStatus = uiState.wifiStatus,
                             locationStatus = uiState.locationStatus,
+                            cellularStatus = uiState.cellularStatus,
+                            satelliteStatus = uiState.satelliteStatus,
                             recentErrors = uiState.recentErrors,
                             onClearErrors = { viewModel.clearErrors() }
                         )

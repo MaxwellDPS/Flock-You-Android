@@ -149,6 +149,8 @@ fun StatusCard(
     bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     wifiStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     locationStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    cellularStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    satelliteStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     recentErrors: List<ScanningService.ScanError> = emptyList(),
     onClearErrors: () -> Unit = {}
 ) {
@@ -210,7 +212,7 @@ fun StatusCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     SubsystemIndicator(
                         name = "BLE",
@@ -225,6 +227,16 @@ fun StatusCard(
                     SubsystemIndicator(
                         name = "GPS",
                         status = locationStatus,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SubsystemIndicator(
+                        name = "Cell",
+                        status = cellularStatus,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SubsystemIndicator(
+                        name = "Sat",
+                        status = satelliteStatus,
                         modifier = Modifier.weight(1f)
                     )
                 }
