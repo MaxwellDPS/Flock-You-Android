@@ -166,124 +166,125 @@ fun MainScreen(
                     else -> filteredDetections
                 }
         
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Status card
-            item(key = "status_card") {
-                StatusCard(
-                    isScanning = uiState.isScanning,
-                    totalDetections = uiState.totalCount,
-                    highThreatCount = uiState.highThreatCount,
-                    onToggleScan = { viewModel.toggleScanning() },
-                    scanStatus = uiState.scanStatus,
-                    bleStatus = uiState.bleStatus,
-                    wifiStatus = uiState.wifiStatus,
-                    locationStatus = uiState.locationStatus,
-                    recentErrors = uiState.recentErrors,
-                    onClearErrors = { viewModel.clearErrors() }
-                )
-            }
-            
-            // Cellular status card (show when scanning or has anomalies) - only on Home tab
-            if (uiState.selectedTab == 0 && (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty())) {
-                item(key = "cellular_status_card") {
-                    CellularStatusCard(
-                        cellStatus = uiState.cellStatus,
-                        anomalies = uiState.cellularAnomalies,
-                        isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
-                    )
-                }
-            }
-            
-            // Last detection alert
-            uiState.lastDetection?.let { detection ->
-                item(key = "last_detection_${detection.id}") {
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = slideInVertically() + fadeIn(),
-                        exit = slideOutVertically() + fadeOut()
-                    ) {
-                        LastDetectionAlert(
-                            detection = detection,
-                            onClick = { selectedDetection = detection }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Status card
+                    item(key = "status_card") {
+                        StatusCard(
+                            isScanning = uiState.isScanning,
+                            totalDetections = uiState.totalCount,
+                            highThreatCount = uiState.highThreatCount,
+                            onToggleScan = { viewModel.toggleScanning() },
+                            scanStatus = uiState.scanStatus,
+                            bleStatus = uiState.bleStatus,
+                            wifiStatus = uiState.wifiStatus,
+                            locationStatus = uiState.locationStatus,
+                            recentErrors = uiState.recentErrors,
+                            onClearErrors = { viewModel.clearErrors() }
                         )
                     }
-                }
-            }
-            
-            // Filter chips if filters active
-            if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null) {
-                item(key = "filter_chips") {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        uiState.filterThreatLevel?.let { level ->
-                            FilterChip(
-                                selected = true,
-                                onClick = { viewModel.setThreatFilter(null) },
-                                label = { Text(level.name) },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Remove filter",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            )
-                        }
-                        uiState.filterDeviceType?.let { type ->
-                            FilterChip(
-                                selected = true,
-                                onClick = { viewModel.setDeviceTypeFilter(null) },
-                                label = { Text(type.name.replace("_", " ")) },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Remove filter",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                    
+                    // Cellular status card (show when scanning or has anomalies) - only on Home tab
+                    if (uiState.selectedTab == 0 && (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty())) {
+                        item(key = "cellular_status_card") {
+                            CellularStatusCard(
+                                cellStatus = uiState.cellStatus,
+                                anomalies = uiState.cellularAnomalies,
+                                isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
                             )
                         }
                     }
-                }
-            }
-            
-            // Section header
-            item(key = "section_header") {
-                Text(
-                    text = when (uiState.selectedTab) {
-                        1 -> "HIGH PRIORITY THREATS"
-                        2 -> "DETECTION HISTORY"
-                        else -> "RECENT DETECTIONS"
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            
-            if (detections.isEmpty()) {
-                item(key = "empty_state") {
-                    EmptyState(isScanning = uiState.isScanning)
-                }
-            } else {
-                items(
-                    items = detections,
-                    key = { it.id }
-                ) { detection ->
-                    DetectionCard(
-                        detection = detection,
-                        onClick = { selectedDetection = detection }
-                    )
-                }
-            }
+                    
+                    // Last detection alert
+                    uiState.lastDetection?.let { detection ->
+                        item(key = "last_detection_${detection.id}") {
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = slideInVertically() + fadeIn(),
+                                exit = slideOutVertically() + fadeOut()
+                            ) {
+                                LastDetectionAlert(
+                                    detection = detection,
+                                    onClick = { selectedDetection = detection }
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Filter chips if filters active
+                    if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null) {
+                        item(key = "filter_chips") {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                uiState.filterThreatLevel?.let { level ->
+                                    FilterChip(
+                                        selected = true,
+                                        onClick = { viewModel.setThreatFilter(null) },
+                                        label = { Text(level.name) },
+                                        trailingIcon = {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Remove filter",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    )
+                                }
+                                uiState.filterDeviceType?.let { type ->
+                                    FilterChip(
+                                        selected = true,
+                                        onClick = { viewModel.setDeviceTypeFilter(null) },
+                                        label = { Text(type.name.replace("_", " ")) },
+                                        trailingIcon = {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Remove filter",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Section header
+                    item(key = "section_header") {
+                        Text(
+                            text = when (uiState.selectedTab) {
+                                1 -> "HIGH PRIORITY THREATS"
+                                2 -> "DETECTION HISTORY"
+                                else -> "RECENT DETECTIONS"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                    
+                    if (detections.isEmpty()) {
+                        item(key = "empty_state") {
+                            EmptyState(isScanning = uiState.isScanning)
+                        }
+                    } else {
+                        items(
+                            items = detections,
+                            key = { it.id }
+                        ) { detection ->
+                            DetectionCard(
+                                detection = detection,
+                                onClick = { selectedDetection = detection }
+                            )
+                        }
+                    }
+                } // end LazyColumn
             } // end else
         } // end when
     }
