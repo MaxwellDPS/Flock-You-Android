@@ -99,6 +99,7 @@ class CellularMonitor(private val context: Context) {
     private var estimatedMovementSpeed: Double = 0.0 // lat/lon units per minute
     
     // Callback for cell info changes
+    @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: Any? = null // TelephonyCallback for API 31+
     
@@ -457,6 +458,7 @@ class CellularMonitor(private val context: Context) {
         val timeSinceLastSnapshot = current.timestamp - previous.timestamp
         val isStationary = estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
         val currentCellTrusted = isCellTrusted(current.cellId?.toString())
+        @Suppress("UNUSED_VARIABLE")
         val previousCellTrusted = isCellTrusted(previous.cellId?.toString())
         
         // 1. CRITICAL: Suspicious MCC/MNC - always flag
@@ -510,8 +512,6 @@ class CellularMonitor(private val context: Context) {
         
         // 3. Cell tower changed - check context
         if (current.cellId != previous.cellId && current.cellId != null) {
-            val cellChanged = true
-            
             // Record timeline event first
             addTimelineEvent(
                 type = if (currentCellTrusted) CellularEventType.RETURNED_TO_TRUSTED else CellularEventType.CELL_HANDOFF,
@@ -756,6 +756,7 @@ class CellularMonitor(private val context: Context) {
         return previousGen >= 3 && currentGen == 2
     }
     
+    @Suppress("DEPRECATION")
     private fun getNetworkGeneration(networkType: Int): Int {
         return when (networkType) {
             TelephonyManager.NETWORK_TYPE_GPRS,
@@ -785,6 +786,7 @@ class CellularMonitor(private val context: Context) {
         }
     }
     
+    @Suppress("DEPRECATION")
     private fun getNetworkTypeName(networkType: Int): String {
         return when (networkType) {
             TelephonyManager.NETWORK_TYPE_GPRS -> "GPRS (2G)"

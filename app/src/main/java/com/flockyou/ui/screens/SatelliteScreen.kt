@@ -95,6 +95,7 @@ fun SatelliteScreen(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun SatelliteConnectionCard(
     state: SatelliteConnectionState,
@@ -649,7 +650,7 @@ fun DetectionRulesCard() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Rule,
+                        imageVector = Icons.AutoMirrored.Filled.Rule,
                         contentDescription = null
                     )
                     Text(

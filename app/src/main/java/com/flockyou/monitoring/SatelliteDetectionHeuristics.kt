@@ -381,6 +381,7 @@ object SatelliteDetectionHeuristics {
          * 
          * Verify claimed satellite is using correct NTN bands
          */
+        @Suppress("UNUSED_PARAMETER")
         fun validateFrequencyForProvider(
             provider: String,
             frequencyMHz: Int

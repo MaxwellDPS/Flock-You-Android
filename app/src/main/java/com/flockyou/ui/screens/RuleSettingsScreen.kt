@@ -377,7 +377,7 @@ private fun CustomRulesTab(
                 modifier = Modifier.padding(32.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Rule,
+                    imageVector = Icons.AutoMirrored.Filled.Rule,
                     contentDescription = null,
                     modifier = Modifier.size(64.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)

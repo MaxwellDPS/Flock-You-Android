@@ -399,7 +399,7 @@ fun SettingsScreen(
             // Detection Rules
             item {
                 SettingsItem(
-                    icon = Icons.Default.Rule,
+                    icon = Icons.AutoMirrored.Filled.Rule,
                     title = "Detection Rules",
                     subtitle = "Toggle built-in rules, add custom regex patterns",
                     onClick = onNavigateToRules

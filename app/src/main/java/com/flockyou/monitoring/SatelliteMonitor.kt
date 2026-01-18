@@ -288,7 +288,9 @@ class SatelliteMonitor(private val context: Context) {
     @RequiresApi(Build.VERSION_CODES.R)
     private fun handleDisplayInfoChange(displayInfo: TelephonyDisplayInfo) {
         coroutineScope.launch {
+            @Suppress("UNUSED_VARIABLE")
             val networkType = displayInfo.networkType
+            @Suppress("UNUSED_VARIABLE")
             val overrideNetworkType = displayInfo.overrideNetworkType
             
             // Check for satellite indicators
@@ -333,6 +335,7 @@ class SatelliteMonitor(private val context: Context) {
      */
     private fun handleServiceStateChange(serviceState: ServiceState) {
         coroutineScope.launch {
+            @Suppress("UNUSED_VARIABLE")
             val roaming = serviceState.roaming
             val operatorName = serviceState.operatorAlphaLong ?: ""
             
@@ -484,6 +487,7 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Record connection event for pattern analysis
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun recordConnectionEvent(state: SatelliteConnectionState, wasConnectedBefore: Boolean) {
         val event = SatelliteConnectionEvent(
             timestamp = System.currentTimeMillis(),

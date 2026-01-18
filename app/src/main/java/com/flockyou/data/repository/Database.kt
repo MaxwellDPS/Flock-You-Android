@@ -117,7 +117,7 @@ interface DetectionDao {
 /**
  * Room database for storing detections
  */
-@Database(entities = [Detection::class], version = 4, exportSchema = true)
+@Database(entities = [Detection::class], version = 4, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
@@ -128,15 +128,15 @@ abstract class FlockYouDatabase : RoomDatabase() {
         
         // Migration from version 3 to 4 - adds indices
         private val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 // Create indices for better query performance
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_macAddress ON detections(macAddress)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_ssid ON detections(ssid)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_threatLevel ON detections(threatLevel)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_deviceType ON detections(deviceType)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_timestamp ON detections(timestamp)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_lastSeenTimestamp ON detections(lastSeenTimestamp)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_detections_isActive ON detections(isActive)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_macAddress ON detections(macAddress)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_ssid ON detections(ssid)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_threatLevel ON detections(threatLevel)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_deviceType ON detections(deviceType)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_timestamp ON detections(timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_lastSeenTimestamp ON detections(lastSeenTimestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_isActive ON detections(isActive)")
             }
         }
         
