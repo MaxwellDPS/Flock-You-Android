@@ -1,18 +1,13 @@
 package com.flockyou.data.oui
 
-import android.content.Context
 import android.util.Log
-import com.flockyou.BuildConfig
 import com.flockyou.data.model.OuiEntry
-import dagger.hilt.android.qualifiers.ApplicationContext
+import com.flockyou.network.TorAwareHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.CertificatePinner
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.io.InputStream
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,13 +18,11 @@ sealed class OuiDownloadResult {
 
 @Singleton
 class OuiDownloader @Inject constructor(
-    @Suppress("UNUSED_PARAMETER")
-    @ApplicationContext private val context: Context
+    private val torAwareHttpClient: TorAwareHttpClient
 ) {
     companion object {
         private const val TAG = "OuiDownloader"
         const val IEEE_OUI_CSV_URL = "https://standards-oui.ieee.org/oui/oui.csv"
-        private const val DOWNLOAD_TIMEOUT_SECONDS = 120L
 
         // Maximum allowed length for organization name (prevents buffer overflow attacks)
         private const val MAX_ORGANIZATION_NAME_LENGTH = 256
@@ -38,30 +31,17 @@ class OuiDownloader @Inject constructor(
         private val UNSAFE_CHARS_PATTERN = Regex("[<>\"'&\\x00-\\x1F\\x7F]")
     }
 
-    // Certificate pinning for IEEE domain
-    // These are the SHA-256 pins for standards-oui.ieee.org
-    // Note: Pin the intermediate CA to handle certificate rotations
-    private val certificatePinner = CertificatePinner.Builder()
-        .add("standards-oui.ieee.org", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=") // Placeholder - will use backup pins
-        .add("standards-oui.ieee.org", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=") // Placeholder - will use backup pins
-        .build()
-
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        // Certificate pinning is disabled in release for now due to certificate rotation issues
-        // Re-enable once we have a robust pin update mechanism
-        // .certificatePinner(certificatePinner)
-        .build()
-
     /**
      * Download and parse IEEE OUI CSV file.
      * Uses streaming to handle the ~3MB file efficiently.
+     * Routes through Tor if enabled in settings.
      */
     suspend fun downloadAndParse(): OuiDownloadResult = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Starting OUI download from $IEEE_OUI_CSV_URL")
+            val isTorActive = torAwareHttpClient.isTorActive()
+            Log.d(TAG, "Starting OUI download from $IEEE_OUI_CSV_URL (Tor: $isTorActive)")
+
+            val httpClient = torAwareHttpClient.getClient()
 
             val request = Request.Builder()
                 .url(IEEE_OUI_CSV_URL)

@@ -26,9 +26,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.flockyou.data.NetworkSettings
 import com.flockyou.data.OuiSettings
+import com.flockyou.network.OrbotHelper
 import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -39,7 +42,8 @@ fun SettingsScreen(
     onNavigateToPatterns: () -> Unit,
     onNavigateToNotifications: () -> Unit = {},
     onNavigateToRules: () -> Unit = {},
-    onNavigateToDetectionSettings: () -> Unit = {}
+    onNavigateToDetectionSettings: () -> Unit = {},
+    onNavigateToSecurity: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -677,6 +681,25 @@ fun SettingsScreen(
                 )
             }
 
+            // Security & Privacy Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                SettingsSectionHeader(title = "Security & Privacy")
+            }
+
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Lock,
+                    title = "App Lock",
+                    subtitle = "PIN and biometric authentication",
+                    onClick = onNavigateToSecurity
+                )
+            }
+
+            item {
+                NetworkPrivacySection(viewModel = viewModel)
+            }
+
             // About Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
@@ -900,6 +923,130 @@ private fun openBatteryOptimizationSettings(context: Context) {
                     context.startActivity(intent)
                 } catch (e4: Exception) {
                     android.util.Log.e("SettingsScreen", "Failed to open any battery settings", e4)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NetworkPrivacySection(viewModel: MainViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val networkSettings by viewModel.networkSettings.collectAsState()
+    val isOrbotInstalled by viewModel.isOrbotInstalled.collectAsState()
+    val isOrbotRunning by viewModel.isOrbotRunning.collectAsState()
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.VpnLock,
+                    contentDescription = null,
+                    tint = if (networkSettings.useTorProxy && isOrbotRunning)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Route Traffic via Tor",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = when {
+                            !isOrbotInstalled -> "Orbot not installed"
+                            !isOrbotRunning -> "Orbot not running"
+                            networkSettings.useTorProxy -> "All network requests use Tor"
+                            else -> "Direct connection"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = networkSettings.useTorProxy,
+                    onCheckedChange = { enabled ->
+                        scope.launch {
+                            viewModel.setUseTorProxy(enabled)
+                        }
+                    },
+                    enabled = isOrbotInstalled
+                )
+            }
+
+            if (!isOrbotInstalled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse(OrbotHelper.ORBOT_FDROID_URL)
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Install Orbot")
+                }
+            } else if (networkSettings.useTorProxy && !isOrbotRunning) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Orbot is not running. Network requests will use direct connection.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        viewModel.launchOrbot()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Launch Orbot")
+                }
+            } else if (networkSettings.useTorProxy && isOrbotRunning) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Connected via Tor (${networkSettings.torProxyHost}:${networkSettings.torProxyPort})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }

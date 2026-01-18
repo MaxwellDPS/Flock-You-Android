@@ -5,13 +5,15 @@ import android.content.Intent
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.flockyou.data.DetectionSettingsRepository
+import com.flockyou.data.NetworkSettings
+import com.flockyou.data.NetworkSettingsRepository
 import com.flockyou.data.OuiSettings
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.model.*
 import com.flockyou.data.repository.DetectionRepository
+import com.flockyou.network.OrbotHelper
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.RfSignalAnalyzer
 import com.flockyou.service.RogueWifiMonitor
@@ -19,6 +21,7 @@ import com.flockyou.service.ScanningService
 import com.flockyou.service.UltrasonicDetector
 import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -67,6 +70,8 @@ class MainViewModel @Inject constructor(
     private val repository: DetectionRepository,
     private val settingsRepository: DetectionSettingsRepository,
     private val ouiSettingsRepository: OuiSettingsRepository,
+    private val networkSettingsRepository: NetworkSettingsRepository,
+    private val orbotHelper: OrbotHelper,
     private val workManager: WorkManager
 ) : AndroidViewModel(application) {
 
@@ -84,7 +89,38 @@ class MainViewModel @Inject constructor(
     private val _isOuiUpdating = MutableStateFlow(false)
     val isOuiUpdating: StateFlow<Boolean> = _isOuiUpdating.asStateFlow()
 
+    // Network Settings
+    val networkSettings: StateFlow<NetworkSettings> = networkSettingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = NetworkSettings()
+        )
+
+    private val _isOrbotInstalled = MutableStateFlow(false)
+    val isOrbotInstalled: StateFlow<Boolean> = _isOrbotInstalled.asStateFlow()
+
+    private val _isOrbotRunning = MutableStateFlow(false)
+    val isOrbotRunning: StateFlow<Boolean> = _isOrbotRunning.asStateFlow()
+
     init {
+        // Check Orbot status periodically
+        viewModelScope.launch {
+            while (true) {
+                _isOrbotInstalled.value = orbotHelper.isOrbotInstalled()
+                if (_isOrbotInstalled.value) {
+                    val settings = networkSettings.value
+                    _isOrbotRunning.value = orbotHelper.isOrbotRunning(
+                        settings.torProxyHost,
+                        settings.torProxyPort
+                    )
+                } else {
+                    _isOrbotRunning.value = false
+                }
+                delay(5000) // Check every 5 seconds
+            }
+        }
+
         // Observe scanning state from service
         viewModelScope.launch {
             ScanningService.isScanning.collect { isScanning ->
@@ -393,5 +429,20 @@ class MainViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    // Network Settings Management
+    fun setUseTorProxy(enabled: Boolean) {
+        viewModelScope.launch {
+            networkSettingsRepository.setUseTorProxy(enabled)
+        }
+    }
+
+    fun launchOrbot() {
+        orbotHelper.launchOrbot()
+    }
+
+    fun openOrbotInstallPage() {
+        orbotHelper.openOrbotInstallPage()
     }
 }

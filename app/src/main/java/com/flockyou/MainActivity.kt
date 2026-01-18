@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -24,9 +23,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.flockyou.data.SecuritySettings
+import com.flockyou.security.AppLockManager
+import com.flockyou.ui.screens.LockScreen
 import com.flockyou.ui.screens.MainScreen
 import com.flockyou.ui.screens.MapScreen
 import com.flockyou.ui.screens.SettingsScreen
@@ -35,14 +41,21 @@ import com.flockyou.ui.screens.DetectionPatternsScreen
 import com.flockyou.ui.screens.NotificationSettingsScreen
 import com.flockyou.ui.screens.RuleSettingsScreen
 import com.flockyou.ui.screens.DetectionSettingsScreen
+import com.flockyou.ui.screens.SecuritySettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    @Inject
+    lateinit var appLockManager: AppLockManager
 
     private var permissionsGranted by mutableStateOf(false)
     private var batteryOptimizationChecked by mutableStateOf(false)
+    private var showLockScreen by mutableStateOf(true)
     
     private val requiredPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -74,6 +87,37 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             FlockYouTheme {
+                val securitySettings by appLockManager.settings.collectAsState(initial = SecuritySettings())
+                val scope = rememberCoroutineScope()
+                val lifecycleOwner = LocalLifecycleOwner.current
+
+                // Handle app lifecycle for lock screen
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        when (event) {
+                            Lifecycle.Event.ON_STOP -> {
+                                appLockManager.onAppBackgrounded()
+                            }
+                            Lifecycle.Event.ON_START -> {
+                                scope.launch {
+                                    appLockManager.onAppForegrounded()
+                                    showLockScreen = appLockManager.shouldShowLockScreen()
+                                }
+                            }
+                            else -> {}
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose {
+                        lifecycleOwner.lifecycle.removeObserver(observer)
+                    }
+                }
+
+                // Initial lock screen check
+                LaunchedEffect(Unit) {
+                    showLockScreen = appLockManager.shouldShowLockScreen()
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -91,8 +135,15 @@ class MainActivity : ComponentActivity() {
                                 onSkip = { batteryOptimizationChecked = true }
                             )
                         }
+                        showLockScreen -> {
+                            LockScreen(
+                                appLockManager = appLockManager,
+                                settings = securitySettings,
+                                onUnlocked = { showLockScreen = false }
+                            )
+                        }
                         else -> {
-                            AppNavigation()
+                            AppNavigation(appLockManager = appLockManager)
                         }
                     }
                 }
@@ -139,9 +190,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(appLockManager: AppLockManager) {
     val navController = rememberNavController()
-    
+
     NavHost(
         navController = navController,
         startDestination = "main"
@@ -164,7 +215,8 @@ fun AppNavigation() {
                 onNavigateToPatterns = { navController.navigate("patterns") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
                 onNavigateToRules = { navController.navigate("rules") },
-                onNavigateToDetectionSettings = { navController.navigate("detection_settings") }
+                onNavigateToDetectionSettings = { navController.navigate("detection_settings") },
+                onNavigateToSecurity = { navController.navigate("security") }
             )
         }
         composable("nearby") {
@@ -189,6 +241,12 @@ fun AppNavigation() {
         }
         composable("detection_settings") {
             DetectionSettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("security") {
+            SecuritySettingsScreen(
+                appLockManager = appLockManager,
                 onNavigateBack = { navController.popBackStack() }
             )
         }
