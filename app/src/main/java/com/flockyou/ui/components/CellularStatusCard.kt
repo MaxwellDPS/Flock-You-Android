@@ -159,7 +159,7 @@ fun CellularStatusCard(
                 }
                 
                 // Cell status
-                if (!cellStatus.isKnownCell) {
+                if (!cellStatus.isTrustedCell) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         shape = MaterialTheme.shapes.small,
@@ -304,36 +304,122 @@ private fun AnomalyItem(anomaly: CellularMonitor.CellularAnomaly) {
     val color = when (anomaly.severity) {
         com.flockyou.data.model.ThreatLevel.CRITICAL -> MaterialTheme.colorScheme.error
         com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF57C00)
-        else -> MaterialTheme.colorScheme.tertiary
+        com.flockyou.data.model.ThreatLevel.MEDIUM -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.outline
     }
+    
+    var expanded by remember { mutableStateOf(false) }
     
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = color.copy(alpha = 0.15f)
+        color = color.copy(alpha = 0.15f),
+        onClick = { expanded = !expanded }
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(8.dp)
         ) {
-            Text(
-                text = anomaly.type.emoji,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = anomaly.type.displayName,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = color
+                    text = anomaly.type.emoji,
+                    style = MaterialTheme.typography.bodyMedium
                 )
-                Text(
-                    text = anomaly.description.take(80) + if (anomaly.description.length > 80) "..." else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = anomaly.type.displayName,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = color
+                        )
+                        // Confidence badge
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = when (anomaly.confidence) {
+                                CellularMonitor.AnomalyConfidence.CRITICAL -> MaterialTheme.colorScheme.error
+                                CellularMonitor.AnomalyConfidence.HIGH -> Color(0xFFF57C00)
+                                CellularMonitor.AnomalyConfidence.MEDIUM -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            }.copy(alpha = 0.3f)
+                        ) {
+                            Text(
+                                text = anomaly.confidence.displayName.substringBefore(" -"),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = anomaly.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (expanded) Int.MAX_VALUE else 2
+                    )
+                }
+                
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.outline
                 )
+            }
+            
+            // Expanded content - show contributing factors
+            if (expanded && anomaly.contributingFactors.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = MaterialTheme.shapes.extraSmall,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Contributing Factors:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        anomaly.contributingFactors.forEach { factor ->
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "•",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = color
+                                )
+                                Text(
+                                    text = factor,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        if (anomaly.technicalDetails.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = anomaly.technicalDetails,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                }
             }
         }
     }

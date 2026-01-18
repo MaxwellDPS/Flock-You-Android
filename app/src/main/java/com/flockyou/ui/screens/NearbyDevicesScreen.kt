@@ -408,7 +408,7 @@ private fun CellularStatusContent(
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (!cellStatus.isKnownCell) {
+                            if (!cellStatus.isTrustedCell) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
                                     color = MaterialTheme.colorScheme.tertiaryContainer

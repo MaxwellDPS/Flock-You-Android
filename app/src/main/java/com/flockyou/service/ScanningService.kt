@@ -72,6 +72,7 @@ class ScanningService : Service() {
         val cellStatus = MutableStateFlow<CellularMonitor.CellStatus?>(null)
         val seenCellTowers = MutableStateFlow<List<CellularMonitor.SeenCellTower>>(emptyList())
         val cellularAnomalies = MutableStateFlow<List<CellularMonitor.CellularAnomaly>>(emptyList())
+        val cellularEvents = MutableStateFlow<List<CellularMonitor.CellularEvent>>(emptyList())
         
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
@@ -91,6 +92,7 @@ class ScanningService : Service() {
         fun clearCellularHistory() {
             seenCellTowers.value = emptyList()
             cellularAnomalies.value = emptyList()
+            cellularEvents.value = emptyList()
         }
         
         fun updateSettings(
@@ -457,6 +459,7 @@ class ScanningService : Service() {
     private var cellularAnomalyJob: Job? = null
     private var cellularStatusJob: Job? = null
     private var cellularHistoryJob: Job? = null
+    private var cellularEventsJob: Job? = null
     
     private fun startCellularMonitoring() {
         if (!hasTelephonyPermissions()) {
@@ -480,6 +483,13 @@ class ScanningService : Service() {
         cellularHistoryJob = serviceScope.launch {
             cellularMonitor?.seenCellTowers?.collect { towers ->
                 seenCellTowers.value = towers
+            }
+        }
+        
+        // Collect cellular timeline events
+        cellularEventsJob = serviceScope.launch {
+            cellularMonitor?.cellularEvents?.collect { events ->
+                cellularEvents.value = events
             }
         }
         
@@ -531,6 +541,8 @@ class ScanningService : Service() {
         cellularStatusJob = null
         cellularHistoryJob?.cancel()
         cellularHistoryJob = null
+        cellularEventsJob?.cancel()
+        cellularEventsJob = null
         cellularMonitor?.stopMonitoring()
         Log.d(TAG, "Cellular monitoring stopped")
     }

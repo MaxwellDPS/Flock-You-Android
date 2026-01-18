@@ -17,27 +17,49 @@ import java.util.UUID
  * Monitors cellular network for anomalies that could indicate IMSI catchers (StingRay)
  * or other cell site simulators.
  * 
+ * IMPROVED DETECTION with reduced false positives:
+ * - Context-aware analysis considering location, time, and history
+ * - Confidence scoring based on multiple indicators
+ * - Distinguishes between normal network behavior and suspicious activity
+ * - Tracks "trusted" cells based on historical observation
+ * 
  * Detection methods:
- * 1. Sudden signal strength changes
- * 2. Cell tower ID changes without movement
- * 3. Encryption downgrade (from 4G/5G to 2G)
- * 4. Unknown/suspicious cell IDs
- * 5. Abnormal LAC/TAC values
+ * 1. Encryption downgrade (4G/5G → 2G) - especially suspicious if sudden
+ * 2. Suspicious MCC/MNC (test networks)
+ * 3. Cell tower changes without movement (considering confidence)
+ * 4. Rapid cell switching beyond normal driving speeds
+ * 5. Unknown cells in familiar locations
+ * 6. Signal strength anomalies (unusual spikes)
+ * 7. LAC/TAC changes without cell change
  */
 class CellularMonitor(private val context: Context) {
     
     companion object {
         private const val TAG = "CellularMonitor"
         
-        // Thresholds for anomaly detection
-        private const val SIGNAL_CHANGE_THRESHOLD = 20 // dBm
-        private const val MIN_ANOMALY_INTERVAL_MS = 30_000L // 30 seconds between same anomaly type
-        private const val CELL_HISTORY_SIZE = 50
+        // Thresholds - tuned to reduce false positives
+        private const val SIGNAL_SPIKE_THRESHOLD = 25 // dBm - increased from 20
+        private const val SIGNAL_SPIKE_TIME_WINDOW = 5_000L // Must occur within 5 seconds
+        private const val MIN_ANOMALY_INTERVAL_MS = 60_000L // 1 minute between same anomaly
+        private const val CELL_HISTORY_SIZE = 100
+        private const val TRUSTED_CELL_THRESHOLD = 5 // Seen 5+ times = trusted
+        private const val TRUSTED_CELL_LOCATION_RADIUS = 0.005 // ~500m in lat/lon
+        
+        // Rapid switching thresholds - more lenient
+        private const val RAPID_SWITCH_COUNT_WALKING = 3 // 3 changes/min while stationary
+        private const val RAPID_SWITCH_COUNT_DRIVING = 8 // 8 changes/min while moving fast
+        private const val MOVEMENT_SPEED_THRESHOLD = 0.0005 // ~50m in lat/lon per minute
         
         // Known suspicious patterns
         private val SUSPICIOUS_MCC_MNC = setOf(
-            // Test networks often used by IMSI catchers
-            "001-01", "001-00", "999-99"
+            "001-01", "001-00", "001-02", // ITU test networks
+            "999-99", "999-01",           // Reserved test networks
+            "000-00"                       // Invalid
+        )
+        
+        // Carriers known to have aggressive handoffs (reduce FPs)
+        private val AGGRESSIVE_HANDOFF_CARRIERS = setOf(
+            "T-Mobile", "Metro", "Sprint" // These carriers hand off more frequently
         )
     }
     
@@ -61,10 +83,20 @@ class CellularMonitor(private val context: Context) {
     private val _cellStatus = MutableStateFlow<CellStatus?>(null)
     val cellStatus: StateFlow<CellStatus?> = _cellStatus.asStateFlow()
     
+    // Cellular event timeline
+    private val _cellularEvents = MutableStateFlow<List<CellularEvent>>(emptyList())
+    val cellularEvents: StateFlow<List<CellularEvent>> = _cellularEvents.asStateFlow()
+    private val eventHistory = mutableListOf<CellularEvent>()
+    private val maxEventHistory = 200
+    
     private val detectedAnomalies = mutableListOf<CellularAnomaly>()
     
-    // Track known cells
-    private val knownCells = mutableSetOf<String>()
+    // Track known/trusted cells with location context
+    private val trustedCells = mutableMapOf<String, TrustedCellInfo>()
+    
+    // Track movement for context
+    private var lastLocationUpdate: LocationSnapshot? = null
+    private var estimatedMovementSpeed: Double = 0.0 // lat/lon units per minute
     
     // Callback for cell info changes
     private var phoneStateListener: PhoneStateListener? = null
@@ -83,12 +115,63 @@ class CellularMonitor(private val context: Context) {
         val longitude: Double?
     )
     
+    data class LocationSnapshot(
+        val timestamp: Long,
+        val latitude: Double,
+        val longitude: Double
+    )
+    
+    data class TrustedCellInfo(
+        val cellId: String,
+        var seenCount: Int = 0,
+        var firstSeen: Long = System.currentTimeMillis(),
+        var lastSeen: Long = System.currentTimeMillis(),
+        val locations: MutableList<Pair<Double, Double>> = mutableListOf(), // lat/lon pairs
+        var operator: String? = null,
+        var networkType: String? = null
+    )
+    
+    /**
+     * Event types for the cellular timeline
+     */
+    enum class CellularEventType(val displayName: String, val emoji: String) {
+        CELL_HANDOFF("Cell Handoff", "🔄"),
+        NETWORK_CHANGE("Network Type Change", "📶"),
+        SIGNAL_CHANGE("Signal Change", "📊"),
+        ENCRYPTION_DOWNGRADE("Encryption Downgrade", "🔓"),
+        MONITORING_STARTED("Monitoring Started", "▶️"),
+        MONITORING_STOPPED("Monitoring Stopped", "⏹️"),
+        ANOMALY_DETECTED("Anomaly Detected", "⚠️"),
+        NEW_CELL_DISCOVERED("New Cell Discovered", "🆕"),
+        RETURNED_TO_TRUSTED("Returned to Trusted Cell", "✅")
+    }
+    
+    /**
+     * Timeline event for cellular activity
+     */
+    data class CellularEvent(
+        val id: String = UUID.randomUUID().toString(),
+        val timestamp: Long = System.currentTimeMillis(),
+        val type: CellularEventType,
+        val title: String,
+        val description: String,
+        val cellId: String?,
+        val networkType: String?,
+        val signalStrength: Int?,
+        val isAnomaly: Boolean = false,
+        val threatLevel: ThreatLevel = ThreatLevel.INFO,
+        val latitude: Double? = null,
+        val longitude: Double? = null
+    )
+    
     data class CellularAnomaly(
         val id: String = UUID.randomUUID().toString(),
         val timestamp: Long = System.currentTimeMillis(),
         val type: AnomalyType,
         val severity: ThreatLevel,
+        val confidence: AnomalyConfidence,
         val description: String,
+        val technicalDetails: String,
         val cellId: Int?,
         val previousCellId: Int?,
         val signalStrength: Int,
@@ -97,17 +180,34 @@ class CellularMonitor(private val context: Context) {
         val previousNetworkType: String?,
         val mccMnc: String?,
         val latitude: Double?,
-        val longitude: Double?
+        val longitude: Double?,
+        val contributingFactors: List<String> = emptyList()
     )
     
-    enum class AnomalyType(val displayName: String, val baseThreatScore: Int, val emoji: String) {
-        SIGNAL_SPIKE("Sudden Signal Spike", 70, "📶"),
-        CELL_TOWER_CHANGE("Unexpected Cell Change", 60, "🗼"),
-        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 95, "🔓"),
-        SUSPICIOUS_NETWORK("Suspicious Network ID", 90, "⚠️"),
-        UNKNOWN_CELL("Unknown Cell Tower", 50, "❓"),
-        RAPID_CELL_SWITCHING("Rapid Cell Switching", 75, "🔄"),
-        LAC_TAC_ANOMALY("Location Area Anomaly", 65, "📍")
+    /**
+     * Confidence level for anomaly - helps filter noise
+     */
+    enum class AnomalyConfidence(val displayName: String, val minFactors: Int) {
+        LOW("Low - Possibly Normal", 1),
+        MEDIUM("Medium - Suspicious", 2),
+        HIGH("High - Likely Threat", 3),
+        CRITICAL("Critical - Strong Indicators", 4)
+    }
+    
+    enum class AnomalyType(
+        val displayName: String, 
+        val baseScore: Int, 
+        val emoji: String,
+        val requiresMultipleFactors: Boolean
+    ) {
+        SIGNAL_SPIKE("Sudden Signal Spike", 30, "📶", true),
+        CELL_TOWER_CHANGE("Cell Tower Change", 20, "🗼", true), // Low base - needs context
+        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 80, "🔓", false), // High base - always suspicious
+        SUSPICIOUS_NETWORK("Suspicious Network ID", 95, "⚠️", false), // Very high - test networks
+        UNKNOWN_CELL_FAMILIAR_AREA("Unknown Cell in Familiar Area", 60, "❓", true),
+        RAPID_CELL_SWITCHING("Rapid Cell Switching", 40, "🔄", true),
+        LAC_TAC_ANOMALY("Location Area Anomaly", 35, "📍", true),
+        STATIONARY_CELL_CHANGE("Cell Changed While Stationary", 50, "🚫", true)
     }
     
     /**
@@ -124,8 +224,11 @@ class CellularMonitor(private val context: Context) {
         val networkGeneration: String,
         val signalStrength: Int,
         val signalBars: Int,
-        val isKnownCell: Boolean,
-        val isRoaming: Boolean
+        val isTrustedCell: Boolean,
+        val trustScore: Int, // 0-100
+        val isRoaming: Boolean,
+        val latitude: Double?,
+        val longitude: Double?
     )
     
     /**
@@ -147,7 +250,8 @@ class CellularMonitor(private val context: Context) {
         val maxSignal: Int,
         val lastSignal: Int,
         val latitude: Double?,
-        val longitude: Double?
+        val longitude: Double?,
+        val isTrusted: Boolean
     )
     
     // Cell tower history flow
@@ -167,82 +271,125 @@ class CellularMonitor(private val context: Context) {
         isMonitoring = true
         Log.d(TAG, "Starting cellular monitoring")
         
+        // Add timeline event
+        addTimelineEvent(
+            type = CellularEventType.MONITORING_STARTED,
+            title = "Cellular Monitoring Started",
+            description = "Now monitoring for IMSI catcher indicators"
+        )
+        
         registerCellListener()
         
         // Take initial snapshot
         takeCellSnapshot()?.let { snapshot ->
             cellHistory.add(snapshot)
             lastKnownCell = snapshot
+            updateCellStatus(snapshot)
+            
+            // Mark initial cell as potentially trusted
+            snapshot.cellId?.let { cellId ->
+                getOrCreateTrustedCellInfo(cellId.toString()).apply {
+                    seenCount++
+                    lastSeen = System.currentTimeMillis()
+                    snapshot.latitude?.let { lat ->
+                        snapshot.longitude?.let { lon ->
+                            locations.add(lat to lon)
+                        }
+                    }
+                }
+            }
         }
     }
     
     fun stopMonitoring() {
         isMonitoring = false
         unregisterCellListener()
+        
+        addTimelineEvent(
+            type = CellularEventType.MONITORING_STOPPED,
+            title = "Cellular Monitoring Stopped",
+            description = "IMSI catcher detection paused"
+        )
+        
         Log.d(TAG, "Stopped cellular monitoring")
     }
     
     fun updateLocation(latitude: Double, longitude: Double) {
+        val now = System.currentTimeMillis()
+        
+        // Calculate movement speed
+        lastLocationUpdate?.let { last ->
+            val timeDiff = (now - last.timestamp) / 60_000.0 // minutes
+            if (timeDiff > 0.1) { // At least 6 seconds
+                val latDiff = kotlin.math.abs(latitude - last.latitude)
+                val lonDiff = kotlin.math.abs(longitude - last.longitude)
+                val distance = kotlin.math.sqrt(latDiff * latDiff + lonDiff * lonDiff)
+                estimatedMovementSpeed = distance / timeDiff
+            }
+        }
+        
+        lastLocationUpdate = LocationSnapshot(now, latitude, longitude)
         currentLatitude = latitude
         currentLongitude = longitude
     }
     
+    fun clearAnomalies() {
+        detectedAnomalies.clear()
+        _anomalies.value = emptyList()
+    }
+    
+    fun clearHistory() {
+        cellHistory.clear()
+        seenCellTowerMap.clear()
+        _seenCellTowers.value = emptyList()
+        eventHistory.clear()
+        _cellularEvents.value = emptyList()
+        // Don't clear trusted cells - keep learning
+    }
+    
     fun destroy() {
         stopMonitoring()
-        cellHistory.clear()
-        detectedAnomalies.clear()
     }
     
     private fun hasPermissions(): Boolean {
         return ContextCompat.checkSelfPermission(
-            context,
+            context, 
             Manifest.permission.READ_PHONE_STATE
-        ) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
     }
     
-    @Suppress("DEPRECATION")
     private fun registerCellListener() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // Use TelephonyCallback for API 31+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // API 31+ uses TelephonyCallback
+            try {
                 val callback = object : TelephonyCallback(), TelephonyCallback.CellInfoListener {
                     override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>) {
-                        onCellInfoUpdate(cellInfo)
+                        processCellInfoChange(cellInfo)
                     }
                 }
-                telephonyCallback = callback
                 telephonyManager.registerTelephonyCallback(
                     context.mainExecutor,
                     callback
                 )
-            } else {
-                // Use deprecated PhoneStateListener for older APIs
-                phoneStateListener = object : PhoneStateListener() {
-                    @Deprecated("Deprecated in Java")
-                    override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
-                        cellInfo?.let { onCellInfoUpdate(it) }
-                    }
-                    
-                    @Deprecated("Deprecated in Java")
-                    override fun onSignalStrengthsChanged(signalStrength: android.telephony.SignalStrength?) {
-                        onSignalUpdate(signalStrength)
-                    }
-                }
-                telephonyManager.listen(
-                    phoneStateListener,
-                    PhoneStateListener.LISTEN_CELL_INFO or PhoneStateListener.LISTEN_SIGNAL_STRENGTHS
-                )
+                telephonyCallback = callback
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Security exception registering callback", e)
             }
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Security exception registering cell listener", e)
+        } else {
+            // Legacy PhoneStateListener
+            @Suppress("DEPRECATION")
+            val listener = object : PhoneStateListener() {
+                @Deprecated("Deprecated in API 31")
+                override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
+                    cellInfo?.let { processCellInfoChange(it) }
+                }
+            }
+            @Suppress("DEPRECATION")
+            telephonyManager.listen(listener, PhoneStateListener.LISTEN_CELL_INFO)
+            phoneStateListener = listener
         }
     }
     
-    @Suppress("DEPRECATION")
     private fun unregisterCellListener() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -250,6 +397,7 @@ class CellularMonitor(private val context: Context) {
                     telephonyManager.unregisterTelephonyCallback(it)
                 }
             } else {
+                @Suppress("DEPRECATION")
                 phoneStateListener?.let {
                     telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE)
                 }
@@ -257,359 +405,347 @@ class CellularMonitor(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering cell listener", e)
         }
-        phoneStateListener = null
-        telephonyCallback = null
     }
     
-    private fun onCellInfoUpdate(cellInfoList: List<CellInfo>) {
+    private fun processCellInfoChange(cellInfoList: List<CellInfo>) {
         if (!isMonitoring) return
         
-        val snapshot = takeCellSnapshot() ?: return
+        val snapshot = extractCellSnapshot(cellInfoList) ?: return
+        val previous = lastKnownCell
         
-        // Add to history
+        // Always update history
         cellHistory.add(snapshot)
         if (cellHistory.size > CELL_HISTORY_SIZE) {
             cellHistory.removeAt(0)
         }
         
-        // Update cell status for UI
+        // Update seen cell towers
+        updateSeenCellTower(snapshot)
+        
+        // Update trusted cell info
+        snapshot.cellId?.let { cellId ->
+            val trusted = getOrCreateTrustedCellInfo(cellId.toString())
+            trusted.seenCount++
+            trusted.lastSeen = System.currentTimeMillis()
+            trusted.operator = telephonyManager.networkOperatorName
+            trusted.networkType = getNetworkTypeName(snapshot.networkType)
+            snapshot.latitude?.let { lat ->
+                snapshot.longitude?.let { lon ->
+                    if (trusted.locations.size < 10) {
+                        trusted.locations.add(lat to lon)
+                    }
+                }
+            }
+        }
+        
+        // Update current status
         updateCellStatus(snapshot)
         
-        // Analyze for anomalies
-        lastKnownCell?.let { previous ->
-            analyzeForAnomalies(previous, snapshot)
+        // Analyze for anomalies with improved heuristics
+        if (previous != null) {
+            analyzeForAnomaliesImproved(previous, snapshot)
         }
         
         lastKnownCell = snapshot
     }
     
-    @Suppress("MissingPermission")
-    private fun updateCellStatus(snapshot: CellSnapshot) {
-        val cellIdStr = snapshot.cellId?.toString() ?: "Unknown"
-        val isKnown = cellIdStr in knownCells
-        if (cellIdStr != "Unknown") {
-            knownCells.add(cellIdStr)
-        }
+    private fun analyzeForAnomaliesImproved(previous: CellSnapshot, current: CellSnapshot) {
+        val contributingFactors = mutableListOf<String>()
+        var totalScore = 0
         
-        val isRoaming = try {
-            telephonyManager.isNetworkRoaming
-        } catch (e: Exception) {
-            false
-        }
+        val mccMnc = "${current.mcc}-${current.mnc}"
+        val timeSinceLastSnapshot = current.timestamp - previous.timestamp
+        val isStationary = estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
+        val currentCellTrusted = isCellTrusted(current.cellId?.toString())
+        val previousCellTrusted = isCellTrusted(previous.cellId?.toString())
         
-        val operator = try {
-            telephonyManager.networkOperatorName?.takeIf { it.isNotBlank() }
-        } catch (e: Exception) {
-            null
-        }
-        
-        val networkTypeName = getNetworkTypeName(snapshot.networkType)
-        val networkGen = "${getNetworkGeneration(snapshot.networkType)}G"
-        
-        _cellStatus.value = CellStatus(
-            cellId = cellIdStr,
-            lac = snapshot.lac,
-            tac = snapshot.tac,
-            mcc = snapshot.mcc,
-            mnc = snapshot.mnc,
-            operator = operator,
-            networkType = networkTypeName,
-            networkGeneration = networkGen,
-            signalStrength = snapshot.signalStrength,
-            signalBars = signalDbmToBars(snapshot.signalStrength),
-            isKnownCell = isKnown,
-            isRoaming = isRoaming
-        )
-        
-        // Track cell tower history
-        if (cellIdStr != "Unknown") {
-            trackCellTower(
-                cellId = cellIdStr,
-                lac = snapshot.lac,
-                tac = snapshot.tac,
-                mcc = snapshot.mcc,
-                mnc = snapshot.mnc,
-                operator = operator,
-                networkType = networkTypeName,
-                networkGeneration = networkGen,
-                signalStrength = snapshot.signalStrength,
-                latitude = snapshot.latitude,
-                longitude = snapshot.longitude
+        // 1. CRITICAL: Suspicious MCC/MNC - always flag
+        if (mccMnc in SUSPICIOUS_MCC_MNC) {
+            reportAnomalyImproved(
+                type = AnomalyType.SUSPICIOUS_NETWORK,
+                description = "Connected to suspicious test network",
+                technicalDetails = "MCC/MNC $mccMnc is a known test/development network identifier commonly used by IMSI catchers",
+                contributingFactors = listOf("Test network MCC/MNC detected", "Network: $mccMnc"),
+                confidence = AnomalyConfidence.CRITICAL,
+                current = current,
+                previous = previous
             )
+            return // Don't analyze further - this is definitive
         }
-    }
-    
-    private fun trackCellTower(
-        cellId: String,
-        lac: Int?,
-        tac: Int?,
-        mcc: String?,
-        mnc: String?,
-        operator: String?,
-        networkType: String,
-        networkGeneration: String,
-        signalStrength: Int,
-        latitude: Double?,
-        longitude: Double?
-    ) {
-        val now = System.currentTimeMillis()
-        val existing = seenCellTowerMap[cellId]
         
-        if (existing != null) {
-            // Update existing tower
-            seenCellTowerMap[cellId] = existing.copy(
-                lastSeen = now,
-                seenCount = existing.seenCount + 1,
-                minSignal = minOf(existing.minSignal, signalStrength),
-                maxSignal = maxOf(existing.maxSignal, signalStrength),
-                lastSignal = signalStrength,
-                latitude = latitude ?: existing.latitude,
-                longitude = longitude ?: existing.longitude
+        // 2. HIGH: Encryption downgrade to 2G
+        if (isEncryptionDowngrade(previous.networkType, current.networkType)) {
+            contributingFactors.add("Encryption downgrade: ${getNetworkTypeName(previous.networkType)} → ${getNetworkTypeName(current.networkType)}")
+            totalScore += AnomalyType.ENCRYPTION_DOWNGRADE.baseScore
+            
+            // Additional factors that increase suspicion
+            if (isStationary) {
+                contributingFactors.add("Device is stationary")
+                totalScore += 15
+            }
+            if (!currentCellTrusted) {
+                contributingFactors.add("New/unknown cell tower")
+                totalScore += 10
+            }
+            
+            // 2G downgrade is always at least MEDIUM
+            val confidence = when {
+                totalScore >= 100 -> AnomalyConfidence.CRITICAL
+                totalScore >= 85 -> AnomalyConfidence.HIGH
+                else -> AnomalyConfidence.MEDIUM
+            }
+            
+            reportAnomalyImproved(
+                type = AnomalyType.ENCRYPTION_DOWNGRADE,
+                description = "Network forced to use weaker 2G encryption",
+                technicalDetails = "Downgraded from ${getNetworkTypeName(previous.networkType)} to ${getNetworkTypeName(current.networkType)}. " +
+                    "2G networks (GSM/EDGE) use A5/1 or A5/0 encryption which is vulnerable or non-existent.",
+                contributingFactors = contributingFactors,
+                confidence = confidence,
+                current = current,
+                previous = previous
             )
-        } else {
-            // Add new tower
-            seenCellTowerMap[cellId] = SeenCellTower(
-                cellId = cellId,
-                lac = lac,
-                tac = tac,
-                mcc = mcc,
-                mnc = mnc,
-                operator = operator,
-                networkType = networkType,
-                networkGeneration = networkGeneration,
-                firstSeen = now,
-                lastSeen = now,
-                seenCount = 1,
-                minSignal = signalStrength,
-                maxSignal = signalStrength,
-                lastSignal = signalStrength,
-                latitude = latitude,
-                longitude = longitude
+            return
+        }
+        
+        // 3. Cell tower changed - check context
+        if (current.cellId != previous.cellId && current.cellId != null) {
+            val cellChanged = true
+            
+            // Record timeline event first
+            addTimelineEvent(
+                type = if (currentCellTrusted) CellularEventType.RETURNED_TO_TRUSTED else CellularEventType.CELL_HANDOFF,
+                title = if (currentCellTrusted) "Returned to Known Cell" else "Cell Handoff",
+                description = "Cell changed: ${previous.cellId ?: "?"} → ${current.cellId}",
+                cellId = current.cellId.toString(),
+                networkType = getNetworkTypeName(current.networkType),
+                signalStrength = current.signalStrength
             )
+            
+            // Only flag if suspicious circumstances
+            if (isStationary && !currentCellTrusted) {
+                // Stationary + new cell = suspicious
+                contributingFactors.add("Cell changed while stationary")
+                contributingFactors.add("New cell tower not previously seen")
+                totalScore += AnomalyType.STATIONARY_CELL_CHANGE.baseScore + 20
+            } else if (isStationary && currentCellTrusted) {
+                // Stationary but returned to known cell - probably normal
+                addTimelineEvent(
+                    type = CellularEventType.CELL_HANDOFF,
+                    title = "Normal Handoff",
+                    description = "Switched to trusted cell ${current.cellId}",
+                    cellId = current.cellId.toString(),
+                    networkType = getNetworkTypeName(current.networkType),
+                    signalStrength = current.signalStrength,
+                    threatLevel = ThreatLevel.INFO
+                )
+                // Don't report as anomaly
+            } else if (!isStationary) {
+                // Moving - cell changes are expected
+                // Only log in timeline, don't report
+            }
         }
         
-        // Update flow
-        _seenCellTowers.value = seenCellTowerMap.values.toList().sortedByDescending { it.lastSeen }
-    }
-    
-    fun clearCellHistory() {
-        seenCellTowerMap.clear()
-        _seenCellTowers.value = emptyList()
-        knownCells.clear()
-    }
-    
-    private fun signalDbmToBars(dbm: Int): Int {
-        return when {
-            dbm >= -70 -> 4
-            dbm >= -85 -> 3
-            dbm >= -100 -> 2
-            dbm >= -110 -> 1
-            else -> 0
-        }
-    }
-    
-    private fun onSignalUpdate(signalStrength: android.telephony.SignalStrength?) {
-        if (!isMonitoring || signalStrength == null) return
+        // 4. Check for rapid cell switching
+        val recentChanges = countRecentCellChanges(60_000)
+        val switchThreshold = if (isStationary) RAPID_SWITCH_COUNT_WALKING else RAPID_SWITCH_COUNT_DRIVING
         
-        // Check for sudden signal changes
-        val currentDbm = getSignalDbm(signalStrength)
-        lastKnownCell?.let { previous ->
-            val change = kotlin.math.abs(currentDbm - previous.signalStrength)
-            if (change > SIGNAL_CHANGE_THRESHOLD) {
-                reportAnomaly(
-                    type = AnomalyType.SIGNAL_SPIKE,
-                    description = "Signal changed by ${change}dBm (${previous.signalStrength} → $currentDbm)",
-                    cellId = previous.cellId,
-                    previousCellId = previous.cellId,
-                    signalStrength = currentDbm,
-                    previousSignalStrength = previous.signalStrength,
-                    networkType = getNetworkTypeName(previous.networkType),
-                    previousNetworkType = null,
-                    mccMnc = "${previous.mcc}-${previous.mnc}"
+        if (recentChanges > switchThreshold) {
+            contributingFactors.add("$recentChanges cell changes in last minute")
+            contributingFactors.add(if (isStationary) "Device is stationary" else "Device is moving")
+            totalScore += AnomalyType.RAPID_CELL_SWITCHING.baseScore
+            
+            if (isStationary) {
+                totalScore += 25 // Much more suspicious if not moving
+            }
+        }
+        
+        // 5. Check for signal spike
+        val signalDelta = current.signalStrength - (previous.signalStrength)
+        if (signalDelta > SIGNAL_SPIKE_THRESHOLD && timeSinceLastSnapshot < SIGNAL_SPIKE_TIME_WINDOW) {
+            contributingFactors.add("Signal spiked +${signalDelta}dBm in ${timeSinceLastSnapshot/1000}s")
+            totalScore += AnomalyType.SIGNAL_SPIKE.baseScore
+            
+            // More suspicious if combined with cell change
+            if (current.cellId != previous.cellId) {
+                contributingFactors.add("Combined with cell tower change")
+                totalScore += 15
+            }
+        }
+        
+        // 6. Unknown cell in familiar area
+        if (!currentCellTrusted && isInFamiliarArea()) {
+            contributingFactors.add("Unknown cell tower in familiar location")
+            totalScore += AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA.baseScore
+        }
+        
+        // 7. LAC/TAC anomaly
+        if (hasLacTacAnomaly(previous, current)) {
+            contributingFactors.add("Location area code changed without cell change")
+            totalScore += AnomalyType.LAC_TAC_ANOMALY.baseScore
+        }
+        
+        // Determine if we should report based on total score and factors
+        if (contributingFactors.isNotEmpty() && totalScore >= 50) {
+            val confidence = when {
+                contributingFactors.size >= 4 -> AnomalyConfidence.CRITICAL
+                contributingFactors.size >= 3 -> AnomalyConfidence.HIGH
+                contributingFactors.size >= 2 -> AnomalyConfidence.MEDIUM
+                else -> AnomalyConfidence.LOW
+            }
+            
+            // Only report if confidence is at least MEDIUM, unless score is very high
+            if (confidence.ordinal >= AnomalyConfidence.MEDIUM.ordinal || totalScore >= 70) {
+                val primaryType = when {
+                    contributingFactors.any { it.contains("stationary", ignoreCase = true) && it.contains("cell", ignoreCase = true) } ->
+                        AnomalyType.STATIONARY_CELL_CHANGE
+                    contributingFactors.any { it.contains("rapid", ignoreCase = true) || it.contains("changes in last", ignoreCase = true) } ->
+                        AnomalyType.RAPID_CELL_SWITCHING
+                    contributingFactors.any { it.contains("signal", ignoreCase = true) } ->
+                        AnomalyType.SIGNAL_SPIKE
+                    contributingFactors.any { it.contains("unknown", ignoreCase = true) } ->
+                        AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA
+                    else -> AnomalyType.CELL_TOWER_CHANGE
+                }
+                
+                reportAnomalyImproved(
+                    type = primaryType,
+                    description = "Multiple suspicious indicators detected",
+                    technicalDetails = contributingFactors.joinToString("; "),
+                    contributingFactors = contributingFactors,
+                    confidence = confidence,
+                    current = current,
+                    previous = previous
+                )
+            } else {
+                // Low confidence - just log to timeline
+                addTimelineEvent(
+                    type = CellularEventType.CELL_HANDOFF,
+                    title = "Cell Activity",
+                    description = contributingFactors.firstOrNull() ?: "Cell network change",
+                    cellId = current.cellId?.toString(),
+                    networkType = getNetworkTypeName(current.networkType),
+                    signalStrength = current.signalStrength,
+                    threatLevel = ThreatLevel.INFO
                 )
             }
         }
     }
     
-    private fun getSignalDbm(signalStrength: android.telephony.SignalStrength): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            signalStrength.cellSignalStrengths.firstOrNull()?.dbm ?: -100
-        } else {
-            @Suppress("DEPRECATION")
-            when {
-                signalStrength.isGsm -> -113 + 2 * signalStrength.gsmSignalStrength
-                else -> signalStrength.cdmaDbm
-            }
+    private fun reportAnomalyImproved(
+        type: AnomalyType,
+        description: String,
+        technicalDetails: String,
+        contributingFactors: List<String>,
+        confidence: AnomalyConfidence,
+        current: CellSnapshot,
+        previous: CellSnapshot
+    ) {
+        val now = System.currentTimeMillis()
+        val lastTime = lastAnomalyTimes[type] ?: 0
+        
+        // Rate limit same anomaly type
+        if (now - lastTime < MIN_ANOMALY_INTERVAL_MS) {
+            return
         }
+        lastAnomalyTimes[type] = now
+        
+        // Calculate severity based on confidence and base score
+        val severity = when (confidence) {
+            AnomalyConfidence.CRITICAL -> ThreatLevel.CRITICAL
+            AnomalyConfidence.HIGH -> ThreatLevel.HIGH
+            AnomalyConfidence.MEDIUM -> ThreatLevel.MEDIUM
+            AnomalyConfidence.LOW -> ThreatLevel.LOW
+        }
+        
+        val anomaly = CellularAnomaly(
+            type = type,
+            severity = severity,
+            confidence = confidence,
+            description = description,
+            technicalDetails = technicalDetails,
+            cellId = current.cellId,
+            previousCellId = previous.cellId,
+            signalStrength = current.signalStrength,
+            previousSignalStrength = previous.signalStrength,
+            networkType = getNetworkTypeName(current.networkType),
+            previousNetworkType = getNetworkTypeName(previous.networkType),
+            mccMnc = "${current.mcc}-${current.mnc}",
+            latitude = currentLatitude,
+            longitude = currentLongitude,
+            contributingFactors = contributingFactors
+        )
+        
+        detectedAnomalies.add(anomaly)
+        _anomalies.value = detectedAnomalies.toList()
+        
+        // Add to timeline
+        addTimelineEvent(
+            type = CellularEventType.ANOMALY_DETECTED,
+            title = "${type.emoji} ${type.displayName}",
+            description = description,
+            cellId = current.cellId?.toString(),
+            networkType = getNetworkTypeName(current.networkType),
+            signalStrength = current.signalStrength,
+            isAnomaly = true,
+            threatLevel = severity
+        )
+        
+        Log.w(TAG, "ANOMALY [${confidence.displayName}]: ${type.displayName} - $description")
     }
     
-    @Suppress("MissingPermission")
-    private fun takeCellSnapshot(): CellSnapshot? {
-        if (!hasPermissions()) return null
-        
-        try {
-            val cellInfoList = telephonyManager.allCellInfo ?: return null
-            val primaryCell = cellInfoList.firstOrNull { it.isRegistered } ?: cellInfoList.firstOrNull()
-            
-            return primaryCell?.let { cellInfo ->
-                extractCellSnapshot(cellInfo)
-            }
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Security exception getting cell info", e)
-            return null
-        }
-    }
-    
-    private fun extractCellSnapshot(cellInfo: CellInfo): CellSnapshot {
-        var cellId: Int? = null
-        var lac: Int? = null
-        var tac: Int? = null
-        var mcc: String? = null
-        var mnc: String? = null
-        var signalDbm = -100
-        var networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN
-        
-        when (cellInfo) {
-            is CellInfoLte -> {
-                cellId = cellInfo.cellIdentity.ci.takeIf { it != Int.MAX_VALUE }
-                tac = cellInfo.cellIdentity.tac.takeIf { it != Int.MAX_VALUE }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    mcc = cellInfo.cellIdentity.mccString
-                    mnc = cellInfo.cellIdentity.mncString
-                }
-                signalDbm = cellInfo.cellSignalStrength.dbm
-                networkType = TelephonyManager.NETWORK_TYPE_LTE
-            }
-            is CellInfoGsm -> {
-                cellId = cellInfo.cellIdentity.cid.takeIf { it != Int.MAX_VALUE }
-                lac = cellInfo.cellIdentity.lac.takeIf { it != Int.MAX_VALUE }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    mcc = cellInfo.cellIdentity.mccString
-                    mnc = cellInfo.cellIdentity.mncString
-                }
-                signalDbm = cellInfo.cellSignalStrength.dbm
-                networkType = TelephonyManager.NETWORK_TYPE_GSM
-            }
-            is CellInfoWcdma -> {
-                cellId = cellInfo.cellIdentity.cid.takeIf { it != Int.MAX_VALUE }
-                lac = cellInfo.cellIdentity.lac.takeIf { it != Int.MAX_VALUE }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    mcc = cellInfo.cellIdentity.mccString
-                    mnc = cellInfo.cellIdentity.mncString
-                }
-                signalDbm = cellInfo.cellSignalStrength.dbm
-                networkType = TelephonyManager.NETWORK_TYPE_UMTS
-            }
-            is CellInfoCdma -> {
-                cellId = cellInfo.cellIdentity.basestationId
-                signalDbm = cellInfo.cellSignalStrength.dbm
-                networkType = TelephonyManager.NETWORK_TYPE_CDMA
-            }
-        }
-        
-        // Handle NR (5G) for API 29+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (cellInfo is CellInfoNr) {
-                val nrIdentity = cellInfo.cellIdentity as? CellIdentityNr
-                cellId = nrIdentity?.nci?.toInt()
-                tac = nrIdentity?.tac
-                mcc = nrIdentity?.mccString
-                mnc = nrIdentity?.mncString
-                signalDbm = (cellInfo.cellSignalStrength as? CellSignalStrengthNr)?.dbm ?: -100
-                networkType = TelephonyManager.NETWORK_TYPE_NR
-            }
-        }
-        
-        return CellSnapshot(
-            timestamp = System.currentTimeMillis(),
+    private fun addTimelineEvent(
+        type: CellularEventType,
+        title: String,
+        description: String,
+        cellId: String? = null,
+        networkType: String? = null,
+        signalStrength: Int? = null,
+        isAnomaly: Boolean = false,
+        threatLevel: ThreatLevel = ThreatLevel.INFO
+    ) {
+        val event = CellularEvent(
+            type = type,
+            title = title,
+            description = description,
             cellId = cellId,
-            lac = lac,
-            tac = tac,
-            mcc = mcc,
-            mnc = mnc,
-            signalStrength = signalDbm,
             networkType = networkType,
+            signalStrength = signalStrength,
+            isAnomaly = isAnomaly,
+            threatLevel = threatLevel,
             latitude = currentLatitude,
             longitude = currentLongitude
         )
+        
+        eventHistory.add(0, event) // Add to beginning
+        if (eventHistory.size > maxEventHistory) {
+            eventHistory.removeAt(eventHistory.size - 1)
+        }
+        _cellularEvents.value = eventHistory.toList()
     }
     
-    private fun analyzeForAnomalies(previous: CellSnapshot, current: CellSnapshot) {
-        // 1. Check for encryption downgrade (4G/5G to 2G)
-        if (isEncryptionDowngrade(previous.networkType, current.networkType)) {
-            reportAnomaly(
-                type = AnomalyType.ENCRYPTION_DOWNGRADE,
-                description = "Network downgraded from ${getNetworkTypeName(previous.networkType)} to ${getNetworkTypeName(current.networkType)} - possible IMSI catcher forcing 2G",
-                cellId = current.cellId,
-                previousCellId = previous.cellId,
-                signalStrength = current.signalStrength,
-                previousSignalStrength = previous.signalStrength,
-                networkType = getNetworkTypeName(current.networkType),
-                previousNetworkType = getNetworkTypeName(previous.networkType),
-                mccMnc = "${current.mcc}-${current.mnc}"
-            )
+    private fun getOrCreateTrustedCellInfo(cellId: String): TrustedCellInfo {
+        return trustedCells.getOrPut(cellId) {
+            TrustedCellInfo(cellId = cellId)
         }
+    }
+    
+    private fun isCellTrusted(cellId: String?): Boolean {
+        if (cellId == null) return false
+        val info = trustedCells[cellId] ?: return false
+        return info.seenCount >= TRUSTED_CELL_THRESHOLD
+    }
+    
+    private fun isInFamiliarArea(): Boolean {
+        val lat = currentLatitude ?: return false
+        val lon = currentLongitude ?: return false
         
-        // 2. Check for suspicious MCC/MNC
-        val mccMnc = "${current.mcc}-${current.mnc}"
-        if (mccMnc in SUSPICIOUS_MCC_MNC) {
-            reportAnomaly(
-                type = AnomalyType.SUSPICIOUS_NETWORK,
-                description = "Connected to suspicious test network $mccMnc - likely IMSI catcher",
-                cellId = current.cellId,
-                previousCellId = previous.cellId,
-                signalStrength = current.signalStrength,
-                previousSignalStrength = previous.signalStrength,
-                networkType = getNetworkTypeName(current.networkType),
-                previousNetworkType = getNetworkTypeName(previous.networkType),
-                mccMnc = mccMnc
-            )
-        }
-        
-        // 3. Check for unexpected cell tower change without movement
-        if (current.cellId != previous.cellId && !hasMovedSignificantly(previous, current)) {
-            reportAnomaly(
-                type = AnomalyType.CELL_TOWER_CHANGE,
-                description = "Cell tower changed (${previous.cellId} → ${current.cellId}) without significant movement",
-                cellId = current.cellId,
-                previousCellId = previous.cellId,
-                signalStrength = current.signalStrength,
-                previousSignalStrength = previous.signalStrength,
-                networkType = getNetworkTypeName(current.networkType),
-                previousNetworkType = getNetworkTypeName(previous.networkType),
-                mccMnc = mccMnc
-            )
-        }
-        
-        // 4. Check for rapid cell switching
-        val recentChanges = countRecentCellChanges(60_000) // Last minute
-        if (recentChanges > 5) {
-            reportAnomaly(
-                type = AnomalyType.RAPID_CELL_SWITCHING,
-                description = "Phone switching cells rapidly ($recentChanges times in last minute) - possible cell site simulator",
-                cellId = current.cellId,
-                previousCellId = previous.cellId,
-                signalStrength = current.signalStrength,
-                previousSignalStrength = previous.signalStrength,
-                networkType = getNetworkTypeName(current.networkType),
-                previousNetworkType = getNetworkTypeName(previous.networkType),
-                mccMnc = mccMnc
-            )
-        }
-        
-        // 5. Check for LAC/TAC anomaly (unusual location area)
-        if (hasLacTacAnomaly(previous, current)) {
-            reportAnomaly(
-                type = AnomalyType.LAC_TAC_ANOMALY,
-                description = "Location area changed unexpectedly (LAC: ${previous.lac}→${current.lac}, TAC: ${previous.tac}→${current.tac})",
-                cellId = current.cellId,
-                previousCellId = previous.cellId,
-                signalStrength = current.signalStrength,
-                previousSignalStrength = previous.signalStrength,
-                networkType = getNetworkTypeName(current.networkType),
-                previousNetworkType = getNetworkTypeName(previous.networkType),
-                mccMnc = mccMnc
-            )
+        // Check if current location is near where we've seen trusted cells
+        return trustedCells.values.any { cell ->
+            cell.locations.any { (cellLat, cellLon) ->
+                kotlin.math.abs(lat - cellLat) < TRUSTED_CELL_LOCATION_RADIUS &&
+                kotlin.math.abs(lon - cellLon) < TRUSTED_CELL_LOCATION_RADIUS
+            }
         }
     }
     
@@ -617,7 +753,7 @@ class CellularMonitor(private val context: Context) {
         val previousGen = getNetworkGeneration(previousType)
         val currentGen = getNetworkGeneration(currentType)
         // Downgrade to 2G is suspicious (2G has weak/no encryption)
-        return previousGen > 2 && currentGen == 2
+        return previousGen >= 3 && currentGen == 2
     }
     
     private fun getNetworkGeneration(networkType: Int): Int {
@@ -674,20 +810,6 @@ class CellularMonitor(private val context: Context) {
         }
     }
     
-    private fun hasMovedSignificantly(previous: CellSnapshot, current: CellSnapshot): Boolean {
-        val prevLat = previous.latitude ?: return true // Assume moved if no location
-        val prevLon = previous.longitude ?: return true
-        val currLat = current.latitude ?: return true
-        val currLon = current.longitude ?: return true
-        
-        // Calculate rough distance (simplified, not using haversine)
-        val latDiff = kotlin.math.abs(currLat - prevLat)
-        val lonDiff = kotlin.math.abs(currLon - prevLon)
-        
-        // About 100 meters threshold
-        return latDiff > 0.001 || lonDiff > 0.001
-    }
-    
     private fun countRecentCellChanges(withinMs: Long): Int {
         val cutoff = System.currentTimeMillis() - withinMs
         val recentSnapshots = cellHistory.filter { it.timestamp > cutoff }
@@ -704,126 +826,247 @@ class CellularMonitor(private val context: Context) {
     }
     
     private fun hasLacTacAnomaly(previous: CellSnapshot, current: CellSnapshot): Boolean {
-        // LAC/TAC should not change without cell ID changing in most cases
-        val lacChanged = previous.lac != null && current.lac != null && previous.lac != current.lac
-        val tacChanged = previous.tac != null && current.tac != null && previous.tac != current.tac
-        val cellSame = previous.cellId == current.cellId
+        val lacChanged = previous.lac != null && current.lac != null && 
+            previous.lac != current.lac && previous.lac != 0 && current.lac != 0
+        val tacChanged = previous.tac != null && current.tac != null && 
+            previous.tac != current.tac && previous.tac != 0 && current.tac != 0
+        val cellSame = previous.cellId == current.cellId && current.cellId != null
         
         return (lacChanged || tacChanged) && cellSame
     }
     
-    private fun reportAnomaly(
-        type: AnomalyType,
-        description: String,
-        cellId: Int?,
-        previousCellId: Int?,
-        signalStrength: Int,
-        previousSignalStrength: Int?,
-        networkType: String,
-        previousNetworkType: String?,
-        mccMnc: String?
-    ) {
-        val now = System.currentTimeMillis()
-        val lastTime = lastAnomalyTimes[type] ?: 0
+    private fun takeCellSnapshot(): CellSnapshot? {
+        if (!hasPermissions()) return null
         
-        // Rate limit same anomaly type
-        if (now - lastTime < MIN_ANOMALY_INTERVAL_MS) {
-            return
+        try {
+            @Suppress("MissingPermission")
+            val cellInfoList = telephonyManager.allCellInfo ?: return null
+            return extractCellSnapshot(cellInfoList)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error taking cell snapshot", e)
+            return null
         }
-        lastAnomalyTimes[type] = now
+    }
+    
+    private fun extractCellSnapshot(cellInfoList: List<CellInfo>): CellSnapshot? {
+        val registeredCell = cellInfoList.firstOrNull { it.isRegistered } ?: return null
         
-        val severity = when (type.baseThreatScore) {
-            in 90..100 -> ThreatLevel.CRITICAL
-            in 70..89 -> ThreatLevel.HIGH
-            in 50..69 -> ThreatLevel.MEDIUM
-            in 30..49 -> ThreatLevel.LOW
-            else -> ThreatLevel.INFO
+        var cellId: Int? = null
+        var lac: Int? = null
+        var tac: Int? = null
+        var mcc: String? = null
+        var mnc: String? = null
+        var signalDbm = -100
+        var networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN
+        
+        when (registeredCell) {
+            is CellInfoLte -> {
+                cellId = registeredCell.cellIdentity.ci
+                tac = registeredCell.cellIdentity.tac
+                mcc = registeredCell.cellIdentity.mccString
+                mnc = registeredCell.cellIdentity.mncString
+                signalDbm = registeredCell.cellSignalStrength.dbm
+                networkType = TelephonyManager.NETWORK_TYPE_LTE
+            }
+            is CellInfoGsm -> {
+                cellId = registeredCell.cellIdentity.cid
+                lac = registeredCell.cellIdentity.lac
+                mcc = registeredCell.cellIdentity.mccString
+                mnc = registeredCell.cellIdentity.mncString
+                signalDbm = registeredCell.cellSignalStrength.dbm
+                networkType = TelephonyManager.NETWORK_TYPE_GSM
+            }
+            is CellInfoWcdma -> {
+                cellId = registeredCell.cellIdentity.cid
+                lac = registeredCell.cellIdentity.lac
+                mcc = registeredCell.cellIdentity.mccString
+                mnc = registeredCell.cellIdentity.mncString
+                signalDbm = registeredCell.cellSignalStrength.dbm
+                networkType = TelephonyManager.NETWORK_TYPE_UMTS
+            }
+            is CellInfoCdma -> {
+                cellId = registeredCell.cellIdentity.basestationId
+                signalDbm = registeredCell.cellSignalStrength.dbm
+                networkType = TelephonyManager.NETWORK_TYPE_CDMA
+            }
         }
         
-        val anomaly = CellularAnomaly(
-            type = type,
-            severity = severity,
-            description = description,
+        // Handle NR (5G) for API 29+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (registeredCell is CellInfoNr) {
+                val nrIdentity = registeredCell.cellIdentity as? CellIdentityNr
+                cellId = nrIdentity?.nci?.toInt()
+                tac = nrIdentity?.tac
+                mcc = nrIdentity?.mccString
+                mnc = nrIdentity?.mncString
+                signalDbm = (registeredCell.cellSignalStrength as? CellSignalStrengthNr)?.dbm ?: -100
+                networkType = TelephonyManager.NETWORK_TYPE_NR
+            }
+        }
+        
+        return CellSnapshot(
+            timestamp = System.currentTimeMillis(),
             cellId = cellId,
-            previousCellId = previousCellId,
-            signalStrength = signalStrength,
-            previousSignalStrength = previousSignalStrength,
+            lac = lac,
+            tac = tac,
+            mcc = mcc,
+            mnc = mnc,
+            signalStrength = signalDbm,
             networkType = networkType,
-            previousNetworkType = previousNetworkType,
-            mccMnc = mccMnc,
             latitude = currentLatitude,
             longitude = currentLongitude
         )
+    }
+    
+    private fun updateCellStatus(snapshot: CellSnapshot) {
+        val cellIdStr = snapshot.cellId?.toString() ?: "Unknown"
+        val networkGen = getNetworkGeneration(snapshot.networkType)
+        val genName = when (networkGen) {
+            5 -> "5G"
+            4 -> "4G"
+            3 -> "3G"
+            2 -> "2G"
+            else -> "Unknown"
+        }
         
-        detectedAnomalies.add(anomaly)
-        _anomalies.value = detectedAnomalies.toList()
+        val signalBars = when {
+            snapshot.signalStrength >= -70 -> 4
+            snapshot.signalStrength >= -85 -> 3
+            snapshot.signalStrength >= -100 -> 2
+            snapshot.signalStrength >= -110 -> 1
+            else -> 0
+        }
         
-        Log.w(TAG, "CELLULAR ANOMALY DETECTED: ${type.displayName} - $description")
+        val trusted = trustedCells[cellIdStr]
+        val trustScore = when {
+            trusted == null -> 0
+            trusted.seenCount >= 20 -> 100
+            trusted.seenCount >= 10 -> 80
+            trusted.seenCount >= 5 -> 60
+            trusted.seenCount >= 2 -> 30
+            else -> 10
+        }
+        
+        _cellStatus.value = CellStatus(
+            cellId = cellIdStr,
+            lac = snapshot.lac,
+            tac = snapshot.tac,
+            mcc = snapshot.mcc,
+            mnc = snapshot.mnc,
+            operator = telephonyManager.networkOperatorName,
+            networkType = getNetworkTypeName(snapshot.networkType),
+            networkGeneration = genName,
+            signalStrength = snapshot.signalStrength,
+            signalBars = signalBars,
+            isTrustedCell = trustScore >= 60,
+            trustScore = trustScore,
+            isRoaming = telephonyManager.isNetworkRoaming,
+            latitude = snapshot.latitude,
+            longitude = snapshot.longitude
+        )
+    }
+    
+    private fun updateSeenCellTower(snapshot: CellSnapshot) {
+        val cellId = snapshot.cellId?.toString() ?: return
+        val networkGen = getNetworkGeneration(snapshot.networkType)
+        val genName = when (networkGen) {
+            5 -> "5G"
+            4 -> "4G"
+            3 -> "3G"
+            2 -> "2G"
+            else -> "Unknown"
+        }
+        
+        val existing = seenCellTowerMap[cellId]
+        val trusted = trustedCells[cellId]
+        
+        if (existing != null) {
+            seenCellTowerMap[cellId] = existing.copy(
+                lastSeen = System.currentTimeMillis(),
+                seenCount = existing.seenCount + 1,
+                minSignal = minOf(existing.minSignal, snapshot.signalStrength),
+                maxSignal = maxOf(existing.maxSignal, snapshot.signalStrength),
+                lastSignal = snapshot.signalStrength,
+                latitude = snapshot.latitude ?: existing.latitude,
+                longitude = snapshot.longitude ?: existing.longitude,
+                isTrusted = trusted?.seenCount ?: 0 >= TRUSTED_CELL_THRESHOLD
+            )
+        } else {
+            // New cell discovered - add to timeline
+            addTimelineEvent(
+                type = CellularEventType.NEW_CELL_DISCOVERED,
+                title = "New Cell Tower",
+                description = "Cell $cellId (${getNetworkTypeName(snapshot.networkType)}) - ${telephonyManager.networkOperatorName ?: "Unknown operator"}",
+                cellId = cellId,
+                networkType = getNetworkTypeName(snapshot.networkType),
+                signalStrength = snapshot.signalStrength
+            )
+            
+            seenCellTowerMap[cellId] = SeenCellTower(
+                cellId = cellId,
+                lac = snapshot.lac,
+                tac = snapshot.tac,
+                mcc = snapshot.mcc,
+                mnc = snapshot.mnc,
+                operator = telephonyManager.networkOperatorName,
+                networkType = getNetworkTypeName(snapshot.networkType),
+                networkGeneration = genName,
+                firstSeen = System.currentTimeMillis(),
+                lastSeen = System.currentTimeMillis(),
+                seenCount = 1,
+                minSignal = snapshot.signalStrength,
+                maxSignal = snapshot.signalStrength,
+                lastSignal = snapshot.signalStrength,
+                latitude = snapshot.latitude,
+                longitude = snapshot.longitude,
+                isTrusted = false
+            )
+        }
+        
+        _seenCellTowers.value = seenCellTowerMap.values
+            .sortedByDescending { it.lastSeen }
+            .toList()
     }
     
     /**
      * Convert a cellular anomaly to a Detection for storage
      */
     fun anomalyToDetection(anomaly: CellularAnomaly): Detection {
-        // Map anomaly type to detection method
         val detectionMethod = when (anomaly.type) {
             AnomalyType.ENCRYPTION_DOWNGRADE -> DetectionMethod.CELL_ENCRYPTION_DOWNGRADE
             AnomalyType.SUSPICIOUS_NETWORK -> DetectionMethod.CELL_SUSPICIOUS_NETWORK
             AnomalyType.CELL_TOWER_CHANGE -> DetectionMethod.CELL_TOWER_CHANGE
+            AnomalyType.STATIONARY_CELL_CHANGE -> DetectionMethod.CELL_TOWER_CHANGE
             AnomalyType.RAPID_CELL_SWITCHING -> DetectionMethod.CELL_RAPID_SWITCHING
             AnomalyType.SIGNAL_SPIKE -> DetectionMethod.CELL_SIGNAL_ANOMALY
             AnomalyType.LAC_TAC_ANOMALY -> DetectionMethod.CELL_LAC_TAC_ANOMALY
-            AnomalyType.UNKNOWN_CELL -> DetectionMethod.CELL_TOWER_CHANGE
+            AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA -> DetectionMethod.CELL_TOWER_CHANGE
         }
         
-        // Build detailed device name
-        val deviceName = when (anomaly.type) {
-            AnomalyType.ENCRYPTION_DOWNGRADE -> 
-                "Encryption Downgrade: ${anomaly.previousNetworkType ?: "4G/5G"} → ${anomaly.networkType}"
-            AnomalyType.SUSPICIOUS_NETWORK -> 
-                "Suspicious Network: ${anomaly.mccMnc ?: "Unknown"}"
-            AnomalyType.CELL_TOWER_CHANGE -> 
-                "Cell Change: ${anomaly.previousCellId ?: "?"} → ${anomaly.cellId ?: "?"}"
-            AnomalyType.RAPID_CELL_SWITCHING -> 
-                "Rapid Switching Detected"
-            AnomalyType.SIGNAL_SPIKE -> 
-                "Signal Spike: ${anomaly.previousSignalStrength ?: "?"}→${anomaly.signalStrength} dBm"
-            AnomalyType.LAC_TAC_ANOMALY -> 
-                "Location Area Changed Unexpectedly"
-            AnomalyType.UNKNOWN_CELL -> 
-                "Unknown Cell Tower: ${anomaly.cellId ?: "?"}"
-        }
-        
-        // Build cell info JSON for serviceUuids field
-        val cellInfo = buildString {
-            append("{")
-            append("\"cellId\":${anomaly.cellId ?: "null"},")
-            append("\"prevCellId\":${anomaly.previousCellId ?: "null"},")
-            append("\"networkType\":\"${anomaly.networkType}\",")
-            append("\"prevNetworkType\":\"${anomaly.previousNetworkType ?: ""}\",")
-            append("\"mccMnc\":\"${anomaly.mccMnc ?: ""}\",")
-            append("\"signalDbm\":${anomaly.signalStrength},")
-            append("\"prevSignalDbm\":${anomaly.previousSignalStrength ?: "null"}")
-            append("}")
-        }
+        val deviceName = "${anomaly.type.emoji} ${anomaly.type.displayName}"
         
         return Detection(
+            deviceType = DeviceType.STINGRAY_IMSI,
             protocol = DetectionProtocol.CELLULAR,
             detectionMethod = detectionMethod,
-            deviceType = DeviceType.STINGRAY_IMSI,
             deviceName = deviceName,
-            macAddress = anomaly.mccMnc, // Store MCC-MNC in MAC field
-            ssid = "CELL-${anomaly.cellId ?: "UNK"}-${anomaly.id.take(8)}", // Unique identifier for DB
+            macAddress = null,
+            ssid = null,
             rssi = anomaly.signalStrength,
             signalStrength = rssiToSignalStrength(anomaly.signalStrength),
             latitude = anomaly.latitude,
             longitude = anomaly.longitude,
             threatLevel = anomaly.severity,
-            threatScore = anomaly.type.baseThreatScore,
-            manufacturer = anomaly.networkType, // Store network type (LTE, 5G, etc)
-            firmwareVersion = "Cell ID: ${anomaly.cellId ?: "Unknown"}", // Store cell ID
-            serviceUuids = cellInfo, // Store full cell info as JSON
-            matchedPatterns = "[\"${anomaly.type.name}\"]"
+            threatScore = when (anomaly.confidence) {
+                AnomalyConfidence.CRITICAL -> 95
+                AnomalyConfidence.HIGH -> 75
+                AnomalyConfidence.MEDIUM -> 50
+                AnomalyConfidence.LOW -> 25
+            },
+            manufacturer = "Cell: ${anomaly.cellId ?: "Unknown"}",
+            firmwareVersion = null,
+            serviceUuids = null,
+            matchedPatterns = anomaly.contributingFactors.joinToString(", ")
         )
     }
 }
