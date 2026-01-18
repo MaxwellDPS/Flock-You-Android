@@ -450,8 +450,6 @@ fun FilterBottomSheet(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetectionDetailSheet(
     detection: Detection,
