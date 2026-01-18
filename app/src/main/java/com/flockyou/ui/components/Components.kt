@@ -78,6 +78,7 @@ fun DeviceType.toIcon(): ImageVector = when (this) {
 fun DetectionProtocol.toIcon(): ImageVector = when (this) {
     DetectionProtocol.WIFI -> Icons.Default.Wifi
     DetectionProtocol.BLUETOOTH_LE -> Icons.Default.Bluetooth
+    DetectionProtocol.CELLULAR -> Icons.Default.CellTower
 }
 
 /**
