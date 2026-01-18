@@ -68,6 +68,11 @@ class ScanningService : Service() {
         val seenBleDevices = MutableStateFlow<List<SeenDevice>>(emptyList())
         val seenWifiNetworks = MutableStateFlow<List<SeenDevice>>(emptyList())
         
+        // Cellular monitoring data
+        val cellStatus = MutableStateFlow<CellularMonitor.CellStatus?>(null)
+        val seenCellTowers = MutableStateFlow<List<CellularMonitor.SeenCellTower>>(emptyList())
+        val cellularAnomalies = MutableStateFlow<List<CellularMonitor.CellularAnomaly>>(emptyList())
+        
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
         
@@ -81,6 +86,11 @@ class ScanningService : Service() {
         fun clearSeenDevices() {
             seenBleDevices.value = emptyList()
             seenWifiNetworks.value = emptyList()
+        }
+        
+        fun clearCellularHistory() {
+            seenCellTowers.value = emptyList()
+            cellularAnomalies.value = emptyList()
         }
         
         fun updateSettings(
@@ -445,6 +455,8 @@ class ScanningService : Service() {
     // ==================== Cellular Monitoring ====================
     
     private var cellularAnomalyJob: Job? = null
+    private var cellularStatusJob: Job? = null
+    private var cellularHistoryJob: Job? = null
     
     private fun startCellularMonitoring() {
         if (!hasTelephonyPermissions()) {
@@ -457,9 +469,25 @@ class ScanningService : Service() {
         cellularStatus.value = SubsystemStatus.Active
         Log.d(TAG, "Cellular monitoring started")
         
+        // Collect cellular status updates
+        cellularStatusJob = serviceScope.launch {
+            cellularMonitor?.cellStatus?.collect { status ->
+                Companion.cellStatus.value = status
+            }
+        }
+        
+        // Collect seen cell tower history
+        cellularHistoryJob = serviceScope.launch {
+            cellularMonitor?.seenCellTowers?.collect { towers ->
+                seenCellTowers.value = towers
+            }
+        }
+        
         // Collect cellular anomalies and convert to detections
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
+                cellularAnomalies.value = anomalies
+                
                 for (anomaly in anomalies) {
                     // Convert anomaly to detection
                     val detection = cellularMonitor?.anomalyToDetection(anomaly)
@@ -499,6 +527,10 @@ class ScanningService : Service() {
     private fun stopCellularMonitoring() {
         cellularAnomalyJob?.cancel()
         cellularAnomalyJob = null
+        cellularStatusJob?.cancel()
+        cellularStatusJob = null
+        cellularHistoryJob?.cancel()
+        cellularHistoryJob = null
         cellularMonitor?.stopMonitoring()
         Log.d(TAG, "Cellular monitoring stopped")
     }

@@ -560,20 +560,32 @@ fun DetectionCard(
                     
                     Spacer(modifier = Modifier.height(2.dp))
                     
-                    // Manufacturer
-                    detection.manufacturer?.let { mfr ->
+                    // Secondary info - different for cellular vs WiFi/BLE
+                    if (detection.protocol == DetectionProtocol.CELLULAR) {
+                        // For cellular: show detection method (anomaly type)
                         Text(
-                            text = mfr,
+                            text = detection.detectionMethod.displayName,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    } else {
+                        // For WiFi/BLE: show manufacturer
+                        detection.manufacturer?.let { mfr ->
+                            Text(
+                                text = mfr,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(4.dp))
                     
-                    // MAC/SSID row
+                    // Identifier row - different for cellular vs WiFi/BLE
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -585,7 +597,15 @@ fun DetectionCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = detection.macAddress ?: detection.ssid ?: "Unknown",
+                            text = when (detection.protocol) {
+                                DetectionProtocol.CELLULAR -> {
+                                    // Show network type and cell ID
+                                    val networkType = detection.manufacturer ?: "Unknown"
+                                    val cellId = detection.firmwareVersion?.removePrefix("Cell ID: ") ?: "?"
+                                    "$networkType • Cell $cellId"
+                                }
+                                else -> detection.macAddress ?: detection.ssid ?: "Unknown"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

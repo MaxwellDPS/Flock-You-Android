@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.flockyou.data.model.*
 import com.flockyou.data.repository.DetectionRepository
+import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -27,7 +28,11 @@ data class MainUiState(
     val bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val wifiStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val locationStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
-    val recentErrors: List<ScanningService.ScanError> = emptyList()
+    val cellularStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    val recentErrors: List<ScanningService.ScanError> = emptyList(),
+    // Cellular monitoring
+    val cellStatus: CellularMonitor.CellStatus? = null,
+    val cellularAnomalies: List<CellularMonitor.CellularAnomaly> = emptyList()
 )
 
 @HiltViewModel
@@ -107,6 +112,27 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             ScanningService.errorLog.collect { errors ->
                 _uiState.update { it.copy(recentErrors = errors.take(5)) }
+            }
+        }
+        
+        // Observe cellular status
+        viewModelScope.launch {
+            ScanningService.cellularStatus.collect { status ->
+                _uiState.update { it.copy(cellularStatus = status) }
+            }
+        }
+        
+        // Observe cell tower status
+        viewModelScope.launch {
+            ScanningService.cellStatus.collect { status ->
+                _uiState.update { it.copy(cellStatus = status) }
+            }
+        }
+        
+        // Observe cellular anomalies
+        viewModelScope.launch {
+            ScanningService.cellularAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(cellularAnomalies = anomalies) }
             }
         }
     }

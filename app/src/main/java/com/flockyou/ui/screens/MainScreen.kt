@@ -156,6 +156,17 @@ fun MainScreen(
                 )
             }
             
+            // Cellular status card (show when scanning or has anomalies)
+            if (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty()) {
+                item(key = "cellular_status_card") {
+                    CellularStatusCard(
+                        cellStatus = uiState.cellStatus,
+                        anomalies = uiState.cellularAnomalies,
+                        isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
+                    )
+                }
+            }
+            
             // Last detection alert
             uiState.lastDetection?.let { detection ->
                 item(key = "last_detection_${detection.id}") {

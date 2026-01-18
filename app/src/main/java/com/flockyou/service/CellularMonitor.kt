@@ -128,6 +128,34 @@ class CellularMonitor(private val context: Context) {
         val isRoaming: Boolean
     )
     
+    /**
+     * Record of a seen cell tower for history
+     */
+    data class SeenCellTower(
+        val cellId: String,
+        val lac: Int?,
+        val tac: Int?,
+        val mcc: String?,
+        val mnc: String?,
+        val operator: String?,
+        val networkType: String,
+        val networkGeneration: String,
+        val firstSeen: Long,
+        val lastSeen: Long,
+        val seenCount: Int,
+        val minSignal: Int,
+        val maxSignal: Int,
+        val lastSignal: Int,
+        val latitude: Double?,
+        val longitude: Double?
+    )
+    
+    // Cell tower history flow
+    private val _seenCellTowers = MutableStateFlow<List<SeenCellTower>>(emptyList())
+    val seenCellTowers: StateFlow<List<SeenCellTower>> = _seenCellTowers.asStateFlow()
+    
+    private val seenCellTowerMap = mutableMapOf<String, SeenCellTower>()
+    
     fun startMonitoring() {
         if (isMonitoring) return
         
@@ -275,6 +303,9 @@ class CellularMonitor(private val context: Context) {
             null
         }
         
+        val networkTypeName = getNetworkTypeName(snapshot.networkType)
+        val networkGen = "${getNetworkGeneration(snapshot.networkType)}G"
+        
         _cellStatus.value = CellStatus(
             cellId = cellIdStr,
             lac = snapshot.lac,
@@ -282,13 +313,89 @@ class CellularMonitor(private val context: Context) {
             mcc = snapshot.mcc,
             mnc = snapshot.mnc,
             operator = operator,
-            networkType = getNetworkTypeName(snapshot.networkType),
-            networkGeneration = "${getNetworkGeneration(snapshot.networkType)}G",
+            networkType = networkTypeName,
+            networkGeneration = networkGen,
             signalStrength = snapshot.signalStrength,
             signalBars = signalDbmToBars(snapshot.signalStrength),
             isKnownCell = isKnown,
             isRoaming = isRoaming
         )
+        
+        // Track cell tower history
+        if (cellIdStr != "Unknown") {
+            trackCellTower(
+                cellId = cellIdStr,
+                lac = snapshot.lac,
+                tac = snapshot.tac,
+                mcc = snapshot.mcc,
+                mnc = snapshot.mnc,
+                operator = operator,
+                networkType = networkTypeName,
+                networkGeneration = networkGen,
+                signalStrength = snapshot.signalStrength,
+                latitude = snapshot.latitude,
+                longitude = snapshot.longitude
+            )
+        }
+    }
+    
+    private fun trackCellTower(
+        cellId: String,
+        lac: Int?,
+        tac: Int?,
+        mcc: String?,
+        mnc: String?,
+        operator: String?,
+        networkType: String,
+        networkGeneration: String,
+        signalStrength: Int,
+        latitude: Double?,
+        longitude: Double?
+    ) {
+        val now = System.currentTimeMillis()
+        val existing = seenCellTowerMap[cellId]
+        
+        if (existing != null) {
+            // Update existing tower
+            seenCellTowerMap[cellId] = existing.copy(
+                lastSeen = now,
+                seenCount = existing.seenCount + 1,
+                minSignal = minOf(existing.minSignal, signalStrength),
+                maxSignal = maxOf(existing.maxSignal, signalStrength),
+                lastSignal = signalStrength,
+                latitude = latitude ?: existing.latitude,
+                longitude = longitude ?: existing.longitude
+            )
+        } else {
+            // Add new tower
+            seenCellTowerMap[cellId] = SeenCellTower(
+                cellId = cellId,
+                lac = lac,
+                tac = tac,
+                mcc = mcc,
+                mnc = mnc,
+                operator = operator,
+                networkType = networkType,
+                networkGeneration = networkGeneration,
+                firstSeen = now,
+                lastSeen = now,
+                seenCount = 1,
+                minSignal = signalStrength,
+                maxSignal = signalStrength,
+                lastSignal = signalStrength,
+                latitude = latitude,
+                longitude = longitude
+            )
+        }
+        
+        // Update flow
+        _seenCellTowers.value = seenCellTowerMap.values.toList().sortedByDescending { it.lastSeen }
+    }
+    
+    fun clearCellHistory() {
+        seenCellTowerMap.clear()
+        _seenCellTowers.value = emptyList()
+        knownCells.clear()
     }
     
     private fun signalDbmToBars(dbm: Int): Int {
