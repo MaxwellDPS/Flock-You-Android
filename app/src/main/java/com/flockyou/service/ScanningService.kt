@@ -472,7 +472,7 @@ class ScanningService : Service() {
                             // Alert and vibrate for high-severity anomalies
                             if (anomaly.severity == ThreatLevel.CRITICAL || 
                                 anomaly.severity == ThreatLevel.HIGH) {
-                                alertOnDetection(det)
+                                alertUser(det)
                             }
                             
                             lastDetection.value = det
