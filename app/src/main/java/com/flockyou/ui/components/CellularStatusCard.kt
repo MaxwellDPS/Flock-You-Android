@@ -204,7 +204,12 @@ fun CellularStatusCard(
             // Anomalies section
             if (anomalies.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
-                HorizontalDivider()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(
