@@ -2,7 +2,33 @@
 <resources>
     <!-- App Info -->
     <string name="app_name">Flock You</string>
+    <string name="app_name_system">Flock You (System)</string>
+    <string name="app_name_oem">Flock You (OEM)</string>
     <string name="app_description">Surveillance detection app</string>
+
+    <!-- Build Mode Info -->
+    <string name="build_mode_sideload">Standard (Sideload)</string>
+    <string name="build_mode_system">System Privileged</string>
+    <string name="build_mode_oem">OEM Embedded</string>
+    <string name="privilege_mode">Privilege Mode</string>
+    <string name="privilege_mode_description">Current privilege level detected at runtime</string>
+
+    <!-- Capabilities -->
+    <string name="capability_wifi_throttling">WiFi Scan Throttling</string>
+    <string name="capability_wifi_throttling_enabled">Enforced (4 scans / 2 min)</string>
+    <string name="capability_wifi_throttling_disabled">Can Disable</string>
+    <string name="capability_mac_address">MAC Address Access</string>
+    <string name="capability_mac_real">Real Hardware Address</string>
+    <string name="capability_mac_masked">May Be Masked</string>
+    <string name="capability_ble_scanning">BLE Scanning Mode</string>
+    <string name="capability_ble_continuous">Continuous</string>
+    <string name="capability_ble_duty_cycled">Duty Cycled</string>
+    <string name="capability_phone_access">Phone State Access</string>
+    <string name="capability_phone_full">IMEI/IMSI Available</string>
+    <string name="capability_phone_limited">Limited</string>
+    <string name="capability_process_mode">Process Mode</string>
+    <string name="capability_process_persistent">Persistent</string>
+    <string name="capability_process_standard">Standard</string>
     
     <!-- Main Screen -->
     <string name="scanning">Scanning</string>

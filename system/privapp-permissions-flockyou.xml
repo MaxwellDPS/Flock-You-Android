@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Privileged permission whitelist for Flock You when installed as a system app.
+
+    This file should be placed in:
+    /system/etc/permissions/privapp-permissions-flockyou.xml
+
+    or for newer Android versions:
+    /system_ext/etc/permissions/privapp-permissions-flockyou.xml
+
+    The APK should be installed to:
+    /system/priv-app/FlockYou/FlockYou.apk
+
+    or for newer Android versions:
+    /system_ext/priv-app/FlockYou/FlockYou.apk
+-->
+<permissions>
+    <privapp-permissions package="com.flockyou">
+        <!-- Bluetooth privileged: Bypass BLE duty cycling for continuous scanning -->
+        <permission name="android.permission.BLUETOOTH_PRIVILEGED"/>
+
+        <!-- MAC address access: Get real hardware addresses instead of randomized ones -->
+        <permission name="android.permission.PEERS_MAC_ADDRESS"/>
+        <permission name="android.permission.LOCAL_MAC_ADDRESS"/>
+
+        <!-- Privileged phone state: Access IMEI/IMSI for IMSI catcher detection -->
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+
+        <!-- Internal connectivity: Control WiFi scan throttling -->
+        <permission name="android.permission.CONNECTIVITY_INTERNAL"/>
+        <permission name="android.permission.NETWORK_SETTINGS"/>
+
+        <!-- Process management: Keep service running persistently -->
+        <permission name="android.permission.PERSISTENT_ACTIVITY"/>
+        <permission name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"/>
+
+        <!-- Multi-user support for shared devices -->
+        <permission name="android.permission.INTERACT_ACROSS_USERS"/>
+        <permission name="android.permission.MANAGE_USERS"/>
+
+        <!-- Usage stats for battery optimization -->
+        <permission name="android.permission.PACKAGE_USAGE_STATS"/>
+    </privapp-permissions>
+</permissions>
