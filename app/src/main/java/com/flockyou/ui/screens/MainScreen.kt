@@ -1217,10 +1217,11 @@ private fun CellularTabContent(
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold
                                 )
+                                val satState = satelliteState
                                 Text(
                                     text = when {
-                                        satelliteState?.isConnected == true -> 
-                                            "Connected: ${satelliteState.connectionType.name.replace("_", " ")}"
+                                        satState?.isConnected == true -> 
+                                            "Connected: ${satState.connectionType.name.replace("_", " ")}"
                                         isScanning -> "Monitoring"
                                         else -> "Not connected"
                                     },
@@ -1245,14 +1246,16 @@ private fun CellularTabContent(
                         }
                     }
                     
-                    if (satelliteState?.isConnected == true && satelliteState.provider != com.flockyou.monitoring.SatelliteMonitor.SatelliteProvider.UNKNOWN) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Provider: ${satelliteState.provider.name} | Network: ${satelliteState.networkName ?: "Unknown"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    satelliteState?.let { satState ->
+                        if (satState.isConnected && satState.provider != com.flockyou.monitoring.SatelliteMonitor.SatelliteProvider.UNKNOWN) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Provider: ${satState.provider.name} | Network: ${satState.networkName ?: "Unknown"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

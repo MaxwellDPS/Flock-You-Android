@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -675,7 +676,7 @@ private fun SatelliteStatusContent(
                     // Connection details when connected
                     if (satelliteState?.isConnected == true) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider()
+                        Divider()
                         Spacer(modifier = Modifier.height(12.dp))
                         
                         Row(
@@ -956,7 +957,7 @@ private fun SatelliteAnomalyListCard(
             
             if (expanded && anomaly.recommendations.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider()
+                Divider()
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "Recommendations:",

@@ -709,7 +709,9 @@ class ScanningService : Service() {
                 )) {
                     val detection = satelliteAnomalyToDetection(anomaly)
                     if (detection != null) {
-                        processDetection(detection)
+                        serviceScope.launch {
+                            handleDetection(detection)
+                        }
                     }
                 }
             }
@@ -734,31 +736,39 @@ class ScanningService : Service() {
             com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> ThreatLevel.LOW
         }
         
-        val detectionType = when (anomaly.type) {
+        val detectionMethod = when (anomaly.type) {
             com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
-            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionType.CELLULAR_ANOMALY
-            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF,
-            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> DetectionType.IMSI_CATCHER
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> DetectionMethod.SAT_FORCED_HANDOFF
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> DetectionMethod.SAT_DOWNGRADE
             com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS,
-            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.NTN_BAND_MISMATCH,
-            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> DetectionType.SIGNAL_JAMMER
-            else -> DetectionType.CELLULAR_ANOMALY
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.NTN_BAND_MISMATCH -> DetectionMethod.SAT_SUSPICIOUS_NTN
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY,
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.EPHEMERIS_MISMATCH -> DetectionMethod.SAT_TIMING_ANOMALY
+            else -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
         }
         
         return Detection(
             id = UUID.randomUUID().toString(),
-            name = "🛰️ ${anomaly.type.name.replace("_", " ")}",
-            type = detectionType,
-            threatLevel = threatLevel,
-            deviceIdentifier = "satellite-${anomaly.type.name.lowercase()}",
+            timestamp = anomaly.timestamp,
+            protocol = DetectionProtocol.CELLULAR,
+            detectionMethod = detectionMethod,
+            deviceType = DeviceType.STINGRAY_IMSI,
+            deviceName = "🛰️ ${anomaly.type.name.replace("_", " ")}",
+            rssi = -100, // Unknown for satellite
             signalStrength = SignalStrength.UNKNOWN,
             latitude = currentLocation?.latitude,
             longitude = currentLocation?.longitude,
-            firstSeen = anomaly.timestamp,
-            lastSeen = anomaly.timestamp,
+            threatLevel = threatLevel,
+            threatScore = when (anomaly.severity) {
+                com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> 100
+                com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> 80
+                com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> 50
+                com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> 30
+                com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> 10
+            },
             manufacturer = "Satellite Network",
-            matchReason = anomaly.description,
-            additionalInfo = anomaly.recommendations.joinToString("\n")
+            matchedPatterns = anomaly.description
         )
     }
     

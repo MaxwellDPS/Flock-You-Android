@@ -65,7 +65,13 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     CELL_TOWER_CHANGE("Unexpected Cell Change", "Cell tower changed without user movement"),
     CELL_RAPID_SWITCHING("Rapid Cell Switching", "Phone switching towers abnormally fast"),
     CELL_SIGNAL_ANOMALY("Signal Anomaly", "Sudden unexplained signal strength change"),
-    CELL_LAC_TAC_ANOMALY("Location Area Anomaly", "LAC/TAC changed unexpectedly")
+    CELL_LAC_TAC_ANOMALY("Location Area Anomaly", "LAC/TAC changed unexpectedly"),
+    // Satellite anomaly detection methods
+    SAT_UNEXPECTED_CONNECTION("Unexpected Satellite", "Satellite connection when terrestrial available"),
+    SAT_FORCED_HANDOFF("Forced Satellite Handoff", "Rapid or suspicious handoff to satellite"),
+    SAT_SUSPICIOUS_NTN("Suspicious NTN", "Unusual NTN parameters suggesting spoofing"),
+    SAT_TIMING_ANOMALY("Satellite Timing Anomaly", "NTN timing doesn't match claimed orbit"),
+    SAT_DOWNGRADE("Downgrade to Satellite", "Forced from better tech to satellite")
 }
 
 enum class DeviceType(val displayName: String, val emoji: String) {
