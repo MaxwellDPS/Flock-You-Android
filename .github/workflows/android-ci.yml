@@ -106,14 +106,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/*/debug/*.apk
           retention-days: 14
 
       - name: 🔏 Attest Debug APK
         id: attest-debug
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: app/build/outputs/apk/debug/*.apk
+          subject-path: app/build/outputs/apk/*/debug/*.apk
 
       - name: 📋 Build Summary
         run: |
@@ -392,7 +392,7 @@ jobs:
             -Pandroid.injected.signing.key.password=ephemeral \
             --stacktrace
       
-      - name: 📝 Rename APK with version
+      - name: 📝 Rename APKs with version
         run: |
           VERSION="${{ needs.build.outputs.version_name }}"
           if [ -z "$VERSION" ]; then
@@ -401,26 +401,31 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION="1.0.0"
           fi
-          
-          # Find and rename the APK
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          if [ -n "$APK_PATH" ]; then
-            mv "$APK_PATH" "app/build/outputs/apk/release/FlockYou-v${VERSION}.apk"
-            echo "📦 Renamed APK to FlockYou-v${VERSION}.apk"
-          fi
-      
+
+          # Create a staging directory for renamed APKs
+          mkdir -p app/build/outputs/apk/release-renamed
+
+          # Find and rename all release APKs (from different flavors)
+          for APK_PATH in $(find app/build/outputs/apk -path "*/release/*.apk" -type f); do
+            FLAVOR=$(echo "$APK_PATH" | sed -n 's|.*/apk/\([^/]*\)/release/.*|\1|p')
+            if [ -n "$FLAVOR" ]; then
+              cp "$APK_PATH" "app/build/outputs/apk/release-renamed/FlockYou-${FLAVOR}-v${VERSION}.apk"
+              echo "📦 Renamed ${FLAVOR} APK to FlockYou-${FLAVOR}-v${VERSION}.apk"
+            fi
+          done
+
       - name: 📤 Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release-renamed/*.apk
           retention-days: 90
 
       - name: 🔏 Attest Release APK
         id: attest-release
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: app/build/outputs/apk/release/*.apk
+          subject-path: app/build/outputs/apk/release-renamed/*.apk
 
       - name: 📋 Release Build Summary
         env:
@@ -487,8 +492,8 @@ jobs:
 
           echo "### 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ls -lh app/build/outputs/apk/release/*.apk 2>/dev/null || echo "No APK found"
-          ls -lh app/build/outputs/apk/release/*.apk >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No APK found" >> $GITHUB_STEP_SUMMARY
+          ls -lh app/build/outputs/apk/release-renamed/*.apk 2>/dev/null || echo "No APK found"
+          ls -lh app/build/outputs/apk/release-renamed/*.apk >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No APK found" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -509,12 +514,13 @@ jobs:
           echo "gh attestation verify FlockYou-v${VERSION}.apk --owner ${{ github.repository_owner }} --format json | jq" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-      - name: 🧹 Cleanup keystores
+      - name: 🧹 Cleanup sensitive files
         if: always()
         run: |
           rm -f app/release-keystore.jks
           rm -f app/ephemeral-keystore.p12
           rm -f app/ca-signed-keystore.p12
+          rm -rf app/build/outputs/apk/release-renamed
 
   # ===========================================
   # Create GitHub Release
