@@ -176,13 +176,17 @@ fun SatelliteConnectionCard(
                     ) {
                         Icon(
                             imageVector = when {
-                                state.signalStrength >= 3 -> Icons.Default.SignalCellular4Bar
-                                state.signalStrength >= 2 -> Icons.Default.SignalCellular3Bar
-                                state.signalStrength >= 1 -> Icons.Default.SignalCellular2Bar
-                                else -> Icons.Default.SignalCellular1Bar
+                                state.signalStrength >= 3 -> Icons.Default.NetworkCell
+                                state.signalStrength >= 2 -> Icons.Default.SignalCellularAlt
+                                state.signalStrength >= 1 -> Icons.Default.SignalCellularAlt
+                                else -> Icons.Default.SignalCellularAlt
                             },
                             contentDescription = "Signal",
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = when {
+                                state.signalStrength >= 3 -> MaterialTheme.colorScheme.primary
+                                state.signalStrength >= 2 -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.error
+                            }
                         )
                         Text(
                             text = "Level ${state.signalStrength}",
@@ -399,6 +403,7 @@ fun AnomaliesHeader(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SatelliteAnomalyCard(anomaly: SatelliteAnomaly) {
     val severityColor = when (anomaly.severity) {
@@ -622,6 +627,7 @@ fun SatelliteInfoCard() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetectionRulesCard() {
     var expanded by remember { mutableStateOf(false) }

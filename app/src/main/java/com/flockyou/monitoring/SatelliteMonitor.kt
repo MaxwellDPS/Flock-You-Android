@@ -573,13 +573,13 @@ class SatelliteMonitor(private val context: Context) {
      * Check for rapid switching anomaly
      */
     private suspend fun checkRapidSwitchingPattern() {
-        synchronized(connectionHistory) {
+        val anomalyToEmit: SatelliteAnomaly? = synchronized(connectionHistory) {
             val recentEvents = connectionHistory
                 .filter { System.currentTimeMillis() - it.timestamp < 60000 } // Last minute
             
             if (recentEvents.size >= 3) {
                 // Multiple satellite connections in short time
-                _anomalies.emit(SatelliteAnomaly(
+                SatelliteAnomaly(
                     type = SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING,
                     severity = AnomalySeverity.MEDIUM,
                     description = "Detected ${recentEvents.size} satellite connection changes in the last minute",
@@ -592,9 +592,10 @@ class SatelliteMonitor(private val context: Context) {
                         "May be caused by moving through coverage boundary",
                         "Consider staying in one location to observe pattern"
                     )
-                ))
-            }
+                )
+            } else null
         }
+        anomalyToEmit?.let { _anomalies.emit(it) }
     }
     
     /**

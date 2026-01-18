@@ -82,7 +82,7 @@ object SatelliteDetectionHeuristics {
             const val BEAMFORMING = true
             const val TDMA = true
             const val HARQ_PROCESSES = 32              // Increased for NTN
-            const val CHANNEL_BW_OPTIONS = listOf(5, 10, 15, 20, 30) // MHz
+            val CHANNEL_BW_OPTIONS = listOf(5, 10, 15, 20, 30) // MHz
         }
         
         // Compatible devices (T-Mobile official list as of late 2025)
