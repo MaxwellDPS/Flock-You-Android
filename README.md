@@ -1,197 +1,221 @@
 # Flock You - Android
 
 <p align="center">
-  <img src="app/src/main/res/drawable/ic_launcher_foreground.xml" width="128" height="128" alt="Flock You Logo">
+  <img src="https://img.shields.io/badge/Platform-Android-green?style=flat-square&logo=android" alt="Platform">
+  <img src="https://img.shields.io/badge/Min%20SDK-26%20(Android%208.0)-blue?style=flat-square" alt="Min SDK">
+  <img src="https://img.shields.io/badge/Target%20SDK-34%20(Android%2014)-blue?style=flat-square" alt="Target SDK">
+  <img src="https://img.shields.io/badge/License-Educational-orange?style=flat-square" alt="License">
 </p>
 
-**Professional surveillance camera detection for Android**
+**Professional surveillance device detection for Android** 📡
 
-An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-you) ESP32 project, enabling mobile detection of Flock Safety surveillance cameras, Raven gunshot detectors, and similar surveillance devices.
+An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-you) ESP32 project, enabling mobile detection of Flock Safety surveillance cameras, Raven gunshot detectors, and similar surveillance devices using WiFi and Bluetooth LE scanning.
 
-## Features
+## 🎯 What It Detects
+
+| Device Type | Detection Methods | Threat Level |
+|-------------|-------------------|--------------|
+| **Flock Safety ALPR** | SSID, BLE Name, MAC OUI | 🔴 HIGH |
+| **Flock Falcon/Sparrow/Condor** | SSID patterns | 🔴 HIGH |
+| **Raven Gunshot Detector** | BLE Service UUIDs | 🔴 CRITICAL |
+| **ShotSpotter/SoundThinking** | BLE Name | 🔴 CRITICAL |
+| **Vigilant (Motorola)** | SSID pattern | 🔴 HIGH |
+| **Penguin Surveillance** | SSID, BLE Name | 🟠 MEDIUM |
+| **Pigvision System** | SSID, BLE Name | 🟠 MEDIUM |
+| **LTE Modems (Quectel, Telit, Sierra)** | MAC OUI | 🟡 LOW |
+
+## ✨ Features
 
 ### Multi-Method Detection
-- **WiFi Scanning**: Detects surveillance devices by SSID patterns and MAC address prefixes
-- **Bluetooth LE Scanning**: Monitors BLE advertisements for surveillance device signatures
-- **Raven Service UUID Detection**: Specialized detection for SoundThinking/ShotSpotter Raven acoustic surveillance devices using BLE service UUID fingerprinting
+- **WiFi Scanning**: SSID pattern matching and MAC address OUI lookup
+- **Bluetooth LE Scanning**: Device name patterns and service UUID fingerprinting
+- **Raven Detection**: Specialized BLE service UUID detection with firmware version estimation
 
-### Device Detection
-- Flock Safety ALPR Cameras
-- Penguin Surveillance Devices
-- Pigvision Systems
-- Raven Gunshot Detectors (with firmware version estimation)
-- Generic ALPR Systems
+### Rich Device Information
+When a device is detected, you'll see:
+- **What it is**: Device type, manufacturer, model
+- **What it does**: Capabilities (ALPR, audio surveillance, vehicle fingerprinting)
+- **Why it matters**: Privacy concerns (data retention, cross-jurisdiction sharing)
+- **How close**: Estimated distance based on signal strength
+- **Technical details**: MAC address, SSID, firmware version
 
 ### User Interface
-- Real-time scanning status with animated radar display
-- Detection history with filtering by threat level and device type
-- Interactive map showing detection locations
-- Detailed device information sheets
-- Vibration alerts for new detections
-- Threat level badges (Critical, High, Medium, Low, Info)
-- Signal strength indicators
+- 🎯 Animated radar scanning display
+- 📊 Detection history with filtering
+- 🗺️ Map view with detection locations
+- 📱 Material 3 dark tactical theme
+- 📳 Vibration alerts for new detections
+- 🏷️ Threat level badges (Critical/High/Medium/Low/Info)
+- 📶 Signal strength indicators with distance estimation
 
-### Technical Features
-- Foreground service for continuous background scanning
-- Room database for persistent detection storage
-- Location tracking for geotagging detections
-- Material 3 design with dark tactical theme
-- Jetpack Compose UI
-- Hilt dependency injection
+## 📸 Detection Examples
 
-## Screenshots
+**Flock Safety ALPR Camera:**
+```
+📸 Flock Safety ALPR
+━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 HIGH Threat (95/100)
 
-[Screenshots would go here]
+Capabilities:
+• License plate capture (up to 100 mph)
+• Vehicle make/model/color identification
+• Vehicle 'fingerprinting' (dents, stickers)
+• Real-time NCIC hotlist alerts
+• Cross-jurisdiction data sharing
 
-## Installation
+⚠️ Privacy Concerns:
+• Mass surveillance of vehicle movements
+• 30-day data retention
+• Shared across law enforcement network
+• Can be integrated with Palantir
+```
 
-### Prerequisites
-- Android Studio Hedgehog or newer
-- Android SDK 34
-- Kotlin 1.9+
-- A Google Maps API key (for map features)
+**Raven Gunshot Detector:**
+```
+🦅 Raven Gunshot Detector
+━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 CRITICAL Threat (100/100)
+Firmware: 1.3.x (Latest)
 
-### Setup
+Capabilities:
+• Continuous audio monitoring
+• Gunshot detection and location
+• Human distress/scream detection
+• GPS location tracking
+• AI-powered audio analysis
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/flock-you-android.git
-   cd flock-you-android
-   ```
+⚠️ Privacy Concerns:
+• Constant audio surveillance
+• 'Human distress' detection is vague
+• Audio recordings may capture conversations
+```
 
-2. **Add your Google Maps API key**
-   
-   Open `app/src/main/AndroidManifest.xml` and replace `YOUR_GOOGLE_MAPS_API_KEY` with your actual API key:
-   ```xml
-   <meta-data
-       android:name="com.google.android.geo.API_KEY"
-       android:value="YOUR_ACTUAL_API_KEY" />
-   ```
+## 🔍 Detection Patterns
 
-3. **Build and run**
-   ```bash
-   ./gradlew assembleDebug
-   ```
-   
-   Or open the project in Android Studio and click Run.
+### SSID Patterns
+| Pattern | Device | Score |
+|---------|--------|-------|
+| `flock*`, `fs_*` | Flock Safety Camera | 95 |
+| `falcon*`, `sparrow*`, `condor*` | Flock Camera Models | 90 |
+| `raven*`, `shotspotter*` | Gunshot Detector | 100 |
+| `vigilant*` | Vigilant (Motorola) ALPR | 85 |
+| `penguin*` | Penguin Surveillance | 85 |
+| `pigvision*` | Pigvision System | 85 |
+| `alpr*`, `lpr*cam*` | Generic ALPR | 75-80 |
 
-## Permissions
+### MAC Address OUI Prefixes
+Flock cameras use cellular LTE modems for connectivity:
 
-The app requires the following permissions:
+| OUI Prefix | Manufacturer | Notes |
+|------------|--------------|-------|
+| `50:29:4D` | Quectel | Common in Flock cameras |
+| `86:25:19` | Quectel | Cellular module |
+| `00:14:2D` | Telit | IoT/surveillance modems |
+| `D8:C7:71` | Telit Wireless | |
+| `00:14:3E` | Sierra Wireless | M2M applications |
+| `00:A0:D5` | Sierra Wireless | |
+| `D4:CA:6E` | u-blox | GPS/cellular modules |
+| `00:10:8B` | Cradlepoint | Mobile surveillance routers |
+
+### Raven BLE Service UUIDs
+Based on [GainSec research](https://github.com/GainSec):
+
+| UUID | Service | Data Exposed |
+|------|---------|--------------|
+| `0000180a-...` | Device Information | Serial, model, firmware |
+| `00003100-...` | GPS Location | Lat/lon/altitude |
+| `00003200-...` | Power Management | Battery, solar status |
+| `00003300-...` | Network Status | LTE signal, carrier |
+| `00003400-...` | Upload Statistics | Bytes sent, detection count |
+| `00003500-...` | Error/Diagnostics | System health, errors |
+| `00001809-...` | Health (Legacy 1.1.x) | Temperature data |
+| `00001819-...` | Location (Legacy 1.1.x) | Basic location |
+
+**Firmware Detection:**
+- **1.3.x**: Has Upload Statistics + Error services
+- **1.2.x**: Has GPS + Power + Network services
+- **1.1.x**: Uses legacy Health/Location services
+
+## 📱 Installation
+
+### From Release APK
+1. Download the latest APK from [Releases](https://github.com/MaxwellDPS/Flock-You-Android/releases)
+2. Enable "Install from unknown sources" in Android settings
+3. Install the APK
+
+### Build from Source
+```bash
+git clone https://github.com/MaxwellDPS/Flock-You-Android.git
+cd Flock-You-Android
+./gradlew assembleDebug
+# APK: app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Google Maps API Key (Optional)
+For map features, add your API key to `AndroidManifest.xml`:
+```xml
+<meta-data
+    android:name="com.google.android.geo.API_KEY"
+    android:value="YOUR_API_KEY" />
+```
+
+## 📋 Permissions
 
 | Permission | Purpose |
 |------------|---------|
-| `ACCESS_FINE_LOCATION` | Required for WiFi and BLE scanning |
-| `ACCESS_COARSE_LOCATION` | Location context for detections |
+| `ACCESS_FINE_LOCATION` | WiFi/BLE scanning requires location |
 | `BLUETOOTH_SCAN` | Scan for BLE surveillance devices |
-| `BLUETOOTH_CONNECT` | Connect to BLE devices for details |
+| `BLUETOOTH_CONNECT` | Read BLE device details |
 | `ACCESS_WIFI_STATE` | Scan WiFi networks |
-| `POST_NOTIFICATIONS` | Alert when devices are detected |
-| `VIBRATE` | Haptic feedback for alerts |
+| `POST_NOTIFICATIONS` | Detection alerts |
+| `VIBRATE` | Haptic feedback |
 | `FOREGROUND_SERVICE` | Background scanning |
 
-## Detection Patterns
-
-### SSID Patterns
-- `flock*` - Flock Safety cameras
-- `fs_*` - Flock Safety variants  
-- `penguin*` - Penguin surveillance devices
-- `pigvision*` - Pigvision systems
-- `alpr*` - Generic ALPR systems
-
-### Raven Service UUIDs
-Based on [GainSec research](https://github.com/GainSec):
-
-| UUID | Service |
-|------|---------|
-| `0000180a-...` | Device Information (Serial, Model, Firmware) |
-| `00003100-...` | GPS Location |
-| `00003200-...` | Power Management (Battery/Solar) |
-| `00003300-...` | Network Status (LTE/WiFi) |
-| `00003400-...` | Upload Statistics |
-| `00003500-...` | Error/Failure Diagnostics |
-| `00001809-...` | Health Service (Legacy 1.1.x) |
-| `00001819-...` | Location Service (Legacy 1.1.x) |
-
-### Firmware Version Detection
-The app automatically estimates Raven firmware versions:
-- **1.3.x (Latest)**: Full suite of diagnostic services
-- **1.2.x**: GPS, Power, and Network services
-- **1.1.x (Legacy)**: Health Thermometer and Location services
-
-## Architecture
+## 🏗️ Architecture
 
 ```
 com.flockyou/
 ├── data/
 │   ├── model/
-│   │   ├── Detection.kt        # Detection data models
-│   │   └── DetectionPatterns.kt # Known device signatures
+│   │   ├── Detection.kt           # Detection data class
+│   │   └── DetectionPatterns.kt   # Device signatures database
 │   └── repository/
-│       ├── Database.kt         # Room database & DAO
+│       ├── Database.kt            # Room database
 │       └── DetectionRepository.kt
-├── di/
-│   └── AppModule.kt            # Hilt DI module
 ├── service/
-│   └── ScanningService.kt      # Foreground scanning service
+│   └── ScanningService.kt         # Foreground scanning service
 ├── ui/
-│   ├── components/
-│   │   └── Components.kt       # Reusable UI components
+│   ├── components/Components.kt   # Reusable UI components
 │   ├── screens/
-│   │   ├── MainScreen.kt       # Main detection list
-│   │   ├── MainViewModel.kt
-│   │   ├── MapScreen.kt        # Detection map
-│   │   └── MapViewModel.kt
-│   └── theme/
-│       ├── Theme.kt            # Material 3 theme
-│       └── Type.kt             # Typography
-├── FlockYouApplication.kt
-└── MainActivity.kt
+│   │   ├── MainScreen.kt          # Detection list + details
+│   │   └── MapScreen.kt           # Detection map
+│   └── theme/Theme.kt             # Dark tactical theme
+└── di/AppModule.kt                # Hilt dependency injection
 ```
 
-## Building
+## ⚠️ Limitations
 
-### Debug Build
-```bash
-./gradlew assembleDebug
-```
+- **WiFi Throttling**: Android limits scans to 4 per 2-minute period
+- **Background**: Battery optimization may affect scan frequency
+- **Range**: BLE detection ~50-100m depending on environment
+- **False Positives**: MAC OUI detection may flag non-surveillance LTE devices
 
-### Release Build
-```bash
-./gradlew assembleRelease
-```
+## 🙏 Credits
 
-The APK will be located at `app/build/outputs/apk/`
-
-## Known Limitations
-
-- **WiFi Scanning**: Android limits WiFi scan frequency to 4 scans per 2-minute period
-- **Background Scanning**: Battery optimizations may affect scan frequency
-- **BLE Range**: Detection range is approximately 50-100 meters depending on environment
-- **Map API Key**: Google Maps features require a valid API key
-
-## Credits
-
-This project is based on the original [Flock You](https://github.com/colonelpanichacks/flock-you) ESP32 project by [Colonel Panic](https://colonelpanic.tech).
-
-Detection patterns are derived from:
+- Original [Flock You](https://github.com/colonelpanichacks/flock-you) by [Colonel Panic](https://colonelpanic.tech)
 - [DeFlock](https://deflock.me) - Crowdsourced ALPR location database
 - [GainSec](https://github.com/GainSec) - Raven BLE service UUID research
 
-## Legal Notice
+## ⚖️ Legal Notice
 
-This application is provided for educational and research purposes only. Please ensure compliance with all applicable laws and regulations in your jurisdiction before using this software.
+**For educational and research purposes only.**
 
-**Do not use this software to:**
-- Interfere with or disable surveillance equipment
-- Engage in any illegal activities
-- Violate others' privacy rights
+This software is designed to detect the presence of surveillance equipment using publicly broadcast wireless signals. It does not interfere with, disable, or modify any surveillance equipment.
 
-## License
-
-This project is provided as-is for educational and research purposes.
+Users are responsible for ensuring compliance with all applicable laws in their jurisdiction.
 
 ---
 
-**Flock You Android: Watch the Watchers** 📡
-
+<p align="center">
+  <b>Flock You Android: Watch the Watchers</b> 📡🔍
+</p>
