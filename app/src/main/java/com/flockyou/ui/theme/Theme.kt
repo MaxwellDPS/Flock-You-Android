@@ -55,6 +55,19 @@ val SignalMedium = Color(0xFFFFEB3B)
 val SignalWeak = Color(0xFFFF9800)
 val SignalVeryWeak = Color(0xFFFF5722)
 
+// Status colors for subsystems and indicators
+val StatusActive = Color(0xFF4CAF50)
+val StatusError = Color(0xFFF44336)
+val StatusWarning = Color(0xFFFF9800)
+val StatusDisabled = Color(0xFFFFC107)
+val StatusInactive = Color(0xFF9E9E9E)
+
+// Network generation colors
+val Network5G = Color(0xFF2196F3)
+val Network4G = Color(0xFF4CAF50)
+val Network3G = Color(0xFFFFC107)
+val Network2G = Color(0xFFF44336)
+
 private val DarkColorScheme = darkColorScheme(
     primary = md_theme_dark_primary,
     onPrimary = md_theme_dark_onPrimary,

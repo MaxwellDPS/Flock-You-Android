@@ -11,6 +11,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.flockyou.data.OuiSettings
 import com.flockyou.data.OuiUpdateInterval
+import com.flockyou.ui.components.SectionHeader
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -29,7 +30,7 @@ fun OuiDatabaseSection(
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // Section Header
-        SettingsSectionHeader(title = "OUI Database")
+        SectionHeader(title = "OUI Database")
 
         // Status Card
         Card(

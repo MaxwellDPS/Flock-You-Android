@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +32,7 @@ import com.flockyou.data.OuiSettings
 import com.flockyou.network.OrbotHelper
 import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
+import com.flockyou.ui.components.SectionHeader
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -109,7 +111,7 @@ fun SettingsScreen(
         ) {
             // Battery Optimization Section
             item {
-                SettingsSectionHeader(title = "Battery & Background")
+                SectionHeader(title = "Battery & Background")
             }
             
             item {
@@ -311,7 +313,7 @@ fun SettingsScreen(
             // Scan Configuration Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "Scan Configuration")
+                SectionHeader(title = "Scan Configuration")
             }
             
             item {
@@ -524,7 +526,7 @@ fun SettingsScreen(
             // Scan Statistics Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "Scan Statistics")
+                SectionHeader(title = "Scan Statistics")
             }
             
             item {
@@ -564,7 +566,7 @@ fun SettingsScreen(
             // Advanced Logs Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "Advanced")
+                SectionHeader(title = "Advanced")
             }
 
             // Advanced Mode toggle
@@ -690,7 +692,7 @@ fun SettingsScreen(
             // Security & Privacy Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "Security & Privacy")
+                SectionHeader(title = "Security & Privacy")
             }
 
             item {
@@ -727,7 +729,7 @@ fun SettingsScreen(
             // About Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionHeader(title = "About")
+                SectionHeader(title = "About")
             }
             
             item {
@@ -776,17 +778,7 @@ private fun updateScanSettings(
     )
 }
 
-@Composable
-fun SettingsSectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(vertical = 8.dp)
-    )
-}
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsItem(
     icon: ImageVector,
@@ -796,9 +788,8 @@ fun SettingsItem(
     trailing: @Composable (() -> Unit)? = null
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
     ) {
         Row(
             modifier = Modifier

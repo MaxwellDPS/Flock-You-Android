@@ -24,6 +24,7 @@ import com.flockyou.data.RetentionPeriod
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.EphemeralDetectionRepository
 import com.flockyou.service.ScanningService
+import com.flockyou.ui.components.SectionHeader
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,7 +64,7 @@ fun PrivacySettingsScreen(
         ) {
             // Priority 1: Ephemeral Mode
             item {
-                PrivacySectionHeader(title = "Memory-Only Mode")
+                SectionHeader(title = "Memory-Only Mode")
             }
 
             item {
@@ -151,17 +152,16 @@ fun PrivacySettingsScreen(
             // Priority 2: Quick Wipe
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                PrivacySectionHeader(title = "Quick Wipe")
+                SectionHeader(title = "Quick Wipe")
             }
 
             item {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showQuickWipeDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                    )
+                    ),
+                    onClick = { showQuickWipeDialog = true }
                 ) {
                     Row(
                         modifier = Modifier
@@ -263,7 +263,7 @@ fun PrivacySettingsScreen(
             // Priority 3: Data Retention
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                PrivacySectionHeader(title = "Data Retention")
+                SectionHeader(title = "Data Retention")
             }
 
             item {
@@ -334,7 +334,7 @@ fun PrivacySettingsScreen(
             // Priority 4: Location Storage
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                PrivacySectionHeader(title = "Location Privacy")
+                SectionHeader(title = "Location Privacy")
             }
 
             item {
@@ -390,7 +390,7 @@ fun PrivacySettingsScreen(
             // Priority 5: Screen Lock Auto-Purge
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                PrivacySectionHeader(title = "Screen Lock Protection")
+                SectionHeader(title = "Screen Lock Protection")
             }
 
             item {
@@ -471,7 +471,7 @@ fun PrivacySettingsScreen(
             // Ultrasonic Detection Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                PrivacySectionHeader(title = "Ultrasonic Detection")
+                SectionHeader(title = "Ultrasonic Detection")
             }
 
             item {
@@ -846,13 +846,3 @@ fun PrivacySettingsScreen(
     }
 }
 
-@Composable
-fun PrivacySectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(vertical = 8.dp)
-    )
-}

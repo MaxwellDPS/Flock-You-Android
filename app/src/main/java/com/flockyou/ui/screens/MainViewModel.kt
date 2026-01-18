@@ -35,6 +35,7 @@ import javax.inject.Inject
 
 data class MainUiState(
     val isScanning: Boolean = false,
+    val isLoading: Boolean = true,
     val detections: List<Detection> = emptyList(),
     val totalCount: Int = 0,
     val highThreatCount: Int = 0,
@@ -164,7 +165,7 @@ class MainViewModel @Inject constructor(
         // Observe all detections
         viewModelScope.launch {
             repository.allDetections.collect { detections ->
-                _uiState.update { it.copy(detections = detections) }
+                _uiState.update { it.copy(detections = detections, isLoading = false) }
             }
         }
 

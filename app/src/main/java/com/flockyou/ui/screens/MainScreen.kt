@@ -2,6 +2,9 @@ package com.flockyou.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -25,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import com.flockyou.ui.components.*
+import com.flockyou.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,7 +122,13 @@ fun MainScreen(
                     onClick = { viewModel.selectTab(1) }
                 )
                 NavigationBarItem(
-                    icon = { 
+                    icon = { Icon(Icons.Default.History, contentDescription = "History") },
+                    label = { Text("History") },
+                    selected = uiState.selectedTab == 2,
+                    onClick = { viewModel.selectTab(2) }
+                )
+                NavigationBarItem(
+                    icon = {
                         BadgedBox(
                             badge = {
                                 if (uiState.cellularAnomalies.isNotEmpty()) {
@@ -132,12 +142,6 @@ fun MainScreen(
                     label = { Text("Cellular") },
                     selected = uiState.selectedTab == 3,
                     onClick = { viewModel.selectTab(3) }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.History, contentDescription = "History") },
-                    label = { Text("History") },
-                    selected = uiState.selectedTab == 2,
-                    onClick = { viewModel.selectTab(2) }
                 )
             }
         }
@@ -271,20 +275,43 @@ fun MainScreen(
                         )
                     }
                     
-                    if (detections.isEmpty()) {
-                        item(key = "empty_state") {
-                            EmptyState(isScanning = uiState.isScanning)
+                    when {
+                        uiState.isLoading -> {
+                            item(key = "loading_state") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator()
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = "Loading detections...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        items(
-                            items = detections,
-                            key = { it.id }
-                        ) { detection ->
-                            DetectionCard(
-                                detection = detection,
-                                onClick = { selectedDetection = detection },
-                                advancedMode = uiState.advancedMode
-                            )
+                        detections.isEmpty() -> {
+                            item(key = "empty_state") {
+                                EmptyState(isScanning = uiState.isScanning)
+                            }
+                        }
+                        else -> {
+                            items(
+                                items = detections,
+                                key = { it.id }
+                            ) { detection ->
+                                DetectionCard(
+                                    detection = detection,
+                                    onClick = { selectedDetection = detection },
+                                    advancedMode = uiState.advancedMode
+                                )
+                            }
                         }
                     }
                 } // end LazyColumn
@@ -409,6 +436,7 @@ fun FilterBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
+                .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
         ) {
             Text(
                 text = "Filter Detections",
@@ -526,7 +554,10 @@ fun DetectionDetailSheet(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(
+                bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
+            )
         ) {
             // Header
             item {
@@ -1268,9 +1299,9 @@ private fun CellularTabContent(
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = when (cellularStatus) {
-                            is ScanningService.SubsystemStatus.Active -> Color(0xFF4CAF50)
-                            is ScanningService.SubsystemStatus.PermissionDenied -> Color(0xFFF44336)
-                            else -> Color(0xFF9E9E9E)
+                            is ScanningService.SubsystemStatus.Active -> StatusActive
+                            is ScanningService.SubsystemStatus.PermissionDenied -> StatusError
+                            else -> StatusInactive
                         }
                     ) {
                         Text(
@@ -1316,11 +1347,11 @@ private fun CellularTabContent(
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = when (cellStatus.networkGeneration) {
-                                    "5G" -> Color(0xFF2196F3)
-                                    "4G" -> Color(0xFF4CAF50)
-                                    "3G" -> Color(0xFFFFC107)
-                                    "2G" -> Color(0xFFF44336)
-                                    else -> Color(0xFF9E9E9E)
+                                    "5G" -> Network5G
+                                    "4G" -> Network4G
+                                    "3G" -> Network3G
+                                    "2G" -> Network2G
+                                    else -> StatusInactive
                                 }
                             ) {
                                 Text(
@@ -1484,13 +1515,13 @@ private fun CellularTabContent(
                         if (satelliteState?.isConnected == true) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                                color = StatusActive.copy(alpha = 0.2f)
                             ) {
                                 Text(
                                     text = "CONNECTED",
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF4CAF50),
+                                    color = StatusActive,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -1576,10 +1607,10 @@ private fun CellularAnomalyCard(
     dateFormat: SimpleDateFormat
 ) {
     val severityColor = when (anomaly.severity) {
-        ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
-        ThreatLevel.HIGH -> Color(0xFFF57C00)
-        ThreatLevel.MEDIUM -> Color(0xFFFBC02D)
-        else -> Color(0xFF9E9E9E)
+        ThreatLevel.CRITICAL -> ThreatCritical
+        ThreatLevel.HIGH -> ThreatHigh
+        ThreatLevel.MEDIUM -> ThreatMedium
+        else -> StatusInactive
     }
     
     Card(
@@ -1669,11 +1700,11 @@ private fun CellTowerHistoryCard(
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = when (tower.networkGeneration) {
-                            "5G" -> Color(0xFF2196F3)
-                            "4G" -> Color(0xFF4CAF50)
-                            "3G" -> Color(0xFFFFC107)
-                            "2G" -> Color(0xFFF44336)
-                            else -> Color(0xFF9E9E9E)
+                            "5G" -> Network5G
+                            "4G" -> Network4G
+                            "3G" -> Network3G
+                            "2G" -> Network2G
+                            else -> StatusInactive
                         }
                     ) {
                         Text(
@@ -1775,11 +1806,11 @@ private fun SatelliteAnomalyHistoryCard(
     dateFormat: SimpleDateFormat
 ) {
     val severityColor = when (anomaly.severity) {
-        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> Color(0xFFD32F2F)
-        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> Color(0xFFF44336)
-        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> Color(0xFFFF9800)
-        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> Color(0xFFFFC107)
-        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> Color(0xFF2196F3)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> ThreatCritical
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> ThreatHigh
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> ThreatMedium
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> ThreatLow
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> ThreatInfo
     }
     
     Card(

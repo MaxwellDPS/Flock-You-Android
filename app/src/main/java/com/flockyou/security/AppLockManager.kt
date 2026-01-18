@@ -630,16 +630,6 @@ class AppLockManager @Inject constructor(
     }
 
     /**
-     * Get current lockout status for UI display.
-     * Returns remaining lockout time in milliseconds, or 0 if not locked out.
-     */
-    fun getRemainingLockoutTime(): Long {
-        val lockoutUntil = encryptedPrefs.getLong(KEY_LOCKOUT_UNTIL, 0L)
-        val remaining = lockoutUntil - System.currentTimeMillis()
-        return if (remaining > 0) remaining else 0L
-    }
-
-    /**
      * Get the number of remaining attempts before lockout.
      */
     fun getRemainingAttempts(): Int {

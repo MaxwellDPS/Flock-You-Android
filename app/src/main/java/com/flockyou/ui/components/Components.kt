@@ -27,6 +27,10 @@ import androidx.compose.ui.unit.dp
 import com.flockyou.data.model.*
 import com.flockyou.service.ScanningService
 import com.flockyou.ui.theme.*
+import com.flockyou.ui.theme.StatusActive
+import com.flockyou.ui.theme.StatusError
+import com.flockyou.ui.theme.StatusWarning
+import com.flockyou.ui.theme.StatusDisabled
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -375,7 +379,7 @@ fun SubsystemIndicator(
 ) {
     val (color, icon, _) = when (status) {
         is ScanningService.SubsystemStatus.Active -> Triple(
-            Color(0xFF4CAF50),
+            StatusActive,
             Icons.Default.CheckCircle,
             "Active"
         )
@@ -385,17 +389,17 @@ fun SubsystemIndicator(
             "Idle"
         )
         is ScanningService.SubsystemStatus.Disabled -> Triple(
-            Color(0xFFFFC107),
+            StatusDisabled,
             Icons.Default.Block,
             "Disabled"
         )
         is ScanningService.SubsystemStatus.Error -> Triple(
-            Color(0xFFF44336),
+            StatusError,
             Icons.Default.Error,
             "Error"
         )
         is ScanningService.SubsystemStatus.PermissionDenied -> Triple(
-            Color(0xFFFF9800),
+            StatusWarning,
             Icons.Default.Lock,
             "No Perm"
         )
@@ -511,6 +515,7 @@ fun StatItem(
 /**
  * Detection list item card
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetectionCard(
     detection: Detection,
@@ -535,12 +540,11 @@ fun DetectionCard(
     }
     
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
-        )
+        ),
+        onClick = onClick
     ) {
         Column(
             modifier = Modifier
@@ -726,7 +730,7 @@ fun DetectionCard(
                     if (detection.isActive) {
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                            color = StatusActive.copy(alpha = 0.2f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -736,14 +740,14 @@ fun DetectionCard(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF4CAF50))
+                                        .background(StatusActive)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "ACTIVE",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF4CAF50)
+                                    color = StatusActive
                                 )
                             }
                         }
@@ -937,3 +941,20 @@ fun EmptyState(
 // Add RadarOutlined icon since it doesn't exist in material icons
 private val Icons.Outlined.RadarOutlined: ImageVector
     get() = Icons.Default.Radar
+
+/**
+ * Shared section header component for settings screens
+ */
+@Composable
+fun SectionHeader(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier.padding(vertical = 8.dp)
+    )
+}

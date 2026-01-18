@@ -98,7 +98,10 @@ fun NukeSettingsScreen(
                             value = settings.usbTriggerDelaySeconds.toFloat(),
                             onValueChange = { scope.launch { nukeSettingsRepository.setUsbTriggerDelaySeconds(it.toInt()) } },
                             valueRange = 0f..60f,
-                            valueLabel = "${settings.usbTriggerDelaySeconds}s"
+                            valueLabel = "${settings.usbTriggerDelaySeconds}s",
+                            steps = 59,
+                            minLabel = "Instant",
+                            maxLabel = "1 minute"
                         )
                     }
                 }
@@ -119,14 +122,20 @@ fun NukeSettingsScreen(
                             value = settings.failedAuthThreshold.toFloat(),
                             onValueChange = { scope.launch { nukeSettingsRepository.setFailedAuthThreshold(it.toInt()) } },
                             valueRange = 3f..50f,
-                            valueLabel = "${settings.failedAuthThreshold} attempts"
+                            valueLabel = "${settings.failedAuthThreshold} attempts",
+                            steps = 46,
+                            minLabel = "3 attempts",
+                            maxLabel = "50 attempts"
                         )
                         SliderSetting(
                             label = "Reset counter after",
                             value = settings.failedAuthResetHours.toFloat(),
                             onValueChange = { scope.launch { nukeSettingsRepository.setFailedAuthResetHours(it.toInt()) } },
                             valueRange = 1f..72f,
-                            valueLabel = "${settings.failedAuthResetHours} hours"
+                            valueLabel = "${settings.failedAuthResetHours} hours",
+                            steps = 70,
+                            minLabel = "1 hour",
+                            maxLabel = "3 days"
                         )
                     }
                 }
@@ -147,7 +156,9 @@ fun NukeSettingsScreen(
                             value = settings.deadManSwitchHours.toFloat(),
                             onValueChange = { scope.launch { nukeSettingsRepository.setDeadManSwitchHours(it.toInt()) } },
                             valueRange = 1f..168f,
-                            valueLabel = formatHours(settings.deadManSwitchHours)
+                            valueLabel = formatHours(settings.deadManSwitchHours),
+                            minLabel = "1 hour",
+                            maxLabel = "7 days"
                         )
                         SwitchSetting(
                             label = "Show warning before wipe",
@@ -160,7 +171,10 @@ fun NukeSettingsScreen(
                                 value = settings.deadManSwitchWarningHours.toFloat(),
                                 onValueChange = { scope.launch { nukeSettingsRepository.setDeadManSwitchWarningHours(it.toInt()) } },
                                 valueRange = 1f..48f,
-                                valueLabel = "${settings.deadManSwitchWarningHours} hours"
+                                valueLabel = "${settings.deadManSwitchWarningHours} hours",
+                                steps = 46,
+                                minLabel = "1 hour",
+                                maxLabel = "2 days"
                             )
                         }
                     }
@@ -182,7 +196,10 @@ fun NukeSettingsScreen(
                             value = settings.networkIsolationHours.toFloat(),
                             onValueChange = { scope.launch { nukeSettingsRepository.setNetworkIsolationHours(it.toInt()) } },
                             valueRange = 1f..48f,
-                            valueLabel = "${settings.networkIsolationHours} hours"
+                            valueLabel = "${settings.networkIsolationHours} hours",
+                            steps = 46,
+                            minLabel = "1 hour",
+                            maxLabel = "2 days"
                         )
                         SwitchSetting(
                             label = "Require both airplane mode AND no network",
@@ -392,7 +409,10 @@ fun NukeSettingsScreen(
                                     value = settings.secureWipePasses.toFloat(),
                                     onValueChange = { scope.launch { nukeSettingsRepository.setSecureWipePasses(it.toInt()) } },
                                     valueRange = 1f..7f,
-                                    valueLabel = "${settings.secureWipePasses} passes"
+                                    valueLabel = "${settings.secureWipePasses} passes",
+                                    steps = 5,
+                                    minLabel = "1 pass",
+                                    maxLabel = "7 passes (DoD)"
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 FlashStorageLimitationNotice()
@@ -608,7 +628,10 @@ private fun SliderSetting(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
-    valueLabel: String
+    valueLabel: String,
+    steps: Int = 0,
+    minLabel: String? = null,
+    maxLabel: String? = null
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Row(
@@ -628,8 +651,26 @@ private fun SliderSetting(
         Slider(
             value = value,
             onValueChange = onValueChange,
-            valueRange = valueRange
+            valueRange = valueRange,
+            steps = steps
         )
+        if (minLabel != null || maxLabel != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = minLabel ?: "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = maxLabel ?: "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

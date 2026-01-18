@@ -278,29 +278,29 @@ private fun NumberPad(
             if (onBiometricClick != null) {
                 IconButton(
                     onClick = onBiometricClick,
-                    modifier = Modifier.size(72.dp)
+                    modifier = Modifier.size(80.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
                         contentDescription = "Biometric",
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(36.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
             } else {
-                Spacer(modifier = Modifier.size(72.dp))
+                Spacer(modifier = Modifier.size(80.dp))
             }
 
             NumberButton("0", onClick = { onNumberClick("0") })
 
             IconButton(
                 onClick = onBackspaceClick,
-                modifier = Modifier.size(72.dp)
+                modifier = Modifier.size(80.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Backspace,
                     contentDescription = "Backspace",
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(32.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -314,12 +314,10 @@ private fun NumberButton(
     onClick: () -> Unit
 ) {
     Surface(
-        modifier = Modifier
-            .size(72.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
+        modifier = Modifier.size(80.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = CircleShape
+        shape = CircleShape,
+        onClick = onClick
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
