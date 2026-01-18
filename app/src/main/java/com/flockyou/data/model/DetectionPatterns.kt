@@ -439,4 +439,77 @@ object DetectionPatterns {
         val capabilities: List<String>,
         val privacyConcerns: List<String>
     )
+    
+    // ==================== OUI Manufacturer Lookup ====================
+    // Common manufacturer OUIs for quick identification
+    private val ouiManufacturers = mapOf(
+        "00:00:0C" to "Cisco",
+        "00:01:42" to "Cisco",
+        "00:0C:29" to "VMware",
+        "00:0D:3A" to "Microsoft",
+        "00:14:22" to "Dell",
+        "00:17:88" to "Philips",
+        "00:1A:11" to "Google",
+        "00:1E:C2" to "Apple",
+        "00:23:32" to "Apple",
+        "00:25:00" to "Apple",
+        "00:26:BB" to "Apple",
+        "00:50:56" to "VMware",
+        "08:00:27" to "Oracle VirtualBox",
+        "14:13:46" to "Xiaomi",
+        "18:65:90" to "Apple",
+        "28:6A:B8" to "Apple",
+        "2C:BE:08" to "Apple",
+        "34:23:BA" to "Xiaomi",
+        "38:F9:D3" to "Apple",
+        "3C:06:30" to "Apple",
+        "40:4E:36" to "HP",
+        "44:D9:E7" to "Ubiquiti",
+        "50:29:4D" to "Quectel",
+        "54:60:09" to "Google",
+        "58:CB:52" to "Google",
+        "5C:CF:7F" to "Espressif",
+        "60:01:94" to "Espressif",
+        "70:B3:D5" to "IEEE Registration",
+        "78:4F:43" to "Apple",
+        "80:6D:97" to "Samsung",
+        "84:D8:1B" to "Apple",
+        "88:E9:FE" to "Apple",
+        "8C:85:90" to "Apple",
+        "94:65:2D" to "OnePlus",
+        "98:D6:F7" to "LG",
+        "9C:8E:99" to "Hewlett Packard",
+        "A4:77:33" to "Google",
+        "A4:C6:39" to "Intel",
+        "AC:37:43" to "HTC",
+        "B0:34:95" to "Apple",
+        "B4:F1:DA" to "LG",
+        "B8:27:EB" to "Raspberry Pi",
+        "BC:83:85" to "Microsoft",
+        "C0:EE:FB" to "OnePlus",
+        "C8:3D:D4" to "CyberTAN",
+        "CC:46:D6" to "Cisco",
+        "D0:03:4B" to "Apple",
+        "D4:61:9D" to "Apple",
+        "D4:CA:6E" to "u-blox",
+        "D8:C7:71" to "Telit",
+        "DC:A6:32" to "Raspberry Pi",
+        "E0:5F:45" to "Apple",
+        "E4:5F:01" to "Raspberry Pi",
+        "EC:85:2F" to "Apple",
+        "F0:18:98" to "Apple",
+        "F4:F5:D8" to "Google",
+        "F8:1A:67" to "TP-Link",
+        "FC:A1:3E" to "Samsung"
+    )
+    
+    /**
+     * Try to identify manufacturer from MAC OUI (first 3 octets)
+     */
+    fun getManufacturerFromOui(oui: String): String? {
+        val normalizedOui = oui.uppercase().replace("-", ":").take(8)
+        return ouiManufacturers[normalizedOui] ?: macPrefixes.find { 
+            normalizedOui.startsWith(it.prefix.uppercase()) 
+        }?.manufacturer
+    }
 }

@@ -23,6 +23,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.flockyou.ui.screens.MainScreen
 import com.flockyou.ui.screens.MapScreen
+import com.flockyou.ui.screens.SettingsScreen
+import com.flockyou.ui.screens.NearbyDevicesScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -94,11 +96,22 @@ fun AppNavigation() {
         composable("main") {
             MainScreen(
                 onNavigateToMap = { navController.navigate("map") },
-                onNavigateToSettings = { navController.navigate("settings") }
+                onNavigateToSettings = { navController.navigate("settings") },
+                onNavigateToNearby = { navController.navigate("nearby") }
             )
         }
         composable("map") {
             MapScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("settings") {
+            SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("nearby") {
+            NearbyDevicesScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

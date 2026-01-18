@@ -42,9 +42,11 @@ class ScanningService : Service() {
         private const val TAG = "ScanningService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "flockyou_scanning"
-        private const val WIFI_SCAN_INTERVAL = 15000L // 15 seconds
+        // Android throttles WiFi scans to 4 per 2 minutes - use 35 second interval
+        private const val WIFI_SCAN_INTERVAL = 35000L // 35 seconds (complies with throttling)
         private const val BLE_SCAN_DURATION = 10000L // 10 seconds
         private const val INACTIVE_TIMEOUT = 60000L // 1 minute
+        private const val SEEN_DEVICE_TIMEOUT = 300000L // 5 minutes
         
         val isScanning = MutableStateFlow(false)
         val lastDetection = MutableStateFlow<Detection?>(null)
@@ -57,12 +59,50 @@ class ScanningService : Service() {
         val locationStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
         val errorLog = MutableStateFlow<List<ScanError>>(emptyList())
         
+        // Seen but unmatched devices
+        val seenBleDevices = MutableStateFlow<List<SeenDevice>>(emptyList())
+        val seenWifiNetworks = MutableStateFlow<List<SeenDevice>>(emptyList())
+        
+        // Scan statistics
+        val scanStats = MutableStateFlow(ScanStatistics())
+        
         private const val MAX_ERROR_LOG_SIZE = 50
+        private const val MAX_SEEN_DEVICES = 100
         
         fun clearErrors() {
             errorLog.value = emptyList()
         }
+        
+        fun clearSeenDevices() {
+            seenBleDevices.value = emptyList()
+            seenWifiNetworks.value = emptyList()
+        }
     }
+    
+    /** Seen device that didn't match surveillance patterns */
+    data class SeenDevice(
+        val id: String, // MAC or BSSID
+        val name: String?,
+        val type: String, // "BLE" or "WiFi"
+        val rssi: Int,
+        val firstSeen: Long = System.currentTimeMillis(),
+        val lastSeen: Long = System.currentTimeMillis(),
+        val seenCount: Int = 1,
+        val manufacturer: String? = null,
+        val serviceUuids: List<String> = emptyList()
+    )
+    
+    /** Scan statistics */
+    data class ScanStatistics(
+        val totalBleScans: Int = 0,
+        val totalWifiScans: Int = 0,
+        val successfulWifiScans: Int = 0,
+        val throttledWifiScans: Int = 0,
+        val bleDevicesSeen: Int = 0,
+        val wifiNetworksSeen: Int = 0,
+        val lastBleSuccessTime: Long? = null,
+        val lastWifiSuccessTime: Long? = null
+    )
     
     /** Overall scanning status */
     sealed class ScanStatus {
@@ -402,12 +442,19 @@ class ScanningService : Service() {
     }
     
     @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private suspend fun processBleScanResult(result: ScanResult) {
         val device = result.device
         val macAddress = device.address ?: return
         val deviceName = device.name
         val rssi = result.rssi
         val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
+        
+        // Update scan stats
+        scanStats.value = scanStats.value.copy(
+            bleDevicesSeen = scanStats.value.bleDevicesSeen + 1,
+            lastBleSuccessTime = System.currentTimeMillis()
+        )
         
         // Check for Raven device (by service UUIDs)
         if (DetectionPatterns.isRavenDevice(serviceUuids)) {
@@ -488,7 +535,52 @@ class ScanningService : Service() {
             )
             
             handleDetection(detection)
+            return
         }
+        
+        // No match - track as seen device
+        trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids)
+    }
+    
+    private fun trackSeenBleDevice(macAddress: String, deviceName: String?, rssi: Int, serviceUuids: List<java.util.UUID>) {
+        val currentList = seenBleDevices.value.toMutableList()
+        val existingIndex = currentList.indexOfFirst { it.id == macAddress }
+        
+        if (existingIndex >= 0) {
+            // Update existing
+            val existing = currentList[existingIndex]
+            currentList[existingIndex] = existing.copy(
+                name = deviceName ?: existing.name,
+                rssi = rssi,
+                lastSeen = System.currentTimeMillis(),
+                seenCount = existing.seenCount + 1
+            )
+        } else {
+            // Add new
+            val manufacturer = try {
+                // Try to identify manufacturer from MAC OUI
+                val oui = macAddress.take(8).uppercase()
+                DetectionPatterns.getManufacturerFromOui(oui)
+            } catch (e: Exception) { null }
+            
+            currentList.add(0, SeenDevice(
+                id = macAddress,
+                name = deviceName,
+                type = "BLE",
+                rssi = rssi,
+                manufacturer = manufacturer,
+                serviceUuids = serviceUuids.map { it.toString() }
+            ))
+            
+            // Limit list size
+            if (currentList.size > MAX_SEEN_DEVICES) {
+                currentList.removeAt(currentList.lastIndex)
+            }
+        }
+        
+        // Remove stale devices
+        val cutoff = System.currentTimeMillis() - SEEN_DEVICE_TIMEOUT
+        seenBleDevices.value = currentList.filter { it.lastSeen > cutoff }
     }
     
     // ==================== WiFi Scanning ====================
@@ -507,6 +599,11 @@ class ScanningService : Service() {
             return
         }
         
+        // Update total scan attempts
+        scanStats.value = scanStats.value.copy(
+            totalWifiScans = scanStats.value.totalWifiScans + 1
+        )
+        
         try {
             @Suppress("DEPRECATION")
             val started = wifiManager.startScan()
@@ -514,8 +611,9 @@ class ScanningService : Service() {
                 wifiStatus.value = SubsystemStatus.Active
                 Log.d(TAG, "WiFi scan started")
             } else {
-                wifiStatus.value = SubsystemStatus.Error(-1, "Scan request rejected")
-                logError("WiFi", -1, "WiFi scan request was rejected by the system", recoverable = true)
+                // Rejection is expected due to Android throttling - don't spam errors
+                Log.d(TAG, "WiFi scan request rejected (throttled)")
+                // Status will be updated by the receiver
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start WiFi scan", e)
@@ -537,9 +635,20 @@ class ScanningService : Service() {
                             processWifiScanResults()
                         }
                     } else {
-                        // Scan failed or was throttled
-                        wifiStatus.value = SubsystemStatus.Error(-2, "Scan throttled")
-                        logError("WiFi", -2, "WiFi scan was throttled by the system", recoverable = true)
+                        // Scan failed or was throttled - update stats but don't spam errors
+                        val stats = scanStats.value
+                        scanStats.value = stats.copy(
+                            throttledWifiScans = stats.throttledWifiScans + 1
+                        )
+                        
+                        // Only log throttle error once per minute to reduce spam
+                        val lastThrottle = lastWifiThrottleLogTime
+                        val now = System.currentTimeMillis()
+                        if (lastThrottle == null || now - lastThrottle > 60000) {
+                            lastWifiThrottleLogTime = now
+                            wifiStatus.value = SubsystemStatus.Error(-2, "Throttled (${stats.throttledWifiScans + 1}x)")
+                            logError("WiFi", -2, "WiFi scan throttled by system (Android limits: 4 scans/2min)", recoverable = true)
+                        }
                     }
                 }
             }
@@ -548,6 +657,8 @@ class ScanningService : Service() {
         val intentFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
         registerReceiver(wifiScanReceiver, intentFilter)
     }
+    
+    private var lastWifiThrottleLogTime: Long? = null
     
     private fun unregisterWifiReceiver() {
         wifiScanReceiver?.let {
@@ -561,22 +672,32 @@ class ScanningService : Service() {
     }
     
     @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private suspend fun processWifiScanResults() {
         if (!hasLocationPermissions()) return
         
         val results = wifiManager.scanResults
         Log.d(TAG, "Processing ${results.size} WiFi scan results")
         
+        // Update scan stats
+        scanStats.value = scanStats.value.copy(
+            wifiNetworksSeen = scanStats.value.wifiNetworksSeen + results.size,
+            successfulWifiScans = scanStats.value.successfulWifiScans + 1,
+            lastWifiSuccessTime = System.currentTimeMillis()
+        )
+        
         for (result in results) {
             val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                result.wifiSsid?.toString()?.removeSurrounding("\"") ?: continue
+                result.wifiSsid?.toString()?.removeSurrounding("\"") ?: ""
             } else {
                 @Suppress("DEPRECATION")
-                result.SSID?.takeIf { it.isNotEmpty() } ?: continue
+                result.SSID ?: ""
             }
             
             val bssid = result.BSSID ?: continue
             val rssi = result.level
+            
+            var matched = false
             
             // Check for SSID pattern match
             val pattern = DetectionPatterns.matchSsidPattern(ssid)
@@ -601,34 +722,77 @@ class ScanningService : Service() {
                 )
                 
                 handleDetection(detection)
-                continue
+                matched = true
             }
             
             // Check for MAC prefix match
-            val macPrefix = DetectionPatterns.matchMacPrefix(bssid)
-            if (macPrefix != null) {
-                val detection = Detection(
-                    protocol = DetectionProtocol.WIFI,
-                    detectionMethod = DetectionMethod.MAC_PREFIX,
-                    deviceType = macPrefix.deviceType,
-                    deviceName = null,
-                    macAddress = bssid,
-                    ssid = ssid,
-                    rssi = rssi,
-                    signalStrength = rssiToSignalStrength(rssi),
-                    latitude = currentLocation?.latitude,
-                    longitude = currentLocation?.longitude,
-                    threatLevel = scoreToThreatLevel(macPrefix.threatScore),
-                    threatScore = macPrefix.threatScore,
-                    manufacturer = macPrefix.manufacturer,
-                    firmwareVersion = null,
-                    serviceUuids = null,
-                    matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
-                )
-                
-                handleDetection(detection)
+            if (!matched) {
+                val macPrefix = DetectionPatterns.matchMacPrefix(bssid)
+                if (macPrefix != null) {
+                    val detection = Detection(
+                        protocol = DetectionProtocol.WIFI,
+                        detectionMethod = DetectionMethod.MAC_PREFIX,
+                        deviceType = macPrefix.deviceType,
+                        deviceName = null,
+                        macAddress = bssid,
+                        ssid = ssid,
+                        rssi = rssi,
+                        signalStrength = rssiToSignalStrength(rssi),
+                        latitude = currentLocation?.latitude,
+                        longitude = currentLocation?.longitude,
+                        threatLevel = scoreToThreatLevel(macPrefix.threatScore),
+                        threatScore = macPrefix.threatScore,
+                        manufacturer = macPrefix.manufacturer,
+                        firmwareVersion = null,
+                        serviceUuids = null,
+                        matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
+                    )
+                    
+                    handleDetection(detection)
+                    matched = true
+                }
+            }
+            
+            // Track unmatched networks
+            if (!matched && ssid.isNotEmpty()) {
+                trackSeenWifiNetwork(bssid, ssid, rssi)
             }
         }
+    }
+    
+    private fun trackSeenWifiNetwork(bssid: String, ssid: String, rssi: Int) {
+        val currentList = seenWifiNetworks.value.toMutableList()
+        val existingIndex = currentList.indexOfFirst { it.id == bssid }
+        
+        if (existingIndex >= 0) {
+            val existing = currentList[existingIndex]
+            currentList[existingIndex] = existing.copy(
+                name = ssid,
+                rssi = rssi,
+                lastSeen = System.currentTimeMillis(),
+                seenCount = existing.seenCount + 1
+            )
+        } else {
+            val manufacturer = try {
+                val oui = bssid.take(8).uppercase()
+                DetectionPatterns.getManufacturerFromOui(oui)
+            } catch (e: Exception) { null }
+            
+            currentList.add(0, SeenDevice(
+                id = bssid,
+                name = ssid,
+                type = "WiFi",
+                rssi = rssi,
+                manufacturer = manufacturer
+            ))
+            
+            if (currentList.size > MAX_SEEN_DEVICES) {
+                currentList.removeAt(currentList.lastIndex)
+            }
+        }
+        
+        val cutoff = System.currentTimeMillis() - SEEN_DEVICE_TIMEOUT
+        seenWifiNetworks.value = currentList.filter { it.lastSeen > cutoff }
     }
     
     // ==================== Detection Handling ====================

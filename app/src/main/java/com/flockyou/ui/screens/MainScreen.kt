@@ -29,7 +29,8 @@ import com.flockyou.ui.components.*
 fun MainScreen(
     viewModel: MainViewModel = hiltViewModel(),
     onNavigateToMap: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToNearby: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -66,16 +67,22 @@ fun MainScreen(
                             )
                         }
                     }
+                    IconButton(onClick = onNavigateToNearby) {
+                        Icon(
+                            imageVector = Icons.Default.Radar,
+                            contentDescription = "Nearby Devices"
+                        )
+                    }
                     IconButton(onClick = onNavigateToMap) {
                         Icon(
                             imageVector = Icons.Default.Map,
                             contentDescription = "Map"
                         )
                     }
-                    IconButton(onClick = { showClearDialog = true }) {
+                    IconButton(onClick = onNavigateToSettings) {
                         Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Clear All"
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings"
                         )
                     }
                 },
