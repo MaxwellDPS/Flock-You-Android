@@ -206,3 +206,23 @@ enum class PatternType {
     BLE_NAME_REGEX,
     BLE_SERVICE_UUID
 }
+
+/**
+ * A custom surveillance pattern that can be imported/exported.
+ * Supports multiple matching criteria per pattern.
+ */
+data class SurveillancePattern(
+    val id: String,
+    val name: String,
+    val description: String,
+    val deviceType: DeviceType,
+    val manufacturer: String? = null,
+    val threatLevel: ThreatLevel = ThreatLevel.HIGH,
+    val ssidPatterns: List<String>? = null,    // Regex patterns for SSID matching
+    val bleNamePatterns: List<String>? = null, // Regex patterns for BLE name matching
+    val macPrefixes: List<String>? = null,     // MAC OUI prefixes (e.g., "AA:BB:CC")
+    val serviceUuids: List<String>? = null,    // BLE service UUIDs
+    val enabled: Boolean = true,
+    val isBuiltIn: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)

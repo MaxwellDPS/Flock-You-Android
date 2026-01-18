@@ -415,7 +415,7 @@ Based on [GainSec research](https://github.com/GainSec):
 ### Scan Settings
 | Setting | Description |
 |---------|-------------|
-| **WiFi Interval** | Time between WiFi scans (15-120s) |
+| **WiFi Interval** | Time between WiFi scans (30-120s) |
 | **BLE Duration** | Bluetooth scan duration (5-30s) |
 | **Cellular Monitoring** | Enable/disable IMSI catcher detection |
 | **Satellite Monitoring** | Enable/disable NTN connection monitoring |
@@ -424,6 +424,40 @@ Based on [GainSec research](https://github.com/GainSec):
 | **Ultrasonic Detection** | Enable/disable audio beacon scanning |
 | **Track Seen Devices** | Remember previously detected devices |
 | **Battery Optimization** | Disable for reliable background scanning |
+| **Auto-start on Boot** | Automatically start scanning when device boots |
+
+### Advanced Mode (Dev Settings)
+
+Enable **Advanced Mode** in Settings to access additional technical controls and improve detection capabilities:
+
+#### Detection Tuning
+Access via **Settings > Detection Tuning** to configure individual detection patterns and thresholds:
+
+| Category | Configurable Options |
+|----------|---------------------|
+| **Cellular Patterns** | Toggle individual anomaly types (encryption downgrade, suspicious network ID, rapid switching, signal spikes, LAC/TAC anomaly, unknown towers) |
+| **Satellite Patterns** | Toggle NTN anomaly detection (unexpected satellite, forced handoff, suspicious parameters, timing anomaly) |
+| **BLE Patterns** | Toggle device categories (Flock Safety, Raven, ShotSpotter, Axon, Motorola, L3Harris, Cellebrite, GrayKey) |
+| **WiFi Patterns** | Toggle detection types (police hotspots, surveillance vans, StingRay WiFi, body cam WiFi, drone WiFi) |
+
+#### Threshold Tuning
+Fine-tune detection sensitivity to reduce false positives or increase detection rate:
+
+| Threshold | Default | Description |
+|-----------|---------|-------------|
+| **Signal Spike (dBm)** | 25 | Cellular signal change to trigger spike alert |
+| **Rapid Switch (stationary)** | 3/min | Max cell tower switches while stationary |
+| **Rapid Switch (moving)** | 8/min | Max cell tower switches while moving |
+| **Trusted Cell Threshold** | 5 | Times seen before cell tower is trusted |
+| **BLE Min RSSI** | -80 dBm | Minimum signal strength for BLE alerts |
+| **BLE Proximity RSSI** | -50 dBm | Signal strength for proximity warnings |
+| **WiFi Min Signal** | -70 dBm | Minimum signal strength for WiFi alerts |
+
+#### Additional Advanced Features
+- **Error Log**: View detailed scanning errors and subsystem status
+- **Scan Statistics**: Monitor BLE/WiFi scan counts, throttling, and success rates
+- **Learning Mode**: Capture signatures from unknown devices for future detection
+- **Advertising Rate Detection**: Monitor BLE packet rates for Axon Signal trigger activation (20+ pps = likely active)
 
 ## 📱 Installation
 

@@ -218,6 +218,90 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // Service Kill Switch
+            item {
+                var showKillConfirmation by remember { mutableStateOf(false) }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.PowerSettingsNew,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Stop All Scanning",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Completely stop the scanning service and prevent auto-restart",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { showKillConfirmation = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Force Stop Service")
+                        }
+                    }
+                }
+
+                if (showKillConfirmation) {
+                    AlertDialog(
+                        onDismissRequest = { showKillConfirmation = false },
+                        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+                        title = { Text("Stop Scanning Service?") },
+                        text = {
+                            Text(
+                                "This will completely stop the scanning service and disable auto-restart. " +
+                                "You will need to manually restart the app to resume scanning.\n\n" +
+                                "Surveillance devices will NOT be detected while the service is stopped."
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showKillConfirmation = false
+                                    // Disable auto-start first
+                                    BootReceiver.setAutoStartOnBoot(context, false)
+                                    autoStartOnBoot = false
+                                    // Stop the service
+                                    ScanningService.forceStop(context)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("Stop Service")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showKillConfirmation = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
+            }
             
             // Scan Configuration Section
             item {

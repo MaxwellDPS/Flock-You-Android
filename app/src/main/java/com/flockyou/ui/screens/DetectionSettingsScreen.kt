@@ -83,11 +83,12 @@ fun DetectionSettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsState()
-    
+
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Cellular", "Satellite", "BLE", "WiFi")
-    
+
     var showResetDialog by remember { mutableStateOf(false) }
+    var showHelpDialog by remember { mutableStateOf(false) }
     
     Scaffold(
         topBar = {
@@ -109,6 +110,9 @@ fun DetectionSettingsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showHelpDialog = true }) {
+                        Icon(Icons.Default.Info, contentDescription = "Help")
+                    }
                     IconButton(onClick = { showResetDialog = true }) {
                         Icon(Icons.Default.RestartAlt, contentDescription = "Reset")
                     }
@@ -226,6 +230,77 @@ fun DetectionSettingsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    // Help dialog
+    if (showHelpDialog) {
+        AlertDialog(
+            onDismissRequest = { showHelpDialog = false },
+            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+            title = { Text("Detection Tuning Help") },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "These settings control which surveillance devices are detected and how sensitive the detection is.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    HelpSection(
+                        title = "Pattern Toggles",
+                        description = "Enable or disable specific detection categories. Disabling a pattern stops alerts for that type of device."
+                    )
+
+                    HelpSection(
+                        title = "Threshold Sliders",
+                        description = "Adjust detection sensitivity. Lower thresholds = more sensitive (more alerts, possible false positives). Higher thresholds = less sensitive (fewer alerts, may miss weak signals)."
+                    )
+
+                    HelpSection(
+                        title = "RSSI Values",
+                        description = "Signal strength in dBm. -30 = very strong (close), -80 = weak (far). Set min RSSI higher to ignore distant devices."
+                    )
+
+                    HelpSection(
+                        title = "Tracking Alerts",
+                        description = "Duration and count thresholds determine when a device is flagged as \"following\" you across locations."
+                    )
+
+                    Text(
+                        text = "Tip: If you get too many false positives, increase thresholds. If you're missing detections, decrease them.",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHelpDialog = false }) {
+                    Text("Got it")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun HelpSection(
+    title: String,
+    description: String
+) {
+    Column {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

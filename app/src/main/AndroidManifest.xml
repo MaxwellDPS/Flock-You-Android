@@ -27,6 +27,9 @@
     
     <!-- Vibration for alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Audio recording for ultrasonic beacon detection -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     
     <!-- Telephony for cellular monitoring (IMSI catcher detection) -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -88,10 +91,12 @@
         </service>
         
         <!-- Boot receiver for auto-starting service -->
+        <!-- Note: exported=true is required to receive BOOT_COMPLETED, but we verify the action -->
         <receiver
             android:name=".service.BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />

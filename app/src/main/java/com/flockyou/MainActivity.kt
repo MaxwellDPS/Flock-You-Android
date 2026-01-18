@@ -234,8 +234,8 @@ fun PermissionScreen(
         
         PermissionItem(
             icon = Icons.Default.LocationOn,
-            title = "Location",
-            description = "Required for WiFi and Bluetooth scanning"
+            title = "Location (Always)",
+            description = "Required for WiFi/Bluetooth scanning and background detection. Location is stored locally with detections."
         )
         
         PermissionItem(

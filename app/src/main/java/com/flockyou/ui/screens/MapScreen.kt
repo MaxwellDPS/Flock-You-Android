@@ -19,9 +19,12 @@ import com.flockyou.ui.components.ThreatBadge
 import com.flockyou.ui.components.toIcon
 import com.flockyou.ui.theme.*
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 
@@ -139,12 +142,13 @@ fun MapScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // OpenStreetMap View
+            // OpenStreetMap View with HTTPS tile source
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     MapView(ctx).apply {
-                        setTileSource(TileSourceFactory.MAPNIK)
+                        // Use HTTPS tile source for security
+                        setTileSource(HTTPS_MAPNIK)
                         setMultiTouchControls(true)
                         controller.setZoom(4.0)
                         controller.setCenter(GeoPoint(39.8283, -98.5795))
@@ -312,6 +316,31 @@ private fun LegendItem(
     }
 }
 
+/**
+ * HTTPS tile source for OpenStreetMap.
+ * Uses HTTPS to prevent MITM attacks on map tile requests.
+ */
+private val HTTPS_MAPNIK = object : OnlineTileSourceBase(
+    "Mapnik-HTTPS",
+    0,
+    19,
+    256,
+    ".png",
+    arrayOf(
+        "https://a.tile.openstreetmap.org/",
+        "https://b.tile.openstreetmap.org/",
+        "https://c.tile.openstreetmap.org/"
+    ),
+    "© OpenStreetMap contributors"
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        val zoom = MapTileIndex.getZoom(pMapTileIndex)
+        val x = MapTileIndex.getX(pMapTileIndex)
+        val y = MapTileIndex.getY(pMapTileIndex)
+        return baseUrl + zoom + "/" + x + "/" + y + mImageFilenameEnding
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MapDetectionSheet(
@@ -346,9 +375,9 @@ private fun MapDetectionSheet(
                 }
                 ThreatBadge(threatLevel = detection.threatLevel)
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             detection.macAddress?.let {
                 Text("MAC: $it", style = MaterialTheme.typography.bodySmall)
             }
@@ -365,16 +394,16 @@ private fun MapDetectionSheet(
                     style = MaterialTheme.typography.titleMedium
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Button(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Close")
             }
-            
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }

@@ -126,12 +126,14 @@ class ExportDetectionsUseCase @Inject constructor(
         return sb.toString()
     }
 
+    /**
+     * Escape value for CSV format.
+     * Always quote the value to ensure consistent parsing across different CSV readers.
+     */
     private fun escapeCsv(value: String): String {
-        return if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            "\"${value.replace("\"", "\"\"")}\""
-        } else {
-            value
-        }
+        // Always quote values for consistent CSV parsing
+        // Escape any existing quotes by doubling them
+        return "\"${value.replace("\"", "\"\"")}\""
     }
 
     private fun buildKml(detections: List<Detection>): String {
@@ -153,17 +155,23 @@ class ExportDetectionsUseCase @Inject constructor(
         detections.forEach { d ->
             if (d.latitude != null && d.longitude != null) {
                 val styleId = d.threatLevel.name.lowercase()
+                // Escape all user-controlled content in CDATA to prevent XML injection
+                val safeMac = d.macAddress?.let { escapeCdata(it) } ?: ""
+                val safeSsid = d.ssid?.let { escapeCdata(it) } ?: ""
+                val safeDeviceName = d.deviceName?.let { escapeCdata(it) } ?: ""
+
                 sb.appendLine("""    <Placemark>""")
                 sb.appendLine("""      <name>${escapeXml(d.deviceType.displayName)}</name>""")
                 sb.appendLine("""      <description><![CDATA[
-        <b>Device:</b> ${d.deviceType.displayName}<br/>
-        <b>Threat Level:</b> ${d.threatLevel.displayName}<br/>
-        <b>Protocol:</b> ${d.protocol.displayName}<br/>
-        <b>Signal:</b> ${d.rssi} dBm (${d.signalStrength.displayName})<br/>
+        <b>Device:</b> ${escapeXml(d.deviceType.displayName)}<br/>
+        <b>Threat Level:</b> ${escapeXml(d.threatLevel.displayName)}<br/>
+        <b>Protocol:</b> ${escapeXml(d.protocol.displayName)}<br/>
+        <b>Signal:</b> ${d.rssi} dBm (${escapeXml(d.signalStrength.displayName)})<br/>
         <b>Detected:</b> ${csvDateFormat.format(Date(d.timestamp))}<br/>
         <b>Times Seen:</b> ${d.seenCount}<br/>
-        ${d.macAddress?.let { "<b>MAC:</b> $it<br/>" } ?: ""}
-        ${d.ssid?.let { "<b>SSID:</b> $it<br/>" } ?: ""}
+        ${if (safeMac.isNotEmpty()) "<b>MAC:</b> $safeMac<br/>" else ""}
+        ${if (safeSsid.isNotEmpty()) "<b>SSID:</b> $safeSsid<br/>" else ""}
+        ${if (safeDeviceName.isNotEmpty()) "<b>Name:</b> $safeDeviceName<br/>" else ""}
       ]]></description>""")
                 sb.appendLine("""      <styleUrl>#$styleId</styleUrl>""")
                 sb.appendLine("""      <Point>""")
@@ -187,6 +195,15 @@ class ExportDetectionsUseCase @Inject constructor(
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&apos;")
+    }
+
+    /**
+     * Escape content inside CDATA sections.
+     * CDATA sections end with "]]>" so we need to handle this sequence.
+     */
+    private fun escapeCdata(value: String): String {
+        // CDATA sections cannot contain "]]>" - split it if present
+        return value.replace("]]>", "]]]]><![CDATA[>")
     }
 
     private fun toIso8601(timestamp: Long): String {

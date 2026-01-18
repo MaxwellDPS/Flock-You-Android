@@ -110,7 +110,7 @@ class CellularMonitor(private val context: Context) {
     
     data class CellSnapshot(
         val timestamp: Long,
-        val cellId: Int?,
+        val cellId: Long?,  // Changed to Long for 5G NCI support (36-bit value)
         val lac: Int?, // Location Area Code (2G/3G)
         val tac: Int?, // Tracking Area Code (4G/5G)
         val mcc: String?,
@@ -483,8 +483,6 @@ class CellularMonitor(private val context: Context) {
         val isStationary = hasRecentLocation && estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
 
         val currentCellTrusted = isCellTrusted(current.cellId?.toString())
-        @Suppress("UNUSED_VARIABLE")
-        val previousCellTrusted = isCellTrusted(previous.cellId?.toString())
         
         // 1. CRITICAL: Suspicious MCC/MNC - always flag
         if (mccMnc in SUSPICIOUS_MCC_MNC) {
@@ -883,18 +881,18 @@ class CellularMonitor(private val context: Context) {
     
     private fun extractCellSnapshot(cellInfoList: List<CellInfo>): CellSnapshot? {
         val registeredCell = cellInfoList.firstOrNull { it.isRegistered } ?: return null
-        
-        var cellId: Int? = null
+
+        var cellId: Long? = null  // Changed to Long for 5G NCI support
         var lac: Int? = null
         var tac: Int? = null
         var mcc: String? = null
         var mnc: String? = null
         var signalDbm = -100
         var networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN
-        
+
         when (registeredCell) {
             is CellInfoLte -> {
-                cellId = registeredCell.cellIdentity.ci
+                cellId = registeredCell.cellIdentity.ci.toLong()
                 tac = registeredCell.cellIdentity.tac
                 mcc = registeredCell.cellIdentity.mccString
                 mnc = registeredCell.cellIdentity.mncString
@@ -902,7 +900,7 @@ class CellularMonitor(private val context: Context) {
                 networkType = TelephonyManager.NETWORK_TYPE_LTE
             }
             is CellInfoGsm -> {
-                cellId = registeredCell.cellIdentity.cid
+                cellId = registeredCell.cellIdentity.cid.toLong()
                 lac = registeredCell.cellIdentity.lac
                 mcc = registeredCell.cellIdentity.mccString
                 mnc = registeredCell.cellIdentity.mncString
@@ -910,7 +908,7 @@ class CellularMonitor(private val context: Context) {
                 networkType = TelephonyManager.NETWORK_TYPE_GSM
             }
             is CellInfoWcdma -> {
-                cellId = registeredCell.cellIdentity.cid
+                cellId = registeredCell.cellIdentity.cid.toLong()
                 lac = registeredCell.cellIdentity.lac
                 mcc = registeredCell.cellIdentity.mccString
                 mnc = registeredCell.cellIdentity.mncString
@@ -918,17 +916,17 @@ class CellularMonitor(private val context: Context) {
                 networkType = TelephonyManager.NETWORK_TYPE_UMTS
             }
             is CellInfoCdma -> {
-                cellId = registeredCell.cellIdentity.basestationId
+                cellId = registeredCell.cellIdentity.basestationId.toLong()
                 signalDbm = registeredCell.cellSignalStrength.dbm
                 networkType = TelephonyManager.NETWORK_TYPE_CDMA
             }
         }
-        
+
         // Handle NR (5G) for API 29+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             if (registeredCell is CellInfoNr) {
                 val nrIdentity = registeredCell.cellIdentity as? CellIdentityNr
-                cellId = nrIdentity?.nci?.toInt()
+                cellId = nrIdentity?.nci  // NCI is already Long, no truncation
                 tac = nrIdentity?.tac
                 mcc = nrIdentity?.mccString
                 mnc = nrIdentity?.mncString

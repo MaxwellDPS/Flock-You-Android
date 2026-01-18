@@ -1,12 +1,23 @@
 package com.flockyou.data.repository
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.util.Log
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.flockyou.data.model.*
 import com.flockyou.data.model.OuiEntry
 import kotlinx.coroutines.flow.Flow
+import net.sqlcipher.database.SupportFactory
+import java.security.KeyStore
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /**
  * Type converters for Room database
@@ -116,7 +127,111 @@ interface DetectionDao {
 }
 
 /**
- * Room database for storing detections
+ * Secure key manager for database encryption passphrase.
+ * Uses Android Keystore to protect the SQLCipher passphrase.
+ */
+object DatabaseKeyManager {
+    private const val TAG = "DatabaseKeyManager"
+    private const val KEYSTORE_ALIAS = "flockyou_db_key"
+    private const val PREFS_NAME = "flockyou_secure_prefs"
+    private const val PREFS_KEY_PASSPHRASE = "encrypted_db_passphrase"
+    private const val PREFS_KEY_IV = "db_passphrase_iv"
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+
+    /**
+     * Get or create the database passphrase.
+     * The passphrase is generated once and stored encrypted using Android Keystore.
+     */
+    fun getOrCreatePassphrase(context: Context): ByteArray {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        val encryptedPassphrase = prefs.getString(PREFS_KEY_PASSPHRASE, null)
+        val ivString = prefs.getString(PREFS_KEY_IV, null)
+
+        return if (encryptedPassphrase != null && ivString != null) {
+            // Decrypt existing passphrase
+            try {
+                decryptPassphrase(
+                    Base64.decode(encryptedPassphrase, Base64.NO_WRAP),
+                    Base64.decode(ivString, Base64.NO_WRAP)
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decrypt passphrase, generating new one", e)
+                generateAndStoreNewPassphrase(context, prefs)
+            }
+        } else {
+            // Generate new passphrase
+            generateAndStoreNewPassphrase(context, prefs)
+        }
+    }
+
+    private fun generateAndStoreNewPassphrase(
+        context: Context,
+        prefs: android.content.SharedPreferences
+    ): ByteArray {
+        // Generate a random 32-byte passphrase
+        val passphrase = ByteArray(32)
+        SecureRandom().nextBytes(passphrase)
+
+        // Create or get the key from Android Keystore
+        val secretKey = getOrCreateSecretKey()
+
+        // Encrypt the passphrase
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+        val iv = cipher.iv
+        val encryptedPassphrase = cipher.doFinal(passphrase)
+
+        // Store encrypted passphrase and IV
+        prefs.edit()
+            .putString(PREFS_KEY_PASSPHRASE, Base64.encodeToString(encryptedPassphrase, Base64.NO_WRAP))
+            .putString(PREFS_KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
+            .apply()
+
+        Log.d(TAG, "Generated and stored new database passphrase")
+        return passphrase
+    }
+
+    private fun decryptPassphrase(encryptedPassphrase: ByteArray, iv: ByteArray): ByteArray {
+        val secretKey = getOrCreateSecretKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+        return cipher.doFinal(encryptedPassphrase)
+    }
+
+    private fun getOrCreateSecretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+
+        // Check if key already exists
+        if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+            val entry = keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.SecretKeyEntry
+            return entry.secretKey
+        }
+
+        // Generate new key
+        val keyGenerator = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            ANDROID_KEYSTORE
+        )
+
+        val keySpec = KeyGenParameterSpec.Builder(
+            KEYSTORE_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build()
+
+        keyGenerator.init(keySpec)
+        return keyGenerator.generateKey()
+    }
+}
+
+/**
+ * Room database for storing detections.
+ * Uses SQLCipher for encryption to protect sensitive detection data.
  */
 @Database(entities = [Detection::class, OuiEntry::class], version = 5, exportSchema = false)
 @TypeConverters(Converters::class)
@@ -125,9 +240,11 @@ abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun ouiDao(): OuiDao
 
     companion object {
+        private const val TAG = "FlockYouDatabase"
+
         @Volatile
         private var INSTANCE: FlockYouDatabase? = null
-        
+
         // Migration from version 3 to 4 - adds indices
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -157,14 +274,21 @@ abstract class FlockYouDatabase : RoomDatabase() {
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_oui_entries_ouiPrefix ON oui_entries(ouiPrefix)")
             }
         }
-        
+
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
+                // Get or create encryption passphrase
+                val passphrase = DatabaseKeyManager.getOrCreatePassphrase(context)
+                val factory = SupportFactory(passphrase)
+
+                Log.d(TAG, "Creating encrypted database")
+
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     FlockYouDatabase::class.java,
-                    "flockyou_database"
+                    "flockyou_database_encrypted"  // New name to avoid conflicts with old unencrypted DB
                 )
+                    .openHelperFactory(factory)
                     .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()

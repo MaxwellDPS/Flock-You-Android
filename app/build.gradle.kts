@@ -40,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true  // Enable BuildConfig for debug checks
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
@@ -75,10 +76,12 @@ dependencies {
     ksp("com.google.dagger:hilt-android-compiler:2.50")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
     
-    // Room
+    // Room with SQLCipher encryption
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
     
     // Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
@@ -101,8 +104,12 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.1.0")
     ksp("androidx.hilt:hilt-compiler:1.1.0")
 
-    // OkHttp for HTTP downloads
+    // OkHttp for HTTP downloads with TLS support
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
+
+    // Security - Encrypted SharedPreferences for storing DB passphrase
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
     // Testing - Unit Tests
     testImplementation("junit:junit:4.13.2")

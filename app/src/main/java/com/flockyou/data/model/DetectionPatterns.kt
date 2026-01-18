@@ -1384,8 +1384,87 @@ object DetectionPatterns {
      */
     fun getManufacturerFromOui(oui: String): String? {
         val normalizedOui = oui.uppercase().replace("-", ":").take(8)
-        return ouiManufacturers[normalizedOui] ?: macPrefixes.find { 
-            normalizedOui.startsWith(it.prefix.uppercase()) 
+        return ouiManufacturers[normalizedOui] ?: macPrefixes.find {
+            normalizedOui.startsWith(it.prefix.uppercase())
         }?.manufacturer
+    }
+
+    /**
+     * Get all built-in patterns as SurveillancePattern objects.
+     * Used for merging with custom/downloaded patterns.
+     */
+    val allPatterns: List<SurveillancePattern> by lazy {
+        val patterns = mutableListOf<SurveillancePattern>()
+
+        // Group SSID patterns by device type
+        val ssidByDevice = ssidPatterns.groupBy { it.deviceType }
+        ssidByDevice.forEach { (deviceType, detectionPatterns) ->
+            patterns.add(
+                SurveillancePattern(
+                    id = "builtin_ssid_${deviceType.name.lowercase()}",
+                    name = deviceType.displayName,
+                    description = detectionPatterns.first().description,
+                    deviceType = deviceType,
+                    manufacturer = detectionPatterns.first().manufacturer,
+                    threatLevel = scoreToThreatLevel(detectionPatterns.maxOf { it.threatScore }),
+                    ssidPatterns = detectionPatterns.map { it.pattern },
+                    isBuiltIn = true
+                )
+            )
+        }
+
+        // Group BLE name patterns by device type
+        val bleByDevice = bleNamePatterns.groupBy { it.deviceType }
+        bleByDevice.forEach { (deviceType, detectionPatterns) ->
+            // Check if we already have an entry for this device
+            val existingIndex = patterns.indexOfFirst { it.deviceType == deviceType }
+            if (existingIndex >= 0) {
+                // Merge BLE patterns into existing entry
+                val existing = patterns[existingIndex]
+                patterns[existingIndex] = existing.copy(
+                    bleNamePatterns = detectionPatterns.map { it.pattern }
+                )
+            } else {
+                patterns.add(
+                    SurveillancePattern(
+                        id = "builtin_ble_${deviceType.name.lowercase()}",
+                        name = deviceType.displayName,
+                        description = detectionPatterns.first().description,
+                        deviceType = deviceType,
+                        manufacturer = detectionPatterns.first().manufacturer,
+                        threatLevel = scoreToThreatLevel(detectionPatterns.maxOf { it.threatScore }),
+                        bleNamePatterns = detectionPatterns.map { it.pattern },
+                        isBuiltIn = true
+                    )
+                )
+            }
+        }
+
+        // Group MAC prefixes by device type
+        val macByDevice = macPrefixes.groupBy { it.deviceType }
+        macByDevice.forEach { (deviceType, macPrefixList) ->
+            val existingIndex = patterns.indexOfFirst { it.deviceType == deviceType }
+            if (existingIndex >= 0) {
+                val existing = patterns[existingIndex]
+                patterns[existingIndex] = existing.copy(
+                    macPrefixes = macPrefixList.map { it.prefix }
+                )
+            } else {
+                patterns.add(
+                    SurveillancePattern(
+                        id = "builtin_mac_${deviceType.name.lowercase()}",
+                        name = deviceType.displayName,
+                        description = macPrefixList.first().description,
+                        deviceType = deviceType,
+                        manufacturer = macPrefixList.first().manufacturer,
+                        threatLevel = scoreToThreatLevel(macPrefixList.maxOf { it.threatScore }),
+                        macPrefixes = macPrefixList.map { it.prefix },
+                        isBuiltIn = true
+                    )
+                )
+            }
+        }
+
+        patterns.toList()
     }
 }

@@ -17,6 +17,7 @@ import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.flockyou.BuildConfig
 import com.flockyou.MainActivity
 import com.flockyou.R
 import com.flockyou.data.model.*
@@ -117,6 +118,9 @@ class ScanningService : Service() {
         private const val MAX_SEEN_DEVICES = 100
         private const val PACKET_RATE_WINDOW_MS = 5000L  // 5 second window for rate calculation
         private const val HIGH_ACTIVITY_THRESHOLD = 20f  // 20+ packets/second = Signal trigger likely active
+
+        // Lock for thread-safe modification of seen device lists
+        private val seenDevicesLock = Any()
 
         fun clearErrors() {
             errorLog.value = emptyList()
@@ -230,6 +234,27 @@ class ScanningService : Service() {
                 enableCellular = enableCellular,
                 trackSeenDevices = trackSeenDevices
             )
+        }
+
+        /**
+         * Forcefully stop the scanning service and prevent auto-restart.
+         * This completely stops all scanning operations.
+         */
+        fun forceStop(context: Context) {
+            Log.w(TAG, "Force stopping scanning service")
+
+            // Reset all state
+            isScanning.value = false
+            scanStatus.value = ScanStatus.Idle
+            bleStatus.value = SubsystemStatus.Idle
+            wifiStatus.value = SubsystemStatus.Idle
+            locationStatus.value = SubsystemStatus.Idle
+            cellularStatus.value = SubsystemStatus.Idle
+            satelliteStatus.value = SubsystemStatus.Idle
+
+            // Stop the service
+            val intent = Intent(context, ScanningService::class.java)
+            context.stopService(intent)
         }
     }
     
@@ -426,9 +451,9 @@ class ScanningService : Service() {
     }
     
     /**
-     * Acquire a partial wake lock to keep CPU running during scans
+     * Acquire a partial wake lock to keep CPU running during scans.
+     * Uses a 10-minute timeout which is re-acquired in the scan loop.
      */
-    @SuppressLint("WakelockTimeout")
     private fun acquireWakeLock() {
         if (wakeLock == null) {
             wakeLock = powerManager.newWakeLock(
@@ -676,8 +701,10 @@ class ScanningService : Service() {
     
     private fun cleanupSeenDevices(timeout: Long) {
         val cutoff = System.currentTimeMillis() - timeout
-        seenBleDevices.value = seenBleDevices.value.filter { it.lastSeen > cutoff }
-        seenWifiNetworks.value = seenWifiNetworks.value.filter { it.lastSeen > cutoff }
+        synchronized(seenDevicesLock) {
+            seenBleDevices.value = seenBleDevices.value.filter { it.lastSeen > cutoff }
+            seenWifiNetworks.value = seenWifiNetworks.value.filter { it.lastSeen > cutoff }
+        }
     }
     
     private fun buildStatusText(): String {
@@ -802,8 +829,10 @@ class ScanningService : Service() {
                             
                             lastDetection.value = det
                             detectionCount.value = repository.getTotalDetectionCount()
-                            
-                            Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+
+                            if (BuildConfig.DEBUG) {
+                                Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                            }
                         }
                     }
                 }
@@ -1011,7 +1040,9 @@ class ScanningService : Service() {
                             lastDetection.value = det
                             detectionCount.value = repository.getTotalDetectionCount()
 
-                            Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                            if (BuildConfig.DEBUG) {
+                                Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                            }
                         }
                     }
                 }
@@ -1109,7 +1140,9 @@ class ScanningService : Service() {
                             lastDetection.value = det
                             detectionCount.value = repository.getTotalDetectionCount()
 
-                            Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                            if (BuildConfig.DEBUG) {
+                                Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                            }
                         }
                     }
                 }
@@ -1351,7 +1384,9 @@ class ScanningService : Service() {
             val isAppleWrapper = manufacturerData.containsKey(0x004C)
 
             if (isNordic || isAppleWrapper) {
-                Log.w(TAG, "⚠️ HIGH ADVERTISING RATE DETECTED: $macAddress ($advertisingRate pps) - possible Signal trigger activation!")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "HIGH ADVERTISING RATE DETECTED: $macAddress ($advertisingRate pps) - possible Signal trigger activation!")
+                }
 
                 // Create a detection for this event
                 val detection = Detection(
@@ -1529,46 +1564,49 @@ class ScanningService : Service() {
         manufacturerData: Map<Int, String> = emptyMap(),
         advertisingRate: Float = 0f
     ) {
-        val currentList = seenBleDevices.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { it.id == macAddress }
+        // Synchronize to prevent race conditions when multiple scan results arrive concurrently
+        synchronized(seenDevicesLock) {
+            val currentList = seenBleDevices.value.toMutableList()
+            val existingIndex = currentList.indexOfFirst { it.id == macAddress }
 
-        if (existingIndex >= 0) {
-            // Update existing
-            val existing = currentList[existingIndex]
-            currentList[existingIndex] = existing.copy(
-                name = deviceName ?: existing.name,
-                rssi = rssi,
-                lastSeen = System.currentTimeMillis(),
-                seenCount = existing.seenCount + 1,
-                manufacturerData = if (manufacturerData.isNotEmpty()) manufacturerData else existing.manufacturerData,
-                advertisingRate = advertisingRate
-            )
-        } else {
-            // Add new
-            val manufacturer = try {
-                // Try to identify manufacturer from MAC OUI
-                val oui = macAddress.take(8).uppercase()
-                DetectionPatterns.getManufacturerFromOui(oui)
-            } catch (e: Exception) { null }
+            if (existingIndex >= 0) {
+                // Update existing
+                val existing = currentList[existingIndex]
+                currentList[existingIndex] = existing.copy(
+                    name = deviceName ?: existing.name,
+                    rssi = rssi,
+                    lastSeen = System.currentTimeMillis(),
+                    seenCount = existing.seenCount + 1,
+                    manufacturerData = if (manufacturerData.isNotEmpty()) manufacturerData else existing.manufacturerData,
+                    advertisingRate = advertisingRate
+                )
+            } else {
+                // Add new
+                val manufacturer = try {
+                    // Try to identify manufacturer from MAC OUI
+                    val oui = macAddress.take(8).uppercase()
+                    DetectionPatterns.getManufacturerFromOui(oui)
+                } catch (e: Exception) { null }
 
-            currentList.add(0, SeenDevice(
-                id = macAddress,
-                name = deviceName,
-                type = "BLE",
-                rssi = rssi,
-                manufacturer = manufacturer,
-                serviceUuids = serviceUuids.map { it.toString() },
-                manufacturerData = manufacturerData,
-                advertisingRate = advertisingRate
-            ))
+                currentList.add(0, SeenDevice(
+                    id = macAddress,
+                    name = deviceName,
+                    type = "BLE",
+                    rssi = rssi,
+                    manufacturer = manufacturer,
+                    serviceUuids = serviceUuids.map { it.toString() },
+                    manufacturerData = manufacturerData,
+                    advertisingRate = advertisingRate
+                ))
 
-            // Limit list size
-            if (currentList.size > MAX_SEEN_DEVICES) {
-                currentList.removeAt(currentList.lastIndex)
+                // Limit list size
+                if (currentList.size > MAX_SEEN_DEVICES) {
+                    currentList.removeAt(currentList.lastIndex)
+                }
             }
-        }
 
-        seenBleDevices.value = currentList
+            seenBleDevices.value = currentList
+        }
     }
     
     // ==================== WiFi Scanning ====================

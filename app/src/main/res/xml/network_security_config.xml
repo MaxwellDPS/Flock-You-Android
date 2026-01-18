@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- Enforce HTTPS for all network traffic -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- Allow cleartext for tile servers that may use HTTP -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">tile.openstreetmap.org</domain>
-        <domain includeSubdomains="true">openstreetmap.org</domain>
-    </domain-config>
+
+    <!--
+        OpenStreetMap tile servers now support HTTPS.
+        We no longer allow cleartext HTTP traffic.
+        The app configures osmdroid to use HTTPS tile URLs.
+    -->
 </network-security-config>

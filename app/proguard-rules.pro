@@ -44,3 +44,12 @@
     public <init>(android.content.Context,androidx.work.WorkerParameters);
 }
 -keep class com.flockyou.worker.** { *; }
+
+# SQLCipher
+-keep class net.sqlcipher.** { *; }
+-keep class net.sqlcipher.database.** { *; }
+-dontwarn net.sqlcipher.**
+
+# Pattern data classes for JSON serialization
+-keep class com.flockyou.data.model.SurveillancePattern { *; }
+-keep class com.flockyou.data.patterns.PatternUpdateService$PatternExport { *; }
