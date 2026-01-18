@@ -124,6 +124,15 @@ fun MainScreen(
             }
         }
     ) { paddingValues ->
+        // Calculate filtered detections outside LazyColumn
+        val filteredDetections = viewModel.getFilteredDetections()
+        val detections = when (uiState.selectedTab) {
+            1 -> filteredDetections.filter { 
+                it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
+            }
+            else -> filteredDetections
+        }
+        
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -132,7 +141,7 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Status card
-            item {
+            item(key = "status_card") {
                 StatusCard(
                     isScanning = uiState.isScanning,
                     totalDetections = uiState.totalCount,
@@ -149,7 +158,7 @@ fun MainScreen(
             
             // Last detection alert
             uiState.lastDetection?.let { detection ->
-                item {
+                item(key = "last_detection_${detection.id}") {
                     AnimatedVisibility(
                         visible = true,
                         enter = slideInVertically() + fadeIn(),
@@ -165,7 +174,7 @@ fun MainScreen(
             
             // Filter chips if filters active
             if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null) {
-                item {
+                item(key = "filter_chips") {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -214,18 +223,6 @@ fun MainScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp)
                 )
-            }
-            
-            // Detection list - use derivedStateOf to prevent unnecessary recompositions
-            val detections = remember(uiState.detections, uiState.selectedTab, uiState.filterThreatLevel, uiState.filterDeviceType) {
-                viewModel.getFilteredDetections().let { list ->
-                    when (uiState.selectedTab) {
-                        1 -> list.filter { 
-                            it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
-                        }
-                        else -> list
-                    }
-                }
             }
             
             if (detections.isEmpty()) {
