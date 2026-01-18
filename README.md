@@ -59,6 +59,20 @@ An Android port of the [Flock You](https://github.com/colonelpanichacks/flock-yo
 - **WiFi Scanning**: SSID pattern matching and MAC address OUI lookup
 - **Bluetooth LE Scanning**: Device name patterns and service UUID fingerprinting
 - **Raven Detection**: Specialized BLE service UUID detection with firmware version estimation
+- **Cellular Monitoring**: Real-time detection of IMSI catchers and cell site simulators
+
+### Cellular Anomaly Detection (StingRay/IMSI Catcher)
+The app monitors your cellular connection for signs of cell site simulators:
+
+| Anomaly Type | Threat Level | Description |
+|--------------|--------------|-------------|
+| **Encryption Downgrade** | 🔴 CRITICAL | Network forced from 4G/5G to 2G (weak encryption) |
+| **Suspicious Network ID** | 🔴 CRITICAL | Connected to test MCC/MNC (001-01, 999-99) |
+| **Rapid Cell Switching** | 🔴 HIGH | Phone switching towers abnormally fast |
+| **Signal Spike** | 🔴 HIGH | Sudden signal strength change (>20 dBm) |
+| **Unexpected Cell Change** | 🟠 MEDIUM | Tower changed without user movement |
+| **Location Area Anomaly** | 🟠 MEDIUM | LAC/TAC changed unexpectedly |
+| **Unknown Cell Tower** | 🟡 LOW | First time seeing this cell ID |
 
 ### Rich Device Information
 When a device is detected, you'll see:
@@ -90,6 +104,7 @@ When a device is detected, you'll see:
 - 🎯 Animated radar scanning display
 - 📊 Detection history with filtering
 - 🗺️ Map view with detection locations
+- 📶 Cellular status card with network info and anomaly alerts
 - 📱 Material 3 dark tactical theme
 - 📳 Vibration alerts for new detections
 - 🏷️ Threat level badges (Critical/High/Medium/Low/Info)
@@ -250,6 +265,7 @@ Based on [GainSec research](https://github.com/GainSec):
 |---------|-------------|
 | **WiFi Interval** | Time between WiFi scans (15-120s) |
 | **BLE Duration** | Bluetooth scan duration (5-30s) |
+| **Cellular Monitoring** | Enable/disable IMSI catcher detection |
 | **Track Seen Devices** | Remember previously detected devices |
 | **Battery Optimization** | Disable for reliable background scanning |
 
@@ -284,6 +300,7 @@ For map features, add your API key to `AndroidManifest.xml`:
 | `BLUETOOTH_SCAN` | Scan for BLE surveillance devices |
 | `BLUETOOTH_CONNECT` | Read BLE device details |
 | `ACCESS_WIFI_STATE` | Scan WiFi networks |
+| `READ_PHONE_STATE` | Cellular network monitoring for IMSI catcher detection |
 | `POST_NOTIFICATIONS` | Detection alerts |
 | `VIBRATE` | Haptic feedback |
 | `FOREGROUND_SERVICE` | Background scanning |
@@ -301,9 +318,12 @@ com.flockyou/
 │   │   └── DetectionRepository.kt
 │   └── RuleAndNotificationSettings.kt # DataStore preferences
 ├── service/
-│   └── ScanningService.kt            # Foreground scanning service
+│   ├── ScanningService.kt            # Foreground scanning service
+│   └── CellularMonitor.kt            # IMSI catcher / cell anomaly detection
 ├── ui/
-│   ├── components/Components.kt      # Reusable UI components
+│   ├── components/
+│   │   ├── Components.kt             # Reusable UI components
+│   │   └── CellularStatusCard.kt     # Cellular network status display
 │   ├── screens/
 │   │   ├── MainScreen.kt             # Detection list + radar
 │   │   ├── MapScreen.kt              # Detection map
@@ -323,6 +343,7 @@ com.flockyou/
 - **Range**: BLE detection ~50-100m depending on environment
 - **False Positives**: MAC OUI detection may flag non-surveillance LTE devices
 - **Police Tech**: Body cameras only detectable when WiFi/BLE is enabled (usually during sync)
+- **Cellular Monitoring**: Anomaly detection may produce false positives in areas with poor coverage or during normal handoffs while moving. Modern IMSI catchers are increasingly difficult to detect.
 
 ## 🙏 Credits
 
