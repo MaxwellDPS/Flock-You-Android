@@ -36,7 +36,8 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToPatterns: () -> Unit,
     onNavigateToNotifications: () -> Unit = {},
-    onNavigateToRules: () -> Unit = {}
+    onNavigateToRules: () -> Unit = {},
+    onNavigateToDetectionSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -402,6 +403,16 @@ fun SettingsScreen(
                     title = "Detection Rules",
                     subtitle = "Toggle built-in rules, add custom regex patterns",
                     onClick = onNavigateToRules
+                )
+            }
+            
+            // Detection Tuning (new)
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = "Detection Tuning",
+                    subtitle = "Toggle patterns and adjust thresholds for Cell, Satellite, BLE, WiFi",
+                    onClick = onNavigateToDetectionSettings
                 )
             }
             

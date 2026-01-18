@@ -28,6 +28,7 @@ import com.flockyou.ui.screens.NearbyDevicesScreen
 import com.flockyou.ui.screens.DetectionPatternsScreen
 import com.flockyou.ui.screens.NotificationSettingsScreen
 import com.flockyou.ui.screens.RuleSettingsScreen
+import com.flockyou.ui.screens.DetectionSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -114,7 +115,8 @@ fun AppNavigation() {
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToPatterns = { navController.navigate("patterns") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
-                onNavigateToRules = { navController.navigate("rules") }
+                onNavigateToRules = { navController.navigate("rules") },
+                onNavigateToDetectionSettings = { navController.navigate("detection_settings") }
             )
         }
         composable("nearby") {
@@ -134,6 +136,11 @@ fun AppNavigation() {
         }
         composable("rules") {
             RuleSettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("detection_settings") {
+            DetectionSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
