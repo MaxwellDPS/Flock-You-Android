@@ -20,9 +20,65 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Default build config values (can be overridden by flavors)
+        buildConfigField("boolean", "IS_SYSTEM_BUILD", "false")
+        buildConfigField("boolean", "IS_OEM_BUILD", "false")
+        buildConfigField("String", "BUILD_MODE", "\"sideload\"")
+    }
+
+    // Product flavors for different installation modes
+    flavorDimensions += "installMode"
+    productFlavors {
+        // Standard sideload version (Play Store, APK install)
+        create("sideload") {
+            dimension = "installMode"
+            applicationIdSuffix = ""
+            versionNameSuffix = ""
+
+            buildConfigField("boolean", "IS_SYSTEM_BUILD", "false")
+            buildConfigField("boolean", "IS_OEM_BUILD", "false")
+            buildConfigField("String", "BUILD_MODE", "\"sideload\"")
+
+            // Standard manifest - no special OEM configurations
+            manifestPlaceholders["appLabel"] = "@string/app_name"
+        }
+
+        // System privileged app version (installed in /system/priv-app)
+        create("system") {
+            dimension = "installMode"
+            applicationIdSuffix = ""
+            versionNameSuffix = "-system"
+
+            buildConfigField("boolean", "IS_SYSTEM_BUILD", "true")
+            buildConfigField("boolean", "IS_OEM_BUILD", "false")
+            buildConfigField("String", "BUILD_MODE", "\"system\"")
+
+            // System app label suffix for identification
+            manifestPlaceholders["appLabel"] = "@string/app_name_system"
+        }
+
+        // OEM embedded version (signed with platform certificate)
+        create("oem") {
+            dimension = "installMode"
+            applicationIdSuffix = ""
+            versionNameSuffix = "-oem"
+
+            buildConfigField("boolean", "IS_SYSTEM_BUILD", "true")
+            buildConfigField("boolean", "IS_OEM_BUILD", "true")
+            buildConfigField("String", "BUILD_MODE", "\"oem\"")
+
+            // OEM app label suffix
+            manifestPlaceholders["appLabel"] = "@string/app_name_oem"
+        }
     }
 
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(

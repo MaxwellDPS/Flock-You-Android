@@ -2,54 +2,126 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ================================================================== -->
+    <!-- STANDARD PERMISSIONS (Required for all installation modes)        -->
+    <!-- ================================================================== -->
+
     <!-- Bluetooth permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    
+
     <!-- WiFi permissions -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
-    
+
     <!-- Location permissions (required for BLE and WiFi scanning) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    
+
     <!-- Foreground service - multiple types for maximum permission coverage -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    
+
     <!-- Vibration for alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Audio recording for ultrasonic beacon detection -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    
+
     <!-- Telephony for cellular monitoring (IMSI catcher detection) -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    
+
     <!-- Internet for maps -->
     <uses-permission android:name="android.permission.INTERNET" />
-    
+
     <!-- Battery optimization exemption - REQUIRED for reliable background scanning -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    
+
     <!-- Wake lock for keeping scans alive -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
+
     <!-- Boot completed for auto-start -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    
+
     <!-- Exact alarms for reliable periodic tasks (Android 12+) -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- ================================================================== -->
+    <!-- SYSTEM/OEM PRIVILEGED PERMISSIONS                                 -->
+    <!-- These permissions are only granted when app is installed as:      -->
+    <!-- - System app in /system/priv-app                                  -->
+    <!-- - OEM app signed with platform certificate                        -->
+    <!-- They are silently ignored for sideloaded (user) app installs.     -->
+    <!-- ================================================================== -->
+
+    <!-- BLUETOOTH PRIVILEGED: Bypass BLE duty cycling restrictions
+         Allows continuous scanning without OS-enforced pauses.
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.BLUETOOTH_PRIVILEGED"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- PEERS MAC ADDRESS: Access real hardware MAC addresses
+         Bypasses MAC randomization for WiFi Direct/Aware peers.
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.PEERS_MAC_ADDRESS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- LOCAL MAC ADDRESS: Access device's own MAC address
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.LOCAL_MAC_ADDRESS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- READ PRIVILEGED PHONE STATE: Access IMEI, IMSI, SIM serial
+         Essential for IMSI catcher (Stingray) detection.
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- CONNECTIVITY INTERNAL: Access internal network APIs
+         Used for WiFi scan throttling control.
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- NETWORK SETTINGS: Modify network settings
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.NETWORK_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- INTERACT ACROSS USERS: For multi-user support on tablets/work profiles
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- MANAGE USERS: For device owner scenarios
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.MANAGE_USERS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- PERSISTENT ACTIVITY: Keep process alive (OEM only)
+         Prevents system from killing the service.
+         Protection level: signature|privileged -->
+    <uses-permission android:name="android.permission.PERSISTENT_ACTIVITY"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- START ACTIVITIES FROM BACKGROUND: Launch activities from background
+         Protection level: signature|privileged|development -->
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- PACKAGE USAGE STATS: Access to usage stats for battery attribution
+         Protection level: signature|privileged|development|appop -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
     
     <!-- Feature declarations -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />

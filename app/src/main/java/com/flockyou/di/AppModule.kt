@@ -13,6 +13,15 @@ import com.flockyou.data.repository.OuiDao
 import com.flockyou.data.repository.OuiRepository
 import com.flockyou.network.OrbotHelper
 import com.flockyou.network.TorAwareHttpClient
+import com.flockyou.privilege.PrivilegeMode
+import com.flockyou.privilege.PrivilegeModeDetector
+import com.flockyou.scanner.IBluetoothScanner
+import com.flockyou.scanner.ICellularScanner
+import com.flockyou.scanner.IWifiScanner
+import com.flockyou.scanner.ScannerBundle
+import com.flockyou.scanner.ScannerCapabilities
+import com.flockyou.scanner.ScannerFactory
+import com.flockyou.scanner.ScannerModeHelper
 import com.flockyou.security.AppLockManager
 import dagger.Module
 import dagger.Provides
@@ -24,6 +33,67 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+
+    // ================================================================
+    // Privilege Mode & Scanner Factory
+    // ================================================================
+
+    @Provides
+    @Singleton
+    fun providePrivilegeMode(@ApplicationContext context: Context): PrivilegeMode {
+        return PrivilegeModeDetector.detect(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideScannerFactory(@ApplicationContext context: Context): ScannerFactory {
+        return ScannerFactory.getInstance(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideScannerCapabilities(scannerFactory: ScannerFactory): ScannerCapabilities {
+        return scannerFactory.getCapabilities()
+    }
+
+    @Provides
+    @Singleton
+    fun provideWifiScanner(scannerFactory: ScannerFactory): IWifiScanner {
+        return scannerFactory.createWifiScanner()
+    }
+
+    @Provides
+    @Singleton
+    fun provideBluetoothScanner(scannerFactory: ScannerFactory): IBluetoothScanner {
+        return scannerFactory.createBluetoothScanner()
+    }
+
+    @Provides
+    @Singleton
+    fun provideCellularScanner(scannerFactory: ScannerFactory): ICellularScanner {
+        return scannerFactory.createCellularScanner()
+    }
+
+    @Provides
+    @Singleton
+    fun provideScannerBundle(
+        wifiScanner: IWifiScanner,
+        bluetoothScanner: IBluetoothScanner,
+        cellularScanner: ICellularScanner,
+        scannerFactory: ScannerFactory
+    ): ScannerBundle {
+        return ScannerBundle(wifiScanner, bluetoothScanner, cellularScanner, scannerFactory)
+    }
+
+    @Provides
+    @Singleton
+    fun provideScannerModeHelper(@ApplicationContext context: Context): ScannerModeHelper {
+        return ScannerModeHelper(context)
+    }
+
+    // ================================================================
+    // Database & Repositories
+    // ================================================================
 
     @Provides
     @Singleton

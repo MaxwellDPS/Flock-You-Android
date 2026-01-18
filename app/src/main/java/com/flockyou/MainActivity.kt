@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.flockyou.data.SecuritySettings
+import com.flockyou.privilege.PrivilegeMode
+import com.flockyou.privilege.PrivilegeModeDetector
+import com.flockyou.privilege.SystemPermissionHelper
 import com.flockyou.security.AppLockManager
 import com.flockyou.ui.screens.LockScreen
 import com.flockyou.ui.screens.MainScreen
@@ -50,13 +54,21 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
 
+    companion object {
+        private const val TAG = "MainActivity"
+    }
+
     @Inject
     lateinit var appLockManager: AppLockManager
 
     private var permissionsGranted by mutableStateOf(false)
     private var batteryOptimizationChecked by mutableStateOf(false)
     private var showLockScreen by mutableStateOf(true)
-    
+
+    // Privilege mode detection
+    private lateinit var privilegeMode: PrivilegeMode
+    private var isPrivilegedMode by mutableStateOf(false)
+
     private val requiredPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -70,7 +82,7 @@ class MainActivity : FragmentActivity() {
             add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
     }
-    
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -83,7 +95,20 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        checkPermissions()
+        // Detect privilege mode at startup
+        privilegeMode = PrivilegeModeDetector.detect(this)
+        isPrivilegedMode = privilegeMode.isPrivileged
+        Log.i(TAG, "Privilege mode detected: $privilegeMode")
+        Log.i(TAG, "Build mode: ${BuildConfig.BUILD_MODE} (system=${BuildConfig.IS_SYSTEM_BUILD}, oem=${BuildConfig.IS_OEM_BUILD})")
+
+        // For privileged modes, skip permission screens if permissions are already granted
+        if (isPrivilegedMode && SystemPermissionHelper.shouldSkipPermissionRequests(this)) {
+            Log.i(TAG, "Privileged mode: skipping permission screens (permissions pre-granted)")
+            permissionsGranted = true
+            batteryOptimizationChecked = true
+        } else {
+            checkPermissions()
+        }
 
         setContent {
             FlockYouTheme {
@@ -479,5 +504,90 @@ fun BatteryOptimizationScreen(
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
+    }
+}
+
+/**
+ * Composable showing the current privilege mode and capabilities.
+ * This can be shown in settings or as a debug screen.
+ */
+@Composable
+fun PrivilegeModeInfoCard(
+    privilegeMode: PrivilegeMode,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (privilegeMode) {
+                is PrivilegeMode.OEM -> MaterialTheme.colorScheme.primaryContainer
+                is PrivilegeMode.System -> MaterialTheme.colorScheme.secondaryContainer
+                is PrivilegeMode.Sideload -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = when (privilegeMode) {
+                        is PrivilegeMode.OEM -> Icons.Default.VerifiedUser
+                        is PrivilegeMode.System -> Icons.Default.AdminPanelSettings
+                        is PrivilegeMode.Sideload -> Icons.Default.Security
+                    },
+                    contentDescription = null,
+                    tint = when (privilegeMode) {
+                        is PrivilegeMode.OEM -> MaterialTheme.colorScheme.primary
+                        is PrivilegeMode.System -> MaterialTheme.colorScheme.secondary
+                        is PrivilegeMode.Sideload -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = when (privilegeMode) {
+                            is PrivilegeMode.OEM -> "OEM Mode"
+                            is PrivilegeMode.System -> "System Mode"
+                            is PrivilegeMode.Sideload -> "Standard Mode"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = PrivilegeModeDetector.getModeDescription(privilegeMode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Show capabilities
+            val capabilities = PrivilegeModeDetector.getCapabilitiesSummary(privilegeMode)
+            capabilities.forEach { (name, available) ->
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (available) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                        contentDescription = null,
+                        tint = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
     }
 }
