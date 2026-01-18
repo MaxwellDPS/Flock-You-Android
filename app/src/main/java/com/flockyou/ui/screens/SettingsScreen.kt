@@ -610,6 +610,11 @@ fun SettingsScreen(
                 }
             }
 
+            // Automation Broadcasts Section
+            item {
+                AutomationBroadcastSection(viewModel = viewModel)
+            }
+
             item {
                 SettingsItem(
                     icon = Icons.Default.BugReport,
@@ -1050,5 +1055,207 @@ fun NetworkPrivacySection(viewModel: MainViewModel) {
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AutomationBroadcastSection(viewModel: MainViewModel) {
+    val broadcastSettings by viewModel.broadcastSettings.collectAsState()
+    var showDetails by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Share,
+                    contentDescription = null,
+                    tint = if (broadcastSettings.enabled)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Automation Broadcasts",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = if (broadcastSettings.enabled)
+                            "Broadcasting to Tasker, Automate, etc."
+                        else
+                            "Send intents to automation apps",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = broadcastSettings.enabled,
+                    onCheckedChange = { enabled ->
+                        viewModel.setBroadcastEnabled(enabled)
+                    }
+                )
+            }
+
+            if (broadcastSettings.enabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Expand/collapse details
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showDetails = !showDetails },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Configure broadcast events",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Icon(
+                        imageVector = if (showDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (showDetails) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Event toggles
+                    BroadcastToggle(
+                        label = "Device Detections",
+                        description = "BLE/WiFi surveillance devices",
+                        checked = broadcastSettings.broadcastOnDetection,
+                        onCheckedChange = { viewModel.setBroadcastOnDetection(it) }
+                    )
+                    BroadcastToggle(
+                        label = "Cellular Anomalies",
+                        description = "IMSI catcher detection",
+                        checked = broadcastSettings.broadcastOnCellularAnomaly,
+                        onCheckedChange = { viewModel.setBroadcastOnCellular(it) }
+                    )
+                    BroadcastToggle(
+                        label = "Satellite Anomalies",
+                        description = "NTN/satellite threats",
+                        checked = broadcastSettings.broadcastOnSatelliteAnomaly,
+                        onCheckedChange = { viewModel.setBroadcastOnSatellite(it) }
+                    )
+                    BroadcastToggle(
+                        label = "WiFi Anomalies",
+                        description = "Evil twins, deauth attacks",
+                        checked = broadcastSettings.broadcastOnWifiAnomaly,
+                        onCheckedChange = { viewModel.setBroadcastOnWifi(it) }
+                    )
+                    BroadcastToggle(
+                        label = "RF Anomalies",
+                        description = "Jammers, drones, surveillance",
+                        checked = broadcastSettings.broadcastOnRfAnomaly,
+                        onCheckedChange = { viewModel.setBroadcastOnRf(it) }
+                    )
+                    BroadcastToggle(
+                        label = "Ultrasonic Beacons",
+                        description = "Audio tracking beacons",
+                        checked = broadcastSettings.broadcastOnUltrasonic,
+                        onCheckedChange = { viewModel.setBroadcastOnUltrasonic(it) }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Include location toggle
+                    BroadcastToggle(
+                        label = "Include Location",
+                        description = "Add GPS coordinates to broadcasts",
+                        checked = broadcastSettings.includeLocation,
+                        onCheckedChange = { viewModel.setBroadcastIncludeLocation(it) }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Minimum threat level dropdown
+                    Text(
+                        text = "Minimum Threat Level",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    val levels = listOf("INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        levels.forEach { level ->
+                            FilterChip(
+                                selected = broadcastSettings.minThreatLevel == level,
+                                onClick = { viewModel.setBroadcastMinThreatLevel(level) },
+                                label = { Text(level, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Intent action info
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "Intent Actions:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "com.flockyou.DETECTION\ncom.flockyou.CELLULAR_ANOMALY\ncom.flockyou.SATELLITE_ANOMALY\ncom.flockyou.WIFI_ANOMALY\ncom.flockyou.RF_ANOMALY\ncom.flockyou.ULTRASONIC",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BroadcastToggle(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
     }
 }

@@ -339,7 +339,12 @@ class ScanningService : Service() {
     
     @Inject
     lateinit var repository: DetectionRepository
-    
+
+    @Inject
+    lateinit var broadcastSettingsRepository: com.flockyou.data.BroadcastSettingsRepository
+
+    private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
+
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val gson = Gson()
     
@@ -583,9 +588,16 @@ class ScanningService : Service() {
     @SuppressLint("MissingPermission")
     private fun startScanning() {
         if (isScanning.value) return
-        
+
         scanStatus.value = ScanStatus.Starting
         Log.d(TAG, "Starting scanning")
+
+        // Collect broadcast settings
+        serviceScope.launch {
+            broadcastSettingsRepository.settings.collect { settings ->
+                currentBroadcastSettings = settings
+            }
+        }
         
         val config = currentSettings.value
         
@@ -811,8 +823,11 @@ class ScanningService : Service() {
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
                 cellularAnomalies.value = anomalies
-                
+
                 for (anomaly in anomalies) {
+                    // Send broadcast for automation apps
+                    sendCellularAnomalyBroadcast(anomaly)
+
                     // Convert anomaly to detection
                     val detection = cellularMonitor?.anomalyToDetection(anomaly)
                     detection?.let { det ->
@@ -820,13 +835,13 @@ class ScanningService : Service() {
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
                             repository.insertDetection(det)
-                            
+
                             // Alert and vibrate for high-severity anomalies
-                            if (anomaly.severity == ThreatLevel.CRITICAL || 
+                            if (anomaly.severity == ThreatLevel.CRITICAL ||
                                 anomaly.severity == ThreatLevel.HIGH) {
                                 alertUser(det)
                             }
-                            
+
                             lastDetection.value = det
                             detectionCount.value = repository.getTotalDetectionCount()
 
@@ -892,7 +907,10 @@ class ScanningService : Service() {
         satelliteAnomalyJob = serviceScope.launch {
             satelliteMonitor?.anomalies?.collect { anomaly ->
                 Log.d(TAG, "Satellite anomaly detected: ${anomaly.type} - ${anomaly.severity}")
-                
+
+                // Send broadcast for automation apps
+                sendSatelliteAnomalyBroadcast(anomaly)
+
                 // Add to anomaly list
                 val currentAnomalies = satelliteAnomalies.value.toMutableList()
                 currentAnomalies.add(0, anomaly)
@@ -1023,6 +1041,9 @@ class ScanningService : Service() {
                 Companion.rogueWifiAnomalies.value = anomalies
 
                 for (anomaly in anomalies) {
+                    // Send broadcast for automation apps
+                    sendWifiAnomalyBroadcast(anomaly)
+
                     val detection = rogueWifiMonitor?.anomalyToDetection(anomaly)
                     detection?.let { det ->
                         // Check if we already have this detection
@@ -1125,6 +1146,9 @@ class ScanningService : Service() {
                 Companion.rfAnomalies.value = anomalies
 
                 for (anomaly in anomalies) {
+                    // Send broadcast for automation apps
+                    sendRfAnomalyBroadcast(anomaly)
+
                     val detection = rfSignalAnalyzer?.anomalyToDetection(anomaly)
                     detection?.let { det ->
                         // Use timestamp-based unique ID for RF anomalies
@@ -1217,6 +1241,9 @@ class ScanningService : Service() {
                 Companion.ultrasonicAnomalies.value = anomalies
 
                 for (anomaly in anomalies) {
+                    // Send broadcast for automation apps
+                    sendUltrasonicAnomalyBroadcast(anomaly)
+
                     val detection = ultrasonicDetector?.anomalyToDetection(anomaly)
                     detection?.let { det ->
                         // Use frequency as unique identifier
@@ -1865,8 +1892,11 @@ class ScanningService : Service() {
         
         // Send notification
         sendDetectionNotification(detection)
+
+        // Send broadcast for automation apps
+        sendDetectionBroadcast(detection)
     }
-    
+
     private fun sendDetectionNotification(detection: Detection) {
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -1887,7 +1917,154 @@ class ScanningService : Service() {
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(detection.id.hashCode(), notification)
     }
-    
+
+    // ==================== Automation Broadcasts ====================
+
+    /**
+     * Send a broadcast for a detection event to automation apps (Tasker, Automate, etc.)
+     */
+    private fun sendDetectionBroadcast(detection: Detection) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnDetection) return
+
+        // Check minimum threat level
+        if (!meetsMinThreatLevel(detection.threatLevel, settings.minThreatLevel)) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_DETECTION).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_DETECTION_ID, detection.id)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_DEVICE_TYPE, detection.deviceType.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_DEVICE_NAME, detection.deviceName)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_MAC_ADDRESS, detection.macAddress)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_SSID, detection.ssid)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, detection.threatLevel.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_SCORE, detection.threatScore)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_PROTOCOL, detection.protocol.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_DETECTION_METHOD, detection.detectionMethod.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_SIGNAL_STRENGTH, detection.signalStrength.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_RSSI, detection.rssi)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, detection.timestamp)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_MANUFACTURER, detection.manufacturer)
+
+            if (settings.includeLocation) {
+                detection.latitude?.let { putExtra(com.flockyou.data.BroadcastSettings.EXTRA_LATITUDE, it) }
+                detection.longitude?.let { putExtra(com.flockyou.data.BroadcastSettings.EXTRA_LONGITUDE, it) }
+            }
+
+            // Allow explicit receivers
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_DETECTION} for ${detection.deviceType}")
+    }
+
+    /**
+     * Send a broadcast for cellular anomaly events
+     */
+    fun sendCellularAnomalyBroadcast(anomaly: CellularMonitor.CellularAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnCellularAnomaly) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_CELLULAR_ANOMALY).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_CELLULAR_ANOMALY}")
+    }
+
+    /**
+     * Send a broadcast for satellite anomaly events
+     */
+    fun sendSatelliteAnomalyBroadcast(anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnSatelliteAnomaly) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_SATELLITE_ANOMALY).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_SATELLITE_ANOMALY}")
+    }
+
+    /**
+     * Send a broadcast for WiFi anomaly events
+     */
+    fun sendWifiAnomalyBroadcast(anomaly: RogueWifiMonitor.WifiAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnWifiAnomaly) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_WIFI_ANOMALY).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_SSID, anomaly.ssid)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_MAC_ADDRESS, anomaly.bssid)
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_WIFI_ANOMALY}")
+    }
+
+    /**
+     * Send a broadcast for RF anomaly events
+     */
+    fun sendRfAnomalyBroadcast(anomaly: RfSignalAnalyzer.RfAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnRfAnomaly) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_RF_ANOMALY).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_RF_ANOMALY}")
+    }
+
+    /**
+     * Send a broadcast for ultrasonic anomaly events
+     */
+    fun sendUltrasonicAnomalyBroadcast(anomaly: UltrasonicDetector.UltrasonicAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnUltrasonic) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_ULTRASONIC).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_ULTRASONIC}")
+    }
+
+    /**
+     * Check if a threat level meets the minimum threshold
+     */
+    private fun meetsMinThreatLevel(actual: ThreatLevel, minimum: String): Boolean {
+        val levels = listOf("INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL")
+        val actualIndex = levels.indexOf(actual.name)
+        val minIndex = levels.indexOf(minimum)
+        return actualIndex >= minIndex
+    }
+
     // ==================== Location ====================
     
     @SuppressLint("MissingPermission")

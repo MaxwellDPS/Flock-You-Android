@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
+import com.flockyou.data.BroadcastSettings
+import com.flockyou.data.BroadcastSettingsRepository
 import com.flockyou.data.DetectionSettingsRepository
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.NetworkSettingsRepository
@@ -71,6 +73,7 @@ class MainViewModel @Inject constructor(
     private val settingsRepository: DetectionSettingsRepository,
     private val ouiSettingsRepository: OuiSettingsRepository,
     private val networkSettingsRepository: NetworkSettingsRepository,
+    private val broadcastSettingsRepository: BroadcastSettingsRepository,
     private val orbotHelper: OrbotHelper,
     private val workManager: WorkManager
 ) : AndroidViewModel(application) {
@@ -95,6 +98,14 @@ class MainViewModel @Inject constructor(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = NetworkSettings()
+        )
+
+    // Broadcast Settings
+    val broadcastSettings: StateFlow<BroadcastSettings> = broadcastSettingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = BroadcastSettings()
         )
 
     private val _isOrbotInstalled = MutableStateFlow(false)
@@ -444,5 +455,60 @@ class MainViewModel @Inject constructor(
 
     fun openOrbotInstallPage() {
         orbotHelper.openOrbotInstallPage()
+    }
+
+    // Broadcast Settings Management
+    fun setBroadcastEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setEnabled(enabled)
+        }
+    }
+
+    fun setBroadcastOnDetection(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnDetection(enabled)
+        }
+    }
+
+    fun setBroadcastOnCellular(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnCellular(enabled)
+        }
+    }
+
+    fun setBroadcastOnSatellite(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnSatellite(enabled)
+        }
+    }
+
+    fun setBroadcastOnWifi(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnWifi(enabled)
+        }
+    }
+
+    fun setBroadcastOnRf(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnRf(enabled)
+        }
+    }
+
+    fun setBroadcastOnUltrasonic(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setBroadcastOnUltrasonic(enabled)
+        }
+    }
+
+    fun setBroadcastIncludeLocation(enabled: Boolean) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setIncludeLocation(enabled)
+        }
+    }
+
+    fun setBroadcastMinThreatLevel(level: String) {
+        viewModelScope.launch {
+            broadcastSettingsRepository.setMinThreatLevel(level)
+        }
     }
 }
