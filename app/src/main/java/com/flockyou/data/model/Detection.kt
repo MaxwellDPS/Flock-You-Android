@@ -94,7 +94,8 @@ enum class SignalStrength(val displayName: String, val description: String) {
     GOOD("Good", "Close proximity - within ~25m"),
     MEDIUM("Medium", "Moderate distance - within ~50m"),
     WEAK("Weak", "Far - within ~75m"),
-    VERY_WEAK("Very Weak", "Edge of range - 75m+")
+    VERY_WEAK("Very Weak", "Edge of range - 75m+"),
+    UNKNOWN("Unknown", "Signal strength not available")
 }
 
 enum class ThreatLevel(val displayName: String, val description: String) {
