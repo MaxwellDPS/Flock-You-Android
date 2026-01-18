@@ -43,6 +43,17 @@ class AppLockManager @Inject constructor(
     private val duressAuthenticator: DuressAuthenticator,
     private val failedAuthWatcher: FailedAuthWatcher
 ) {
+    /**
+     * Configurable lockout parameters.
+     * These can be adjusted based on security requirements.
+     */
+    data class LockoutConfig(
+        val maxFailedAttempts: Int = DEFAULT_MAX_FAILED_ATTEMPTS,
+        val lockoutDurationMs: Long = DEFAULT_LOCKOUT_DURATION_MS,
+        val escalatingLockout: Boolean = true, // Double lockout time on each consecutive lockout
+        val maxLockoutDurationMs: Long = DEFAULT_MAX_LOCKOUT_DURATION_MS
+    )
+
     companion object {
         private const val TAG = "AppLockManager"
         private const val PREFS_NAME = "app_lock_secure_prefs_v2"
@@ -51,16 +62,29 @@ class AppLockManager @Inject constructor(
         private const val KEY_PIN_SALT = "pin_salt"
         private const val KEY_FAILED_ATTEMPTS = "failed_attempts"
         private const val KEY_LOCKOUT_UNTIL = "lockout_until"
+        private const val KEY_LOCKOUT_COUNT = "lockout_count"
         private const val KEY_SECURITY_LEVEL = "security_level"
         private const val KEY_BIOMETRIC_KEY_ALIAS = "flockyou_biometric_key"
-        private const val MAX_FAILED_ATTEMPTS = 5
-        private const val LOCKOUT_DURATION_MS = 30_000L // 30 seconds
+
+        // Default lockout parameters
+        const val DEFAULT_MAX_FAILED_ATTEMPTS = 5
+        const val DEFAULT_LOCKOUT_DURATION_MS = 30_000L // 30 seconds
+        const val DEFAULT_MAX_LOCKOUT_DURATION_MS = 3600_000L // 1 hour max lockout
 
         // PBKDF2 parameters (OWASP recommendations)
         private const val PBKDF2_ITERATIONS = 120_000
         private const val PBKDF2_KEY_LENGTH = 256
         private const val SALT_LENGTH = 32
     }
+
+    // Configurable lockout settings - can be updated at runtime
+    private var _lockoutConfig = LockoutConfig()
+    var lockoutConfig: LockoutConfig
+        get() = _lockoutConfig
+        set(value) {
+            _lockoutConfig = value
+            Log.d(TAG, "Lockout config updated: maxAttempts=${value.maxFailedAttempts}, duration=${value.lockoutDurationMs}ms")
+        }
 
     private val _isLocked = MutableStateFlow(true)
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
@@ -132,13 +156,83 @@ class AppLockManager @Inject constructor(
     }
 
     /**
+     * Validate PIN complexity to reject common/weak sequences.
+     * Rejects:
+     * - All same digits (1111, 0000)
+     * - Sequential ascending (1234, 2345)
+     * - Sequential descending (4321, 9876)
+     * - Common PINs (0000, 1234, 1111, etc.)
+     *
+     * @param pin The PIN to validate
+     * @return null if valid, or an error message describing the issue
+     */
+    fun validatePinComplexity(pin: String): String? {
+        if (pin.length < 4 || pin.length > 8) {
+            return "PIN must be 4-8 digits"
+        }
+
+        if (!pin.all { it.isDigit() }) {
+            return "PIN must contain only digits"
+        }
+
+        // Check for all same digits
+        if (pin.all { it == pin[0] }) {
+            return "PIN cannot be all the same digit"
+        }
+
+        // Check for ascending sequence
+        var isAscending = true
+        for (i in 1 until pin.length) {
+            if (pin[i].code != pin[i - 1].code + 1) {
+                isAscending = false
+                break
+            }
+        }
+        if (isAscending) {
+            return "PIN cannot be a sequential sequence"
+        }
+
+        // Check for descending sequence
+        var isDescending = true
+        for (i in 1 until pin.length) {
+            if (pin[i].code != pin[i - 1].code - 1) {
+                isDescending = false
+                break
+            }
+        }
+        if (isDescending) {
+            return "PIN cannot be a sequential sequence"
+        }
+
+        // Common weak PINs to reject
+        val commonWeakPins = setOf(
+            "0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999",
+            "1234", "4321", "1212", "2121", "1122", "2211",
+            "0123", "3210", "9876", "6789",
+            "1357", "2468", "7531", "8642",
+            "0852", "2580", "1470", "7410",
+            "1230", "0321", "9870", "0789",
+            "2000", "1999", "2001", "2020", "2021", "2022", "2023", "2024", "2025",
+            "1000", "2000", "3000", "4000", "5000", "6000", "7000", "8000", "9000",
+            "00000000", "11111111", "12345678", "87654321"
+        )
+        if (pin in commonWeakPins) {
+            return "PIN is too common and easy to guess"
+        }
+
+        return null // Valid PIN
+    }
+
+    /**
      * Set a new PIN with PBKDF2 key derivation.
      *
      * @param pin The PIN to set (4-8 digits)
      * @return true if PIN was set successfully
      */
     fun setPin(pin: String): Boolean {
-        if (pin.length < 4 || pin.length > 8) {
+        val complexityError = validatePinComplexity(pin)
+        if (complexityError != null) {
+            Log.w(TAG, "PIN rejected: $complexityError")
             return false
         }
 
@@ -201,13 +295,16 @@ class AppLockManager @Inject constructor(
     }
 
     /**
-     * Verify a PIN using constant-time comparison.
+     * Verify a PIN using constant-time comparison (suspend version).
      * Also checks for duress PIN and integrates with failed auth tracking.
+     *
+     * RECOMMENDED: Use this suspend function to avoid blocking the UI thread.
+     * The PIN verification includes PBKDF2 with 120K iterations which is CPU-intensive.
      *
      * @param pin The PIN to verify
      * @return PinVerificationResult indicating the outcome
      */
-    fun verifyPinWithResult(pin: String): PinVerificationResult {
+    suspend fun verifyPinWithResultAsync(pin: String): PinVerificationResult {
         if (isLockedOut()) {
             Log.w(TAG, "PIN verification blocked - account locked out")
             return PinVerificationResult.LockedOut
@@ -217,10 +314,8 @@ class AppLockManager @Inject constructor(
             val storedHash = encryptedPrefs.getString(KEY_PIN_HASH, null)
             val storedSalt = encryptedPrefs.getString(KEY_PIN_SALT, null)
 
-            // Check for duress PIN first (runs in a blocking coroutine for immediate response)
-            val duressResult = kotlinx.coroutines.runBlocking {
-                duressAuthenticator.checkPin(pin, storedHash, storedSalt)
-            }
+            // Check for duress PIN first
+            val duressResult = duressAuthenticator.checkPin(pin, storedHash, storedSalt)
 
             when (duressResult) {
                 is DuressCheckResult.DuressPin -> {
@@ -277,11 +372,52 @@ class AppLockManager @Inject constructor(
     }
 
     /**
-     * Verify a PIN using constant-time comparison.
+     * Verify a PIN using constant-time comparison (blocking version).
+     * Also checks for duress PIN and integrates with failed auth tracking.
+     *
+     * WARNING: This function uses runBlocking which can cause ANR if called from the UI thread.
+     * The PIN verification includes PBKDF2 with 120K iterations which is CPU-intensive.
+     * PREFER using verifyPinWithResultAsync() from a coroutine instead.
+     *
+     * @param pin The PIN to verify
+     * @return PinVerificationResult indicating the outcome
+     */
+    @Deprecated(
+        message = "Use verifyPinWithResultAsync() to avoid blocking the UI thread",
+        replaceWith = ReplaceWith("verifyPinWithResultAsync(pin)")
+    )
+    fun verifyPinWithResult(pin: String): PinVerificationResult {
+        return kotlinx.coroutines.runBlocking {
+            verifyPinWithResultAsync(pin)
+        }
+    }
+
+    /**
+     * Verify a PIN using constant-time comparison (suspend version).
      *
      * @param pin The PIN to verify
      * @return true if PIN is correct
      */
+    suspend fun verifyPinAsync(pin: String): Boolean {
+        return when (verifyPinWithResultAsync(pin)) {
+            is PinVerificationResult.Success -> true
+            else -> false
+        }
+    }
+
+    /**
+     * Verify a PIN using constant-time comparison (blocking version).
+     *
+     * WARNING: This uses runBlocking internally. Prefer verifyPinAsync().
+     *
+     * @param pin The PIN to verify
+     * @return true if PIN is correct
+     */
+    @Deprecated(
+        message = "Use verifyPinAsync() to avoid blocking the UI thread",
+        replaceWith = ReplaceWith("verifyPinAsync(pin)")
+    )
+    @Suppress("DEPRECATION")
     fun verifyPin(pin: String): Boolean {
         return when (verifyPinWithResult(pin)) {
             is PinVerificationResult.Success -> true
@@ -452,13 +588,29 @@ class AppLockManager @Inject constructor(
 
     private fun recordFailedAttempt() {
         try {
+            val config = _lockoutConfig
             val attempts = getFailedAttempts() + 1
             encryptedPrefs.edit().putInt(KEY_FAILED_ATTEMPTS, attempts).apply()
 
-            if (attempts >= MAX_FAILED_ATTEMPTS) {
-                val lockoutUntil = System.currentTimeMillis() + LOCKOUT_DURATION_MS
-                encryptedPrefs.edit().putLong(KEY_LOCKOUT_UNTIL, lockoutUntil).apply()
-                Log.w(TAG, "Account locked out for ${LOCKOUT_DURATION_MS / 1000} seconds after $attempts failed attempts")
+            if (attempts >= config.maxFailedAttempts) {
+                // Calculate lockout duration with optional escalation
+                val lockoutCount = encryptedPrefs.getInt(KEY_LOCKOUT_COUNT, 0) + 1
+                val lockoutDuration = if (config.escalatingLockout) {
+                    // Double the lockout duration for each consecutive lockout, up to max
+                    minOf(
+                        config.lockoutDurationMs * (1L shl (lockoutCount - 1).coerceAtMost(10)),
+                        config.maxLockoutDurationMs
+                    )
+                } else {
+                    config.lockoutDurationMs
+                }
+
+                val lockoutUntil = System.currentTimeMillis() + lockoutDuration
+                encryptedPrefs.edit()
+                    .putLong(KEY_LOCKOUT_UNTIL, lockoutUntil)
+                    .putInt(KEY_LOCKOUT_COUNT, lockoutCount)
+                    .apply()
+                Log.w(TAG, "Account locked out for ${lockoutDuration / 1000} seconds after $attempts failed attempts (lockout #$lockoutCount)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error recording failed attempt", e)
@@ -470,10 +622,29 @@ class AppLockManager @Inject constructor(
             encryptedPrefs.edit()
                 .remove(KEY_FAILED_ATTEMPTS)
                 .remove(KEY_LOCKOUT_UNTIL)
+                .remove(KEY_LOCKOUT_COUNT)
                 .apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing failed attempts", e)
         }
+    }
+
+    /**
+     * Get current lockout status for UI display.
+     * Returns remaining lockout time in milliseconds, or 0 if not locked out.
+     */
+    fun getRemainingLockoutTime(): Long {
+        val lockoutUntil = encryptedPrefs.getLong(KEY_LOCKOUT_UNTIL, 0L)
+        val remaining = lockoutUntil - System.currentTimeMillis()
+        return if (remaining > 0) remaining else 0L
+    }
+
+    /**
+     * Get the number of remaining attempts before lockout.
+     */
+    fun getRemainingAttempts(): Int {
+        val failed = getFailedAttempts()
+        return (_lockoutConfig.maxFailedAttempts - failed).coerceAtLeast(0)
     }
 
     /**

@@ -73,8 +73,6 @@ class BootWatcher : BroadcastReceiver() {
     @Inject
     lateinit var nukeManager: NukeManager
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
@@ -82,8 +80,14 @@ class BootWatcher : BroadcastReceiver() {
             "android.intent.action.QUICKBOOT_POWERON",
             "com.htc.intent.action.QUICKBOOT_POWERON" -> {
                 Log.d(TAG, "Boot event received: ${intent.action}")
-                scope.launch {
-                    handleBootEvent(context)
+                // Use goAsync() for proper async handling in BroadcastReceiver
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        handleBootEvent(context)
+                    } finally {
+                        pendingResult.finish()
+                    }
                 }
             }
         }

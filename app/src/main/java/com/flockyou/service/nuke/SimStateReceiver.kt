@@ -42,8 +42,6 @@ class SimStateReceiver : BroadcastReceiver() {
     @Inject
     lateinit var nukeManager: NukeManager
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onReceive(context: Context, intent: Intent) {
         // Support both legacy and new SIM state change actions
         val isSimStateChange = intent.action == "android.intent.action.SIM_STATE_CHANGED" ||
@@ -56,8 +54,14 @@ class SimStateReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "SIM state changed: ${intent.action}")
 
-        scope.launch {
-            handleSimStateChange(context, intent)
+        // Use goAsync() for proper async handling in BroadcastReceiver
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                handleSimStateChange(context, intent)
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 
@@ -150,7 +154,7 @@ class SimStateReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun triggerNuke(context: Context, settings: com.flockyou.data.NukeSettings) {
+    private suspend fun triggerNuke(context: Context, settings: com.flockyou.data.NukeSettings) {
         val delaySeconds = settings.simRemovalDelaySeconds
 
         if (delaySeconds > 0) {
@@ -158,9 +162,7 @@ class SimStateReceiver : BroadcastReceiver() {
             NukeWorker.scheduleSimNuke(context, delaySeconds)
         } else {
             Log.w(TAG, "Executing immediate nuke due to SIM removal")
-            scope.launch {
-                nukeManager.executeNuke(NukeTriggerSource.SIM_REMOVAL)
-            }
+            nukeManager.executeNuke(NukeTriggerSource.SIM_REMOVAL)
         }
     }
 

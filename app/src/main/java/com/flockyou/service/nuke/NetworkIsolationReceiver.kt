@@ -46,16 +46,21 @@ class NetworkIsolationReceiver : BroadcastReceiver() {
     @Inject
     lateinit var nukeManager: NukeManager
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Received: ${intent.action}")
 
+        @Suppress("DEPRECATION")
         when (intent.action) {
             ConnectivityManager.CONNECTIVITY_ACTION,
             Intent.ACTION_AIRPLANE_MODE_CHANGED -> {
-                scope.launch {
-                    handleNetworkChange(context)
+                // Use goAsync() for proper async handling in BroadcastReceiver
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        handleNetworkChange(context)
+                    } finally {
+                        pendingResult.finish()
+                    }
                 }
             }
         }
@@ -140,9 +145,7 @@ class NetworkIsolationReceiver : BroadcastReceiver() {
     /**
      * Check current isolation state - call this on app startup to resume monitoring.
      */
-    fun checkCurrentState(context: Context) {
-        scope.launch {
-            handleNetworkChange(context)
-        }
+    suspend fun checkCurrentState(context: Context) {
+        handleNetworkChange(context)
     }
 }

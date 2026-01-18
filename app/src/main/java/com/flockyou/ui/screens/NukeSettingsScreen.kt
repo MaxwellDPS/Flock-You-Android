@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,8 +45,7 @@ fun NukeSettingsScreen(
                 title = { Text("Emergency Wipe") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        @Suppress("DEPRECATION")
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -394,6 +394,8 @@ fun NukeSettingsScreen(
                                     valueRange = 1f..7f,
                                     valueLabel = "${settings.secureWipePasses} passes"
                                 )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FlashStorageLimitationNotice()
                             }
                         }
                     }
@@ -867,6 +869,48 @@ private fun AddDangerZoneDialog(
             }
         }
     )
+}
+
+/**
+ * Notice explaining the limitations of secure wipe on flash storage.
+ * Modern flash storage uses wear leveling and may retain old data
+ * in unmapped blocks even after secure overwrite.
+ */
+@Composable
+private fun FlashStorageLimitationNotice() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Default.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = "Flash Storage Limitations",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Modern flash storage (eMMC, UFS) uses wear leveling, which may retain old data in unmapped blocks even after secure overwrite. For maximum security, consider enabling full-disk encryption (which is standard on modern Android) and ensure your device uses hardware-backed encryption keys.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
 }
 
 private fun formatHours(hours: Int): String {

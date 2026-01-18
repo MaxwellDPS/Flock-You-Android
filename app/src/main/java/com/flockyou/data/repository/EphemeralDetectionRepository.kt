@@ -6,6 +6,8 @@ import com.flockyou.data.model.ThreatLevel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,11 +15,14 @@ import javax.inject.Singleton
  * In-memory detection repository for ephemeral mode.
  * All detections are stored in RAM only and are lost on service restart.
  * This provides maximum privacy as no data is persisted to disk.
+ *
+ * Thread-safe: Uses a Mutex to protect concurrent access to the detection list.
  */
 @Singleton
 class EphemeralDetectionRepository @Inject constructor() {
 
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
+    private val mutex = Mutex()
 
     val allDetections: Flow<List<Detection>> = _detections
 
@@ -73,19 +78,19 @@ class EphemeralDetectionRepository @Inject constructor() {
         return _detections.value.toList()
     }
 
-    suspend fun insertDetection(detection: Detection) {
+    suspend fun insertDetection(detection: Detection) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.add(0, detection)
         _detections.value = current
     }
 
-    suspend fun insertDetections(detections: List<Detection>) {
+    suspend fun insertDetections(detections: List<Detection>) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.addAll(0, detections)
         _detections.value = current
     }
 
-    suspend fun updateDetection(detection: Detection) {
+    suspend fun updateDetection(detection: Detection) = mutex.withLock {
         val current = _detections.value.toMutableList()
         val index = current.indexOfFirst { it.id == detection.id }
         if (index >= 0) {
@@ -94,23 +99,23 @@ class EphemeralDetectionRepository @Inject constructor() {
         }
     }
 
-    suspend fun deleteDetection(detection: Detection) {
+    suspend fun deleteDetection(detection: Detection) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.removeAll { it.id == detection.id }
         _detections.value = current
     }
 
-    suspend fun deleteAllDetections() {
+    suspend fun deleteAllDetections() = mutex.withLock {
         _detections.value = emptyList()
     }
 
-    suspend fun deleteOldDetections(beforeMillis: Long) {
+    suspend fun deleteOldDetections(beforeMillis: Long) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.removeAll { it.timestamp < beforeMillis }
         _detections.value = current
     }
 
-    suspend fun markInactive(macAddress: String) {
+    suspend fun markInactive(macAddress: String) = mutex.withLock {
         val current = _detections.value.toMutableList()
         val index = current.indexOfFirst { it.macAddress == macAddress }
         if (index >= 0) {
@@ -119,7 +124,7 @@ class EphemeralDetectionRepository @Inject constructor() {
         }
     }
 
-    suspend fun markOldInactive(beforeMillis: Long) {
+    suspend fun markOldInactive(beforeMillis: Long) = mutex.withLock {
         val current = _detections.value.toMutableList()
         _detections.value = current.map { detection ->
             if (detection.lastSeenTimestamp < beforeMillis && detection.isActive) {
@@ -133,13 +138,15 @@ class EphemeralDetectionRepository @Inject constructor() {
     /**
      * Update an existing detection's seen count and location, or insert if new.
      * Returns true if this is a new detection, false if updated existing.
+     * Thread-safe: Uses mutex to prevent race conditions during read-modify-write.
      */
-    suspend fun upsertDetection(detection: Detection): Boolean {
-        val existingByMac = detection.macAddress?.let { getDetectionByMacAddress(it) }
-        val existingBySsid = if (existingByMac == null) detection.ssid?.let { getDetectionBySsid(it) } else null
+    suspend fun upsertDetection(detection: Detection): Boolean = mutex.withLock {
+        val currentList = _detections.value
+        val existingByMac = detection.macAddress?.let { mac -> currentList.find { it.macAddress == mac } }
+        val existingBySsid = if (existingByMac == null) detection.ssid?.let { ssid -> currentList.find { it.ssid == ssid } } else null
         val existing = existingByMac ?: existingBySsid
 
-        return if (existing != null) {
+        return@withLock if (existing != null) {
             // Update existing
             val updated = existing.copy(
                 lastSeenTimestamp = detection.timestamp,
@@ -149,10 +156,17 @@ class EphemeralDetectionRepository @Inject constructor() {
                 seenCount = existing.seenCount + 1,
                 isActive = true
             )
-            updateDetection(updated)
+            val mutableList = currentList.toMutableList()
+            val index = mutableList.indexOfFirst { it.id == existing.id }
+            if (index >= 0) {
+                mutableList[index] = updated
+                _detections.value = mutableList
+            }
             false
         } else {
-            insertDetection(detection)
+            val mutableList = currentList.toMutableList()
+            mutableList.add(0, detection)
+            _detections.value = mutableList
             true
         }
     }

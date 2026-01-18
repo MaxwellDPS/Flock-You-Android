@@ -94,8 +94,7 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        @Suppress("DEPRECATION")
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -746,7 +745,7 @@ fun SettingsScreen(
                     title = "Open Source",
                     subtitle = "View source code on GitHub",
                     onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ANG13T/flock-you-android"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MaxwellDPS/Flock-You-Android"))
                         context.startActivity(intent)
                     }
                 )

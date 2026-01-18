@@ -43,8 +43,6 @@ class UsbWatchdogReceiver : BroadcastReceiver() {
     @Inject
     lateinit var nukeManager: NukeManager
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Received: ${intent.action}")
 
@@ -52,8 +50,15 @@ class UsbWatchdogReceiver : BroadcastReceiver() {
             UsbManager.ACTION_USB_DEVICE_ATTACHED,
             UsbManager.ACTION_USB_ACCESSORY_ATTACHED,
             Intent.ACTION_POWER_CONNECTED -> {
-                scope.launch {
-                    handleUsbEvent(context, intent)
+                // Use goAsync() to allow async work in BroadcastReceiver
+                // This keeps the receiver alive until we call pendingResult.finish()
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        handleUsbEvent(context, intent)
+                    } finally {
+                        pendingResult.finish()
+                    }
                 }
             }
         }
@@ -140,7 +145,7 @@ class UsbWatchdogReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun triggerNuke(context: Context, settings: NukeSettings) {
+    private suspend fun triggerNuke(context: Context, settings: NukeSettings) {
         val delaySeconds = settings.usbTriggerDelaySeconds
 
         if (delaySeconds > 0) {
@@ -148,9 +153,7 @@ class UsbWatchdogReceiver : BroadcastReceiver() {
             NukeWorker.scheduleUsbNuke(context, delaySeconds)
         } else {
             Log.w(TAG, "Executing immediate nuke due to USB trigger")
-            scope.launch {
-                nukeManager.executeNuke(NukeTriggerSource.USB_CONNECTION)
-            }
+            nukeManager.executeNuke(NukeTriggerSource.USB_CONNECTION)
         }
     }
 }

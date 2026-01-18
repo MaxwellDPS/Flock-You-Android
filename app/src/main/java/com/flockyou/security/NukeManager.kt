@@ -141,17 +141,35 @@ class NukeManager @Inject constructor(
 
     /**
      * Wipe the SQLCipher encrypted database.
+     * Includes verification that database is properly closed before deletion.
      */
     private suspend fun wipeDatabase(secureWipe: Boolean, passes: Int): Boolean = withContext(Dispatchers.IO) {
         try {
-            // First, try to close the database properly
-            try {
-                // Get the singleton instance and close it
-                val databaseDir = context.getDatabasePath(DATABASE_NAME).parentFile
-                FlockYouDatabase.getDatabase(context).close()
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not close database gracefully", e)
+            // First, try to close the database properly with verification
+            var closedSuccessfully = false
+            val maxRetries = 3
+            val retryDelayMs = 100L
+
+            for (attempt in 1..maxRetries) {
+                try {
+                    FlockYouDatabase.getDatabase(context).close()
+                    closedSuccessfully = true
+                    Log.d(TAG, "Database closed successfully on attempt $attempt")
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Database close attempt $attempt failed: ${e.message}")
+                    if (attempt < maxRetries) {
+                        kotlinx.coroutines.delay(retryDelayMs)
+                    }
+                }
             }
+
+            if (!closedSuccessfully) {
+                Log.w(TAG, "Could not verify database closure after $maxRetries attempts - proceeding with wipe anyway")
+            }
+
+            // Give the system a moment to release file handles
+            kotlinx.coroutines.delay(50)
 
             // List of all database-related files
             val databaseFiles = listOf(
@@ -162,17 +180,36 @@ class NukeManager @Inject constructor(
             )
 
             var success = true
+            var filesDeleted = 0
+            var filesFailed = 0
+
             for (file in databaseFiles) {
                 if (file.exists()) {
-                    if (secureWipe) {
-                        success = secureDeleteFile(file, passes) && success
+                    val fileDeleted = if (secureWipe) {
+                        secureDeleteFile(file, passes)
                     } else {
-                        success = file.delete() && success
+                        file.delete()
+                    }
+
+                    if (fileDeleted) {
+                        filesDeleted++
+                    } else {
+                        filesFailed++
+                        success = false
+                        Log.e(TAG, "Failed to delete database file: ${file.name}")
                     }
                 }
             }
 
-            Log.i(TAG, "Database wipe complete (secure=$secureWipe, passes=$passes): $success")
+            // Verify files are actually deleted
+            val remainingFiles = databaseFiles.filter { it.exists() }
+            if (remainingFiles.isNotEmpty()) {
+                Log.e(TAG, "Database files still exist after wipe: ${remainingFiles.map { it.name }}")
+                success = false
+            }
+
+            Log.i(TAG, "Database wipe complete (secure=$secureWipe, passes=$passes): " +
+                    "deleted=$filesDeleted, failed=$filesFailed, verified=${remainingFiles.isEmpty()}")
             success
         } catch (e: Exception) {
             Log.e(TAG, "Failed to wipe database", e)
