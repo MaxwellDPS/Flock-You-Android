@@ -1,6 +1,5 @@
 package com.flockyou.data.model
 
-import androidx.compose.ui.graphics.Color
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
@@ -86,17 +85,6 @@ enum class ThreatLevel(val displayName: String, val description: String) {
     MEDIUM("Medium", "Likely surveillance equipment"),
     LOW("Low", "Possible surveillance device"),
     INFO("Info", "Device of interest - may not be surveillance")
-}
-
-/**
- * Extension to get color for ThreatLevel
- */
-fun ThreatLevel.toColor(): Color = when (this) {
-    ThreatLevel.CRITICAL -> Color(0xFFD32F2F) // Red
-    ThreatLevel.HIGH -> Color(0xFFF57C00) // Orange
-    ThreatLevel.MEDIUM -> Color(0xFFFBC02D) // Yellow
-    ThreatLevel.LOW -> Color(0xFF388E3C) // Green
-    ThreatLevel.INFO -> Color(0xFF1976D2) // Blue
 }
 
 /**

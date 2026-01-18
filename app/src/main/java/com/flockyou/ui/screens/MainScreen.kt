@@ -946,15 +946,6 @@ fun DetailRow(
 }
 
 @Composable
-private fun ThreatLevel.toColor(): Color = when (this) {
-    ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
-    ThreatLevel.HIGH -> Color(0xFFF57C00)
-    ThreatLevel.MEDIUM -> Color(0xFFFBC02D)
-    ThreatLevel.LOW -> Color(0xFF388E3C)
-    ThreatLevel.INFO -> Color(0xFF1976D2)
-}
-
-@Composable
 private fun CellularTabContent(
     modifier: Modifier = Modifier,
     cellStatus: CellularMonitor.CellStatus?,
@@ -1154,7 +1145,10 @@ private fun CellularTabContent(
                 )
             }
             
-            items(cellularAnomalies.take(10)) { anomaly ->
+            items(
+                items = cellularAnomalies.take(10),
+                key = { it.id }
+            ) { anomaly ->
                 CellularAnomalyCard(anomaly = anomaly, dateFormat = dateFormat)
             }
         }
@@ -1178,7 +1172,10 @@ private fun CellularTabContent(
                 }
             }
             
-            items(seenCellTowers) { tower ->
+            items(
+                items = seenCellTowers,
+                key = { it.cellId }
+            ) { tower ->
                 CellTowerHistoryCard(tower = tower, dateFormat = dateFormat)
             }
         }

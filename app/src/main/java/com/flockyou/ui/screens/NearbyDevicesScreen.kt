@@ -198,7 +198,10 @@ fun NearbyDevicesScreen(
                                 }
                             }
                             
-                            items(devices.sortedByDescending { it.lastSeen }) { device ->
+                            items(
+                                items = devices.sortedByDescending { it.lastSeen },
+                                key = { it.id }
+                            ) { device ->
                                 SeenDeviceCard(device = device, isBle = selectedTab == 0)
                             }
                             
@@ -477,7 +480,10 @@ private fun CellularStatusContent(
                     )
                 }
                 
-                items(cellularAnomalies.take(10)) { anomaly ->
+                items(
+                    items = cellularAnomalies.take(10),
+                    key = { it.id }
+                ) { anomaly ->
                     AnomalyCard(anomaly = anomaly, dateFormat = dateFormat)
                 }
                 
@@ -514,7 +520,10 @@ private fun CellularStatusContent(
                     }
                 }
                 
-                items(seenCellTowers) { tower ->
+                items(
+                    items = seenCellTowers,
+                    key = { it.cellId }
+                ) { tower ->
                     SeenCellTowerCard(tower = tower, dateFormat = dateFormat)
                 }
             }
