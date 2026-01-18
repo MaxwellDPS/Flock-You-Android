@@ -625,15 +625,50 @@ fun DetectionDetailSheet(
                 )
             }
             
-            detection.macAddress?.let { mac ->
-                item {
-                    DetailRow(label = "MAC Address", value = mac)
+            // Show different fields based on protocol
+            if (detection.protocol == DetectionProtocol.CELLULAR) {
+                // Cellular-specific fields
+                detection.firmwareVersion?.let { cellId ->
+                    item {
+                        DetailRow(label = "Cell Info", value = cellId)
+                    }
                 }
-            }
-            
-            detection.ssid?.let { ssid ->
-                item {
-                    DetailRow(label = "SSID", value = ssid)
+                
+                detection.macAddress?.let { mccMnc ->
+                    item {
+                        DetailRow(label = "MCC-MNC", value = mccMnc)
+                    }
+                }
+                
+                detection.manufacturer?.let { networkType ->
+                    item {
+                        DetailRow(label = "Network Type", value = networkType)
+                    }
+                }
+            } else {
+                // WiFi/BLE fields
+                detection.macAddress?.let { mac ->
+                    item {
+                        DetailRow(label = "MAC Address", value = mac)
+                    }
+                }
+                
+                detection.ssid?.let { ssid ->
+                    item {
+                        DetailRow(label = "SSID", value = ssid)
+                    }
+                }
+                
+                detection.manufacturer?.let { mfr ->
+                    item {
+                        DetailRow(label = "Manufacturer", value = mfr)
+                    }
+                }
+                
+                detection.firmwareVersion?.let { fw ->
+                    item {
+                        DetailRow(label = "Firmware", value = fw)
+                    }
                 }
             }
             
@@ -655,18 +690,6 @@ fun DetectionDetailSheet(
                     label = "Est. Distance",
                     value = rssiToDistance(detection.rssi)
                 )
-            }
-            
-            detection.manufacturer?.let { mfr ->
-                item {
-                    DetailRow(label = "Manufacturer", value = mfr)
-                }
-            }
-            
-            detection.firmwareVersion?.let { fw ->
-                item {
-                    DetailRow(label = "Firmware", value = fw)
-                }
             }
             
             // Location Section

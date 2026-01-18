@@ -115,7 +115,7 @@ interface DetectionDao {
 /**
  * Room database for storing detections
  */
-@Database(entities = [Detection::class], version = 2, exportSchema = false)
+@Database(entities = [Detection::class], version = 3, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao

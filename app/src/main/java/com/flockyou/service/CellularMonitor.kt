@@ -658,22 +658,64 @@ class CellularMonitor(private val context: Context) {
      * Convert a cellular anomaly to a Detection for storage
      */
     fun anomalyToDetection(anomaly: CellularAnomaly): Detection {
+        // Map anomaly type to detection method
+        val detectionMethod = when (anomaly.type) {
+            AnomalyType.ENCRYPTION_DOWNGRADE -> DetectionMethod.CELL_ENCRYPTION_DOWNGRADE
+            AnomalyType.SUSPICIOUS_NETWORK -> DetectionMethod.CELL_SUSPICIOUS_NETWORK
+            AnomalyType.CELL_TOWER_CHANGE -> DetectionMethod.CELL_TOWER_CHANGE
+            AnomalyType.RAPID_CELL_SWITCHING -> DetectionMethod.CELL_RAPID_SWITCHING
+            AnomalyType.SIGNAL_SPIKE -> DetectionMethod.CELL_SIGNAL_ANOMALY
+            AnomalyType.LAC_TAC_ANOMALY -> DetectionMethod.CELL_LAC_TAC_ANOMALY
+            AnomalyType.UNKNOWN_CELL -> DetectionMethod.CELL_TOWER_CHANGE
+        }
+        
+        // Build detailed device name
+        val deviceName = when (anomaly.type) {
+            AnomalyType.ENCRYPTION_DOWNGRADE -> 
+                "Encryption Downgrade: ${anomaly.previousNetworkType ?: "4G/5G"} → ${anomaly.networkType}"
+            AnomalyType.SUSPICIOUS_NETWORK -> 
+                "Suspicious Network: ${anomaly.mccMnc ?: "Unknown"}"
+            AnomalyType.CELL_TOWER_CHANGE -> 
+                "Cell Change: ${anomaly.previousCellId ?: "?"} → ${anomaly.cellId ?: "?"}"
+            AnomalyType.RAPID_CELL_SWITCHING -> 
+                "Rapid Switching Detected"
+            AnomalyType.SIGNAL_SPIKE -> 
+                "Signal Spike: ${anomaly.previousSignalStrength ?: "?"}→${anomaly.signalStrength} dBm"
+            AnomalyType.LAC_TAC_ANOMALY -> 
+                "Location Area Changed Unexpectedly"
+            AnomalyType.UNKNOWN_CELL -> 
+                "Unknown Cell Tower: ${anomaly.cellId ?: "?"}"
+        }
+        
+        // Build cell info JSON for serviceUuids field
+        val cellInfo = buildString {
+            append("{")
+            append("\"cellId\":${anomaly.cellId ?: "null"},")
+            append("\"prevCellId\":${anomaly.previousCellId ?: "null"},")
+            append("\"networkType\":\"${anomaly.networkType}\",")
+            append("\"prevNetworkType\":\"${anomaly.previousNetworkType ?: ""}\",")
+            append("\"mccMnc\":\"${anomaly.mccMnc ?: ""}\",")
+            append("\"signalDbm\":${anomaly.signalStrength},")
+            append("\"prevSignalDbm\":${anomaly.previousSignalStrength ?: "null"}")
+            append("}")
+        }
+        
         return Detection(
-            protocol = DetectionProtocol.WIFI, // Using WIFI as placeholder - could add CELLULAR protocol
-            detectionMethod = DetectionMethod.BEACON_FRAME, // Using as placeholder for cellular
+            protocol = DetectionProtocol.CELLULAR,
+            detectionMethod = detectionMethod,
             deviceType = DeviceType.STINGRAY_IMSI,
-            deviceName = "Cell Anomaly: ${anomaly.type.displayName}",
-            macAddress = null,
-            ssid = "CELL-${anomaly.cellId ?: "UNKNOWN"}-${anomaly.id.take(8)}", // Unique identifier
+            deviceName = deviceName,
+            macAddress = anomaly.mccMnc, // Store MCC-MNC in MAC field
+            ssid = "CELL-${anomaly.cellId ?: "UNK"}-${anomaly.id.take(8)}", // Unique identifier for DB
             rssi = anomaly.signalStrength,
             signalStrength = rssiToSignalStrength(anomaly.signalStrength),
             latitude = anomaly.latitude,
             longitude = anomaly.longitude,
             threatLevel = anomaly.severity,
             threatScore = anomaly.type.baseThreatScore,
-            manufacturer = "Unknown (${anomaly.mccMnc ?: "?"})",
-            firmwareVersion = null,
-            serviceUuids = null,
+            manufacturer = anomaly.networkType, // Store network type (LTE, 5G, etc)
+            firmwareVersion = "Cell ID: ${anomaly.cellId ?: "Unknown"}", // Store cell ID
+            serviceUuids = cellInfo, // Store full cell info as JSON
             matchedPatterns = "[\"${anomaly.type.name}\"]"
         )
     }

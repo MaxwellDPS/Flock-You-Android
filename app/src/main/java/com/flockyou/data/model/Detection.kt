@@ -36,7 +36,8 @@ data class Detection(
 
 enum class DetectionProtocol(val displayName: String, val icon: String) {
     WIFI("WiFi", "📡"),
-    BLUETOOTH_LE("Bluetooth LE", "📶")
+    BLUETOOTH_LE("Bluetooth LE", "📶"),
+    CELLULAR("Cellular", "📱")
 }
 
 enum class DetectionMethod(val displayName: String, val description: String) {
@@ -46,7 +47,14 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     BLE_SERVICE_UUID("BLE Service", "Device identified by Bluetooth service UUIDs"),
     RAVEN_SERVICE_UUID("Raven Services", "Raven gunshot detector identified by specific BLE services"),
     PROBE_REQUEST("Probe Request", "Device detected via WiFi probe request"),
-    BEACON_FRAME("Beacon Frame", "Device detected via WiFi beacon broadcast")
+    BEACON_FRAME("Beacon Frame", "Device detected via WiFi beacon broadcast"),
+    // Cellular anomaly detection methods
+    CELL_ENCRYPTION_DOWNGRADE("Encryption Downgrade", "Network forced from 4G/5G to 2G with weak encryption"),
+    CELL_SUSPICIOUS_NETWORK("Suspicious Network", "Connected to test/invalid MCC-MNC identifier"),
+    CELL_TOWER_CHANGE("Unexpected Cell Change", "Cell tower changed without user movement"),
+    CELL_RAPID_SWITCHING("Rapid Cell Switching", "Phone switching towers abnormally fast"),
+    CELL_SIGNAL_ANOMALY("Signal Anomaly", "Sudden unexplained signal strength change"),
+    CELL_LAC_TAC_ANOMALY("Location Area Anomaly", "LAC/TAC changed unexpectedly")
 }
 
 enum class DeviceType(val displayName: String, val emoji: String) {
