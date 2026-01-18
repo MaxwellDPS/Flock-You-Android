@@ -920,7 +920,7 @@ private fun SeenCellTowerCard(
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "${tower.signalStrength} dBm",
+                        text = "${tower.lastSignal} dBm",
                         style = MaterialTheme.typography.labelMedium,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
