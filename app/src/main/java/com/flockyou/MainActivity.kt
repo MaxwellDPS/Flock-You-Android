@@ -46,7 +46,14 @@ import com.flockyou.ui.screens.NotificationSettingsScreen
 import com.flockyou.ui.screens.RuleSettingsScreen
 import com.flockyou.ui.screens.DetectionSettingsScreen
 import com.flockyou.ui.screens.SecuritySettingsScreen
+import com.flockyou.ui.screens.PrivacySettingsScreen
 import com.flockyou.ui.screens.PermissionSetupWizard
+import com.flockyou.data.NukeSettingsRepository
+import com.flockyou.data.PrivacySettingsRepository
+import com.flockyou.data.repository.DetectionRepository
+import com.flockyou.data.repository.EphemeralDetectionRepository
+import com.flockyou.security.DuressAuthenticator
+import com.flockyou.ui.screens.NukeSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -61,6 +68,21 @@ class MainActivity : FragmentActivity() {
 
     @Inject
     lateinit var appLockManager: AppLockManager
+
+    @Inject
+    lateinit var privacySettingsRepository: PrivacySettingsRepository
+
+    @Inject
+    lateinit var detectionRepository: DetectionRepository
+
+    @Inject
+    lateinit var ephemeralRepository: EphemeralDetectionRepository
+
+    @Inject
+    lateinit var nukeSettingsRepository: NukeSettingsRepository
+
+    @Inject
+    lateinit var duressAuthenticator: DuressAuthenticator
 
     private var permissionsGranted by mutableStateOf(false)
     private var batteryOptimizationChecked by mutableStateOf(false)
@@ -171,7 +193,14 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                         else -> {
-                            AppNavigation(appLockManager = appLockManager)
+                            AppNavigation(
+                                appLockManager = appLockManager,
+                                privacySettingsRepository = privacySettingsRepository,
+                                detectionRepository = detectionRepository,
+                                ephemeralRepository = ephemeralRepository,
+                                nukeSettingsRepository = nukeSettingsRepository,
+                                duressAuthenticator = duressAuthenticator
+                            )
                         }
                     }
                 }
@@ -224,7 +253,14 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
-fun AppNavigation(appLockManager: AppLockManager) {
+fun AppNavigation(
+    appLockManager: AppLockManager,
+    privacySettingsRepository: PrivacySettingsRepository,
+    detectionRepository: DetectionRepository,
+    ephemeralRepository: EphemeralDetectionRepository,
+    nukeSettingsRepository: NukeSettingsRepository,
+    duressAuthenticator: DuressAuthenticator
+) {
     val navController = rememberNavController()
 
     NavHost(
@@ -250,7 +286,9 @@ fun AppNavigation(appLockManager: AppLockManager) {
                 onNavigateToNotifications = { navController.navigate("notifications") },
                 onNavigateToRules = { navController.navigate("rules") },
                 onNavigateToDetectionSettings = { navController.navigate("detection_settings") },
-                onNavigateToSecurity = { navController.navigate("security") }
+                onNavigateToSecurity = { navController.navigate("security") },
+                onNavigateToPrivacy = { navController.navigate("privacy") },
+                onNavigateToNuke = { navController.navigate("nuke_settings") }
             )
         }
         composable("nearby") {
@@ -281,6 +319,22 @@ fun AppNavigation(appLockManager: AppLockManager) {
         composable("security") {
             SecuritySettingsScreen(
                 appLockManager = appLockManager,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("privacy") {
+            PrivacySettingsScreen(
+                privacySettingsRepository = privacySettingsRepository,
+                detectionRepository = detectionRepository,
+                ephemeralRepository = ephemeralRepository,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("nuke_settings") {
+            NukeSettingsScreen(
+                nukeSettingsRepository = nukeSettingsRepository,
+                appLockManager = appLockManager,
+                duressAuthenticator = duressAuthenticator,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

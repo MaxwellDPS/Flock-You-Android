@@ -364,8 +364,55 @@ class CellularMonitor(private val context: Context) {
     
     fun destroy() {
         stopMonitoring()
+        clearSensitiveData()
     }
-    
+
+    /**
+     * Clear all sensitive cellular data from memory.
+     * Call this when:
+     * - User locks the app
+     * - App goes to background (if configured)
+     * - Service is being destroyed
+     *
+     * This helps protect sensitive location and cellular network data from
+     * memory-based attacks.
+     */
+    fun clearSensitiveData() {
+        // Clear anomaly data
+        detectedAnomalies.clear()
+        _anomalies.value = emptyList()
+
+        // Clear cell history
+        cellHistory.clear()
+        lastKnownCell = null
+
+        // Clear event history
+        eventHistory.clear()
+        _cellularEvents.value = emptyList()
+
+        // Clear trusted cells (contains location correlations)
+        trustedCells.clear()
+
+        // Clear seen cell towers
+        seenCellTowerMap.clear()
+        _seenCellTowers.value = emptyList()
+
+        // Clear location tracking
+        lastLocationUpdate = null
+        currentLatitude = null
+        currentLongitude = null
+        estimatedMovementSpeed = 0.0
+
+        // Clear status
+        _cellStatus.value = null
+
+        // Clear anomaly timestamps
+        lastAnomalyTimes.clear()
+        lastAnyAnomalyTime = 0L
+
+        Log.d(TAG, "Cleared all sensitive cellular data from memory")
+    }
+
     private fun hasPermissions(): Boolean {
         return ContextCompat.checkSelfPermission(
             context, 

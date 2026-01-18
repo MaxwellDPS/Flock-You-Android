@@ -13,7 +13,12 @@ import com.flockyou.data.NetworkSettings
 import com.flockyou.data.NetworkSettingsRepository
 import com.flockyou.data.OuiSettings
 import com.flockyou.data.OuiSettingsRepository
+import com.flockyou.data.PrivacySettings
+import com.flockyou.data.PrivacySettingsRepository
+import com.flockyou.data.RetentionPeriod
 import com.flockyou.data.model.*
+import com.flockyou.data.repository.EphemeralDetectionRepository
+import com.flockyou.worker.DataRetentionWorker
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.network.OrbotHelper
 import com.flockyou.service.CellularMonitor
@@ -70,10 +75,12 @@ data class MainUiState(
 class MainViewModel @Inject constructor(
     private val application: Application,
     private val repository: DetectionRepository,
+    private val ephemeralRepository: EphemeralDetectionRepository,
     private val settingsRepository: DetectionSettingsRepository,
     private val ouiSettingsRepository: OuiSettingsRepository,
     private val networkSettingsRepository: NetworkSettingsRepository,
     private val broadcastSettingsRepository: BroadcastSettingsRepository,
+    private val privacySettingsRepository: PrivacySettingsRepository,
     private val orbotHelper: OrbotHelper,
     private val workManager: WorkManager
 ) : AndroidViewModel(application) {
@@ -106,6 +113,14 @@ class MainViewModel @Inject constructor(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = BroadcastSettings()
+        )
+
+    // Privacy Settings
+    val privacySettings: StateFlow<PrivacySettings> = privacySettingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = PrivacySettings()
         )
 
     private val _isOrbotInstalled = MutableStateFlow(false)
@@ -538,6 +553,68 @@ class MainViewModel @Inject constructor(
     fun setBroadcastMinThreatLevel(level: String) {
         viewModelScope.launch {
             broadcastSettingsRepository.setMinThreatLevel(level)
+        }
+    }
+
+    // Privacy Settings Management
+    fun setEphemeralMode(enabled: Boolean) {
+        viewModelScope.launch {
+            privacySettingsRepository.setEphemeralModeEnabled(enabled)
+            if (enabled) {
+                // Clear persistent storage when enabling ephemeral mode
+                repository.deleteAllDetections()
+            } else {
+                // Clear ephemeral storage when disabling
+                ephemeralRepository.clearAll()
+            }
+        }
+    }
+
+    fun setRetentionPeriod(period: RetentionPeriod) {
+        viewModelScope.launch {
+            privacySettingsRepository.setRetentionPeriod(period)
+            // Update the data retention worker schedule
+            DataRetentionWorker.schedulePeriodicCleanupHours(application, period.hours)
+        }
+    }
+
+    fun setStoreLocationWithDetections(enabled: Boolean) {
+        viewModelScope.launch {
+            privacySettingsRepository.setStoreLocationWithDetections(enabled)
+        }
+    }
+
+    fun setAutoPurgeOnScreenLock(enabled: Boolean) {
+        viewModelScope.launch {
+            privacySettingsRepository.setAutoPurgeOnScreenLock(enabled)
+        }
+    }
+
+    fun setQuickWipeRequiresConfirmation(required: Boolean) {
+        viewModelScope.launch {
+            privacySettingsRepository.setQuickWipeRequiresConfirmation(required)
+        }
+    }
+
+    /**
+     * Perform a quick wipe - delete all detection data.
+     */
+    fun performQuickWipe() {
+        viewModelScope.launch {
+            // Clear persistent database
+            repository.deleteAllDetections()
+
+            // Clear ephemeral storage
+            ephemeralRepository.clearAll()
+
+            // Clear service runtime data
+            ScanningService.clearSeenDevices()
+            ScanningService.clearCellularHistory()
+            ScanningService.clearSatelliteHistory()
+            ScanningService.clearErrors()
+            ScanningService.clearLearnedSignatures()
+            ScanningService.detectionCount.value = 0
+            ScanningService.lastDetection.value = null
         }
     }
 }

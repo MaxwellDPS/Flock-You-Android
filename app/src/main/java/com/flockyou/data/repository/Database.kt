@@ -1,7 +1,11 @@
 package com.flockyou.data.repository
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
@@ -17,6 +21,7 @@ import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 
 /**
@@ -130,19 +135,121 @@ interface DetectionDao {
 }
 
 /**
+ * Security level for database encryption key.
+ */
+enum class DatabaseSecurityLevel {
+    /** Hardware TPM - highest security, isolated secure processor */
+    STRONGBOX,
+    /** Trusted Execution Environment - hardware-backed but shared processor */
+    TEE,
+    /** Software-only - no hardware backing available */
+    SOFTWARE_ONLY
+}
+
+/**
  * Secure key manager for database encryption passphrase.
- * Uses Android Keystore to protect the SQLCipher passphrase.
+ * Uses Android Keystore with StrongBox/TEE hardware backing to protect the SQLCipher passphrase.
+ *
+ * Security features:
+ * - StrongBox (TPM) backing when available (API 28+)
+ * - TEE fallback when StrongBox unavailable
+ * - Device unlock requirement (API 28+)
+ * - Migration from legacy non-hardware-backed keys
  */
 object DatabaseKeyManager {
     private const val TAG = "DatabaseKeyManager"
-    private const val KEYSTORE_ALIAS = "flockyou_db_key"
+    private const val KEYSTORE_ALIAS = "flockyou_db_key_v2"
+    private const val LEGACY_KEYSTORE_ALIAS = "flockyou_db_key"
     private const val PREFS_NAME = "flockyou_secure_prefs"
-    private const val PREFS_KEY_PASSPHRASE = "encrypted_db_passphrase"
-    private const val PREFS_KEY_IV = "db_passphrase_iv"
+    private const val PREFS_KEY_PASSPHRASE = "encrypted_db_passphrase_v2"
+    private const val PREFS_KEY_IV = "db_passphrase_iv_v2"
+    private const val PREFS_KEY_SECURITY_LEVEL = "db_key_security_level"
+    private const val LEGACY_PREFS_KEY_PASSPHRASE = "encrypted_db_passphrase"
+    private const val LEGACY_PREFS_KEY_IV = "db_passphrase_iv"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 
+    @Volatile
+    private var cachedSecurityLevel: DatabaseSecurityLevel? = null
+
     /**
-     * Get or create the database passphrase.
+     * Check if StrongBox is available on this device.
+     */
+    fun hasStrongBox(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Get the current security level of the database encryption key.
+     */
+    fun getSecurityLevel(context: Context): DatabaseSecurityLevel {
+        cachedSecurityLevel?.let { return it }
+
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val levelName = prefs.getString(PREFS_KEY_SECURITY_LEVEL, null)
+
+        val level = try {
+            levelName?.let { DatabaseSecurityLevel.valueOf(it) }
+                ?: detectKeySecurityLevel()
+        } catch (e: Exception) {
+            detectKeySecurityLevel()
+        }
+
+        cachedSecurityLevel = level
+        return level
+    }
+
+    /**
+     * Detect the actual security level of the current key.
+     */
+    private fun detectKeySecurityLevel(): DatabaseSecurityLevel {
+        return try {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+            keyStore.load(null)
+
+            if (!keyStore.containsAlias(KEYSTORE_ALIAS)) {
+                return DatabaseSecurityLevel.SOFTWARE_ONLY
+            }
+
+            val key = keyStore.getKey(KEYSTORE_ALIAS, null) as? SecretKey
+                ?: return DatabaseSecurityLevel.SOFTWARE_ONLY
+
+            val factory = SecretKeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
+            val keyInfo = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                when (keyInfo.securityLevel) {
+                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> DatabaseSecurityLevel.STRONGBOX
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> DatabaseSecurityLevel.TEE
+                    else -> DatabaseSecurityLevel.SOFTWARE_ONLY
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                if (keyInfo.isInsideSecureHardware) DatabaseSecurityLevel.TEE
+                else DatabaseSecurityLevel.SOFTWARE_ONLY
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting key security level", e)
+            DatabaseSecurityLevel.SOFTWARE_ONLY
+        }
+    }
+
+    /**
+     * Get a human-readable description of the current security level.
+     */
+    fun getSecurityLevelDescription(context: Context): String {
+        return when (getSecurityLevel(context)) {
+            DatabaseSecurityLevel.STRONGBOX -> "StrongBox (Hardware TPM)"
+            DatabaseSecurityLevel.TEE -> "TEE (Trusted Execution Environment)"
+            DatabaseSecurityLevel.SOFTWARE_ONLY -> "Software-only"
+        }
+    }
+
+    /**
+     * Get or create the database passphrase with hardware-backed protection.
      * The passphrase is generated once and stored encrypted using Android Keystore.
      */
     fun getOrCreatePassphrase(context: Context): ByteArray {
@@ -159,25 +266,35 @@ object DatabaseKeyManager {
                     Base64.decode(ivString, Base64.NO_WRAP)
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to decrypt passphrase, generating new one", e)
-                generateAndStoreNewPassphrase(context, prefs)
+                Log.e(TAG, "Failed to decrypt passphrase", e)
+                // Try to migrate from legacy key
+                if (tryMigrateLegacyPassphrase(context, prefs)) {
+                    getOrCreatePassphrase(context) // Retry after migration
+                } else {
+                    Log.w(TAG, "Generating new passphrase - existing encrypted data will be lost")
+                    generateAndStoreNewPassphrase(context, prefs)
+                }
             }
         } else {
-            // Generate new passphrase
-            generateAndStoreNewPassphrase(context, prefs)
+            // Check for legacy passphrase and migrate
+            if (tryMigrateLegacyPassphrase(context, prefs)) {
+                getOrCreatePassphrase(context) // Retry after migration
+            } else {
+                generateAndStoreNewPassphrase(context, prefs)
+            }
         }
     }
 
     private fun generateAndStoreNewPassphrase(
         context: Context,
-        prefs: android.content.SharedPreferences
+        prefs: SharedPreferences
     ): ByteArray {
         // Generate a random 32-byte passphrase
         val passphrase = ByteArray(32)
         SecureRandom().nextBytes(passphrase)
 
-        // Create or get the key from Android Keystore
-        val secretKey = getOrCreateSecretKey()
+        // Create or get the key from Android Keystore (with hardware backing)
+        val secretKey = getOrCreateSecretKey(context)
 
         // Encrypt the passphrase
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -185,24 +302,37 @@ object DatabaseKeyManager {
         val iv = cipher.iv
         val encryptedPassphrase = cipher.doFinal(passphrase)
 
-        // Store encrypted passphrase and IV
+        // Detect and store security level
+        val securityLevel = detectKeySecurityLevel()
+        cachedSecurityLevel = securityLevel
+
+        // Store encrypted passphrase, IV, and security level
         prefs.edit()
             .putString(PREFS_KEY_PASSPHRASE, Base64.encodeToString(encryptedPassphrase, Base64.NO_WRAP))
             .putString(PREFS_KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
+            .putString(PREFS_KEY_SECURITY_LEVEL, securityLevel.name)
             .apply()
 
-        Log.d(TAG, "Generated and stored new database passphrase")
+        Log.i(TAG, "Generated new database passphrase with security level: $securityLevel")
         return passphrase
     }
 
     private fun decryptPassphrase(encryptedPassphrase: ByteArray, iv: ByteArray): ByteArray {
-        val secretKey = getOrCreateSecretKey()
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+
+        val secretKey = if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+            (keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
+        } else {
+            throw IllegalStateException("Database key not found")
+        }
+
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
         return cipher.doFinal(encryptedPassphrase)
     }
 
-    private fun getOrCreateSecretKey(): SecretKey {
+    private fun getOrCreateSecretKey(context: Context): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
         keyStore.load(null)
 
@@ -212,23 +342,118 @@ object DatabaseKeyManager {
             return entry.secretKey
         }
 
-        // Generate new key
+        // Generate new hardware-backed key
         val keyGenerator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES,
             ANDROID_KEYSTORE
         )
 
-        val keySpec = KeyGenParameterSpec.Builder(
+        val builder = KeyGenParameterSpec.Builder(
             KEYSTORE_ALIAS,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
-            .build()
+            .setRandomizedEncryptionRequired(true)
 
-        keyGenerator.init(keySpec)
-        return keyGenerator.generateKey()
+        var useStrongBox = false
+
+        // Enable StrongBox if available (API 28+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && hasStrongBox(context)) {
+            builder.setIsStrongBoxBacked(true)
+            useStrongBox = true
+            Log.d(TAG, "Requesting StrongBox-backed database key")
+        }
+
+        // Require device to be unlocked (API 28+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            builder.setUnlockedDeviceRequired(true)
+        }
+
+        return try {
+            keyGenerator.init(builder.build())
+            val key = keyGenerator.generateKey()
+            Log.i(TAG, "Created database key with StrongBox=$useStrongBox")
+            key
+        } catch (e: Exception) {
+            // StrongBox may fail on some devices - fallback to TEE
+            if (useStrongBox) {
+                Log.w(TAG, "StrongBox key creation failed, falling back to TEE", e)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    builder.setIsStrongBoxBacked(false)
+                }
+                keyGenerator.init(builder.build())
+                keyGenerator.generateKey()
+            } else {
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Try to migrate from legacy passphrase (non-hardware-backed) to new hardware-backed key.
+     * Returns true if migration was successful or not needed.
+     */
+    private fun tryMigrateLegacyPassphrase(context: Context, prefs: SharedPreferences): Boolean {
+        val legacyEncrypted = prefs.getString(LEGACY_PREFS_KEY_PASSPHRASE, null)
+        val legacyIv = prefs.getString(LEGACY_PREFS_KEY_IV, null)
+
+        if (legacyEncrypted == null || legacyIv == null) {
+            return false // No legacy passphrase to migrate
+        }
+
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+
+        if (!keyStore.containsAlias(LEGACY_KEYSTORE_ALIAS)) {
+            return false // No legacy key
+        }
+
+        return try {
+            Log.i(TAG, "Migrating legacy database passphrase to hardware-backed key")
+
+            // Decrypt with legacy key
+            val legacyKey = (keyStore.getEntry(LEGACY_KEYSTORE_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                legacyKey,
+                GCMParameterSpec(128, Base64.decode(legacyIv, Base64.NO_WRAP))
+            )
+            val passphrase = cipher.doFinal(Base64.decode(legacyEncrypted, Base64.NO_WRAP))
+
+            // Re-encrypt with new hardware-backed key
+            val newKey = getOrCreateSecretKey(context)
+            cipher.init(Cipher.ENCRYPT_MODE, newKey)
+            val newIv = cipher.iv
+            val newEncrypted = cipher.doFinal(passphrase)
+
+            // Detect security level
+            val securityLevel = detectKeySecurityLevel()
+            cachedSecurityLevel = securityLevel
+
+            // Store with new keys and remove legacy
+            prefs.edit()
+                .putString(PREFS_KEY_PASSPHRASE, Base64.encodeToString(newEncrypted, Base64.NO_WRAP))
+                .putString(PREFS_KEY_IV, Base64.encodeToString(newIv, Base64.NO_WRAP))
+                .putString(PREFS_KEY_SECURITY_LEVEL, securityLevel.name)
+                .remove(LEGACY_PREFS_KEY_PASSPHRASE)
+                .remove(LEGACY_PREFS_KEY_IV)
+                .apply()
+
+            // Clear passphrase from memory
+            passphrase.fill(0)
+
+            // Delete legacy key
+            keyStore.deleteEntry(LEGACY_KEYSTORE_ALIAS)
+
+            Log.i(TAG, "Successfully migrated database key to hardware-backed storage (level: $securityLevel)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to migrate legacy passphrase", e)
+            false
+        }
     }
 }
 
@@ -283,6 +508,10 @@ abstract class FlockYouDatabase : RoomDatabase() {
                 // Get or create encryption passphrase
                 val passphrase = DatabaseKeyManager.getOrCreatePassphrase(context)
                 val factory = SupportFactory(passphrase)
+
+                // Clear passphrase from memory after factory creation
+                // The factory has already copied the passphrase internally
+                java.util.Arrays.fill(passphrase, 0.toByte())
 
                 Log.d(TAG, "Creating encrypted database")
 

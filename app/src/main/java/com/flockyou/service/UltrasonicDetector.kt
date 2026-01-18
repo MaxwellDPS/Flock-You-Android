@@ -9,6 +9,8 @@ import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.flockyou.data.model.*
+import com.flockyou.security.SecureAudioBuffer
+import com.flockyou.security.SecureMemory
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -239,23 +241,32 @@ class UltrasonicDetector(private val context: Context) {
     }
 
     /**
-     * Perform a single ultrasonic scan
+     * Perform a single ultrasonic scan with secure encrypted audio processing.
+     *
+     * SECURITY: Audio samples are encrypted in memory using AES-256-GCM.
+     * Raw audio is never stored to disk and is cleared immediately after analysis.
      */
     private suspend fun performScan() {
         if (!hasPermission()) return
 
         withContext(Dispatchers.IO) {
+            // Create secure encrypted buffer for audio samples
+            var secureBuffer: SecureAudioBuffer? = null
+
             try {
                 addTimelineEvent(
                     type = UltrasonicEventType.SCAN_STARTED,
                     title = "Scanning for Beacons",
-                    description = "Analyzing audio for ultrasonic frequencies"
+                    description = "Analyzing audio for ultrasonic frequencies (encrypted)"
                 )
 
                 val bufferSize = maxOf(
                     AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT),
                     FFT_SIZE * BUFFER_SIZE_MULTIPLIER
                 )
+
+                // Initialize secure buffer for encrypted audio storage
+                secureBuffer = SecureAudioBuffer(FFT_SIZE, SAMPLE_RATE)
 
                 @Suppress("MissingPermission")
                 audioRecord = AudioRecord(
@@ -273,17 +284,23 @@ class UltrasonicDetector(private val context: Context) {
 
                 audioRecord?.startRecording()
 
-                val audioBuffer = ShortArray(FFT_SIZE)
+                // Temporary buffer for reading - will be cleared after each read
+                val tempBuffer = ShortArray(FFT_SIZE)
                 val detectedFrequencies = mutableMapOf<Int, MutableList<Double>>()
                 val scanStartTime = System.currentTimeMillis()
 
                 // Collect samples for scan duration
                 while (System.currentTimeMillis() - scanStartTime < SCAN_DURATION_MS && isMonitoring) {
-                    val readCount = audioRecord?.read(audioBuffer, 0, FFT_SIZE) ?: 0
+                    val readCount = audioRecord?.read(tempBuffer, 0, FFT_SIZE) ?: 0
 
                     if (readCount > 0) {
-                        // Perform FFT analysis
-                        val frequencyBins = analyzeFrequencies(audioBuffer, readCount)
+                        // Write to secure encrypted buffer
+                        secureBuffer.write(tempBuffer, readCount)
+
+                        // Analyze within secure context - data decrypted only during analysis
+                        val frequencyBins = secureBuffer.analyze { samples ->
+                            analyzeFrequencies(samples, samples.size)
+                        }
 
                         // Check for ultrasonic content
                         for (bin in frequencyBins) {
@@ -300,10 +317,19 @@ class UltrasonicDetector(private val context: Context) {
                             val avgLowFreq = lowFreqBins.map { it.amplitudeDb }.average()
                             noiseFloorDb = noiseFloorDb * 0.95 + avgLowFreq * 0.05 // Slow adaptation
                         }
+
+                        // Clear secure buffer after each analysis cycle
+                        secureBuffer.clear()
                     }
+
+                    // Securely clear temporary buffer after each read
+                    SecureMemory.clear(tempBuffer)
 
                     delay(50) // Small delay between reads
                 }
+
+                // Final secure clear of temp buffer
+                SecureMemory.clear(tempBuffer)
 
                 audioRecord?.stop()
                 releaseAudioRecord()
@@ -323,6 +349,9 @@ class UltrasonicDetector(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(TAG, "Error during ultrasonic scan", e)
                 releaseAudioRecord()
+            } finally {
+                // CRITICAL: Always destroy secure buffer to wipe encryption keys
+                secureBuffer?.destroy()
             }
         }
     }

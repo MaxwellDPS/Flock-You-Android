@@ -43,7 +43,9 @@ fun SettingsScreen(
     onNavigateToNotifications: () -> Unit = {},
     onNavigateToRules: () -> Unit = {},
     onNavigateToDetectionSettings: () -> Unit = {},
-    onNavigateToSecurity: () -> Unit = {}
+    onNavigateToSecurity: () -> Unit = {},
+    onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToNuke: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -698,6 +700,24 @@ fun SettingsScreen(
                     title = "App Lock",
                     subtitle = "PIN and biometric authentication",
                     onClick = onNavigateToSecurity
+                )
+            }
+
+            item {
+                SettingsItem(
+                    icon = Icons.Default.PrivacyTip,
+                    title = "Privacy & Data",
+                    subtitle = "Ephemeral mode, data retention, quick wipe",
+                    onClick = onNavigateToPrivacy
+                )
+            }
+
+            item {
+                SettingsItem(
+                    icon = Icons.Default.DeleteForever,
+                    title = "Emergency Wipe",
+                    subtitle = "Auto-nuke triggers, duress PIN, dead man's switch",
+                    onClick = onNavigateToNuke
                 )
             }
 

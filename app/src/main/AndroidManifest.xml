@@ -130,7 +130,8 @@
 
     <application
         android:name=".FlockYouApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupOnly="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -205,7 +206,91 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-            
+
+        <!-- Quick Settings Tile for Quick Wipe (Priority 2 Feature) -->
+        <service
+            android:name=".service.QuickWipeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_delete_sweep"
+            android:label="Quick Wipe"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="false" />
+        </service>
+
+        <!-- Quick Wipe Confirmation Activity (transparent dialog) -->
+        <activity
+            android:name=".service.QuickWipeConfirmationActivity"
+            android:exported="false"
+            android:theme="@style/Theme.FlockYou.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
+
+        <!-- Quick Wipe Broadcast Receiver -->
+        <receiver
+            android:name=".service.QuickWipeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.flockyou.ACTION_QUICK_WIPE_CONFIRMED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ================================================================== -->
+        <!-- NUKE/EMERGENCY WIPE SYSTEM RECEIVERS                              -->
+        <!-- ================================================================== -->
+
+        <!-- USB Watchdog Receiver - Detects USB/ADB connections -->
+        <receiver
+            android:name=".service.nuke.UsbWatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+                <action android:name="android.intent.action.POWER_CONNECTED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- SIM State Receiver - Detects SIM removal -->
+        <receiver
+            android:name=".service.nuke.SimStateReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.SIM_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Network Isolation Receiver - Detects airplane mode/network loss -->
+        <receiver
+            android:name=".service.nuke.NetworkIsolationReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+                <action android:name="android.intent.action.AIRPLANE_MODE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Boot Watcher - Detects rapid reboots -->
+        <receiver
+            android:name=".service.nuke.BootWatcher"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

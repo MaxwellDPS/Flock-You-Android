@@ -29,18 +29,71 @@ class DataRetentionWorker @AssistedInject constructor(
 
         // Input data keys
         const val KEY_RETENTION_DAYS = "retention_days"
+        const val KEY_RETENTION_HOURS = "retention_hours"
 
-        // Default retention periods
-        const val DEFAULT_RETENTION_DAYS = 30
-        const val MIN_RETENTION_DAYS = 1
+        // Default retention periods (changed from 30 days to 3 days for privacy)
+        const val DEFAULT_RETENTION_DAYS = 3
+        const val MIN_RETENTION_DAYS = 0  // 0 means using hours instead
         const val MAX_RETENTION_DAYS = 365
+
+        // New hour-based retention options
+        const val RETENTION_HOURS_4 = 4
+        const val RETENTION_HOURS_24 = 24  // 1 day
+        const val RETENTION_HOURS_72 = 72  // 3 days
+        const val RETENTION_HOURS_168 = 168  // 7 days
+        const val RETENTION_HOURS_720 = 720  // 30 days
+
+        /**
+         * Schedule periodic data cleanup with hour-based retention.
+         * Runs at appropriate intervals based on retention period.
+         */
+        fun schedulePeriodicCleanupHours(context: Context, retentionHours: Int) {
+            val inputData = Data.Builder()
+                .putInt(KEY_RETENTION_HOURS, retentionHours)
+                .build()
+
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .build()
+
+            // For short retention periods (< 24h), run more frequently
+            val repeatInterval = when {
+                retentionHours <= 4 -> 1L  // Every hour for 4-hour retention
+                retentionHours <= 24 -> 4L // Every 4 hours for 1-day retention
+                else -> 24L // Daily for longer retention periods
+            }
+
+            val workRequest = PeriodicWorkRequestBuilder<DataRetentionWorker>(
+                repeatInterval, TimeUnit.HOURS,
+                repeatInterval / 2, TimeUnit.HOURS  // Flex interval
+            )
+                .setConstraints(constraints)
+                .setInputData(inputData)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS
+                )
+                .addTag(TAG)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                workRequest
+            )
+
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Scheduled periodic data cleanup (retention: $retentionHours hours, interval: $repeatInterval hours)")
+            }
+        }
 
         /**
          * Schedule periodic data cleanup.
          * Runs daily to enforce retention policy.
          */
         fun schedulePeriodicCleanup(context: Context, retentionDays: Int) {
-            val actualRetentionDays = retentionDays.coerceIn(MIN_RETENTION_DAYS, MAX_RETENTION_DAYS)
+            val actualRetentionDays = retentionDays.coerceIn(1, MAX_RETENTION_DAYS)
 
             val inputData = Data.Builder()
                 .putInt(KEY_RETENTION_DAYS, actualRetentionDays)
@@ -114,16 +167,23 @@ class DataRetentionWorker @AssistedInject constructor(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // Check for hour-based retention first (new format), then fall back to day-based
+        val retentionHours = inputData.getInt(KEY_RETENTION_HOURS, -1)
         val retentionDays = inputData.getInt(KEY_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)
 
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Starting data retention cleanup (retention: $retentionDays days)")
+        val cutoffTimestamp = if (retentionHours > 0) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Starting data retention cleanup (retention: $retentionHours hours)")
+            }
+            System.currentTimeMillis() - (retentionHours * 60 * 60 * 1000L)
+        } else {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Starting data retention cleanup (retention: $retentionDays days)")
+            }
+            System.currentTimeMillis() - (retentionDays * 24 * 60 * 60 * 1000L)
         }
 
         try {
-            // Calculate cutoff timestamp
-            val cutoffTimestamp = System.currentTimeMillis() - (retentionDays * 24 * 60 * 60 * 1000L)
-
             // Delete old detections
             detectionRepository.deleteOldDetections(cutoffTimestamp)
 

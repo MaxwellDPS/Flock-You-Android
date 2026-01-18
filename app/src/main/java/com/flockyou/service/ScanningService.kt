@@ -349,9 +349,20 @@ class ScanningService : Service() {
     lateinit var repository: DetectionRepository
 
     @Inject
+    lateinit var ephemeralRepository: com.flockyou.data.repository.EphemeralDetectionRepository
+
+    @Inject
     lateinit var broadcastSettingsRepository: com.flockyou.data.BroadcastSettingsRepository
 
+    @Inject
+    lateinit var privacySettingsRepository: com.flockyou.data.PrivacySettingsRepository
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
+
+    private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
+
+    // Screen lock receiver for auto-purge feature (Priority 5)
+    private var screenLockReceiver: ScreenLockReceiver? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val gson = Gson()
@@ -606,7 +617,40 @@ class ScanningService : Service() {
                 currentBroadcastSettings = settings
             }
         }
-        
+
+        // Collect privacy settings for ephemeral mode, location-optional storage, and ultrasonic opt-in
+        serviceScope.launch {
+            privacySettingsRepository.settings.collect { settings ->
+                val previousSettings = currentPrivacySettings
+                currentPrivacySettings = settings
+
+                // Clear ephemeral data when ephemeral mode is enabled (on service restart)
+                if (settings.ephemeralModeEnabled) {
+                    ephemeralRepository.clearAll()
+                    Log.d(TAG, "Ephemeral mode active - in-memory storage only")
+                }
+
+                // Handle ultrasonic detection opt-in/opt-out changes
+                if (settings.ultrasonicDetectionEnabled != previousSettings.ultrasonicDetectionEnabled) {
+                    if (settings.ultrasonicDetectionEnabled && settings.ultrasonicConsentAcknowledged) {
+                        Log.i(TAG, "Ultrasonic detection enabled by user - starting monitoring")
+                        startUltrasonicDetection()
+                    } else {
+                        Log.i(TAG, "Ultrasonic detection disabled by user - stopping monitoring")
+                        stopUltrasonicDetection()
+                    }
+                }
+            }
+        }
+
+        // Register screen lock receiver for auto-purge feature (Priority 5)
+        try {
+            screenLockReceiver = ScreenLockReceiver.register(this)
+            Log.d(TAG, "Screen lock receiver registered for auto-purge feature")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register screen lock receiver", e)
+        }
+
         val config = currentSettings.value
         
         // Check permissions first
@@ -646,8 +690,14 @@ class ScanningService : Service() {
         // Start RF signal analysis
         startRfSignalAnalysis()
 
-        // Start ultrasonic detection
-        startUltrasonicDetection()
+        // Start ultrasonic detection ONLY if user has opted in
+        // This is an opt-in feature requiring explicit user consent
+        if (currentPrivacySettings.ultrasonicDetectionEnabled && currentPrivacySettings.ultrasonicConsentAcknowledged) {
+            Log.i(TAG, "Ultrasonic detection enabled - user has consented")
+            startUltrasonicDetection()
+        } else {
+            Log.d(TAG, "Ultrasonic detection disabled - user has not opted in (requires consent in Privacy settings)")
+        }
 
         // Start heartbeat monitoring - sends periodic heartbeats to watchdog
         ServiceRestartReceiver.scheduleHeartbeat(this)
@@ -776,6 +826,12 @@ class ScanningService : Service() {
         stopRogueWifiMonitoring()
         stopRfSignalAnalysis()
         stopUltrasonicDetection()
+
+        // Unregister screen lock receiver
+        screenLockReceiver?.let {
+            ScreenLockReceiver.unregister(this, it)
+            screenLockReceiver = null
+        }
 
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
@@ -1233,12 +1289,18 @@ class ScanningService : Service() {
     private var ultrasonicBeaconsJob: Job? = null
 
     private fun startUltrasonicDetection() {
+        // Double-check that user has opted in with consent
+        if (!currentPrivacySettings.ultrasonicDetectionEnabled || !currentPrivacySettings.ultrasonicConsentAcknowledged) {
+            Log.w(TAG, "Ultrasonic detection not enabled - user must opt-in via Privacy settings")
+            return
+        }
+
         if (!hasAudioPermissions()) {
             Log.w(TAG, "Missing audio permissions for ultrasonic detection")
             return
         }
 
-        Log.d(TAG, "Starting ultrasonic beacon detection")
+        Log.d(TAG, "Starting ultrasonic beacon detection (user consented, audio encrypted in memory)")
 
         ultrasonicDetector?.startMonitoring()
 
@@ -1886,25 +1948,47 @@ class ScanningService : Service() {
     }
     
     // ==================== Detection Handling ====================
-    
+
+    /**
+     * Apply privacy settings to a detection before storing.
+     * - Strips location data if storeLocationWithDetections is disabled (Priority 4)
+     */
+    private fun applyPrivacySettings(detection: Detection): Detection {
+        return if (!currentPrivacySettings.storeLocationWithDetections) {
+            // Strip location data for privacy
+            detection.copy(latitude = null, longitude = null)
+        } else {
+            detection
+        }
+    }
+
     private suspend fun handleDetection(detection: Detection) {
         try {
-            // Use upsert - this will update seen count if existing, or insert if new
-            val isNew = repository.upsertDetection(detection)
+            // Apply privacy settings (strip location if disabled)
+            val privacyAwareDetection = applyPrivacySettings(detection)
+
+            // Choose storage based on ephemeral mode (Priority 1)
+            val isNew = if (currentPrivacySettings.ephemeralModeEnabled) {
+                // Ephemeral mode: store in RAM only
+                ephemeralRepository.upsertDetection(privacyAwareDetection)
+            } else {
+                // Normal mode: persist to encrypted database
+                repository.upsertDetection(privacyAwareDetection)
+            }
 
             if (isNew) {
                 // New detection
                 detectionCount.value++
-                lastDetection.value = detection
+                lastDetection.value = privacyAwareDetection
 
-                Log.d(TAG, "New detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
+                Log.d(TAG, "New detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
 
                 // Alert user
-                alertUser(detection)
+                alertUser(privacyAwareDetection)
             } else {
                 // Existing detection - update lastDetection to refresh UI
-                lastDetection.value = detection
-                Log.d(TAG, "Updated detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
+                lastDetection.value = privacyAwareDetection
+                Log.d(TAG, "Updated detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
             }
 
             // Emit refresh event to ensure UI updates even if Room Flow doesn't trigger

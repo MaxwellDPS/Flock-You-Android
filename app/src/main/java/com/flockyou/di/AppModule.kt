@@ -2,6 +2,7 @@ package com.flockyou.di
 
 import android.content.Context
 import com.flockyou.data.NetworkSettingsRepository
+import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.SecuritySettingsRepository
 import com.flockyou.data.oui.OuiDownloader
@@ -23,6 +24,11 @@ import com.flockyou.scanner.ScannerCapabilities
 import com.flockyou.scanner.ScannerFactory
 import com.flockyou.scanner.ScannerModeHelper
 import com.flockyou.security.AppLockManager
+import com.flockyou.security.DuressAuthenticator
+import com.flockyou.security.FailedAuthWatcher
+import com.flockyou.security.NukeManager
+import com.flockyou.security.SecureKeyManager
+import com.flockyou.service.nuke.GeofenceWatcher
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -137,7 +143,16 @@ object AppModule {
         return OuiLookupService(ouiRepository)
     }
 
-    // Security Settings
+    // ================================================================
+    // Security
+    // ================================================================
+
+    @Provides
+    @Singleton
+    fun provideSecureKeyManager(@ApplicationContext context: Context): SecureKeyManager {
+        return SecureKeyManager(context)
+    }
+
     @Provides
     @Singleton
     fun provideSecuritySettingsRepository(@ApplicationContext context: Context): SecuritySettingsRepository {
@@ -148,9 +163,12 @@ object AppModule {
     @Singleton
     fun provideAppLockManager(
         @ApplicationContext context: Context,
-        securitySettingsRepository: SecuritySettingsRepository
+        securitySettingsRepository: SecuritySettingsRepository,
+        secureKeyManager: SecureKeyManager,
+        duressAuthenticator: DuressAuthenticator,
+        failedAuthWatcher: FailedAuthWatcher
     ): AppLockManager {
-        return AppLockManager(context, securitySettingsRepository)
+        return AppLockManager(context, securitySettingsRepository, secureKeyManager, duressAuthenticator, failedAuthWatcher)
     }
 
     // Network Settings
@@ -179,5 +197,54 @@ object AppModule {
     @Singleton
     fun provideOuiDownloader(torAwareHttpClient: TorAwareHttpClient): OuiDownloader {
         return OuiDownloader(torAwareHttpClient)
+    }
+
+    // ================================================================
+    // Nuke/Emergency Wipe System
+    // ================================================================
+
+    @Provides
+    @Singleton
+    fun provideNukeSettingsRepository(@ApplicationContext context: Context): NukeSettingsRepository {
+        return NukeSettingsRepository(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideNukeManager(
+        @ApplicationContext context: Context,
+        nukeSettingsRepository: NukeSettingsRepository
+    ): NukeManager {
+        return NukeManager(context, nukeSettingsRepository)
+    }
+
+    @Provides
+    @Singleton
+    fun provideFailedAuthWatcher(
+        @ApplicationContext context: Context,
+        nukeSettingsRepository: NukeSettingsRepository,
+        nukeManager: NukeManager
+    ): FailedAuthWatcher {
+        return FailedAuthWatcher(context, nukeSettingsRepository, nukeManager)
+    }
+
+    @Provides
+    @Singleton
+    fun provideDuressAuthenticator(
+        @ApplicationContext context: Context,
+        nukeSettingsRepository: NukeSettingsRepository,
+        nukeManager: NukeManager
+    ): DuressAuthenticator {
+        return DuressAuthenticator(context, nukeSettingsRepository, nukeManager)
+    }
+
+    @Provides
+    @Singleton
+    fun provideGeofenceWatcher(
+        @ApplicationContext context: Context,
+        nukeSettingsRepository: NukeSettingsRepository,
+        nukeManager: NukeManager
+    ): GeofenceWatcher {
+        return GeofenceWatcher(context, nukeSettingsRepository, nukeManager)
     }
 }
