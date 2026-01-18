@@ -380,7 +380,7 @@ class ScanningService : Service() {
             else -> {}
         }
         
-        when (val wifi = wifiStatus.value) {
+        when (wifiStatus.value) {
             is SubsystemStatus.Error -> parts.add("WiFi: Error")
             is SubsystemStatus.PermissionDenied -> parts.add("WiFi: No permission")
             is SubsystemStatus.Disabled -> parts.add("WiFi: Disabled")

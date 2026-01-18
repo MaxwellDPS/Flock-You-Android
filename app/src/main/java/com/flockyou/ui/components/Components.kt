@@ -84,26 +84,6 @@ fun ScanningRadar(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "radar")
     
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "scale"
-    )
-    
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.7f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "alpha"
-    )
-    
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         if (isScanning) {
             // Animated rings
@@ -358,7 +338,7 @@ fun SubsystemIndicator(
     status: ScanningService.SubsystemStatus,
     modifier: Modifier = Modifier
 ) {
-    val (color, icon, label) = when (status) {
+    val (color, icon, _) = when (status) {
         is ScanningService.SubsystemStatus.Active -> Triple(
             Color(0xFF4CAF50),
             Icons.Default.CheckCircle,

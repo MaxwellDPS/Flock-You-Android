@@ -65,7 +65,7 @@ fun MapScreen(
                         title = detection.deviceType.name.replace("_", " ")
                         snippet = detection.macAddress ?: detection.ssid ?: "Unknown"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        icon = createMarkerDrawable(context, detection.threatLevel)
+                        icon = createMarkerDrawable(detection.threatLevel)
                         
                         setOnMarkerClickListener { _, _ ->
                             selectedDetection = detection
@@ -92,7 +92,7 @@ fun MapScreen(
                 title = { Text("Detection Map") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -275,7 +275,7 @@ private fun zoomToFitPoints(map: MapView, points: List<GeoPoint>) {
     }
 }
 
-private fun createMarkerDrawable(context: Context, threatLevel: ThreatLevel): android.graphics.drawable.Drawable {
+private fun createMarkerDrawable(threatLevel: ThreatLevel): android.graphics.drawable.Drawable {
     val color = when (threatLevel) {
         ThreatLevel.CRITICAL -> Color.parseColor("#D32F2F")
         ThreatLevel.HIGH -> Color.parseColor("#F57C00")

@@ -85,12 +85,15 @@ private val DarkColorScheme = darkColorScheme(
     surfaceTint = md_theme_dark_surfaceTint
 )
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun FlockYouTheme(
     darkTheme: Boolean = true, // Always dark for tactical appearance
     dynamicColor: Boolean = false, // Don't use dynamic colors
     content: @Composable () -> Unit
 ) {
+    // Note: darkTheme and dynamicColor are kept for API compatibility
+    // but this app always uses the dark tactical theme
     val colorScheme = DarkColorScheme
     
     val view = LocalView.current

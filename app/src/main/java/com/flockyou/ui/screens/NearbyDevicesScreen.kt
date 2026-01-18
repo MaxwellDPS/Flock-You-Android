@@ -47,7 +47,7 @@ fun NearbyDevicesScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -129,7 +129,7 @@ fun NearbyDevicesScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = if (selectedTab == 0) Icons.Default.BluetoothSearching else Icons.Default.WifiFind,
+                            imageVector = if (selectedTab == 0) Icons.Default.Bluetooth else Icons.Default.Wifi,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
