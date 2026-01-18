@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.flockyou.data.model.ThreatLevel
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
-import com.flockyou.ui.components.ThreatLevel.toColor
+import com.flockyou.ui.components.toColor
 import java.text.SimpleDateFormat
 import java.util.*
 
