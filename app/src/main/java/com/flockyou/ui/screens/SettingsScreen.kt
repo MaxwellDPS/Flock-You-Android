@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
@@ -48,12 +49,16 @@ fun SettingsScreen(
     var batteryOptimizationIgnored by remember { 
         mutableStateOf(isBatteryOptimizationIgnored(context)) 
     }
+    var autoStartOnBoot by remember {
+        mutableStateOf(BootReceiver.isAutoStartOnBoot(context))
+    }
     
     // Re-check battery optimization when returning to screen
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryOptimizationIgnored = isBatteryOptimizationIgnored(context)
+                autoStartOnBoot = BootReceiver.isAutoStartOnBoot(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -92,7 +97,7 @@ fun SettingsScreen(
         ) {
             // Battery Optimization Section
             item {
-                SettingsSectionHeader(title = "Battery & Performance")
+                SettingsSectionHeader(title = "Battery & Background")
             }
             
             item {
@@ -127,11 +132,14 @@ fun SettingsScreen(
                                 )
                                 Text(
                                     text = if (batteryOptimizationIgnored)
-                                        "Unrestricted - scanning will run continuously"
+                                        "✓ Unrestricted - scanning will run continuously"
                                     else
-                                        "Restricted - Android may stop scanning",
+                                        "⚠ Restricted - Android may stop scanning",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (batteryOptimizationIgnored)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.error
                                 )
                             }
                         }
@@ -139,9 +147,9 @@ fun SettingsScreen(
                         if (!batteryOptimizationIgnored) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "⚠️ Battery optimization is enabled. Android may stop the scanning service to save battery.",
+                                text = "Battery optimization is enabled. Android may stop the scanning service to save battery. Tap below to disable it for this app.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
@@ -150,11 +158,56 @@ fun SettingsScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(Icons.Default.Settings, contentDescription = null)
+                                Icon(Icons.Default.BatteryAlert, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Open Battery Settings")
+                                Text("Disable Battery Optimization")
                             }
                         }
+                    }
+                }
+            }
+            
+            // Auto-start on boot toggle
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = if (autoStartOnBoot)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Auto-start on Boot",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = if (autoStartOnBoot)
+                                    "Scanning starts automatically when device boots"
+                                else
+                                    "Manual start required after reboot",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = autoStartOnBoot,
+                            onCheckedChange = { enabled ->
+                                autoStartOnBoot = enabled
+                                BootReceiver.setAutoStartOnBoot(context, enabled)
+                            }
+                        )
                     }
                 }
             }
@@ -659,22 +712,38 @@ private fun isBatteryOptimizationIgnored(context: Context): Boolean {
 
 private fun openBatteryOptimizationSettings(context: Context) {
     try {
-        // Try the direct intent first
+        // Direct request to disable battery optimization for this app
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
     } catch (e: Exception) {
         // Fall back to battery optimization list
         try {
-            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            context.startActivity(intent)
-        } catch (e2: Exception) {
-            // Fall back to app settings
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:${context.packageName}")
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
+        } catch (e2: Exception) {
+            // Fall back to app settings as last resort
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e3: Exception) {
+                // Final fallback: open general battery settings
+                try {
+                    val intent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e4: Exception) {
+                    android.util.Log.e("SettingsScreen", "Failed to open any battery settings", e4)
+                }
+            }
         }
     }
 }

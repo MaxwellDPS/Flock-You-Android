@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.*
 import javax.inject.Inject
 
+private const val WAKE_LOCK_TAG = "FlockYou:ScanningWakeLock"
+
 /**
  * Foreground service that continuously scans for surveillance devices
  * using both Bluetooth LE and WiFi
@@ -210,9 +212,16 @@ class ScanningService : Service() {
     // Cellular monitor
     private var cellularMonitor: CellularMonitor? = null
     
+    // Wake lock for background operation
+    private var wakeLock: PowerManager.WakeLock? = null
+    private lateinit var powerManager: PowerManager
+    
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
+        
+        // Initialize Power Manager and Wake Lock
+        powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         
         // Initialize Bluetooth
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -241,7 +250,10 @@ class ScanningService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "Service started")
+        Log.d(TAG, "Service started with action: ${intent?.action}")
+        
+        // Acquire wake lock to prevent CPU from sleeping
+        acquireWakeLock()
         
         val notification = createNotification("Initializing...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -250,20 +262,97 @@ class ScanningService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         
+        // Mark service as enabled for boot receiver
+        BootReceiver.setServiceEnabled(this, true)
+        
+        // Schedule watchdog to ensure service stays running
+        ServiceRestartReceiver.scheduleWatchdog(this)
+        
         startScanning()
         
         return START_STICKY
     }
     
+    /**
+     * Acquire a partial wake lock to keep CPU running during scans
+     */
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                WAKE_LOCK_TAG
+            ).apply {
+                setReferenceCounted(false)
+            }
+        }
+        
+        if (wakeLock?.isHeld == false) {
+            // Acquire with timeout of 10 minutes, will be re-acquired in scan loop
+            wakeLock?.acquire(10 * 60 * 1000L)
+            Log.d(TAG, "Wake lock acquired")
+        }
+    }
+    
+    /**
+     * Release the wake lock
+     */
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+                Log.d(TAG, "Wake lock released")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing wake lock", e)
+        }
+    }
+    
     override fun onBind(intent: Intent?): IBinder? = null
     
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "Task removed - scheduling restart")
+        
+        // If service should continue running, schedule restart
+        if (BootReceiver.isServiceEnabled(this)) {
+            ServiceRestartReceiver.scheduleRestart(this)
+        }
+    }
+    
     override fun onDestroy() {
-        super.onDestroy()
         Log.d(TAG, "Service destroyed")
+        
+        // Release wake lock
+        releaseWakeLock()
+        
         stopScanning()
         cellularMonitor?.destroy()
         cellularMonitor = null
+        
+        // Cancel watchdog if service is intentionally stopped
+        // Only schedule restart if service should still be running
+        if (BootReceiver.isServiceEnabled(this)) {
+            Log.d(TAG, "Service was destroyed but should be running - scheduling restart")
+            ServiceRestartReceiver.scheduleRestart(this)
+        } else {
+            Log.d(TAG, "Service intentionally stopped - canceling watchdog")
+            ServiceRestartReceiver.cancelWatchdog(this)
+        }
+        
         serviceScope.cancel()
+        super.onDestroy()
+    }
+    
+    /**
+     * Called when user explicitly stops the service
+     */
+    fun stopServiceCompletely() {
+        Log.d(TAG, "Service stopped by user")
+        BootReceiver.setServiceEnabled(this, false)
+        ServiceRestartReceiver.cancelWatchdog(this)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
     
     private fun createNotificationChannel() {
@@ -347,6 +436,10 @@ class ScanningService : Service() {
         scanJob = serviceScope.launch {
             while (isActive) {
                 val scanConfig = currentSettings.value // Re-read in case settings changed
+                
+                // Refresh wake lock to prevent timeout
+                acquireWakeLock()
+                
                 try {
                     // Start BLE scan
                     if (scanConfig.enableBle) {

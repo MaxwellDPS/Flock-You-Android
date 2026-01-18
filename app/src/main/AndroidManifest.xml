@@ -32,6 +32,19 @@
     <!-- Internet for maps -->
     <uses-permission android:name="android.permission.INTERNET" />
     
+    <!-- Battery optimization exemption - REQUIRED for reliable background scanning -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    
+    <!-- Wake lock for keeping scans alive -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- Boot completed for auto-start -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    
+    <!-- Exact alarms for reliable periodic tasks (Android 12+) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    
     <!-- Feature declarations -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
@@ -62,7 +75,31 @@
             android:name=".service.ScanningService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="location" />
+            android:foregroundServiceType="location"
+            android:stopWithTask="false" />
+        
+        <!-- Boot receiver for auto-starting service -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+        
+        <!-- Service restart receiver -->
+        <receiver
+            android:name=".service.ServiceRestartReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.flockyou.RESTART_SERVICE" />
+            </intent-filter>
+        </receiver>
         
         <!-- File Provider for sharing exported files -->
         <provider
