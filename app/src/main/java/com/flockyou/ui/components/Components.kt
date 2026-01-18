@@ -52,6 +52,7 @@ fun SignalStrength.toColor(): Color = when (this) {
     SignalStrength.MEDIUM -> SignalMedium
     SignalStrength.WEAK -> SignalWeak
     SignalStrength.VERY_WEAK -> SignalVeryWeak
+    SignalStrength.UNKNOWN -> Color.Gray
 }
 
 /**
@@ -783,6 +784,7 @@ fun SignalIndicator(
                 SignalStrength.MEDIUM -> 2
                 SignalStrength.WEAK -> 1
                 SignalStrength.VERY_WEAK -> 1
+                SignalStrength.UNKNOWN -> 0
             }
             
             repeat(4) { index ->
