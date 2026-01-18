@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -129,7 +130,13 @@ fun MainScreen(
                     isScanning = uiState.isScanning,
                     totalDetections = uiState.totalCount,
                     highThreatCount = uiState.highThreatCount,
-                    onToggleScan = { viewModel.toggleScanning() }
+                    onToggleScan = { viewModel.toggleScanning() },
+                    scanStatus = uiState.scanStatus,
+                    bleStatus = uiState.bleStatus,
+                    wifiStatus = uiState.wifiStatus,
+                    locationStatus = uiState.locationStatus,
+                    recentErrors = uiState.recentErrors,
+                    onClearErrors = { viewModel.clearErrors() }
                 )
             }
             

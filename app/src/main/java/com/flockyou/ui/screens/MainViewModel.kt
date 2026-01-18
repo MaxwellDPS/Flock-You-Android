@@ -21,7 +21,13 @@ data class MainUiState(
     val lastDetection: Detection? = null,
     val selectedTab: Int = 0,
     val filterThreatLevel: ThreatLevel? = null,
-    val filterDeviceType: DeviceType? = null
+    val filterDeviceType: DeviceType? = null,
+    // Status information
+    val scanStatus: ScanningService.ScanStatus = ScanningService.ScanStatus.Idle,
+    val bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    val wifiStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    val locationStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    val recentErrors: List<ScanningService.ScanError> = emptyList()
 )
 
 @HiltViewModel
@@ -66,6 +72,41 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             repository.highThreatCount.collect { count ->
                 _uiState.update { it.copy(highThreatCount = count) }
+            }
+        }
+        
+        // Observe scan status
+        viewModelScope.launch {
+            ScanningService.scanStatus.collect { status ->
+                _uiState.update { it.copy(scanStatus = status) }
+            }
+        }
+        
+        // Observe BLE status
+        viewModelScope.launch {
+            ScanningService.bleStatus.collect { status ->
+                _uiState.update { it.copy(bleStatus = status) }
+            }
+        }
+        
+        // Observe WiFi status
+        viewModelScope.launch {
+            ScanningService.wifiStatus.collect { status ->
+                _uiState.update { it.copy(wifiStatus = status) }
+            }
+        }
+        
+        // Observe location status
+        viewModelScope.launch {
+            ScanningService.locationStatus.collect { status ->
+                _uiState.update { it.copy(locationStatus = status) }
+            }
+        }
+        
+        // Observe error log (only keep last 5 for UI)
+        viewModelScope.launch {
+            ScanningService.errorLog.collect { errors ->
+                _uiState.update { it.copy(recentErrors = errors.take(5)) }
             }
         }
     }
@@ -118,6 +159,10 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             repository.deleteAllDetections()
         }
+    }
+    
+    fun clearErrors() {
+        ScanningService.clearErrors()
     }
     
     fun getFilteredDetections(): List<Detection> {

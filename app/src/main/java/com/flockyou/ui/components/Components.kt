@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.flockyou.data.model.*
+import com.flockyou.service.ScanningService
 import com.flockyou.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -155,8 +156,16 @@ fun StatusCard(
     totalDetections: Int,
     highThreatCount: Int,
     onToggleScan: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    scanStatus: ScanningService.ScanStatus = ScanningService.ScanStatus.Idle,
+    bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    wifiStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    locationStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
+    recentErrors: List<ScanningService.ScanError> = emptyList(),
+    onClearErrors: () -> Unit = {}
 ) {
+    var showErrorDetails by remember { mutableStateOf(false) }
+    
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -175,11 +184,23 @@ fun StatusCard(
             ) {
                 Column {
                     Text(
-                        text = if (isScanning) "SCANNING" else "IDLE",
+                        text = when (scanStatus) {
+                            is ScanningService.ScanStatus.Idle -> "IDLE"
+                            is ScanningService.ScanStatus.Starting -> "STARTING..."
+                            is ScanningService.ScanStatus.Active -> "SCANNING"
+                            is ScanningService.ScanStatus.Stopping -> "STOPPING..."
+                            is ScanningService.ScanStatus.Error -> "ERROR"
+                        },
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        color = if (isScanning) MaterialTheme.colorScheme.primary else Color.Gray
+                        color = when (scanStatus) {
+                            is ScanningService.ScanStatus.Active -> MaterialTheme.colorScheme.primary
+                            is ScanningService.ScanStatus.Error -> MaterialTheme.colorScheme.error
+                            is ScanningService.ScanStatus.Starting,
+                            is ScanningService.ScanStatus.Stopping -> MaterialTheme.colorScheme.tertiary
+                            else -> Color.Gray
+                        }
                     )
                     Text(
                         text = "Surveillance Detection System",
@@ -193,6 +214,96 @@ fun StatusCard(
                     contentAlignment = Alignment.Center
                 ) {
                     ScanningRadar(isScanning = isScanning)
+                }
+            }
+            
+            // Subsystem status indicators
+            if (isScanning) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    SubsystemIndicator(
+                        name = "BLE",
+                        status = bleStatus,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SubsystemIndicator(
+                        name = "WiFi",
+                        status = wifiStatus,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SubsystemIndicator(
+                        name = "GPS",
+                        status = locationStatus,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            
+            // Error banner
+            if (recentErrors.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showErrorDetails = !showErrorDetails },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${recentErrors.size} recent error${if (recentErrors.size > 1) "s" else ""}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = recentErrors.firstOrNull()?.message ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            imageVector = if (showErrorDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "Toggle error details",
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+                
+                // Expandable error details
+                AnimatedVisibility(visible = showErrorDetails) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        recentErrors.take(5).forEach { error ->
+                            ErrorLogItem(error = error)
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        TextButton(
+                            onClick = onClearErrors,
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Clear Errors")
+                        }
+                    }
                 }
             }
             
@@ -237,6 +348,121 @@ fun StatusCard(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SubsystemIndicator(
+    name: String,
+    status: ScanningService.SubsystemStatus,
+    modifier: Modifier = Modifier
+) {
+    val (color, icon, label) = when (status) {
+        is ScanningService.SubsystemStatus.Active -> Triple(
+            Color(0xFF4CAF50),
+            Icons.Default.CheckCircle,
+            "Active"
+        )
+        is ScanningService.SubsystemStatus.Idle -> Triple(
+            Color.Gray,
+            Icons.Default.RadioButtonUnchecked,
+            "Idle"
+        )
+        is ScanningService.SubsystemStatus.Disabled -> Triple(
+            Color(0xFFFFC107),
+            Icons.Default.Block,
+            "Disabled"
+        )
+        is ScanningService.SubsystemStatus.Error -> Triple(
+            Color(0xFFF44336),
+            Icons.Default.Error,
+            "Error"
+        )
+        is ScanningService.SubsystemStatus.PermissionDenied -> Triple(
+            Color(0xFFFF9800),
+            Icons.Default.Lock,
+            "No Perm"
+        )
+    }
+    
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = color.copy(alpha = 0.15f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+fun ErrorLogItem(
+    error: ScanningService.ScanError,
+    modifier: Modifier = Modifier
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = dateFormat.format(Date(error.timestamp)),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = if (error.recoverable) 
+                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                else 
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+            ) {
+                Text(
+                    text = error.subsystem,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (error.recoverable)
+                        MaterialTheme.colorScheme.tertiary
+                    else
+                        MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = error.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

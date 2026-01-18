@@ -49,7 +49,47 @@ class ScanningService : Service() {
         val isScanning = MutableStateFlow(false)
         val lastDetection = MutableStateFlow<Detection?>(null)
         val detectionCount = MutableStateFlow(0)
+        
+        // Status tracking
+        val scanStatus = MutableStateFlow<ScanStatus>(ScanStatus.Idle)
+        val bleStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+        val wifiStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+        val locationStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+        val errorLog = MutableStateFlow<List<ScanError>>(emptyList())
+        
+        private const val MAX_ERROR_LOG_SIZE = 50
+        
+        fun clearErrors() {
+            errorLog.value = emptyList()
+        }
     }
+    
+    /** Overall scanning status */
+    sealed class ScanStatus {
+        object Idle : ScanStatus()
+        object Starting : ScanStatus()
+        object Active : ScanStatus()
+        object Stopping : ScanStatus()
+        data class Error(val message: String, val recoverable: Boolean = true) : ScanStatus()
+    }
+    
+    /** Individual subsystem status */
+    sealed class SubsystemStatus {
+        object Idle : SubsystemStatus()
+        object Active : SubsystemStatus()
+        object Disabled : SubsystemStatus()
+        data class Error(val code: Int, val message: String) : SubsystemStatus()
+        data class PermissionDenied(val permission: String) : SubsystemStatus()
+    }
+    
+    /** Error log entry */
+    data class ScanError(
+        val timestamp: Long = System.currentTimeMillis(),
+        val subsystem: String,
+        val code: Int,
+        val message: String,
+        val recoverable: Boolean = true
+    )
     
     @Inject
     lateinit var repository: DetectionRepository
@@ -171,8 +211,23 @@ class ScanningService : Service() {
     private fun startScanning() {
         if (isScanning.value) return
         
-        isScanning.value = true
+        scanStatus.value = ScanStatus.Starting
         Log.d(TAG, "Starting scanning")
+        
+        // Check permissions first
+        if (!hasBluetoothPermissions()) {
+            bleStatus.value = SubsystemStatus.PermissionDenied("BLUETOOTH_SCAN")
+            logError("BLE", -1, "Bluetooth permissions not granted", recoverable = true)
+        }
+        
+        if (!hasLocationPermissions()) {
+            locationStatus.value = SubsystemStatus.PermissionDenied("ACCESS_FINE_LOCATION")
+            wifiStatus.value = SubsystemStatus.PermissionDenied("ACCESS_FINE_LOCATION")
+            logError("Location", -1, "Location permissions not granted", recoverable = true)
+        }
+        
+        isScanning.value = true
+        scanStatus.value = ScanStatus.Active
         
         // Get initial location
         updateLocation()
@@ -200,21 +255,69 @@ class ScanningService : Service() {
                     val inactiveThreshold = System.currentTimeMillis() - INACTIVE_TIMEOUT
                     repository.markOldInactive(inactiveThreshold)
                     
-                    // Update notification
-                    updateNotification("Detections: ${detectionCount.value}")
+                    // Update notification with status
+                    val statusText = buildStatusText()
+                    updateNotification(statusText)
                     
                 } catch (e: Exception) {
                     Log.e(TAG, "Scanning error", e)
+                    logError("Scanner", -1, "Scan cycle error: ${e.message}", recoverable = true)
                 }
             }
         }
     }
     
+    private fun buildStatusText(): String {
+        val parts = mutableListOf<String>()
+        parts.add("Detections: ${detectionCount.value}")
+        
+        when (val ble = bleStatus.value) {
+            is SubsystemStatus.Error -> parts.add("BLE: Error ${ble.code}")
+            is SubsystemStatus.PermissionDenied -> parts.add("BLE: No permission")
+            is SubsystemStatus.Disabled -> parts.add("BLE: Disabled")
+            else -> {}
+        }
+        
+        when (val wifi = wifiStatus.value) {
+            is SubsystemStatus.Error -> parts.add("WiFi: Error")
+            is SubsystemStatus.PermissionDenied -> parts.add("WiFi: No permission")
+            is SubsystemStatus.Disabled -> parts.add("WiFi: Disabled")
+            else -> {}
+        }
+        
+        return parts.joinToString(" | ")
+    }
+    
+    private fun logError(subsystem: String, code: Int, message: String, recoverable: Boolean = true) {
+        val error = ScanError(
+            subsystem = subsystem,
+            code = code,
+            message = message,
+            recoverable = recoverable
+        )
+        Log.e(TAG, "[$subsystem] Error $code: $message")
+        
+        val currentErrors = errorLog.value.toMutableList()
+        currentErrors.add(0, error)
+        if (currentErrors.size > MAX_ERROR_LOG_SIZE) {
+            currentErrors.removeAt(currentErrors.lastIndex)
+        }
+        errorLog.value = currentErrors
+    }
+    
     private fun stopScanning() {
+        scanStatus.value = ScanStatus.Stopping
         isScanning.value = false
         scanJob?.cancel()
         stopBleScan()
         unregisterWifiReceiver()
+        
+        // Reset subsystem statuses
+        bleStatus.value = SubsystemStatus.Idle
+        wifiStatus.value = SubsystemStatus.Idle
+        locationStatus.value = SubsystemStatus.Idle
+        scanStatus.value = ScanStatus.Idle
+        
         Log.d(TAG, "Stopped scanning")
     }
     
@@ -223,11 +326,13 @@ class ScanningService : Service() {
     @SuppressLint("MissingPermission")
     private fun startBleScan() {
         if (!hasBluetoothPermissions()) {
+            bleStatus.value = SubsystemStatus.PermissionDenied("BLUETOOTH_SCAN")
             Log.w(TAG, "Missing Bluetooth permissions")
             return
         }
         
         if (bluetoothAdapter?.isEnabled != true) {
+            bleStatus.value = SubsystemStatus.Disabled
             Log.w(TAG, "Bluetooth is disabled")
             return
         }
@@ -242,9 +347,12 @@ class ScanningService : Service() {
         try {
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
             isBleScanningActive = true
+            bleStatus.value = SubsystemStatus.Active
             Log.d(TAG, "BLE scan started")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start BLE scan", e)
+            bleStatus.value = SubsystemStatus.Error(-1, e.message ?: "Unknown error")
+            logError("BLE", -1, "Failed to start scan: ${e.message}", recoverable = true)
         }
     }
     
@@ -277,7 +385,19 @@ class ScanningService : Service() {
         }
         
         override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE scan failed with error: $errorCode")
+            val errorMessage = when (errorCode) {
+                SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
+                SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                SCAN_FAILED_OUT_OF_HARDWARE_RESOURCES -> "Out of hardware resources"
+                SCAN_FAILED_SCANNING_TOO_FREQUENTLY -> "Scanning too frequently"
+                else -> "Unknown error"
+            }
+            Log.e(TAG, "BLE scan failed with error: $errorCode ($errorMessage)")
+            bleStatus.value = SubsystemStatus.Error(errorCode, errorMessage)
+            logError("BLE", errorCode, errorMessage, recoverable = errorCode != SCAN_FAILED_FEATURE_UNSUPPORTED)
+            isBleScanningActive = false
         }
     }
     
@@ -376,21 +496,31 @@ class ScanningService : Service() {
     @SuppressLint("MissingPermission")
     private fun startWifiScan() {
         if (!hasLocationPermissions()) {
+            wifiStatus.value = SubsystemStatus.PermissionDenied("ACCESS_FINE_LOCATION")
             Log.w(TAG, "Missing location permissions for WiFi scan")
             return
         }
         
         if (!wifiManager.isWifiEnabled) {
+            wifiStatus.value = SubsystemStatus.Disabled
             Log.w(TAG, "WiFi is disabled")
             return
         }
         
         try {
             @Suppress("DEPRECATION")
-            wifiManager.startScan()
-            Log.d(TAG, "WiFi scan started")
+            val started = wifiManager.startScan()
+            if (started) {
+                wifiStatus.value = SubsystemStatus.Active
+                Log.d(TAG, "WiFi scan started")
+            } else {
+                wifiStatus.value = SubsystemStatus.Error(-1, "Scan request rejected")
+                logError("WiFi", -1, "WiFi scan request was rejected by the system", recoverable = true)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start WiFi scan", e)
+            wifiStatus.value = SubsystemStatus.Error(-1, e.message ?: "Unknown error")
+            logError("WiFi", -1, "Failed to start scan: ${e.message}", recoverable = true)
         }
     }
     
@@ -402,9 +532,14 @@ class ScanningService : Service() {
                 if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
                     val success = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)
                     if (success) {
+                        wifiStatus.value = SubsystemStatus.Active
                         serviceScope.launch {
                             processWifiScanResults()
                         }
+                    } else {
+                        // Scan failed or was throttled
+                        wifiStatus.value = SubsystemStatus.Error(-2, "Scan throttled")
+                        logError("WiFi", -2, "WiFi scan was throttled by the system", recoverable = true)
                     }
                 }
             }
@@ -572,11 +707,25 @@ class ScanningService : Service() {
     
     @SuppressLint("MissingPermission")
     private fun updateLocation() {
-        if (!hasLocationPermissions()) return
-        
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            currentLocation = location
+        if (!hasLocationPermissions()) {
+            locationStatus.value = SubsystemStatus.PermissionDenied("ACCESS_FINE_LOCATION")
+            return
         }
+        
+        fusedLocationClient.lastLocation
+            .addOnSuccessListener { location ->
+                currentLocation = location
+                locationStatus.value = if (location != null) {
+                    SubsystemStatus.Active
+                } else {
+                    SubsystemStatus.Error(-1, "No location available")
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to get location", e)
+                locationStatus.value = SubsystemStatus.Error(-1, e.message ?: "Location error")
+                logError("Location", -1, "Failed to get location: ${e.message}", recoverable = true)
+            }
     }
     
     // ==================== Permissions ====================
