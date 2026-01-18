@@ -857,31 +857,22 @@ class ScanningService : Service() {
     // ==================== Detection Handling ====================
     
     private suspend fun handleDetection(detection: Detection) {
-        // Check if we've already seen this device recently
-        val existing = repository.getDetectionByMacAddress(detection.macAddress ?: "")
+        // Use upsert - this will update seen count if existing, or insert if new
+        val isNew = repository.upsertDetection(detection)
         
-        if (existing != null && existing.isActive) {
-            // Update existing detection with new signal strength and location
-            val updated = existing.copy(
-                timestamp = System.currentTimeMillis(),
-                rssi = detection.rssi,
-                signalStrength = detection.signalStrength,
-                latitude = detection.latitude ?: existing.latitude,
-                longitude = detection.longitude ?: existing.longitude,
-                isActive = true
-            )
-            repository.updateDetection(updated)
-            Log.d(TAG, "Updated detection: ${detection.deviceType}")
-        } else {
+        if (isNew) {
             // New detection
-            repository.insertDetection(detection)
             detectionCount.value++
             lastDetection.value = detection
             
-            Log.d(TAG, "New detection: ${detection.deviceType} - ${detection.macAddress}")
+            Log.d(TAG, "New detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
             
             // Alert user
             alertUser(detection)
+        } else {
+            // Existing detection - update lastDetection to refresh UI
+            lastDetection.value = detection
+            Log.d(TAG, "Updated detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
         }
     }
     

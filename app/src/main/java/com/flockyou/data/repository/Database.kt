@@ -45,23 +45,26 @@ class Converters {
  */
 @Dao
 interface DetectionDao {
-    @Query("SELECT * FROM detections ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections ORDER BY lastSeenTimestamp DESC")
     fun getAllDetections(): Flow<List<Detection>>
     
-    @Query("SELECT * FROM detections WHERE isActive = 1 ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections WHERE isActive = 1 ORDER BY lastSeenTimestamp DESC")
     fun getActiveDetections(): Flow<List<Detection>>
     
-    @Query("SELECT * FROM detections WHERE timestamp > :since ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections WHERE timestamp > :since ORDER BY lastSeenTimestamp DESC")
     fun getRecentDetections(since: Long): Flow<List<Detection>>
     
-    @Query("SELECT * FROM detections WHERE threatLevel = :threatLevel ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections WHERE threatLevel = :threatLevel ORDER BY lastSeenTimestamp DESC")
     fun getDetectionsByThreatLevel(threatLevel: ThreatLevel): Flow<List<Detection>>
     
-    @Query("SELECT * FROM detections WHERE deviceType = :deviceType ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections WHERE deviceType = :deviceType ORDER BY lastSeenTimestamp DESC")
     fun getDetectionsByDeviceType(deviceType: DeviceType): Flow<List<Detection>>
     
-    @Query("SELECT * FROM detections WHERE macAddress = :macAddress ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM detections WHERE macAddress = :macAddress ORDER BY lastSeenTimestamp DESC LIMIT 1")
     suspend fun getDetectionByMacAddress(macAddress: String): Detection?
+    
+    @Query("SELECT * FROM detections WHERE ssid = :ssid ORDER BY lastSeenTimestamp DESC LIMIT 1")
+    suspend fun getDetectionBySsid(ssid: String): Detection?
     
     @Query("SELECT * FROM detections WHERE id = :id")
     suspend fun getDetectionById(id: String): Detection?
@@ -87,8 +90,14 @@ interface DetectionDao {
     @Query("UPDATE detections SET isActive = 0 WHERE macAddress = :macAddress")
     suspend fun markInactive(macAddress: String)
     
-    @Query("UPDATE detections SET isActive = 0 WHERE timestamp < :before")
+    @Query("UPDATE detections SET isActive = 0 WHERE lastSeenTimestamp < :before")
     suspend fun markOldInactive(before: Long)
+    
+    @Query("UPDATE detections SET isActive = 1, seenCount = seenCount + 1, lastSeenTimestamp = :timestamp, rssi = :rssi, latitude = :latitude, longitude = :longitude WHERE macAddress = :macAddress")
+    suspend fun updateSeenByMac(macAddress: String, timestamp: Long, rssi: Int, latitude: Double?, longitude: Double?)
+    
+    @Query("UPDATE detections SET isActive = 1, seenCount = seenCount + 1, lastSeenTimestamp = :timestamp, rssi = :rssi, latitude = :latitude, longitude = :longitude WHERE ssid = :ssid")
+    suspend fun updateSeenBySsid(ssid: String, timestamp: Long, rssi: Int, latitude: Double?, longitude: Double?)
     
     @Query("SELECT COUNT(*) FROM detections")
     fun getTotalDetectionCount(): Flow<Int>
@@ -96,14 +105,14 @@ interface DetectionDao {
     @Query("SELECT COUNT(*) FROM detections WHERE threatLevel = 'CRITICAL' OR threatLevel = 'HIGH'")
     fun getHighThreatCount(): Flow<Int>
     
-    @Query("SELECT * FROM detections WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY timestamp DESC")
+    @Query("SELECT * FROM detections WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY lastSeenTimestamp DESC")
     fun getDetectionsWithLocation(): Flow<List<Detection>>
 }
 
 /**
  * Room database for storing detections
  */
-@Database(entities = [Detection::class], version = 1, exportSchema = false)
+@Database(entities = [Detection::class], version = 2, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao

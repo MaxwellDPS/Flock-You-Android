@@ -34,6 +34,10 @@ class DetectionRepository @Inject constructor(
         return detectionDao.getDetectionByMacAddress(macAddress)
     }
     
+    suspend fun getDetectionBySsid(ssid: String): Detection? {
+        return detectionDao.getDetectionBySsid(ssid)
+    }
+    
     suspend fun getDetectionById(id: String): Detection? {
         return detectionDao.getDetectionById(id)
     }
@@ -68,5 +72,41 @@ class DetectionRepository @Inject constructor(
     
     suspend fun markOldInactive(beforeMillis: Long) {
         detectionDao.markOldInactive(beforeMillis)
+    }
+    
+    /**
+     * Update an existing detection's seen count and location, or insert if new
+     */
+    suspend fun upsertDetection(detection: Detection): Boolean {
+        // Try to find existing detection
+        val existingByMac = detection.macAddress?.let { getDetectionByMacAddress(it) }
+        val existingBySsid = if (existingByMac == null) detection.ssid?.let { getDetectionBySsid(it) } else null
+        val existing = existingByMac ?: existingBySsid
+        
+        return if (existing != null) {
+            // Update existing - increment seen count
+            if (detection.macAddress != null) {
+                detectionDao.updateSeenByMac(
+                    macAddress = detection.macAddress,
+                    timestamp = detection.timestamp,
+                    rssi = detection.rssi,
+                    latitude = detection.latitude,
+                    longitude = detection.longitude
+                )
+            } else if (detection.ssid != null) {
+                detectionDao.updateSeenBySsid(
+                    ssid = detection.ssid,
+                    timestamp = detection.timestamp,
+                    rssi = detection.rssi,
+                    latitude = detection.latitude,
+                    longitude = detection.longitude
+                )
+            }
+            false // Not a new detection
+        } else {
+            // Insert new
+            insertDetection(detection)
+            true // New detection
+        }
     }
 }

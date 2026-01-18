@@ -29,7 +29,9 @@ data class Detection(
     val firmwareVersion: String?,
     val serviceUuids: String?, // JSON array of service UUIDs
     val matchedPatterns: String?, // JSON array of matched patterns
-    val isActive: Boolean = true
+    val isActive: Boolean = true,
+    val seenCount: Int = 1, // Number of times this device has been seen
+    val lastSeenTimestamp: Long = System.currentTimeMillis() // When device was last seen
 )
 
 enum class DetectionProtocol(val displayName: String, val icon: String) {

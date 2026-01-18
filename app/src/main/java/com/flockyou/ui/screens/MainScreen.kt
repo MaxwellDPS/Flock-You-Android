@@ -203,7 +203,7 @@ fun MainScreen(
             }
             
             // Section header
-            item {
+            item(key = "section_header") {
                 Text(
                     text = when (uiState.selectedTab) {
                         1 -> "HIGH PRIORITY THREATS"
@@ -216,22 +216,27 @@ fun MainScreen(
                 )
             }
             
-            // Detection list
-            val detections = viewModel.getFilteredDetections().let { list ->
-                when (uiState.selectedTab) {
-                    1 -> list.filter { 
-                        it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
+            // Detection list - use derivedStateOf to prevent unnecessary recompositions
+            val detections = remember(uiState.detections, uiState.selectedTab, uiState.filterThreatLevel, uiState.filterDeviceType) {
+                viewModel.getFilteredDetections().let { list ->
+                    when (uiState.selectedTab) {
+                        1 -> list.filter { 
+                            it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
+                        }
+                        else -> list
                     }
-                    else -> list
                 }
             }
             
             if (detections.isEmpty()) {
-                item {
+                item(key = "empty_state") {
                     EmptyState(isScanning = uiState.isScanning)
                 }
             } else {
-                items(detections, key = { it.id }) { detection ->
+                items(
+                    items = detections,
+                    key = { it.id }
+                ) { detection ->
                     DetectionCard(
                         detection = detection,
                         onClick = { selectedDetection = detection }
@@ -579,8 +584,33 @@ fun DetectionDetailSheet(
             
             item {
                 DetailRow(
-                    label = "Detected",
+                    label = "First Detected",
                     value = dateFormat.format(Date(detection.timestamp))
+                )
+            }
+            
+            if (detection.lastSeenTimestamp != detection.timestamp) {
+                item {
+                    DetailRow(
+                        label = "Last Seen",
+                        value = dateFormat.format(Date(detection.lastSeenTimestamp))
+                    )
+                }
+            }
+            
+            if (detection.seenCount > 1) {
+                item {
+                    DetailRow(
+                        label = "Times Seen",
+                        value = "${detection.seenCount}x"
+                    )
+                }
+            }
+            
+            item {
+                DetailRow(
+                    label = "Status",
+                    value = if (detection.isActive) "🟢 Active" else "⚪ Inactive"
                 )
             }
             
@@ -619,7 +649,7 @@ fun DetectionDetailSheet(
             item {
                 DetailRow(
                     label = "Signal",
-                    value = "${detection.rssi} dBm (${detection.signalStrength.displayName} - ${detection.signalStrength.description})"
+                    value = "${detection.rssi} dBm (${detection.signalStrength.displayName})"
                 )
             }
             
@@ -642,12 +672,60 @@ fun DetectionDetailSheet(
                 }
             }
             
+            // Location Section
             if (detection.latitude != null && detection.longitude != null) {
                 item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "📍 Location",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                item {
                     DetailRow(
-                        label = "Location",
+                        label = "Coordinates",
                         value = "%.6f, %.6f".format(detection.latitude, detection.longitude)
                     )
+                }
+                
+                item {
+                    // Clickable location card to open in maps
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "View on Map",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "Tap detection card to see on app map",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
             }
             
