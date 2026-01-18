@@ -108,7 +108,7 @@ class OuiUpdateWorker @AssistedInject constructor(
         try {
             val result = ouiDownloader.downloadAndParse()
 
-            when (result) {
+            return@withContext when (result) {
                 is OuiDownloadResult.Success -> {
                     Log.d(TAG, "Downloaded ${result.entries.size} OUI entries")
 
@@ -150,7 +150,7 @@ class OuiUpdateWorker @AssistedInject constructor(
                 success = false,
                 error = e.message ?: "Unknown error"
             )
-            Result.failure()
+            return@withContext Result.failure()
         }
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -29,8 +30,15 @@ class OrbotHelper @Inject constructor(
 
     fun isOrbotInstalled(): Boolean {
         return try {
-            @Suppress("DEPRECATION")
-            context.packageManager.getPackageInfo(ORBOT_PACKAGE_NAME, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    ORBOT_PACKAGE_NAME,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(ORBOT_PACKAGE_NAME, 0)
+            }
             true
         } catch (e: PackageManager.NameNotFoundException) {
             false
