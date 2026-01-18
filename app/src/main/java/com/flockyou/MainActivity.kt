@@ -46,6 +46,7 @@ import com.flockyou.ui.screens.NotificationSettingsScreen
 import com.flockyou.ui.screens.RuleSettingsScreen
 import com.flockyou.ui.screens.DetectionSettingsScreen
 import com.flockyou.ui.screens.SecuritySettingsScreen
+import com.flockyou.ui.screens.PermissionSetupWizard
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -73,6 +74,7 @@ class MainActivity : FragmentActivity() {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.READ_PHONE_STATE)
+        add(Manifest.permission.RECORD_AUDIO) // For ultrasonic beacon detection
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -149,8 +151,9 @@ class MainActivity : FragmentActivity() {
                 ) {
                     when {
                         !permissionsGranted -> {
-                            PermissionScreen(
-                                onRequestPermissions = { requestPermissions() }
+                            PermissionSetupWizard(
+                                onRequestPermissions = { requestPermissions() },
+                                onRequestBackgroundLocation = { requestBackgroundLocation() }
                             )
                         }
                         !batteryOptimizationChecked -> {
@@ -211,6 +214,12 @@ class MainActivity : FragmentActivity() {
     
     private fun requestPermissions() {
         permissionLauncher.launch(requiredPermissions.toTypedArray())
+    }
+
+    private fun requestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        }
     }
 }
 

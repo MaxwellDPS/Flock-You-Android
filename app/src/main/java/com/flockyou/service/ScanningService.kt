@@ -27,8 +27,11 @@ import com.google.android.gms.location.*
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.*
 import javax.inject.Inject
 
@@ -105,6 +108,11 @@ class ScanningService : Service() {
         
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
+
+        // Detection refresh event - emits when detections are added/updated
+        // This ensures UI updates even if Room's Flow emissions fail with SQLCipher
+        private val _detectionRefreshEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
+        val detectionRefreshEvent: SharedFlow<Unit> = _detectionRefreshEvent.asSharedFlow()
 
         // Learning mode - for capturing unknown device signatures
         val learningModeEnabled = MutableStateFlow(false)
@@ -834,19 +842,24 @@ class ScanningService : Service() {
                         // Check if we already have this detection (use unique SSID)
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
-                            repository.insertDetection(det)
+                            try {
+                                repository.insertDetection(det)
 
-                            // Alert and vibrate for high-severity anomalies
-                            if (anomaly.severity == ThreatLevel.CRITICAL ||
-                                anomaly.severity == ThreatLevel.HIGH) {
-                                alertUser(det)
-                            }
+                                // Alert and vibrate for high-severity anomalies
+                                if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                    anomaly.severity == ThreatLevel.HIGH) {
+                                    alertUser(det)
+                                }
 
-                            lastDetection.value = det
-                            detectionCount.value = repository.getTotalDetectionCount()
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
 
-                            if (BuildConfig.DEBUG) {
-                                Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                if (BuildConfig.DEBUG) {
+                                    Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving cellular detection: ${e.message}", e)
                             }
                         }
                     }
@@ -1051,18 +1064,23 @@ class ScanningService : Service() {
                             ?: det.ssid?.let { repository.getDetectionBySsid(it) }
 
                         if (existing == null) {
-                            repository.insertDetection(det)
+                            try {
+                                repository.insertDetection(det)
 
-                            if (anomaly.severity == ThreatLevel.CRITICAL ||
-                                anomaly.severity == ThreatLevel.HIGH) {
-                                alertUser(det)
-                            }
+                                if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                    anomaly.severity == ThreatLevel.HIGH) {
+                                    alertUser(det)
+                                }
 
-                            lastDetection.value = det
-                            detectionCount.value = repository.getTotalDetectionCount()
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
 
-                            if (BuildConfig.DEBUG) {
-                                Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                if (BuildConfig.DEBUG) {
+                                    Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving WiFi detection: ${e.message}", e)
                             }
                         }
                     }
@@ -1129,11 +1147,16 @@ class ScanningService : Service() {
                     detection?.let { det ->
                         val existing = det.macAddress?.let { repository.getDetectionByMacAddress(it) }
                         if (existing == null) {
-                            repository.insertDetection(det)
-                            alertUser(det)
-                            lastDetection.value = det
-                            detectionCount.value = repository.getTotalDetectionCount()
-                            Log.w(TAG, "DRONE DETECTED: ${drone.manufacturer} at ${drone.estimatedDistance}")
+                            try {
+                                repository.insertDetection(det)
+                                alertUser(det)
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
+                                Log.w(TAG, "DRONE DETECTED: ${drone.manufacturer} at ${drone.estimatedDistance}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving drone detection: ${e.message}", e)
+                            }
                         }
                     }
                 }
@@ -1154,18 +1177,23 @@ class ScanningService : Service() {
                         // Use timestamp-based unique ID for RF anomalies
                         val existing = repository.getDetectionBySsid(det.deviceName ?: "")
                         if (existing == null) {
-                            repository.insertDetection(det)
+                            try {
+                                repository.insertDetection(det)
 
-                            if (anomaly.severity == ThreatLevel.CRITICAL ||
-                                anomaly.severity == ThreatLevel.HIGH) {
-                                alertUser(det)
-                            }
+                                if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                    anomaly.severity == ThreatLevel.HIGH) {
+                                    alertUser(det)
+                                }
 
-                            lastDetection.value = det
-                            detectionCount.value = repository.getTotalDetectionCount()
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
 
-                            if (BuildConfig.DEBUG) {
-                                Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                if (BuildConfig.DEBUG) {
+                                    Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving RF detection: ${e.message}", e)
                             }
                         }
                     }
@@ -1249,17 +1277,22 @@ class ScanningService : Service() {
                         // Use frequency as unique identifier
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
-                            repository.insertDetection(det)
+                            try {
+                                repository.insertDetection(det)
 
-                            if (anomaly.severity == ThreatLevel.CRITICAL ||
-                                anomaly.severity == ThreatLevel.HIGH) {
-                                alertUser(det)
+                                if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                    anomaly.severity == ThreatLevel.HIGH) {
+                                    alertUser(det)
+                                }
+
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
+
+                                Log.w(TAG, "ULTRASONIC: ${anomaly.type.displayName} - ${anomaly.frequency}Hz")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving ultrasonic detection: ${e.message}", e)
                             }
-
-                            lastDetection.value = det
-                            detectionCount.value = repository.getTotalDetectionCount()
-
-                            Log.w(TAG, "ULTRASONIC: ${anomaly.type.displayName} - ${anomaly.frequency}Hz")
                         }
                     }
                 }
@@ -1855,22 +1888,30 @@ class ScanningService : Service() {
     // ==================== Detection Handling ====================
     
     private suspend fun handleDetection(detection: Detection) {
-        // Use upsert - this will update seen count if existing, or insert if new
-        val isNew = repository.upsertDetection(detection)
-        
-        if (isNew) {
-            // New detection
-            detectionCount.value++
-            lastDetection.value = detection
-            
-            Log.d(TAG, "New detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
-            
-            // Alert user
-            alertUser(detection)
-        } else {
-            // Existing detection - update lastDetection to refresh UI
-            lastDetection.value = detection
-            Log.d(TAG, "Updated detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
+        try {
+            // Use upsert - this will update seen count if existing, or insert if new
+            val isNew = repository.upsertDetection(detection)
+
+            if (isNew) {
+                // New detection
+                detectionCount.value++
+                lastDetection.value = detection
+
+                Log.d(TAG, "New detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
+
+                // Alert user
+                alertUser(detection)
+            } else {
+                // Existing detection - update lastDetection to refresh UI
+                lastDetection.value = detection
+                Log.d(TAG, "Updated detection: ${detection.deviceType} - ${detection.macAddress ?: detection.ssid}")
+            }
+
+            // Emit refresh event to ensure UI updates even if Room Flow doesn't trigger
+            _detectionRefreshEvent.tryEmit(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling detection: ${e.message}", e)
+            logError("Detection", 1001, "Failed to save detection: ${e.message}")
         }
     }
     

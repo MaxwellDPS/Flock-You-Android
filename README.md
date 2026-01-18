@@ -474,6 +474,36 @@ cd Flock-You-Android
 # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### OEM / System App Installation
+
+For GrapheneOS, CalyxOS, LineageOS, or other AOSP-based ROM integration, see the [OEM Integration Guide](OEM_INTEGRATION.md).
+
+**Quick integration for GrapheneOS:**
+```bash
+# Automated integration with platform signing (OEM mode)
+./system/integrate-grapheneos.sh ~/grapheneos
+
+# Or with pre-signed APK (System mode)
+./system/integrate-grapheneos.sh ~/grapheneos presigned
+```
+
+**Build variants:**
+| Variant | Command | Privileges |
+|---------|---------|------------|
+| Sideload | `./gradlew assembleSideloadRelease` | Standard user app |
+| System | `./gradlew assembleSystemRelease` | Privileged system app |
+| OEM | `./gradlew assembleOemRelease` | Platform-signed, maximum privileges |
+
+**Integration files in `system/`:**
+| File | Purpose |
+|------|---------|
+| `Android.bp` | Soong build module (Android 11+) |
+| `Android.mk` | Legacy Make build module |
+| `flockyou.mk` | Device makefile include |
+| `integrate-grapheneos.sh` | Automated integration script |
+| `privapp-permissions-flockyou.xml` | Privileged permissions whitelist |
+| `default-permissions-flockyou.xml` | Runtime permissions pre-grant |
+
 ### Verify APK Attestation
 All release APKs include [SLSA Build Provenance](https://slsa.dev/spec/v1.0/provenance) attestation. Verify authenticity with:
 ```bash
@@ -672,6 +702,36 @@ For optimal detection coverage:
 - Consider reducing scan intervals in low-risk areas
 
 The app uses a foreground service with wake locks to maintain reliable scanning. This is necessary for consistent detection but comes at a battery cost.
+
+## 🔐 Data Collection & Privacy
+
+> **To detect if you're being surveilled, this app must surveil you first.**
+
+This app collects and stores locally:
+- **Location data** attached to every detection event
+- **Cell tower history** with timestamps and coordinates
+- **WiFi network profiles** with location mapping
+- **Bluetooth device records** with signal data
+- **Ultrasonic events** and RF environment data
+
+**Database encryption**: SQLCipher with AES-256-GCM, key in Android Keystore.
+
+**What encryption protects against**:
+- Casual device theft
+- Locked device extraction (mostly)
+
+**What encryption does NOT protect against**:
+- Unlocked device forensics (Cellebrite, GrayKey)
+- Compelled device unlock
+- Malware with app-level access
+
+**Recommendations**:
+- Use shortest retention period acceptable (Settings > Data Retention)
+- Clear data before high-risk situations (border crossings, protests)
+- Consider disabling features you don't need
+- For OEM deployments, see [detailed security analysis](OEM_INTEGRATION.md#data-collection--the-surveillance-paradox)
+
+**TPM/StrongBox binding** would provide marginal improvement for locked-device attacks but doesn't help when the device is unlocked (which is when the app needs to function). See [OEM Integration Guide](OEM_INTEGRATION.md#would-tpm-bound-secrets-help) for detailed analysis.
 
 ## ⚖️ Legal Notice
 

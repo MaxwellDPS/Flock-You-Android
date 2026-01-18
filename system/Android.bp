@@ -1,0 +1,84 @@
+// Flock You - Android.bp for GrapheneOS/AOSP build integration
+//
+// This file enables building Flock You as a privileged system app
+// in GrapheneOS, CalyxOS, LineageOS, or other AOSP-based ROMs.
+//
+// Usage:
+//   1. Copy this directory to vendor/flockyou/ or packages/apps/FlockYou/
+//   2. Build the APK: ./gradlew assembleOemRelease (or assembleSystemRelease)
+//   3. Copy the APK to this directory as FlockYou.apk
+//   4. Add "FlockYou" to PRODUCT_PACKAGES in your device.mk
+//
+// For platform-signed builds (OEM mode), use certificate: "platform"
+// For pre-signed builds (System mode), use certificate: "PRESIGNED"
+
+android_app_import {
+    name: "FlockYou",
+    apk: "FlockYou.apk",
+
+    // Install as privileged app in /system_ext/priv-app/
+    privileged: true,
+    system_ext_specific: true,
+
+    // Signing configuration:
+    // - Use "platform" for OEM builds (maximum privileges, IMEI/IMSI access)
+    // - Use "PRESIGNED" if APK is already signed (System mode)
+    certificate: "platform",
+
+    // DEX optimization
+    dex_preopt: {
+        enabled: true,
+    },
+
+    // Required permissions whitelists
+    required: [
+        "privapp_permissions_flockyou",
+        "default_permissions_flockyou",
+    ],
+
+    // Optional: Uncomment to use pre-signed APK instead of platform signing
+    // certificate: "PRESIGNED",
+    // presigned: true,
+}
+
+// Permission whitelist for privileged permissions
+prebuilt_etc {
+    name: "privapp_permissions_flockyou",
+    src: "privapp-permissions-flockyou.xml",
+    sub_dir: "permissions",
+    system_ext_specific: true,
+    filename: "privapp-permissions-flockyou.xml",
+}
+
+// Default runtime permissions (pre-granted on first boot)
+prebuilt_etc {
+    name: "default_permissions_flockyou",
+    src: "default-permissions-flockyou.xml",
+    sub_dir: "default-permissions",
+    system_ext_specific: true,
+    filename: "default-permissions-flockyou.xml",
+}
+
+// Alternative: System app (non-system_ext) for older Android versions
+// Uncomment this block and comment out the above if targeting Android 10 or earlier
+/*
+android_app_import {
+    name: "FlockYou_legacy",
+    apk: "FlockYou.apk",
+    privileged: true,
+    certificate: "platform",
+    dex_preopt: {
+        enabled: true,
+    },
+    required: [
+        "privapp_permissions_flockyou_legacy",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp_permissions_flockyou_legacy",
+    src: "privapp-permissions-flockyou.xml",
+    sub_dir: "permissions",
+    filename: "privapp-permissions-flockyou.xml",
+}
+*/

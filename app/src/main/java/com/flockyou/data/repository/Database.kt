@@ -85,7 +85,10 @@ interface DetectionDao {
     
     @Query("SELECT COUNT(*) FROM detections")
     suspend fun getTotalDetectionCountSync(): Int
-    
+
+    @Query("SELECT * FROM detections ORDER BY lastSeenTimestamp DESC")
+    suspend fun getAllDetectionsSnapshot(): List<Detection>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDetection(detection: Detection)
     

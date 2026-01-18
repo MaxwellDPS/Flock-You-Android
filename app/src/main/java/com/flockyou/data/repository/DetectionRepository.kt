@@ -45,7 +45,11 @@ class DetectionRepository @Inject constructor(
     suspend fun getTotalDetectionCount(): Int {
         return detectionDao.getTotalDetectionCountSync()
     }
-    
+
+    suspend fun getAllDetectionsSnapshot(): List<Detection> {
+        return detectionDao.getAllDetectionsSnapshot()
+    }
+
     suspend fun insertDetection(detection: Detection) {
         detectionDao.insertDetection(detection)
     }

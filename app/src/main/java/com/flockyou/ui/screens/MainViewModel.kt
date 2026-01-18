@@ -152,14 +152,22 @@ class MainViewModel @Inject constructor(
                 _uiState.update { it.copy(detections = detections) }
             }
         }
-        
+
+        // Observe detection refresh events from service (ensures UI updates even if Room Flow fails)
+        viewModelScope.launch {
+            ScanningService.detectionRefreshEvent.collect {
+                // Manually refresh detection list and counts from database
+                refreshDetections()
+            }
+        }
+
         // Observe total count
         viewModelScope.launch {
             repository.totalDetectionCount.collect { count ->
                 _uiState.update { it.copy(totalCount = count) }
             }
         }
-        
+
         // Observe high threat count
         viewModelScope.launch {
             repository.highThreatCount.collect { count ->
@@ -367,6 +375,27 @@ class MainViewModel @Inject constructor(
     
     fun clearErrors() {
         ScanningService.clearErrors()
+    }
+
+    /**
+     * Manually refresh detections from database.
+     * Called when detection refresh events are received to ensure UI stays in sync
+     * even if Room's Flow emissions don't trigger properly with SQLCipher.
+     */
+    private suspend fun refreshDetections() {
+        try {
+            val detections = repository.getAllDetectionsSnapshot()
+            val totalCount = repository.getTotalDetectionCount()
+            _uiState.update {
+                it.copy(
+                    detections = detections,
+                    totalCount = totalCount
+                )
+            }
+        } catch (e: Exception) {
+            // Log error but don't crash - Room Flow should still work as backup
+            android.util.Log.e("MainViewModel", "Error refreshing detections: ${e.message}", e)
+        }
     }
 
     fun setAdvancedMode(enabled: Boolean) {

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Default runtime permissions for Flock You on first boot.
+
+    This file pre-grants runtime permissions so users don't need to
+    manually grant them after installing. This is optional but recommended
+    for OEM/system app deployments.
+
+    Installation path:
+    /system_ext/etc/default-permissions/default-permissions-flockyou.xml
+
+    Note: This requires the ROM to support default permission grants.
+    GrapheneOS and most AOSP-based ROMs support this.
+-->
+<exceptions>
+    <exception package="com.flockyou">
+        <!-- Location permissions for WiFi/cellular scanning -->
+        <permission name="android.permission.ACCESS_FINE_LOCATION" fixed="false"/>
+        <permission name="android.permission.ACCESS_COARSE_LOCATION" fixed="false"/>
+        <permission name="android.permission.ACCESS_BACKGROUND_LOCATION" fixed="false"/>
+
+        <!-- Bluetooth permissions for BLE scanning -->
+        <permission name="android.permission.BLUETOOTH_SCAN" fixed="false"/>
+        <permission name="android.permission.BLUETOOTH_CONNECT" fixed="false"/>
+
+        <!-- Phone state for cellular monitoring -->
+        <permission name="android.permission.READ_PHONE_STATE" fixed="false"/>
+
+        <!-- Notifications -->
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false"/>
+
+        <!-- Nearby devices (Android 12+) -->
+        <permission name="android.permission.NEARBY_WIFI_DEVICES" fixed="false"/>
+    </exception>
+</exceptions>
