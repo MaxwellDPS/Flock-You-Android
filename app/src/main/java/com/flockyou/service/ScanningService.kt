@@ -364,7 +364,7 @@ class ScanningService : Service() {
                 manufacturer = macPrefix.manufacturer,
                 firmwareVersion = null,
                 serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                matchedPatterns = gson.toJson(listOf("MAC prefix: ${macPrefix.prefix}"))
+                matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
             )
             
             handleDetection(detection)
@@ -488,7 +488,7 @@ class ScanningService : Service() {
                     manufacturer = macPrefix.manufacturer,
                     firmwareVersion = null,
                     serviceUuids = null,
-                    matchedPatterns = gson.toJson(listOf("MAC prefix: ${macPrefix.prefix}"))
+                    matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
                 )
                 
                 handleDetection(detection)
