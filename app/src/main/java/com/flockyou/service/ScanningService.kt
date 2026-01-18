@@ -76,6 +76,12 @@ class ScanningService : Service() {
         val cellularAnomalies = MutableStateFlow<List<CellularMonitor.CellularAnomaly>>(emptyList())
         val cellularEvents = MutableStateFlow<List<CellularMonitor.CellularEvent>>(emptyList())
         
+        // Satellite monitoring data
+        val satelliteState = MutableStateFlow<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?>(null)
+        val satelliteAnomalies = MutableStateFlow<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>>(emptyList())
+        val satelliteHistory = MutableStateFlow<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionEvent>>(emptyList())
+        val satelliteStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+        
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
         
@@ -95,6 +101,11 @@ class ScanningService : Service() {
             seenCellTowers.value = emptyList()
             cellularAnomalies.value = emptyList()
             cellularEvents.value = emptyList()
+        }
+        
+        fun clearSatelliteHistory() {
+            satelliteAnomalies.value = emptyList()
+            satelliteHistory.value = emptyList()
         }
         
         fun updateSettings(
@@ -212,6 +223,9 @@ class ScanningService : Service() {
     // Cellular monitor
     private var cellularMonitor: CellularMonitor? = null
     
+    // Satellite monitor
+    private var satelliteMonitor: com.flockyou.monitoring.SatelliteMonitor? = null
+    
     // Wake lock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var powerManager: PowerManager
@@ -245,6 +259,9 @@ class ScanningService : Service() {
         
         // Initialize Cellular Monitor
         cellularMonitor = CellularMonitor(applicationContext)
+        
+        // Initialize Satellite Monitor
+        satelliteMonitor = com.flockyou.monitoring.SatelliteMonitor(applicationContext)
         
         createNotificationChannel()
     }
@@ -329,6 +346,8 @@ class ScanningService : Service() {
         stopScanning()
         cellularMonitor?.destroy()
         cellularMonitor = null
+        satelliteMonitor?.stopMonitoring()
+        satelliteMonitor = null
         
         // Cancel watchdog if service is intentionally stopped
         // Only schedule restart if service should still be running
@@ -431,6 +450,9 @@ class ScanningService : Service() {
         if (config.enableCellular) {
             startCellularMonitoring()
         }
+        
+        // Start satellite monitoring
+        startSatelliteMonitoring()
         
         // Start continuous scanning
         scanJob = serviceScope.launch {
@@ -536,12 +558,14 @@ class ScanningService : Service() {
         stopBleScan()
         unregisterWifiReceiver()
         stopCellularMonitoring()
+        stopSatelliteMonitoring()
         
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
         wifiStatus.value = SubsystemStatus.Idle
         locationStatus.value = SubsystemStatus.Idle
         cellularStatus.value = SubsystemStatus.Idle
+        satelliteStatus.value = SubsystemStatus.Idle
         scanStatus.value = ScanStatus.Idle
         
         Log.d(TAG, "Stopped scanning")
@@ -638,6 +662,104 @@ class ScanningService : Service() {
         cellularEventsJob = null
         cellularMonitor?.stopMonitoring()
         Log.d(TAG, "Cellular monitoring stopped")
+    }
+    
+    // ==================== Satellite Monitoring ====================
+    
+    private var satelliteStateJob: Job? = null
+    private var satelliteAnomalyJob: Job? = null
+    
+    private fun startSatelliteMonitoring() {
+        if (!hasTelephonyPermissions()) {
+            satelliteStatus.value = SubsystemStatus.PermissionDenied("READ_PHONE_STATE")
+            Log.w(TAG, "Missing telephony permissions for satellite monitoring")
+            return
+        }
+        
+        Log.d(TAG, "Starting satellite monitoring")
+        satelliteStatus.value = SubsystemStatus.Active
+        
+        satelliteMonitor?.startMonitoring()
+        
+        // Collect satellite state updates
+        satelliteStateJob = serviceScope.launch {
+            satelliteMonitor?.satelliteState?.collect { state ->
+                satelliteState.value = state
+                Log.d(TAG, "Satellite state updated: connected=${state.isConnected}, type=${state.connectionType}")
+            }
+        }
+        
+        // Collect satellite anomalies
+        satelliteAnomalyJob = serviceScope.launch {
+            satelliteMonitor?.anomalies?.collect { anomaly ->
+                Log.d(TAG, "Satellite anomaly detected: ${anomaly.type} - ${anomaly.severity}")
+                
+                // Add to anomaly list
+                val currentAnomalies = satelliteAnomalies.value.toMutableList()
+                currentAnomalies.add(0, anomaly)
+                if (currentAnomalies.size > 100) {
+                    currentAnomalies.removeLast()
+                }
+                satelliteAnomalies.value = currentAnomalies
+                
+                // Convert high severity anomalies to detections
+                if (anomaly.severity in listOf(
+                    com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH,
+                    com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL
+                )) {
+                    val detection = satelliteAnomalyToDetection(anomaly)
+                    if (detection != null) {
+                        processDetection(detection)
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun stopSatelliteMonitoring() {
+        satelliteStateJob?.cancel()
+        satelliteStateJob = null
+        satelliteAnomalyJob?.cancel()
+        satelliteAnomalyJob = null
+        satelliteMonitor?.stopMonitoring()
+        Log.d(TAG, "Satellite monitoring stopped")
+    }
+    
+    private fun satelliteAnomalyToDetection(anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly): Detection? {
+        val threatLevel = when (anomaly.severity) {
+            com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> ThreatLevel.CRITICAL
+            com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> ThreatLevel.HIGH
+            com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> ThreatLevel.MEDIUM
+            com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> ThreatLevel.LOW
+            com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> ThreatLevel.LOW
+        }
+        
+        val detectionType = when (anomaly.type) {
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionType.CELLULAR_ANOMALY
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF,
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> DetectionType.IMSI_CATCHER
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS,
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.NTN_BAND_MISMATCH,
+            com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> DetectionType.SIGNAL_JAMMER
+            else -> DetectionType.CELLULAR_ANOMALY
+        }
+        
+        return Detection(
+            id = UUID.randomUUID().toString(),
+            name = "🛰️ ${anomaly.type.name.replace("_", " ")}",
+            type = detectionType,
+            threatLevel = threatLevel,
+            deviceIdentifier = "satellite-${anomaly.type.name.lowercase()}",
+            signalStrength = SignalStrength.UNKNOWN,
+            latitude = currentLocation?.latitude,
+            longitude = currentLocation?.longitude,
+            firstSeen = anomaly.timestamp,
+            lastSeen = anomaly.timestamp,
+            manufacturer = "Satellite Network",
+            matchReason = anomaly.description,
+            additionalInfo = anomaly.recommendations.joinToString("\n")
+        )
     }
     
     private fun hasTelephonyPermissions(): Boolean {

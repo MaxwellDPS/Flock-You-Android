@@ -955,6 +955,8 @@ private fun CellularTabContent(
     onToggleScan: () -> Unit
 ) {
     val seenCellTowers by ScanningService.seenCellTowers.collectAsState()
+    val satelliteState by ScanningService.satelliteState.collectAsState()
+    val satelliteAnomalies by ScanningService.satelliteAnomalies.collectAsState()
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     
     LazyColumn(
@@ -1177,6 +1179,108 @@ private fun CellularTabContent(
                 key = { it.cellId }
             ) { tower ->
                 CellTowerHistoryCard(tower = tower, dateFormat = dateFormat)
+            }
+        }
+        
+        // Satellite status card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        satelliteState?.isConnected == true -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    }
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.SatelliteAlt,
+                                contentDescription = null,
+                                tint = if (satelliteState?.isConnected == true) 
+                                    MaterialTheme.colorScheme.primary 
+                                else 
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "🛰️ Satellite Status",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = when {
+                                        satelliteState?.isConnected == true -> 
+                                            "Connected: ${satelliteState.connectionType.name.replace("_", " ")}"
+                                        isScanning -> "Monitoring"
+                                        else -> "Not connected"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (satelliteState?.isConnected == true) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = "CONNECTED",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF4CAF50),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    
+                    if (satelliteState?.isConnected == true && satelliteState.provider != com.flockyou.monitoring.SatelliteMonitor.SatelliteProvider.UNKNOWN) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Provider: ${satelliteState.provider.name} | Network: ${satelliteState.networkName ?: "Unknown"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        
+        // Satellite anomalies
+        if (satelliteAnomalies.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🛰️ Satellite Anomalies (${satelliteAnomalies.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    TextButton(onClick = { ScanningService.clearSatelliteHistory() }) {
+                        Text("Clear")
+                    }
+                }
+            }
+            
+            items(
+                items = satelliteAnomalies.take(10),
+                key = { "${it.type}-${it.timestamp}" }
+            ) { anomaly ->
+                SatelliteAnomalyHistoryCard(anomaly = anomaly, dateFormat = dateFormat)
             }
         }
         
@@ -1405,6 +1509,75 @@ private fun CellTowerHistoryCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SatelliteAnomalyHistoryCard(
+    anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly,
+    dateFormat: SimpleDateFormat
+) {
+    val severityColor = when (anomaly.severity) {
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> Color(0xFFD32F2F)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> Color(0xFFF44336)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> Color(0xFFFF9800)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> Color(0xFFFFC107)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> Color(0xFF2196F3)
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = severityColor.copy(alpha = 0.1f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.SatelliteAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = severityColor
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = anomaly.type.name.replace("_", " "),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = dateFormat.format(Date(anomaly.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = severityColor.copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = anomaly.severity.name,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = severityColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = anomaly.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

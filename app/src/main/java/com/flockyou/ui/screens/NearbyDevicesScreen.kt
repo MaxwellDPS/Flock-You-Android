@@ -35,8 +35,13 @@ fun NearbyDevicesScreen(
     val cellularAnomalies by ScanningService.cellularAnomalies.collectAsState()
     val isScanning by ScanningService.isScanning.collectAsState()
     
+    // Satellite state
+    val satelliteState by ScanningService.satelliteState.collectAsState()
+    val satelliteAnomalies by ScanningService.satelliteAnomalies.collectAsState()
+    val satelliteStatus by ScanningService.satelliteStatus.collectAsState()
+    
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("BLE", "WiFi", "Cellular")
+    val tabs = listOf("BLE", "WiFi", "Cellular", "Satellite")
     
     Scaffold(
         topBar = {
@@ -82,20 +87,28 @@ fun NearbyDevicesScreen(
                                     imageVector = when (index) {
                                         0 -> Icons.Default.Bluetooth
                                         1 -> Icons.Default.Wifi
-                                        else -> Icons.Default.CellTower
+                                        2 -> Icons.Default.CellTower
+                                        else -> Icons.Default.SatelliteAlt
                                     },
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(title)
-                                if (index < 2) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Badge {
-                                        Text(
-                                            if (index == 0) seenBleDevices.size.toString() 
-                                            else seenWifiNetworks.size.toString()
-                                        )
+                                when (index) {
+                                    0 -> if (seenBleDevices.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge { Text(seenBleDevices.size.toString()) }
+                                    }
+                                    1 -> if (seenWifiNetworks.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge { Text(seenWifiNetworks.size.toString()) }
+                                    }
+                                    3 -> if (satelliteAnomalies.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        ) { Text(satelliteAnomalies.size.toString()) }
                                     }
                                 }
                             }
@@ -218,6 +231,15 @@ fun NearbyDevicesScreen(
                         cellularStatus = cellularStatus,
                         seenCellTowers = seenCellTowers,
                         cellularAnomalies = cellularAnomalies,
+                        isScanning = isScanning
+                    )
+                }
+                3 -> {
+                    // Satellite tab
+                    SatelliteStatusContent(
+                        satelliteState = satelliteState,
+                        satelliteStatus = satelliteStatus,
+                        satelliteAnomalies = satelliteAnomalies,
                         isScanning = isScanning
                     )
                 }
@@ -568,6 +590,385 @@ private fun CellularStatusContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SatelliteStatusContent(
+    satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?,
+    satelliteStatus: ScanningService.SubsystemStatus,
+    satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>,
+    isScanning: Boolean
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Status card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        satelliteState?.isConnected == true -> MaterialTheme.colorScheme.primaryContainer
+                        satelliteStatus is ScanningService.SubsystemStatus.Active -> MaterialTheme.colorScheme.surfaceVariant
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    }
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.SatelliteAlt,
+                                contentDescription = null,
+                                tint = when {
+                                    satelliteState?.isConnected == true -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Satellite Monitor",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = when {
+                                        satelliteState?.isConnected == true -> "🛰️ Connected to ${satelliteState.connectionType.name.replace("_", " ")}"
+                                        isScanning -> "Monitoring for satellite connections"
+                                        else -> "Not monitoring"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        // Connection indicator
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    when {
+                                        satelliteState?.isConnected == true -> Color(0xFF4CAF50)
+                                        isScanning -> Color(0xFFFFC107)
+                                        else -> Color.Gray
+                                    }
+                                )
+                        )
+                    }
+                    
+                    // Connection details when connected
+                    if (satelliteState?.isConnected == true) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            SatelliteInfoItem(
+                                label = "Provider",
+                                value = satelliteState.provider.name
+                            )
+                            SatelliteInfoItem(
+                                label = "Network",
+                                value = satelliteState.networkName ?: "Unknown"
+                            )
+                            SatelliteInfoItem(
+                                label = "Signal",
+                                value = satelliteState.signalStrength?.toString() ?: "N/A"
+                            )
+                        }
+                        
+                        if (satelliteState.frequency != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                SatelliteInfoItem(
+                                    label = "Frequency",
+                                    value = "${satelliteState.frequency} MHz"
+                                )
+                                SatelliteInfoItem(
+                                    label = "NTN Band",
+                                    value = if (satelliteState.isNTNBand) "✓ Valid" else "⚠ Unknown"
+                                )
+                                SatelliteInfoItem(
+                                    label = "Radio Tech",
+                                    value = when (satelliteState.radioTechnology) {
+                                        1 -> "NB-IoT NTN"
+                                        2 -> "NR-NTN"
+                                        3 -> "eMTC NTN"
+                                        4 -> "Proprietary"
+                                        else -> "Unknown"
+                                    }
+                                )
+                            }
+                        }
+                        
+                        // Capabilities
+                        val caps = satelliteState.capabilities
+                        if (caps.supportsSMS || caps.supportsVoice || caps.supportsData || caps.supportsEmergency) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (caps.supportsSMS) CapabilityChip("SMS")
+                                if (caps.supportsVoice) CapabilityChip("Voice")
+                                if (caps.supportsData) CapabilityChip("Data")
+                                if (caps.supportsEmergency) CapabilityChip("SOS")
+                                if (caps.supportsLocationSharing) CapabilityChip("Location")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Anomalies section
+        if (satelliteAnomalies.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Satellite Anomalies (${satelliteAnomalies.size})",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    TextButton(onClick = { ScanningService.clearSatelliteHistory() }) {
+                        Text("Clear")
+                    }
+                }
+            }
+            
+            items(
+                items = satelliteAnomalies.take(20),
+                key = { "${it.type}-${it.timestamp}" }
+            ) { anomaly ->
+                SatelliteAnomalyListCard(anomaly = anomaly, dateFormat = dateFormat)
+            }
+        }
+        
+        // Info card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "🛰️ About Satellite Monitoring",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Monitors for satellite connectivity anomalies:\n" +
+                            "• T-Mobile Starlink Direct to Cell (3GPP NTN)\n" +
+                            "• Skylo NTN (Pixel 9/10 Satellite SOS)\n" +
+                            "• Unexpected satellite connections in covered areas\n" +
+                            "• Forced handoffs from terrestrial to satellite\n" +
+                            "• Suspicious NTN parameters suggesting spoofing",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        
+        // Empty state when no activity
+        if (!isScanning && satelliteState?.isConnected != true && satelliteAnomalies.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.SatelliteAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No satellite activity",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Start scanning to monitor for satellite connections",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+        }
+        
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun SatelliteInfoItem(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun CapabilityChip(label: String) {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SatelliteAnomalyListCard(
+    anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly,
+    dateFormat: SimpleDateFormat
+) {
+    val severityColor = when (anomaly.severity) {
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> Color(0xFFD32F2F)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH -> Color(0xFFF44336)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.MEDIUM -> Color(0xFFFF9800)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> Color(0xFFFFC107)
+        com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> Color(0xFF2196F3)
+    }
+    
+    var expanded by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = severityColor.copy(alpha = 0.1f)
+        ),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(severityColor)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = anomaly.type.name.replace("_", " "),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = dateFormat.format(Date(anomaly.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = severityColor.copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = anomaly.severity.name,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = severityColor
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = anomaly.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            if (expanded && anomaly.recommendations.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Recommendations:",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                anomaly.recommendations.forEach { rec ->
+                    Text(
+                        text = "• $rec",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
