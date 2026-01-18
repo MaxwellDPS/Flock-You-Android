@@ -850,23 +850,43 @@ object DetectionPatterns {
             DeviceType.STINGRAY_IMSI -> DeviceTypeInfo(
                 name = "Cell Site Simulator (StingRay)",
                 shortDescription = "IMSI Catcher / Fake Cell Tower",
-                fullDescription = "Cell site simulators (StingRay, Hailstorm, etc.) impersonate cell towers " +
-                    "to intercept mobile phone communications. They capture IMSI numbers, location data, " +
-                    "and can intercept calls and texts from ALL phones in range, not just targets.",
+                fullDescription = "Cell site simulators (StingRay, Hailstorm, Kingfish, Crossbow, etc.) are " +
+                    "portable devices that impersonate legitimate cell towers to intercept mobile communications. " +
+                    "When your phone connects to one, it captures your IMSI (unique SIM identifier), IMEI (device ID), " +
+                    "and can intercept calls, texts, and data. These devices affect ALL phones in range (typically 1-2 km), " +
+                    "not just the target, making them a mass surveillance tool.\n\n" +
+                    "🔍 THIS DETECTION was triggered by anomalous cellular behavior on your device - " +
+                    "your phone may have experienced an encryption downgrade, unexpected tower switch, " +
+                    "or connected to a suspicious network identifier.",
                 capabilities = listOf(
-                    "Capture all phone identifiers in range",
-                    "Track phone locations precisely",
-                    "Intercept calls and SMS",
-                    "Force phones to downgrade encryption",
-                    "Deny cell service selectively",
-                    "Identify phone make/model"
+                    "Capture IMSI/IMEI from all phones in range (~1-2 km radius)",
+                    "Track phone locations to within a few meters",
+                    "Intercept calls, SMS, and data traffic",
+                    "Force 4G/5G phones to downgrade to 2G (weak/no encryption)",
+                    "Perform man-in-the-middle attacks on communications",
+                    "Deny cell service selectively or entirely",
+                    "Identify phone make, model, and installed apps",
+                    "Clone phone identifiers for impersonation"
                 ),
                 privacyConcerns = listOf(
-                    "Mass surveillance of all phones nearby",
-                    "Used under NDA - often hidden from courts",
-                    "Can intercept content of calls/texts",
-                    "No warrant required in many jurisdictions",
-                    "Disrupts cell service for everyone"
+                    "Mass surveillance - captures data from EVERYONE nearby, not just targets",
+                    "Used under NDA - police often hide usage from courts and defense attorneys",
+                    "Can intercept encrypted app traffic via downgrade attacks",
+                    "No warrant required in many jurisdictions (pen register theory)",
+                    "Disrupts legitimate cell service for entire area",
+                    "Data retention policies are opaque or nonexistent",
+                    "Often deployed at protests, political events, and public gatherings",
+                    "FBI requires local police to drop cases rather than reveal usage"
+                ),
+                recommendations = listOf(
+                    "🛡️ IMMEDIATE: Enable airplane mode, then re-enable only WiFi if needed",
+                    "📱 Use Signal, WhatsApp, or other E2E encrypted apps for sensitive communications",
+                    "📍 Note your location and time - document for potential legal challenges",
+                    "🚶 Leave the area if possible - StingRays have limited range (~1-2 km)",
+                    "⚙️ Disable 2G on your phone if supported (Settings → Network → Preferred type → LTE/5G only)",
+                    "🔒 Avoid making regular phone calls or SMS - use encrypted messaging instead",
+                    "📸 Look for suspicious vehicles (vans, SUVs) with antennas or running generators",
+                    "⚠️ FALSE POSITIVE? This could also be triggered by poor coverage, moving between towers, or network maintenance"
                 )
             )
             DeviceType.UNKNOWN_SURVEILLANCE -> DeviceTypeInfo(
@@ -885,7 +905,8 @@ object DetectionPatterns {
         val shortDescription: String,
         val fullDescription: String,
         val capabilities: List<String>,
-        val privacyConcerns: List<String>
+        val privacyConcerns: List<String>,
+        val recommendations: List<String> = emptyList()
     )
     
     // ==================== OUI Manufacturer Lookup ====================

@@ -792,6 +792,33 @@ fun DetectionDetailSheet(
                 }
             }
             
+            // Recommendations Section
+            if (deviceInfo.recommendations.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "🛡️ What You Can Do",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                items(deviceInfo.recommendations.size) { index ->
+                    Row(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = deviceInfo.recommendations[index],
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            
             // Actions
             item {
                 Spacer(modifier = Modifier.height(24.dp))
