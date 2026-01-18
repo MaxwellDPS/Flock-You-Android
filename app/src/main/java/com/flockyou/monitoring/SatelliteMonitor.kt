@@ -4,11 +4,26 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.telephony.*
+import android.telephony.CellInfo
+import android.telephony.CellInfoNr
+import android.telephony.CellSignalStrengthNr
+import android.telephony.NetworkRegistrationInfo
+import android.telephony.PhoneStateListener
+import android.telephony.ServiceState
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyDisplayInfo
+import android.telephony.TelephonyManager
+import android.telephony.SignalStrength as TelephonySignalStrength
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
+import com.flockyou.data.model.Detection
+import com.flockyou.data.model.DetectionMethod
+import com.flockyou.data.model.DetectionProtocol
+import com.flockyou.data.model.DeviceType
+import com.flockyou.data.model.ThreatLevel
+import com.flockyou.data.model.SignalStrength as DetectionSignalStrength
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.time.Instant
@@ -270,7 +285,7 @@ class SatelliteMonitor(private val context: Context) {
                     handleServiceStateChange(serviceState)
                 }
                 
-                override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+                override fun onSignalStrengthsChanged(signalStrength: TelephonySignalStrength) {
                     handleSignalStrengthChange(signalStrength)
                 }
             }
@@ -360,7 +375,7 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Handle signal strength changes
      */
-    private fun handleSignalStrengthChange(signalStrength: SignalStrength) {
+    private fun handleSignalStrengthChange(signalStrength: TelephonySignalStrength) {
         coroutineScope.launch {
             val level = signalStrength.level
             
@@ -629,7 +644,7 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Get best signal strength in dBm
      */
-    private fun getBestSignalDbm(signalStrength: SignalStrength): Int? {
+    private fun getBestSignalDbm(signalStrength: TelephonySignalStrength): Int? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             signalStrength.cellSignalStrengths
                 .mapNotNull { it.dbm.takeIf { dbm -> dbm != Int.MAX_VALUE && dbm != Int.MIN_VALUE } }
@@ -776,4 +791,92 @@ class SatelliteMonitor(private val context: Context) {
         val recentAnomalyCount: Int,
         val deviceSupported: Boolean
     )
+
+    /**
+     * Convert satellite anomaly to Detection for storage
+     */
+    fun anomalyToDetection(anomaly: SatelliteAnomaly): Detection {
+        val detectionMethod = when (anomaly.type) {
+            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
+            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> DetectionMethod.SAT_FORCED_HANDOFF
+            SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> DetectionMethod.SAT_SUSPICIOUS_NTN
+            SatelliteAnomalyType.UNKNOWN_SATELLITE_NETWORK -> DetectionMethod.SAT_SUSPICIOUS_NTN
+            SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
+            SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING -> DetectionMethod.SAT_FORCED_HANDOFF
+            SatelliteAnomalyType.NTN_BAND_MISMATCH -> DetectionMethod.SAT_SUSPICIOUS_NTN
+            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> DetectionMethod.SAT_TIMING_ANOMALY
+            SatelliteAnomalyType.EPHEMERIS_MISMATCH -> DetectionMethod.SAT_TIMING_ANOMALY
+            SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> DetectionMethod.SAT_DOWNGRADE
+        }
+
+        val threatLevel = when (anomaly.severity) {
+            AnomalySeverity.CRITICAL -> ThreatLevel.CRITICAL
+            AnomalySeverity.HIGH -> ThreatLevel.HIGH
+            AnomalySeverity.MEDIUM -> ThreatLevel.MEDIUM
+            AnomalySeverity.LOW -> ThreatLevel.LOW
+            AnomalySeverity.INFO -> ThreatLevel.INFO
+        }
+
+        val threatScore = when (anomaly.severity) {
+            AnomalySeverity.CRITICAL -> 95
+            AnomalySeverity.HIGH -> 80
+            AnomalySeverity.MEDIUM -> 60
+            AnomalySeverity.LOW -> 40
+            AnomalySeverity.INFO -> 20
+        }
+
+        // Build description from technical details
+        val detailsStr = anomaly.technicalDetails.entries.joinToString(", ") { "${it.key}: ${it.value}" }
+
+        return Detection(
+            deviceType = DeviceType.SATELLITE_NTN,
+            protocol = DetectionProtocol.SATELLITE,
+            detectionMethod = detectionMethod,
+            deviceName = "🛰️ ${formatAnomalyTypeName(anomaly.type)}",
+            macAddress = null,
+            ssid = _satelliteState.value.networkName,
+            rssi = _satelliteState.value.signalStrength?.let { it * -20 - 40 } ?: -80, // Convert level to approximate dBm
+            signalStrength = when (_satelliteState.value.signalStrength) {
+                4 -> DetectionSignalStrength.EXCELLENT
+                3 -> DetectionSignalStrength.GOOD
+                2 -> DetectionSignalStrength.MEDIUM
+                1 -> DetectionSignalStrength.WEAK
+                else -> DetectionSignalStrength.VERY_WEAK
+            },
+            latitude = null, // Could add from location service
+            longitude = null,
+            threatLevel = threatLevel,
+            threatScore = threatScore,
+            manufacturer = formatProviderName(_satelliteState.value.provider),
+            matchedPatterns = if (detailsStr.isNotEmpty()) detailsStr else anomaly.description
+        )
+    }
+
+    private fun formatAnomalyTypeName(type: SatelliteAnomalyType): String {
+        return when (type) {
+            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> "Unexpected Satellite"
+            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> "Forced Handoff"
+            SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> "Suspicious NTN"
+            SatelliteAnomalyType.UNKNOWN_SATELLITE_NETWORK -> "Unknown Network"
+            SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> "Satellite in Coverage"
+            SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING -> "Rapid Switching"
+            SatelliteAnomalyType.NTN_BAND_MISMATCH -> "Band Mismatch"
+            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> "Timing Anomaly"
+            SatelliteAnomalyType.EPHEMERIS_MISMATCH -> "Ephemeris Mismatch"
+            SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> "Network Downgrade"
+        }
+    }
+
+    private fun formatProviderName(provider: SatelliteProvider): String {
+        return when (provider) {
+            SatelliteProvider.STARLINK -> "SpaceX Starlink"
+            SatelliteProvider.SKYLO -> "Skylo NTN"
+            SatelliteProvider.GLOBALSTAR -> "Globalstar"
+            SatelliteProvider.AST_SPACEMOBILE -> "AST SpaceMobile"
+            SatelliteProvider.LYNK -> "Lynk"
+            SatelliteProvider.IRIDIUM -> "Iridium"
+            SatelliteProvider.INMARSAT -> "Inmarsat"
+            SatelliteProvider.UNKNOWN -> "Unknown Provider"
+        }
+    }
 }

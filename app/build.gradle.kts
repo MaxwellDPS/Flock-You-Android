@@ -95,6 +95,14 @@ dependencies {
     
     // JSON
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // WorkManager for periodic background tasks
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.hilt:hilt-work:1.1.0")
+    ksp("androidx.hilt:hilt-compiler:1.1.0")
+
+    // OkHttp for HTTP downloads
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     // Testing - Unit Tests
     testImplementation("junit:junit:4.13.2")

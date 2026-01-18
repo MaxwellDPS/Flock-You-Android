@@ -5,6 +5,7 @@ import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.flockyou.data.model.*
+import com.flockyou.data.model.OuiEntry
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -117,11 +118,12 @@ interface DetectionDao {
 /**
  * Room database for storing detections
  */
-@Database(entities = [Detection::class], version = 4, exportSchema = false)
+@Database(entities = [Detection::class, OuiEntry::class], version = 5, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
-    
+    abstract fun ouiDao(): OuiDao
+
     companion object {
         @Volatile
         private var INSTANCE: FlockYouDatabase? = null
@@ -139,6 +141,22 @@ abstract class FlockYouDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_isActive ON detections(isActive)")
             }
         }
+
+        // Migration from version 4 to 5 - adds OUI entries table
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS oui_entries (
+                        ouiPrefix TEXT NOT NULL PRIMARY KEY,
+                        organizationName TEXT NOT NULL,
+                        registry TEXT NOT NULL DEFAULT 'MA-L',
+                        address TEXT,
+                        lastUpdated INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_oui_entries_ouiPrefix ON oui_entries(ouiPrefix)")
+            }
+        }
         
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -147,7 +165,7 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     FlockYouDatabase::class.java,
                     "flockyou_database"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance

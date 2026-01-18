@@ -121,24 +121,27 @@ data class DetectionSettings(
     // Cellular patterns
     val enabledCellularPatterns: Set<CellularPattern> = CellularPattern.values().filter { it.defaultEnabled }.toSet(),
     val cellularThresholds: CellularThresholds = CellularThresholds(),
-    
+
     // Satellite patterns
     val enabledSatellitePatterns: Set<SatellitePattern> = SatellitePattern.values().filter { it.defaultEnabled }.toSet(),
     val satelliteThresholds: SatelliteThresholds = SatelliteThresholds(),
-    
+
     // BLE patterns
     val enabledBlePatterns: Set<BlePattern> = BlePattern.values().filter { it.defaultEnabled }.toSet(),
     val bleThresholds: BleThresholds = BleThresholds(),
-    
+
     // WiFi patterns
     val enabledWifiPatterns: Set<WifiPattern> = WifiPattern.values().filter { it.defaultEnabled }.toSet(),
     val wifiThresholds: WifiThresholds = WifiThresholds(),
-    
+
     // Global settings
     val enableCellularDetection: Boolean = true,
     val enableSatelliteDetection: Boolean = true,
     val enableBleDetection: Boolean = true,
-    val enableWifiDetection: Boolean = true
+    val enableWifiDetection: Boolean = true,
+
+    // UI settings
+    val advancedMode: Boolean = false
 )
 
 @Singleton
@@ -151,6 +154,9 @@ class DetectionSettingsRepository @Inject constructor(
         val ENABLE_SATELLITE = booleanPreferencesKey("detection_satellite_enabled")
         val ENABLE_BLE = booleanPreferencesKey("detection_ble_enabled")
         val ENABLE_WIFI = booleanPreferencesKey("detection_wifi_enabled")
+
+        // UI settings
+        val ADVANCED_MODE = booleanPreferencesKey("ui_advanced_mode")
         
         // Pattern toggles (stored as comma-separated disabled patterns)
         val DISABLED_CELLULAR_PATTERNS = stringPreferencesKey("disabled_cellular_patterns")
@@ -208,6 +214,7 @@ class DetectionSettingsRepository @Inject constructor(
             enableSatelliteDetection = prefs[Keys.ENABLE_SATELLITE] ?: true,
             enableBleDetection = prefs[Keys.ENABLE_BLE] ?: true,
             enableWifiDetection = prefs[Keys.ENABLE_WIFI] ?: true,
+            advancedMode = prefs[Keys.ADVANCED_MODE] ?: false,
             
             enabledCellularPatterns = CellularPattern.values().filter { it !in disabledCellular }.toSet(),
             enabledSatellitePatterns = SatellitePattern.values().filter { it !in disabledSatellite }.toSet(),
@@ -307,6 +314,13 @@ class DetectionSettingsRepository @Inject constructor(
             satellite?.let { prefs[Keys.ENABLE_SATELLITE] = it }
             ble?.let { prefs[Keys.ENABLE_BLE] = it }
             wifi?.let { prefs[Keys.ENABLE_WIFI] = it }
+        }
+    }
+
+    // Toggle advanced mode
+    suspend fun setAdvancedMode(enabled: Boolean) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.ADVANCED_MODE] = enabled
         }
     }
     

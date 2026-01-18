@@ -36,27 +36,31 @@ class CellularMonitor(private val context: Context) {
     
     companion object {
         private const val TAG = "CellularMonitor"
-        
+
         // Thresholds - tuned to reduce false positives
         private const val SIGNAL_SPIKE_THRESHOLD = 25 // dBm - increased from 20
         private const val SIGNAL_SPIKE_TIME_WINDOW = 5_000L // Must occur within 5 seconds
-        private const val MIN_ANOMALY_INTERVAL_MS = 60_000L // 1 minute between same anomaly
+        private const val MIN_ANOMALY_INTERVAL_MS = 60_000L // 1 minute between same anomaly type
+        private const val GLOBAL_ANOMALY_COOLDOWN_MS = 30_000L // 30 seconds between ANY anomaly
         private const val CELL_HISTORY_SIZE = 100
         private const val TRUSTED_CELL_THRESHOLD = 5 // Seen 5+ times = trusted
-        private const val TRUSTED_CELL_LOCATION_RADIUS = 0.005 // ~500m in lat/lon
-        
+        private const val TRUSTED_CELL_LOCATION_RADIUS = 0.002 // ~200m in lat/lon (was 500m - too broad)
+
         // Rapid switching thresholds - more lenient
-        private const val RAPID_SWITCH_COUNT_WALKING = 3 // 3 changes/min while stationary
-        private const val RAPID_SWITCH_COUNT_DRIVING = 8 // 8 changes/min while moving fast
+        private const val RAPID_SWITCH_COUNT_WALKING = 5 // 5 changes/min while stationary (was 3)
+        private const val RAPID_SWITCH_COUNT_DRIVING = 12 // 12 changes/min while moving fast (was 8)
         private const val MOVEMENT_SPEED_THRESHOLD = 0.0005 // ~50m in lat/lon per minute
-        
+
+        // How stale location data can be before we consider movement unknown
+        private const val LOCATION_STALENESS_THRESHOLD_MS = 30_000L // 30 seconds
+
         // Known suspicious patterns
         private val SUSPICIOUS_MCC_MNC = setOf(
             "001-01", "001-00", "001-02", // ITU test networks
             "999-99", "999-01",           // Reserved test networks
             "000-00"                       // Invalid
         )
-        
+
         // Carriers known to have aggressive handoffs (reduce FPs)
         private val AGGRESSIVE_HANDOFF_CARRIERS = setOf(
             "T-Mobile", "Metro", "Sprint" // These carriers hand off more frequently
@@ -97,7 +101,8 @@ class CellularMonitor(private val context: Context) {
     // Track movement for context
     private var lastLocationUpdate: LocationSnapshot? = null
     private var estimatedMovementSpeed: Double = 0.0 // lat/lon units per minute
-    
+    private var lastAnyAnomalyTime: Long = 0L // Global cooldown for all anomalies
+
     // Callback for cell info changes
     @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
@@ -317,7 +322,7 @@ class CellularMonitor(private val context: Context) {
     
     fun updateLocation(latitude: Double, longitude: Double) {
         val now = System.currentTimeMillis()
-        
+
         // Calculate movement speed
         lastLocationUpdate?.let { last ->
             val timeDiff = (now - last.timestamp) / 60_000.0 // minutes
@@ -328,10 +333,19 @@ class CellularMonitor(private val context: Context) {
                 estimatedMovementSpeed = distance / timeDiff
             }
         }
-        
+
         lastLocationUpdate = LocationSnapshot(now, latitude, longitude)
         currentLatitude = latitude
         currentLongitude = longitude
+    }
+
+    /**
+     * Check if we have recent location data to reliably determine movement state.
+     * If location data is stale, we cannot confidently say the user is stationary.
+     */
+    private fun hasRecentLocationData(): Boolean {
+        val lastUpdate = lastLocationUpdate ?: return false
+        return (System.currentTimeMillis() - lastUpdate.timestamp) < LOCATION_STALENESS_THRESHOLD_MS
     }
     
     fun clearAnomalies() {
@@ -451,12 +465,23 @@ class CellularMonitor(private val context: Context) {
     }
     
     private fun analyzeForAnomaliesImproved(previous: CellSnapshot, current: CellSnapshot) {
+        // Global cooldown - don't spam alerts
+        val now = System.currentTimeMillis()
+        if (now - lastAnyAnomalyTime < GLOBAL_ANOMALY_COOLDOWN_MS) {
+            return
+        }
+
         val contributingFactors = mutableListOf<String>()
         var totalScore = 0
-        
+
         val mccMnc = "${current.mcc}-${current.mnc}"
         val timeSinceLastSnapshot = current.timestamp - previous.timestamp
-        val isStationary = estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
+
+        // BUG FIX: Only consider user stationary if we have RECENT location data.
+        // If GPS is stale/unavailable, assume user MIGHT be moving (benefit of the doubt).
+        val hasRecentLocation = hasRecentLocationData()
+        val isStationary = hasRecentLocation && estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
+
         val currentCellTrusted = isCellTrusted(current.cellId?.toString())
         @Suppress("UNUSED_VARIABLE")
         val previousCellTrusted = isCellTrusted(previous.cellId?.toString())
@@ -643,12 +668,13 @@ class CellularMonitor(private val context: Context) {
     ) {
         val now = System.currentTimeMillis()
         val lastTime = lastAnomalyTimes[type] ?: 0
-        
+
         // Rate limit same anomaly type
         if (now - lastTime < MIN_ANOMALY_INTERVAL_MS) {
             return
         }
         lastAnomalyTimes[type] = now
+        lastAnyAnomalyTime = now // Update global cooldown
         
         // Calculate severity based on confidence and base score
         val severity = when (confidence) {
@@ -739,14 +765,19 @@ class CellularMonitor(private val context: Context) {
     private fun isInFamiliarArea(): Boolean {
         val lat = currentLatitude ?: return false
         val lon = currentLongitude ?: return false
-        
-        // Check if current location is near where we've seen trusted cells
-        return trustedCells.values.any { cell ->
+
+        // BUG FIX: Require at least 2 TRUSTED cells (seen 5+ times) near this location
+        // to consider it a "familiar area". Previously any single cell sighting made
+        // everywhere "familiar", causing too many false positives.
+        val trustedCellsNearby = trustedCells.values.count { cell ->
+            // Only count cells that are actually trusted (seen enough times)
+            cell.seenCount >= TRUSTED_CELL_THRESHOLD &&
             cell.locations.any { (cellLat, cellLon) ->
                 kotlin.math.abs(lat - cellLat) < TRUSTED_CELL_LOCATION_RADIUS &&
                 kotlin.math.abs(lon - cellLon) < TRUSTED_CELL_LOCATION_RADIUS
             }
         }
+        return trustedCellsNearby >= 2
     }
     
     private fun isEncryptionDowngrade(previousType: Int, currentType: Int): Boolean {

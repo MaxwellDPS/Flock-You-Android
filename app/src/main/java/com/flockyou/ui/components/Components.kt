@@ -69,7 +69,18 @@ fun DeviceType.toIcon(): ImageVector = when (this) {
     DeviceType.CELLEBRITE_FORENSICS -> Icons.Default.PhoneAndroid
     DeviceType.BODY_CAMERA -> Icons.Default.Videocam
     DeviceType.POLICE_RADIO -> Icons.Default.Radio
+    DeviceType.POLICE_VEHICLE -> Icons.Default.LocalPolice
+    DeviceType.FLEET_VEHICLE -> Icons.Default.DirectionsCar
     DeviceType.STINGRAY_IMSI -> Icons.Default.CellTower
+    DeviceType.ROGUE_AP -> Icons.Default.WifiOff
+    DeviceType.HIDDEN_CAMERA -> Icons.Default.Visibility
+    DeviceType.SURVEILLANCE_VAN -> Icons.Default.DirectionsCar
+    DeviceType.TRACKING_DEVICE -> Icons.Default.LocationOn
+    DeviceType.RF_JAMMER -> Icons.Default.SignalCellularOff
+    DeviceType.DRONE -> Icons.Default.FlightTakeoff
+    DeviceType.SURVEILLANCE_INFRASTRUCTURE -> Icons.Default.Business
+    DeviceType.ULTRASONIC_BEACON -> Icons.Default.Hearing
+    DeviceType.SATELLITE_NTN -> Icons.Default.SatelliteAlt
     DeviceType.UNKNOWN_SURVEILLANCE -> Icons.Default.QuestionMark
 }
 
@@ -80,6 +91,9 @@ fun DetectionProtocol.toIcon(): ImageVector = when (this) {
     DetectionProtocol.WIFI -> Icons.Default.Wifi
     DetectionProtocol.BLUETOOTH_LE -> Icons.Default.Bluetooth
     DetectionProtocol.CELLULAR -> Icons.Default.CellTower
+    DetectionProtocol.SATELLITE -> Icons.Default.SatelliteAlt
+    DetectionProtocol.AUDIO -> Icons.Default.Hearing
+    DetectionProtocol.RF -> Icons.Default.SettingsInputAntenna
 }
 
 /**
@@ -501,7 +515,8 @@ fun StatItem(
 fun DetectionCard(
     detection: Detection,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    advancedMode: Boolean = false
 ) {
     val threatColor = detection.threatLevel.toColor()
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -684,7 +699,7 @@ fun DetectionCard(
                             )
                         }
                     }
-                    
+
                     // Seen count
                     if (detection.seenCount > 1) {
                         Row(
@@ -704,9 +719,9 @@ fun DetectionCard(
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.weight(1f))
-                    
+
                     // Active indicator
                     if (detection.isActive) {
                         Surface(
@@ -732,6 +747,76 @@ fun DetectionCard(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // Advanced mode: Show additional technical details
+            if (advancedMode) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Detection method and protocol
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Method: ${detection.detectionMethod.displayName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Score: ${detection.threatScore}/100",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = threatColor
+                            )
+                        }
+
+                        // Service UUIDs if present
+                        detection.serviceUuids?.let { uuids ->
+                            if (uuids.isNotEmpty() && uuids != "[]") {
+                                Text(
+                                    text = "UUIDs: $uuids",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        // Matched patterns if present
+                        detection.matchedPatterns?.let { patterns ->
+                            if (patterns.isNotEmpty() && patterns != "[]") {
+                                Text(
+                                    text = "Patterns: $patterns",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        // ID for debugging
+                        Text(
+                            text = "ID: ${detection.id.take(8)}...",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
                     }
                 }
             }

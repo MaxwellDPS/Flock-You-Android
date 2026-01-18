@@ -154,14 +154,16 @@ class DetectionTest {
             protocol = DetectionProtocol.WIFI,
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
-            rssi = -60
+            rssi = -60,
+            signalStrength = SignalStrength.GOOD
         )
         val detection2 = Detection(
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             protocol = DetectionProtocol.WIFI,
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
-            rssi = -60
+            rssi = -60,
+            signalStrength = SignalStrength.GOOD
         )
         assertNotEquals("Should have unique IDs", detection1.id, detection2.id)
     }
@@ -174,10 +176,11 @@ class DetectionTest {
             protocol = DetectionProtocol.WIFI,
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
-            rssi = -60
+            rssi = -60,
+            signalStrength = SignalStrength.GOOD
         )
         val after = System.currentTimeMillis()
-        
+
         assertTrue(
             "Timestamp should be between before and after",
             detection.timestamp in before..after
@@ -191,7 +194,8 @@ class DetectionTest {
             protocol = DetectionProtocol.WIFI,
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
-            rssi = -60
+            rssi = -60,
+            signalStrength = SignalStrength.GOOD
         )
         assertEquals(1, detection.seenCount)
     }
@@ -203,7 +207,8 @@ class DetectionTest {
             protocol = DetectionProtocol.WIFI,
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
-            rssi = -60
+            rssi = -60,
+            signalStrength = SignalStrength.GOOD
         )
         assertTrue(detection.isActive)
     }
@@ -216,6 +221,7 @@ class DetectionTest {
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
             rssi = -60,
+            signalStrength = SignalStrength.GOOD,
             latitude = 47.6062,
             longitude = -122.3321
         )
@@ -231,6 +237,7 @@ class DetectionTest {
             detectionMethod = DetectionMethod.MAC_PREFIX,
             threatLevel = ThreatLevel.HIGH,
             rssi = -60,
+            signalStrength = SignalStrength.GOOD,
             macAddress = "AA:BB:CC:DD:EE:FF"
         )
         assertEquals("AA:BB:CC:DD:EE:FF", detection.macAddress)
@@ -244,6 +251,7 @@ class DetectionTest {
             detectionMethod = DetectionMethod.SSID_PATTERN,
             threatLevel = ThreatLevel.HIGH,
             rssi = -60,
+            signalStrength = SignalStrength.GOOD,
             ssid = "Flock-ABC123"
         )
         assertEquals("Flock-ABC123", detection.ssid)
@@ -258,7 +266,8 @@ class DetectionTest {
             protocol = DetectionProtocol.BLUETOOTH_LE,
             detectionMethod = DetectionMethod.BLE_DEVICE_NAME,
             threatLevel = ThreatLevel.INFO,
-            rssi = -80
+            rssi = -80,
+            signalStrength = SignalStrength.WEAK
         )
         assertNull(detection.macAddress)
         assertNull(detection.ssid)

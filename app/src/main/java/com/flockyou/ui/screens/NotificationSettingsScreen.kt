@@ -191,7 +191,7 @@ fun NotificationSettingsScreen(
             
             item {
                 SettingsToggleRow(
-                    icon = Icons.AutoMirrored.Filled.VolumeUp,
+                    icon = Icons.Default.VolumeUp,
                     title = "Sound",
                     subtitle = "Play alert sound",
                     checked = settings.sound,

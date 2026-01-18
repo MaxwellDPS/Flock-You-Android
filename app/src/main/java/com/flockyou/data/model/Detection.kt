@@ -48,7 +48,10 @@ data class Detection(
 enum class DetectionProtocol(val displayName: String, val icon: String) {
     WIFI("WiFi", "📡"),
     BLUETOOTH_LE("Bluetooth LE", "📶"),
-    CELLULAR("Cellular", "📱")
+    CELLULAR("Cellular", "📱"),
+    SATELLITE("Satellite", "🛰️"),
+    AUDIO("Audio/Ultrasonic", "🔊"),
+    RF("RF Analysis", "📻")
 }
 
 enum class DetectionMethod(val displayName: String, val description: String) {
@@ -71,7 +74,31 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     SAT_FORCED_HANDOFF("Forced Satellite Handoff", "Rapid or suspicious handoff to satellite"),
     SAT_SUSPICIOUS_NTN("Suspicious NTN", "Unusual NTN parameters suggesting spoofing"),
     SAT_TIMING_ANOMALY("Satellite Timing Anomaly", "NTN timing doesn't match claimed orbit"),
-    SAT_DOWNGRADE("Downgrade to Satellite", "Forced from better tech to satellite")
+    SAT_DOWNGRADE("Downgrade to Satellite", "Forced from better tech to satellite"),
+    // WiFi rogue AP detection methods
+    WIFI_EVIL_TWIN("Evil Twin AP", "Same SSID broadcast from multiple different MAC addresses"),
+    WIFI_DEAUTH_ATTACK("Deauth Attack", "Rapid WiFi disconnections indicating deauth flood"),
+    WIFI_HIDDEN_CAMERA("Hidden Camera", "WiFi network matching hidden camera patterns"),
+    WIFI_ROGUE_AP("Rogue AP", "Suspicious or unauthorized access point"),
+    WIFI_SIGNAL_ANOMALY("WiFi Signal Anomaly", "Unusual WiFi signal behavior"),
+    WIFI_FOLLOWING("Following Network", "Network appearing at multiple locations you visit"),
+    WIFI_SURVEILLANCE_VAN("Surveillance Van", "Mobile hotspot matching surveillance patterns"),
+    WIFI_KARMA_ATTACK("Karma Attack", "AP responding to all probe requests"),
+    // RF signal analysis methods
+    RF_JAMMER("RF Jammer", "Sudden drop in all wireless signals indicating jamming"),
+    RF_DRONE("Drone Detected", "Drone WiFi signal detected nearby"),
+    RF_SURVEILLANCE_AREA("Surveillance Area", "High concentration of surveillance cameras"),
+    RF_SPECTRUM_ANOMALY("Spectrum Anomaly", "Unusual RF spectrum activity"),
+    RF_UNUSUAL_ACTIVITY("Unusual RF Activity", "Abnormal wireless activity patterns"),
+    RF_INTERFERENCE("RF Interference", "Significant change in RF environment"),
+    RF_HIDDEN_TRANSMITTER("Hidden Transmitter", "Possible covert RF transmission detected"),
+    // Ultrasonic detection methods
+    ULTRASONIC_TRACKING_BEACON("Tracking Beacon", "Ultrasonic beacon for cross-device tracking"),
+    ULTRASONIC_AD_BEACON("Ad Beacon", "Advertising/TV tracking ultrasonic signal"),
+    ULTRASONIC_RETAIL_BEACON("Retail Beacon", "Retail location tracking ultrasonic"),
+    ULTRASONIC_CONTINUOUS("Continuous Ultrasonic", "Persistent ultrasonic transmission"),
+    ULTRASONIC_CROSS_DEVICE("Cross-Device Tracking", "Signal linking multiple devices"),
+    ULTRASONIC_UNKNOWN("Unknown Ultrasonic", "Unidentified ultrasonic source")
 }
 
 enum class DeviceType(val displayName: String, val emoji: String) {
@@ -85,7 +112,22 @@ enum class DeviceType(val displayName: String, val emoji: String) {
     CELLEBRITE_FORENSICS("Cellebrite Forensics", "📱"),
     BODY_CAMERA("Body Camera", "🎥"),
     POLICE_RADIO("Police Radio System", "📡"),
+    POLICE_VEHICLE("Police/Emergency Vehicle", "🚔"),
+    FLEET_VEHICLE("Fleet Vehicle", "🚐"),
     STINGRAY_IMSI("Cell Site Simulator", "📶"),
+    // WiFi threat device types
+    ROGUE_AP("Rogue Access Point", "🏴"),
+    HIDDEN_CAMERA("Hidden Camera", "📹"),
+    SURVEILLANCE_VAN("Surveillance Van", "🚙"),
+    TRACKING_DEVICE("Tracking Device", "📍"),
+    // RF device types
+    RF_JAMMER("RF Jammer", "📵"),
+    DRONE("Drone/UAV", "🚁"),
+    SURVEILLANCE_INFRASTRUCTURE("Surveillance Infrastructure", "🏢"),
+    // Audio device types
+    ULTRASONIC_BEACON("Ultrasonic Beacon", "🔊"),
+    // Satellite device types
+    SATELLITE_NTN("Satellite NTN Device", "🛰️"),
     UNKNOWN_SURVEILLANCE("Unknown Surveillance", "❓")
 }
 

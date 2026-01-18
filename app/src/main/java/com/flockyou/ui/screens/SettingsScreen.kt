@@ -23,8 +23,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.flockyou.data.OuiSettings
 import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
@@ -41,14 +43,18 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val viewModel: MainViewModel = hiltViewModel()
+    val uiState by viewModel.uiState.collectAsState()
     val scanStats by ScanningService.scanStats.collectAsState()
     val errorLog by ScanningService.errorLog.collectAsState()
     val currentConfig by ScanningService.currentSettings.collectAsState()
-    
+    val ouiSettings by viewModel.ouiSettings.collectAsState()
+    val isOuiUpdating by viewModel.isOuiUpdating.collectAsState()
+
     var showLogs by remember { mutableStateOf(false) }
     var showScanSettings by remember { mutableStateOf(false) }
-    var batteryOptimizationIgnored by remember { 
-        mutableStateOf(isBatteryOptimizationIgnored(context)) 
+    var batteryOptimizationIgnored by remember {
+        mutableStateOf(isBatteryOptimizationIgnored(context))
     }
     var autoStartOnBoot by remember {
         mutableStateOf(BootReceiver.isAutoStartOnBoot(context))
@@ -399,7 +405,7 @@ fun SettingsScreen(
             // Detection Rules
             item {
                 SettingsItem(
-                    icon = Icons.AutoMirrored.Filled.Rule,
+                    icon = Icons.Default.Checklist,
                     title = "Detection Rules",
                     subtitle = "Toggle built-in rules, add custom regex patterns",
                     onClick = onNavigateToRules
@@ -471,7 +477,51 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
                 SettingsSectionHeader(title = "Advanced")
             }
-            
+
+            // Advanced Mode toggle
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Code,
+                            contentDescription = null,
+                            tint = if (uiState.advancedMode)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Advanced Mode",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = if (uiState.advancedMode)
+                                    "Showing all technical details and raw data"
+                                else
+                                    "Show additional technical information",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = uiState.advancedMode,
+                            onCheckedChange = { enabled ->
+                                viewModel.setAdvancedMode(enabled)
+                            }
+                        )
+                    }
+                }
+            }
+
             item {
                 SettingsItem(
                     icon = Icons.Default.BugReport,
@@ -529,7 +579,20 @@ fun SettingsScreen(
                     }
                 }
             }
-            
+
+            // OUI Database Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                OuiDatabaseSection(
+                    ouiSettings = ouiSettings,
+                    isUpdating = isOuiUpdating,
+                    onAutoUpdateToggle = { viewModel.setOuiAutoUpdate(it) },
+                    onIntervalChange = { viewModel.setOuiUpdateInterval(it) },
+                    onWifiOnlyToggle = { viewModel.setOuiWifiOnly(it) },
+                    onManualUpdate = { viewModel.triggerOuiUpdate() }
+                )
+            }
+
             // About Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))

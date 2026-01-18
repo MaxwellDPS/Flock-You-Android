@@ -1,9 +1,15 @@
 package com.flockyou
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,8 +40,9 @@ import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    
+
     private var permissionsGranted by mutableStateOf(false)
+    private var batteryOptimizationChecked by mutableStateOf(false)
     
     private val requiredPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -47,6 +54,7 @@ class MainActivity : ComponentActivity() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
+            add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
     }
     
@@ -54,29 +62,69 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         permissionsGranted = permissions.values.all { it }
+        if (permissionsGranted) {
+            checkBatteryOptimization()
+        }
     }
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         checkPermissions()
-        
+
         setContent {
             FlockYouTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (permissionsGranted) {
-                        AppNavigation()
-                    } else {
-                        PermissionScreen(
-                            onRequestPermissions = { requestPermissions() }
-                        )
+                    when {
+                        !permissionsGranted -> {
+                            PermissionScreen(
+                                onRequestPermissions = { requestPermissions() }
+                            )
+                        }
+                        !batteryOptimizationChecked -> {
+                            BatteryOptimizationScreen(
+                                isOptimizationDisabled = isBatteryOptimizationDisabled(),
+                                onRequestDisable = { requestDisableBatteryOptimization() },
+                                onSkip = { batteryOptimizationChecked = true }
+                            )
+                        }
+                        else -> {
+                            AppNavigation()
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-check battery optimization when returning to app (user may have just changed it)
+        if (permissionsGranted && !batteryOptimizationChecked) {
+            if (isBatteryOptimizationDisabled()) {
+                batteryOptimizationChecked = true
+            }
+        }
+    }
+
+    private fun isBatteryOptimizationDisabled(): Boolean {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun checkBatteryOptimization() {
+        batteryOptimizationChecked = isBatteryOptimizationDisabled()
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun requestDisableBatteryOptimization() {
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        startActivity(intent)
     }
     
     private fun checkPermissions() {
@@ -255,5 +303,123 @@ fun PermissionItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+fun BatteryOptimizationScreen(
+    isOptimizationDisabled: Boolean,
+    onRequestDisable: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.BatteryChargingFull,
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+            tint = if (isOptimizationDisabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.error
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = if (isOptimizationDisabled) "Battery Optimization Disabled"
+            else "Disable Battery Optimization",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (isOptimizationDisabled) {
+            Text(
+                text = "Flock You can now run reliably in the background without being killed by Android's battery management.",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onSkip,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Continue")
+            }
+        } else {
+            Text(
+                text = "For reliable background scanning, Flock You needs to be exempt from battery optimization. " +
+                        "This prevents Android from killing the scanning service when the app is in the background.",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Without this, surveillance devices may go undetected while your screen is off.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onRequestDisable,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.BatteryChargingFull, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Disable Battery Optimization")
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TextButton(
+                onClick = onSkip,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Skip for now")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "This is a sideloaded app setting that allows continuous background operation.",
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        )
     }
 }

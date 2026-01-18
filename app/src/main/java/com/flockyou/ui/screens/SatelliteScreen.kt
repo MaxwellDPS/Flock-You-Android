@@ -57,12 +57,24 @@ fun SatelliteScreen(
                 statusSummary = statusSummary
             )
         }
-        
+
+        // Technical Details Card (when connected)
+        if (state.isConnected) {
+            item {
+                SatelliteTechnicalDetailsCard(state = state)
+            }
+        }
+
         // Device Capabilities Card
         item {
             DeviceCapabilitiesCard(
                 statusSummary = statusSummary
             )
+        }
+
+        // Network Coverage Card
+        item {
+            SatelliteNetworkCoverageCard()
         }
         
         // Anomalies Section
@@ -292,6 +304,390 @@ fun CapabilityChip(
         },
         modifier = Modifier.height(28.dp)
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SatelliteTechnicalDetailsCard(state: SatelliteConnectionState) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Technical Details",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null
+                )
+            }
+
+            // Always show key info
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                TechDetailItem(
+                    icon = Icons.Default.Speed,
+                    label = "Latency",
+                    value = when (state.provider) {
+                        SatelliteProvider.STARLINK -> "~30ms (LEO)"
+                        SatelliteProvider.SKYLO -> "~50ms (LEO)"
+                        else -> "Variable"
+                    }
+                )
+                TechDetailItem(
+                    icon = Icons.Default.Public,
+                    label = "Orbit",
+                    value = when (state.provider) {
+                        SatelliteProvider.STARLINK -> "540km LEO"
+                        SatelliteProvider.IRIDIUM -> "780km LEO"
+                        SatelliteProvider.INMARSAT -> "35,786km GEO"
+                        else -> "LEO/MEO"
+                    }
+                )
+                TechDetailItem(
+                    icon = Icons.Default.Router,
+                    label = "Standard",
+                    value = "3GPP R17"
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Detailed technical info
+                    Text(
+                        text = "Connection Parameters",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Network info
+                    TechDetailRow("Network Name", state.networkName ?: "Unknown")
+                    TechDetailRow("Operator", state.operatorName ?: "Unknown")
+                    TechDetailRow("Radio Technology", formatRadioTech(state.radioTechnology))
+                    TechDetailRow("NTN Band", if (state.isNTNBand) "Yes (L/S-band)" else "Checking...")
+                    state.frequency?.let { freq ->
+                        TechDetailRow("Frequency", "${freq} MHz")
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Provider-specific info
+                    Text(
+                        text = "Provider Information",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    when (state.provider) {
+                        SatelliteProvider.STARLINK -> {
+                            TechDetailRow("Constellation", "~6,000+ satellites")
+                            TechDetailRow("D2D Sats", "~650 (as of Jan 2026)")
+                            TechDetailRow("Orbital Speed", "17,000 mph")
+                            TechDetailRow("Pass Duration", "~10-15 min overhead")
+                            TechDetailRow("HARQ Processes", "32 (NTN extended)")
+                        }
+                        SatelliteProvider.SKYLO -> {
+                            TechDetailRow("Technology", "NB-IoT NTN")
+                            TechDetailRow("Modem", "Exynos 5400 / MT T900")
+                            TechDetailRow("Emergency Partner", "Garmin Response")
+                            TechDetailRow("Free Period", "2 years included")
+                        }
+                        SatelliteProvider.GLOBALSTAR -> {
+                            TechDetailRow("Constellation", "24 satellites")
+                            TechDetailRow("Coverage", "Emergency SOS only")
+                            TechDetailRow("Partner", "Apple iPhone")
+                        }
+                        else -> {
+                            TechDetailRow("Status", "Monitoring connection...")
+                        }
+                    }
+
+                    // Message capabilities
+                    if (state.capabilities.supportsSMS) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Messaging Limits",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        state.capabilities.maxMessageLength?.let { len ->
+                            TechDetailRow("Max Message", "$len characters")
+                        }
+                        TechDetailRow("Send Time", "~10-60 seconds typical")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TechDetailItem(
+    icon: ImageVector,
+    label: String,
+    value: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+fun TechDetailRow(
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SatelliteNetworkCoverageCard() {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Map,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Network Coverage & Carriers",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Direct-to-Cell satellite is available in most of the continental US with expanding international coverage.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Active D2D Services (Jan 2026)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    CarrierCoverageItem(
+                        carrier = "T-Mobile + Starlink",
+                        region = "USA (500,000 sq mi)",
+                        status = "Active",
+                        features = "SMS, MMS, Location, 911"
+                    )
+
+                    CarrierCoverageItem(
+                        carrier = "One NZ + Starlink",
+                        region = "New Zealand",
+                        status = "Active",
+                        features = "SMS, Emergency"
+                    )
+
+                    CarrierCoverageItem(
+                        carrier = "Verizon + Skylo",
+                        region = "USA",
+                        status = "Active",
+                        features = "Emergency SOS"
+                    )
+
+                    CarrierCoverageItem(
+                        carrier = "Orange + Skylo",
+                        region = "France",
+                        status = "Active",
+                        features = "Emergency SOS"
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Coming Soon",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val upcomingCarriers = listOf(
+                        "Telstra (Australia)",
+                        "Rogers (Canada)",
+                        "KDDI (Japan)",
+                        "Salt (Switzerland)",
+                        "VMO2 (UK)",
+                        "AT&T + AST SpaceMobile (USA)"
+                    )
+
+                    upcomingCarriers.forEach { carrier ->
+                        Text(
+                            text = "• $carrier",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Skylo SOS regions
+                    Text(
+                        text = "Skylo Emergency SOS Regions",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "USA, Canada, UK, France, Germany, Spain, Switzerland, Australia",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CarrierCoverageItem(
+    carrier: String,
+    region: String,
+    status: String,
+    features: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(
+                    when (status) {
+                        "Active" -> Color(0xFF4CAF50)
+                        "Testing" -> Color(0xFFFF9800)
+                        else -> Color(0xFF9E9E9E)
+                    }
+                )
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(
+                text = carrier,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = "$region • $features",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable
@@ -650,7 +1046,7 @@ fun DetectionRulesCard() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Rule,
+                        imageVector = Icons.Default.Checklist,
                         contentDescription = null
                     )
                     Text(

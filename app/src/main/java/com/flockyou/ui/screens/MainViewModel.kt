@@ -5,10 +5,19 @@ import android.content.Intent
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.flockyou.data.DetectionSettingsRepository
+import com.flockyou.data.OuiSettings
+import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.model.*
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.service.CellularMonitor
+import com.flockyou.service.RfSignalAnalyzer
+import com.flockyou.service.RogueWifiMonitor
 import com.flockyou.service.ScanningService
+import com.flockyou.service.UltrasonicDetector
+import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -35,18 +44,46 @@ data class MainUiState(
     val cellStatus: CellularMonitor.CellStatus? = null,
     val cellularAnomalies: List<CellularMonitor.CellularAnomaly> = emptyList(),
     val seenCellTowers: List<CellularMonitor.SeenCellTower> = emptyList(),
-    val cellularEvents: List<CellularMonitor.CellularEvent> = emptyList()
+    val cellularEvents: List<CellularMonitor.CellularEvent> = emptyList(),
+    // Rogue WiFi monitoring
+    val rogueWifiStatus: RogueWifiMonitor.WifiEnvironmentStatus? = null,
+    val rogueWifiAnomalies: List<RogueWifiMonitor.WifiAnomaly> = emptyList(),
+    val suspiciousNetworks: List<RogueWifiMonitor.SuspiciousNetwork> = emptyList(),
+    // RF signal analysis
+    val rfStatus: RfSignalAnalyzer.RfEnvironmentStatus? = null,
+    val rfAnomalies: List<RfSignalAnalyzer.RfAnomaly> = emptyList(),
+    val detectedDrones: List<RfSignalAnalyzer.DroneInfo> = emptyList(),
+    // Ultrasonic detection
+    val ultrasonicStatus: UltrasonicDetector.UltrasonicStatus? = null,
+    val ultrasonicAnomalies: List<UltrasonicDetector.UltrasonicAnomaly> = emptyList(),
+    val ultrasonicBeacons: List<UltrasonicDetector.BeaconDetection> = emptyList(),
+    // UI settings
+    val advancedMode: Boolean = false
 )
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val application: Application,
-    private val repository: DetectionRepository
+    private val repository: DetectionRepository,
+    private val settingsRepository: DetectionSettingsRepository,
+    private val ouiSettingsRepository: OuiSettingsRepository,
+    private val workManager: WorkManager
 ) : AndroidViewModel(application) {
-    
+
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-    
+
+    // OUI Settings
+    val ouiSettings: StateFlow<OuiSettings> = ouiSettingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = OuiSettings()
+        )
+
+    private val _isOuiUpdating = MutableStateFlow(false)
+    val isOuiUpdating: StateFlow<Boolean> = _isOuiUpdating.asStateFlow()
+
     init {
         // Observe scanning state from service
         viewModelScope.launch {
@@ -159,6 +196,76 @@ class MainViewModel @Inject constructor(
                 _uiState.update { it.copy(cellularEvents = events) }
             }
         }
+
+        // Observe rogue WiFi status
+        viewModelScope.launch {
+            ScanningService.rogueWifiStatus.collect { status ->
+                _uiState.update { it.copy(rogueWifiStatus = status) }
+            }
+        }
+
+        // Observe rogue WiFi anomalies
+        viewModelScope.launch {
+            ScanningService.rogueWifiAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(rogueWifiAnomalies = anomalies) }
+            }
+        }
+
+        // Observe suspicious networks
+        viewModelScope.launch {
+            ScanningService.suspiciousNetworks.collect { networks ->
+                _uiState.update { it.copy(suspiciousNetworks = networks) }
+            }
+        }
+
+        // Observe RF status
+        viewModelScope.launch {
+            ScanningService.rfStatus.collect { status ->
+                _uiState.update { it.copy(rfStatus = status) }
+            }
+        }
+
+        // Observe RF anomalies
+        viewModelScope.launch {
+            ScanningService.rfAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(rfAnomalies = anomalies) }
+            }
+        }
+
+        // Observe detected drones
+        viewModelScope.launch {
+            ScanningService.detectedDrones.collect { drones ->
+                _uiState.update { it.copy(detectedDrones = drones) }
+            }
+        }
+
+        // Observe ultrasonic status
+        viewModelScope.launch {
+            ScanningService.ultrasonicStatus.collect { status ->
+                _uiState.update { it.copy(ultrasonicStatus = status) }
+            }
+        }
+
+        // Observe ultrasonic anomalies
+        viewModelScope.launch {
+            ScanningService.ultrasonicAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(ultrasonicAnomalies = anomalies) }
+            }
+        }
+
+        // Observe ultrasonic beacons
+        viewModelScope.launch {
+            ScanningService.ultrasonicBeacons.collect { beacons ->
+                _uiState.update { it.copy(ultrasonicBeacons = beacons) }
+            }
+        }
+
+        // Observe advanced mode setting
+        viewModelScope.launch {
+            settingsRepository.settings.collect { settings ->
+                _uiState.update { it.copy(advancedMode = settings.advancedMode) }
+            }
+        }
     }
     
     fun startScanning() {
@@ -214,6 +321,12 @@ class MainViewModel @Inject constructor(
     fun clearErrors() {
         ScanningService.clearErrors()
     }
+
+    fun setAdvancedMode(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setAdvancedMode(enabled)
+        }
+    }
     
     fun getFilteredDetections(): List<Detection> {
         val state = _uiState.value
@@ -221,6 +334,64 @@ class MainViewModel @Inject constructor(
             val threatMatch = state.filterThreatLevel?.let { detection.threatLevel == it } ?: true
             val typeMatch = state.filterDeviceType?.let { detection.deviceType == it } ?: true
             threatMatch && typeMatch
+        }
+    }
+
+    // OUI Database Management
+    fun setOuiAutoUpdate(enabled: Boolean) {
+        viewModelScope.launch {
+            ouiSettingsRepository.setAutoUpdateEnabled(enabled)
+            if (enabled) {
+                val settings = ouiSettings.value
+                OuiUpdateWorker.schedulePeriodicUpdate(
+                    application,
+                    settings.updateIntervalHours,
+                    settings.useWifiOnly
+                )
+            } else {
+                OuiUpdateWorker.cancelAll(application)
+            }
+        }
+    }
+
+    fun setOuiUpdateInterval(hours: Int) {
+        viewModelScope.launch {
+            ouiSettingsRepository.setUpdateInterval(hours)
+            if (ouiSettings.value.autoUpdateEnabled) {
+                OuiUpdateWorker.schedulePeriodicUpdate(
+                    application,
+                    hours,
+                    ouiSettings.value.useWifiOnly
+                )
+            }
+        }
+    }
+
+    fun setOuiWifiOnly(wifiOnly: Boolean) {
+        viewModelScope.launch {
+            ouiSettingsRepository.setUseWifiOnly(wifiOnly)
+            if (ouiSettings.value.autoUpdateEnabled) {
+                OuiUpdateWorker.schedulePeriodicUpdate(
+                    application,
+                    ouiSettings.value.updateIntervalHours,
+                    wifiOnly
+                )
+            }
+        }
+    }
+
+    fun triggerOuiUpdate() {
+        _isOuiUpdating.value = true
+
+        val workId = OuiUpdateWorker.triggerImmediateUpdate(application)
+
+        // Observe work completion
+        viewModelScope.launch {
+            workManager.getWorkInfoByIdFlow(workId).collect { workInfo ->
+                if (workInfo?.state?.isFinished == true) {
+                    _isOuiUpdating.value = false
+                }
+            }
         }
     }
 }

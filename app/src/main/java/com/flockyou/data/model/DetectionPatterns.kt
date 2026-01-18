@@ -468,6 +468,106 @@ object DetectionPatterns {
             manufacturer = "Grayshift",
             threatScore = 95,
             description = "GrayKey forensics device"
+        ),
+
+        // ==================== Whelen Lightbar / Emergency Vehicle Patterns ====================
+
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^cencom[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Whelen Engineering",
+            threatScore = 90,
+            description = "Whelen CenCom Lightbar Controller - police/emergency vehicle lightbar sync"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^wecan[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Whelen Engineering",
+            threatScore = 90,
+            description = "Whelen WeCAN Network - vehicle lighting controller"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^whelen[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Whelen Engineering",
+            threatScore = 85,
+            description = "Whelen emergency lighting equipment"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^core[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Whelen Engineering",
+            threatScore = 80,
+            description = "Whelen Core lightbar system"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(ion|legacy|liberty|freedom)[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Whelen Engineering",
+            threatScore = 75,
+            description = "Whelen lightbar series"
+        ),
+
+        // ==================== Axon Signal / Body Camera Trigger Patterns ====================
+
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^signal[_-]?(sidearm|vehicle|performance)?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 90,
+            description = "Axon Signal - auto-activates body cameras on siren/gun draw"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^fleet[_-]?[23]?.*",
+            deviceType = DeviceType.AXON_POLICE_TECH,
+            manufacturer = "Axon Enterprise",
+            threatScore = 85,
+            description = "Axon Fleet in-car camera system"
+        ),
+
+        // ==================== Federal Signal Patterns ====================
+
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^federal[_-]?signal.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Federal Signal",
+            threatScore = 85,
+            description = "Federal Signal emergency lighting"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(valor|integrity|allegiant)[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Federal Signal",
+            threatScore = 80,
+            description = "Federal Signal lightbar"
+        ),
+
+        // ==================== Code 3 / SoundOff Signal Patterns ====================
+
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^code[_-]?3.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "Code 3",
+            threatScore = 80,
+            description = "Code 3 emergency lighting"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^soundoff[_-]?.*",
+            deviceType = DeviceType.POLICE_VEHICLE,
+            manufacturer = "SoundOff Signal",
+            threatScore = 80,
+            description = "SoundOff Signal emergency equipment"
         )
     )
     
@@ -572,34 +672,72 @@ object DetectionPatterns {
             "Quectel LTE modem - commonly used in Flock cameras"),
         MacPrefix("86:25:19", DeviceType.FLOCK_SAFETY_CAMERA, "Quectel (LTE Modem)", 70,
             "Quectel cellular module"),
-        
+
         // Telit - Another common IoT/LTE modem maker
         MacPrefix("00:14:2D", DeviceType.UNKNOWN_SURVEILLANCE, "Telit (LTE Modem)", 65,
             "Telit cellular modem - used in IoT surveillance"),
         MacPrefix("D8:C7:71", DeviceType.UNKNOWN_SURVEILLANCE, "Telit Wireless", 65,
             "Telit wireless module"),
-            
-        // Sierra Wireless
-        MacPrefix("00:14:3E", DeviceType.UNKNOWN_SURVEILLANCE, "Sierra Wireless", 65,
-            "Sierra Wireless modem - IoT/M2M applications"),
-        MacPrefix("00:A0:D5", DeviceType.UNKNOWN_SURVEILLANCE, "Sierra Wireless", 65,
+
+        // ==================== Fleet Vehicle OUIs (Police Car WiFi APs) ====================
+        // Sierra Wireless - Common in police/fleet vehicles
+        MacPrefix("00:0E:8E", DeviceType.FLEET_VEHICLE, "Sierra Wireless", 85,
+            "Sierra Wireless - common in police/fleet vehicle mobile routers"),
+        MacPrefix("00:11:75", DeviceType.FLEET_VEHICLE, "Sierra Wireless", 85,
+            "Sierra Wireless - fleet vehicle mobile hotspot"),
+        MacPrefix("00:14:3E", DeviceType.FLEET_VEHICLE, "Sierra Wireless", 80,
+            "Sierra Wireless modem - IoT/M2M/fleet applications"),
+        MacPrefix("00:A0:D5", DeviceType.FLEET_VEHICLE, "Sierra Wireless", 80,
             "Sierra Wireless cellular module"),
-            
+
+        // Cradlepoint - Popular for mobile command/surveillance vehicles
+        MacPrefix("00:30:44", DeviceType.FLEET_VEHICLE, "Cradlepoint", 85,
+            "Cradlepoint - mobile router common in police/emergency vehicles"),
+        MacPrefix("00:10:8B", DeviceType.FLEET_VEHICLE, "Cradlepoint", 85,
+            "Cradlepoint router - often used for mobile surveillance/command"),
+        MacPrefix("EC:F4:51", DeviceType.FLEET_VEHICLE, "Cradlepoint", 80,
+            "Cradlepoint NetCloud - fleet management router"),
+
+        // Digi International - Fleet telematics
+        MacPrefix("00:40:9D", DeviceType.FLEET_VEHICLE, "Digi International", 75,
+            "Digi - fleet telematics and mobile connectivity"),
+
+        // CalAmp - Vehicle tracking and fleet management
+        MacPrefix("00:07:F9", DeviceType.FLEET_VEHICLE, "CalAmp", 80,
+            "CalAmp - vehicle tracking and fleet management"),
+
+        // Geotab - Fleet telematics
+        MacPrefix("00:1E:C0", DeviceType.FLEET_VEHICLE, "Geotab", 75,
+            "Geotab - fleet telematics device"),
+
         // u-blox - GPS/cellular modules
         MacPrefix("D4:CA:6E", DeviceType.UNKNOWN_SURVEILLANCE, "u-blox", 60,
             "u-blox cellular/GPS module"),
-            
-        // Cradlepoint / Ericsson
-        MacPrefix("00:10:8B", DeviceType.UNKNOWN_SURVEILLANCE, "Cradlepoint", 65,
-            "Cradlepoint router - often used for mobile surveillance"),
-            
+
         // Raspberry Pi (used in DIY/prototype ALPR)
         MacPrefix("B8:27:EB", DeviceType.UNKNOWN_SURVEILLANCE, "Raspberry Pi", 50,
             "Raspberry Pi - potential DIY ALPR system"),
         MacPrefix("DC:A6:32", DeviceType.UNKNOWN_SURVEILLANCE, "Raspberry Pi", 50,
             "Raspberry Pi 4 - potential DIY surveillance"),
         MacPrefix("E4:5F:01", DeviceType.UNKNOWN_SURVEILLANCE, "Raspberry Pi", 50,
-            "Raspberry Pi - IoT device")
+            "Raspberry Pi - IoT device"),
+
+        // ==================== Axon / Body Camera Manufacturer OUIs ====================
+        // Nordic Semiconductor - used in Axon body cameras and Signal devices
+        MacPrefix("00:59", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 75,
+            "Nordic Semiconductor - common in Axon body cameras/Signal triggers"),
+        MacPrefix("C0:A5:3E", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 75,
+            "Nordic Semiconductor BLE - Axon equipment"),
+        MacPrefix("F0:5C:D5", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 70,
+            "Nordic Semiconductor - police equipment BLE"),
+
+        // Texas Instruments - used in some body cameras
+        MacPrefix("D0:39:72", DeviceType.BODY_CAMERA, "Texas Instruments", 65,
+            "TI BLE module - potential body camera"),
+
+        // Dialog Semiconductor - BLE chips in wearables/cameras
+        MacPrefix("80:EA:CA", DeviceType.BODY_CAMERA, "Dialog Semiconductor", 60,
+            "Dialog Semiconductor - BLE wearable/camera")
     )
     
     data class MacPrefix(
@@ -887,6 +1025,275 @@ object DetectionPatterns {
                     "🔒 Avoid making regular phone calls or SMS - use encrypted messaging instead",
                     "📸 Look for suspicious vehicles (vans, SUVs) with antennas or running generators",
                     "⚠️ FALSE POSITIVE? This could also be triggered by poor coverage, moving between towers, or network maintenance"
+                )
+            )
+            DeviceType.ROGUE_AP -> DeviceTypeInfo(
+                name = "Rogue Access Point",
+                shortDescription = "Unauthorized WiFi Access Point",
+                fullDescription = "A rogue access point is an unauthorized wireless device that may be " +
+                    "attempting to intercept network traffic. This could be an 'evil twin' attack, " +
+                    "karma attack, or surveillance equipment designed to capture communications.",
+                capabilities = listOf(
+                    "Intercept wireless traffic",
+                    "Capture login credentials",
+                    "Man-in-the-middle attacks",
+                    "Session hijacking",
+                    "SSL stripping"
+                ),
+                privacyConcerns = listOf(
+                    "All network traffic may be captured",
+                    "Credentials and sensitive data at risk",
+                    "Location tracking through WiFi",
+                    "Device fingerprinting"
+                ),
+                recommendations = listOf(
+                    "🛡️ Disconnect from this network immediately",
+                    "🔒 Use a VPN for all internet activity",
+                    "📱 Verify network authenticity before connecting",
+                    "⚠️ Avoid entering sensitive information"
+                )
+            )
+            DeviceType.HIDDEN_CAMERA -> DeviceTypeInfo(
+                name = "Hidden Camera",
+                shortDescription = "Covert Video Surveillance",
+                fullDescription = "A WiFi-enabled hidden camera detected through network patterns. " +
+                    "These devices may be disguised as everyday objects and stream video over WiFi.",
+                capabilities = listOf(
+                    "Video recording",
+                    "Live streaming",
+                    "Motion detection",
+                    "Night vision recording",
+                    "Cloud storage upload"
+                ),
+                privacyConcerns = listOf(
+                    "Invasion of privacy in private spaces",
+                    "Recording without consent",
+                    "Footage may be stored indefinitely",
+                    "May be accessed remotely"
+                ),
+                recommendations = listOf(
+                    "🔍 Search for the physical device",
+                    "📍 Note the signal strength to locate it",
+                    "🚨 Report to authorities if in rental/hotel",
+                    "📸 Document evidence before removal"
+                )
+            )
+            DeviceType.SURVEILLANCE_VAN -> DeviceTypeInfo(
+                name = "Surveillance Van",
+                shortDescription = "Mobile Surveillance Platform",
+                fullDescription = "A mobile hotspot matching patterns associated with surveillance vehicles. " +
+                    "These may be law enforcement, private investigators, or other monitoring operations.",
+                capabilities = listOf(
+                    "Mobile surveillance platform",
+                    "Multiple monitoring systems",
+                    "Extended area coverage",
+                    "Cellular interception capability"
+                ),
+                privacyConcerns = listOf(
+                    "Targeted surveillance operations",
+                    "May include multiple monitoring technologies",
+                    "Can follow subjects over distance",
+                    "Often unmarked and inconspicuous"
+                ),
+                recommendations = listOf(
+                    "🚶 Leave the area if possible",
+                    "📍 Note vehicle descriptions",
+                    "📱 Use encrypted communications",
+                    "🔒 Enable airplane mode if concerned"
+                )
+            )
+            DeviceType.TRACKING_DEVICE -> DeviceTypeInfo(
+                name = "Tracking Device",
+                shortDescription = "Location Tracking Device",
+                fullDescription = "A device designed to track location, which may be placed on vehicles " +
+                    "or personal belongings. Can transmit location data via WiFi or cellular.",
+                capabilities = listOf(
+                    "GPS location tracking",
+                    "Movement history logging",
+                    "Real-time location updates",
+                    "Geofence alerts"
+                ),
+                privacyConcerns = listOf(
+                    "Continuous location monitoring",
+                    "Movement pattern analysis",
+                    "May be placed without consent",
+                    "Data shared with third parties"
+                ),
+                recommendations = listOf(
+                    "🔍 Search vehicle and belongings",
+                    "📍 Locate using signal strength",
+                    "🚨 Report unauthorized tracking to police",
+                    "📸 Document before removal"
+                )
+            )
+            DeviceType.RF_JAMMER -> DeviceTypeInfo(
+                name = "RF Jammer",
+                shortDescription = "Radio Frequency Jammer",
+                fullDescription = "A device that disrupts wireless communications by emitting interference. " +
+                    "RF jammers are illegal in most jurisdictions but may be used by law enforcement or criminals.",
+                capabilities = listOf(
+                    "Block cellular signals",
+                    "Disrupt WiFi communications",
+                    "Prevent GPS tracking",
+                    "Interfere with Bluetooth"
+                ),
+                privacyConcerns = listOf(
+                    "Prevents emergency calls",
+                    "Blocks legitimate communications",
+                    "May indicate criminal activity nearby",
+                    "Illegal to operate in most places"
+                ),
+                recommendations = listOf(
+                    "🚨 Leave area - may indicate robbery or attack",
+                    "📍 Note location and time",
+                    "📞 Report to authorities (from outside range)",
+                    "⚠️ Do not attempt to locate the device"
+                )
+            )
+            DeviceType.DRONE -> DeviceTypeInfo(
+                name = "Drone/UAV",
+                shortDescription = "Unmanned Aerial Vehicle",
+                fullDescription = "A drone detected via its WiFi control signal. Drones can carry cameras " +
+                    "and other sensors for aerial surveillance.",
+                capabilities = listOf(
+                    "Aerial video/photo capture",
+                    "Thermal imaging",
+                    "GPS tracking",
+                    "Extended range surveillance",
+                    "Face recognition capability"
+                ),
+                privacyConcerns = listOf(
+                    "Surveillance from above",
+                    "Difficult to detect visually",
+                    "Can follow subjects",
+                    "May record private property"
+                ),
+                recommendations = listOf(
+                    "🔍 Look up to locate the drone",
+                    "📱 Use the signal strength to find operator",
+                    "🚨 Report if over private property",
+                    "🏠 Move indoors if concerned"
+                )
+            )
+            DeviceType.SURVEILLANCE_INFRASTRUCTURE -> DeviceTypeInfo(
+                name = "Surveillance Infrastructure",
+                shortDescription = "Fixed Surveillance System",
+                fullDescription = "A concentration of surveillance devices indicating organized monitoring " +
+                    "infrastructure such as camera networks or sensor arrays.",
+                capabilities = listOf(
+                    "Multiple camera coverage",
+                    "License plate recognition",
+                    "Face recognition",
+                    "Behavior analysis",
+                    "Cross-camera tracking"
+                ),
+                privacyConcerns = listOf(
+                    "Comprehensive area monitoring",
+                    "Long-term data retention",
+                    "Automated tracking capabilities",
+                    "Integration with law enforcement databases"
+                )
+            )
+            DeviceType.ULTRASONIC_BEACON -> DeviceTypeInfo(
+                name = "Ultrasonic Beacon",
+                shortDescription = "Ultrasonic Tracking Device",
+                fullDescription = "An ultrasonic beacon emitting inaudible sounds for cross-device tracking. " +
+                    "These are used by advertisers to link your devices and track you across locations.",
+                capabilities = listOf(
+                    "Cross-device tracking",
+                    "Location tracking in stores",
+                    "Ad targeting coordination",
+                    "Linking anonymous browsing to identity"
+                ),
+                privacyConcerns = listOf(
+                    "Tracks without visual indication",
+                    "Links all your devices together",
+                    "Retail location tracking",
+                    "Advertising profile building",
+                    "Works even with WiFi/Bluetooth off"
+                ),
+                recommendations = listOf(
+                    "🔇 These signals are inaudible to humans",
+                    "📱 Some apps can block ultrasonic tracking",
+                    "🏪 Common in retail stores and TV ads",
+                    "🔒 Consider ultrasonic firewall apps"
+                )
+            )
+            DeviceType.POLICE_VEHICLE -> DeviceTypeInfo(
+                name = "Police/Emergency Vehicle",
+                shortDescription = "Emergency Vehicle Detected",
+                fullDescription = "A police car, ambulance, or fire truck has been detected nearby via its " +
+                    "emergency lighting system's Bluetooth connection. Modern emergency vehicles use BLE " +
+                    "to synchronize their lightbars (Whelen CenCom, Federal Signal, etc.) and may also " +
+                    "have body camera triggers (Axon Signal) that activate when sirens are turned on.",
+                capabilities = listOf(
+                    "Emergency lightbar synchronization",
+                    "Automatic body camera activation",
+                    "Siren/PA system integration",
+                    "In-car video triggering",
+                    "GPS/AVL location reporting"
+                ),
+                privacyConcerns = listOf(
+                    "Officers may be actively recording",
+                    "Vehicle likely has dash cameras",
+                    "ALPR systems often installed",
+                    "Location data transmitted to dispatch"
+                ),
+                recommendations = listOf(
+                    "🚔 Police or emergency vehicle is nearby",
+                    "📹 Assume you are being recorded",
+                    "📍 Note time and location if relevant",
+                    "🚗 May be stationary or moving through area"
+                )
+            )
+            DeviceType.FLEET_VEHICLE -> DeviceTypeInfo(
+                name = "Fleet Vehicle",
+                shortDescription = "Commercial/Government Fleet Vehicle",
+                fullDescription = "A vehicle with fleet management hardware has been detected. This could be " +
+                    "a police vehicle, government car, utility truck, or commercial fleet vehicle. These " +
+                    "vehicles often have WiFi hotspots using Sierra Wireless or Cradlepoint routers, which " +
+                    "are commonly used by law enforcement for mobile data terminals and surveillance equipment.",
+                capabilities = listOf(
+                    "Mobile WiFi hotspot for in-vehicle systems",
+                    "GPS tracking and route logging",
+                    "Mobile data terminal connectivity",
+                    "Potential ALPR/camera data uplink",
+                    "Fleet management and dispatch integration"
+                ),
+                privacyConcerns = listOf(
+                    "May be an unmarked police vehicle",
+                    "Could have surveillance equipment",
+                    "Vehicle movements are tracked",
+                    "Hidden SSID networks are common"
+                ),
+                recommendations = listOf(
+                    "🚐 Fleet vehicle detected via mobile router",
+                    "👀 Could be police, utility, or commercial",
+                    "📶 Strong signal = vehicle is close",
+                    "🔍 Hidden SSIDs are suspicious"
+                )
+            )
+            DeviceType.SATELLITE_NTN -> DeviceTypeInfo(
+                name = "Satellite NTN Device",
+                shortDescription = "Non-Terrestrial Network Connection",
+                fullDescription = "Connection detected via satellite-based Non-Terrestrial Network (NTN). " +
+                    "This could be legitimate D2D service (T-Mobile Starlink, Skylo) or potentially " +
+                    "suspicious if unexpected in an area with good terrestrial coverage.",
+                capabilities = listOf(
+                    "SMS/MMS messaging (provider dependent)",
+                    "Emergency SOS services",
+                    "Location sharing",
+                    "Limited data for select apps"
+                ),
+                privacyConcerns = listOf(
+                    "Satellite connections can be spoofed by ground stations",
+                    "NTN parameters can reveal user location",
+                    "Unknown satellites may intercept communications"
+                ),
+                recommendations = listOf(
+                    "Verify expected satellite provider",
+                    "Check if terrestrial coverage is available",
+                    "Monitor for timing anomalies"
                 )
             )
             DeviceType.UNKNOWN_SURVEILLANCE -> DeviceTypeInfo(

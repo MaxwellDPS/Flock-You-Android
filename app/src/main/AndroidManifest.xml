@@ -11,15 +11,18 @@
     <!-- WiFi permissions -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     
     <!-- Location permissions (required for BLE and WiFi scanning) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     
-    <!-- Foreground service -->
+    <!-- Foreground service - multiple types for maximum permission coverage -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <!-- Vibration for alerts -->
@@ -71,12 +74,18 @@
             </intent-filter>
         </activity>
         
+        <!-- Scanning service with multiple foreground types for robust background operation -->
         <service
             android:name=".service.ScanningService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="location"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="location|connectedDevice|specialUse"
+            android:stopWithTask="false"
+            android:process=":scanning">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="surveillance_detection" />
+        </service>
         
         <!-- Boot receiver for auto-starting service -->
         <receiver
@@ -98,8 +107,16 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.flockyou.RESTART_SERVICE" />
+                <action android:name="com.flockyou.SERVICE_HEARTBEAT" />
             </intent-filter>
         </receiver>
+
+        <!-- JobService for backup service restart (survives Doze mode) -->
+        <service
+            android:name=".service.ServiceRestartJobService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         
         <!-- File Provider for sharing exported files -->
         <provider

@@ -46,8 +46,10 @@ class ScanningService : Service() {
         private const val CHANNEL_ID = "flockyou_scanning"
         
         // Default values (can be overridden by settings)
-        private const val DEFAULT_WIFI_SCAN_INTERVAL = 35000L
-        private const val DEFAULT_BLE_SCAN_DURATION = 10000L
+        // Aggressive burst scan pattern: 25s on, 5s cooldown to prevent thermal throttling
+        private const val DEFAULT_WIFI_SCAN_INTERVAL = 30000L  // 30 seconds between WiFi scans
+        private const val DEFAULT_BLE_SCAN_DURATION = 25000L   // 25 seconds of low-latency scanning
+        private const val DEFAULT_BLE_COOLDOWN = 5000L         // 5 seconds cooldown to prevent thermal throttle
         private const val DEFAULT_INACTIVE_TIMEOUT = 60000L
         private const val DEFAULT_SEEN_DEVICE_TIMEOUT = 300000L
         
@@ -81,20 +83,120 @@ class ScanningService : Service() {
         val satelliteAnomalies = MutableStateFlow<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>>(emptyList())
         val satelliteHistory = MutableStateFlow<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionEvent>>(emptyList())
         val satelliteStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+
+        // Rogue WiFi monitoring data
+        val rogueWifiStatus = MutableStateFlow<RogueWifiMonitor.WifiEnvironmentStatus?>(null)
+        val rogueWifiAnomalies = MutableStateFlow<List<RogueWifiMonitor.WifiAnomaly>>(emptyList())
+        val rogueWifiEvents = MutableStateFlow<List<RogueWifiMonitor.WifiEvent>>(emptyList())
+        val suspiciousNetworks = MutableStateFlow<List<RogueWifiMonitor.SuspiciousNetwork>>(emptyList())
+
+        // RF signal analysis data
+        val rfStatus = MutableStateFlow<RfSignalAnalyzer.RfEnvironmentStatus?>(null)
+        val rfAnomalies = MutableStateFlow<List<RfSignalAnalyzer.RfAnomaly>>(emptyList())
+        val rfEvents = MutableStateFlow<List<RfSignalAnalyzer.RfEvent>>(emptyList())
+        val detectedDrones = MutableStateFlow<List<RfSignalAnalyzer.DroneInfo>>(emptyList())
+
+        // Ultrasonic detection data
+        val ultrasonicStatus = MutableStateFlow<UltrasonicDetector.UltrasonicStatus?>(null)
+        val ultrasonicAnomalies = MutableStateFlow<List<UltrasonicDetector.UltrasonicAnomaly>>(emptyList())
+        val ultrasonicEvents = MutableStateFlow<List<UltrasonicDetector.UltrasonicEvent>>(emptyList())
+        val ultrasonicBeacons = MutableStateFlow<List<UltrasonicDetector.BeaconDetection>>(emptyList())
         
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
-        
+
+        // Learning mode - for capturing unknown device signatures
+        val learningModeEnabled = MutableStateFlow(false)
+        val learnedSignatures = MutableStateFlow<List<LearnedSignature>>(emptyList())
+
+        // Packet rate tracking for Signal trigger detection (advertising spike detection)
+        private val devicePacketCounts = mutableMapOf<String, MutableList<Long>>()  // MAC -> timestamps
+        val highActivityDevices = MutableStateFlow<List<String>>(emptyList())  // MACs with advertising spikes
+
         private const val MAX_ERROR_LOG_SIZE = 50
         private const val MAX_SEEN_DEVICES = 100
-        
+        private const val PACKET_RATE_WINDOW_MS = 5000L  // 5 second window for rate calculation
+        private const val HIGH_ACTIVITY_THRESHOLD = 20f  // 20+ packets/second = Signal trigger likely active
+
         fun clearErrors() {
             errorLog.value = emptyList()
         }
-        
+
         fun clearSeenDevices() {
             seenBleDevices.value = emptyList()
             seenWifiNetworks.value = emptyList()
+        }
+
+        /**
+         * Enable learning mode to capture device signatures
+         */
+        fun enableLearningMode() {
+            learningModeEnabled.value = true
+        }
+
+        /**
+         * Disable learning mode
+         */
+        fun disableLearningMode() {
+            learningModeEnabled.value = false
+        }
+
+        /**
+         * Learn a device signature from a seen device
+         */
+        fun learnDeviceSignature(device: SeenDevice, notes: String? = null) {
+            val signature = LearnedSignature(
+                id = device.id,
+                name = device.name,
+                macPrefix = device.id.take(8).uppercase(),
+                serviceUuids = device.serviceUuids,
+                manufacturerIds = device.manufacturerData.keys.toList(),
+                notes = notes
+            )
+
+            val current = learnedSignatures.value.toMutableList()
+            // Remove existing signature for same device if present
+            current.removeAll { it.id == device.id }
+            current.add(0, signature)
+            learnedSignatures.value = current
+        }
+
+        /**
+         * Clear all learned signatures
+         */
+        fun clearLearnedSignatures() {
+            learnedSignatures.value = emptyList()
+        }
+
+        /**
+         * Track packet for advertising rate calculation
+         */
+        fun trackPacket(macAddress: String): Float {
+            val now = System.currentTimeMillis()
+            val packets = devicePacketCounts.getOrPut(macAddress) { mutableListOf() }
+            packets.add(now)
+
+            // Remove old packets outside the window
+            val cutoff = now - PACKET_RATE_WINDOW_MS
+            packets.removeAll { it < cutoff }
+
+            // Calculate rate
+            val rate = if (packets.size > 1) {
+                packets.size.toFloat() / (PACKET_RATE_WINDOW_MS / 1000f)
+            } else {
+                0f
+            }
+
+            // Check for high activity (potential Signal trigger activation)
+            if (rate >= HIGH_ACTIVITY_THRESHOLD) {
+                val current = highActivityDevices.value.toMutableList()
+                if (!current.contains(macAddress)) {
+                    current.add(macAddress)
+                    highActivityDevices.value = current
+                }
+            }
+
+            return rate
         }
         
         fun clearCellularHistory() {
@@ -135,12 +237,14 @@ class ScanningService : Service() {
     data class ScanConfig(
         val wifiScanInterval: Long = DEFAULT_WIFI_SCAN_INTERVAL,
         val bleScanDuration: Long = DEFAULT_BLE_SCAN_DURATION,
+        val bleCooldown: Long = DEFAULT_BLE_COOLDOWN,
         val inactiveTimeout: Long = DEFAULT_INACTIVE_TIMEOUT,
         val seenDeviceTimeout: Long = DEFAULT_SEEN_DEVICE_TIMEOUT,
         val enableBle: Boolean = true,
         val enableWifi: Boolean = true,
         val enableCellular: Boolean = true,
-        val trackSeenDevices: Boolean = true
+        val trackSeenDevices: Boolean = true,
+        val aggressiveBleMode: Boolean = true  // Use MATCH_MODE_AGGRESSIVE for weak signal detection
     )
     
     /** Seen device that didn't match surveillance patterns */
@@ -153,7 +257,20 @@ class ScanningService : Service() {
         val lastSeen: Long = System.currentTimeMillis(),
         val seenCount: Int = 1,
         val manufacturer: String? = null,
-        val serviceUuids: List<String> = emptyList()
+        val serviceUuids: List<String> = emptyList(),
+        val manufacturerData: Map<Int, String> = emptyMap(), // Manufacturer ID -> hex data
+        val advertisingRate: Float = 0f  // Packets per second (for Signal trigger detection)
+    )
+
+    /** Learned device signature (user-confirmed suspicious device) */
+    data class LearnedSignature(
+        val id: String,
+        val name: String?,
+        val macPrefix: String, // First 3 octets
+        val serviceUuids: List<String>,
+        val manufacturerIds: List<Int>,
+        val learnedAt: Long = System.currentTimeMillis(),
+        val notes: String? = null
     )
     
     /** Scan statistics */
@@ -222,9 +339,18 @@ class ScanningService : Service() {
     
     // Cellular monitor
     private var cellularMonitor: CellularMonitor? = null
-    
+
     // Satellite monitor
     private var satelliteMonitor: com.flockyou.monitoring.SatelliteMonitor? = null
+
+    // Rogue WiFi monitor
+    private var rogueWifiMonitor: RogueWifiMonitor? = null
+
+    // RF signal analyzer
+    private var rfSignalAnalyzer: RfSignalAnalyzer? = null
+
+    // Ultrasonic detector
+    private var ultrasonicDetector: UltrasonicDetector? = null
     
     // Wake lock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
@@ -259,10 +385,19 @@ class ScanningService : Service() {
         
         // Initialize Cellular Monitor
         cellularMonitor = CellularMonitor(applicationContext)
-        
+
         // Initialize Satellite Monitor
         satelliteMonitor = com.flockyou.monitoring.SatelliteMonitor(applicationContext)
-        
+
+        // Initialize Rogue WiFi Monitor
+        rogueWifiMonitor = RogueWifiMonitor(applicationContext)
+
+        // Initialize RF Signal Analyzer
+        rfSignalAnalyzer = RfSignalAnalyzer(applicationContext)
+
+        // Initialize Ultrasonic Detector
+        ultrasonicDetector = UltrasonicDetector(applicationContext)
+
         createNotificationChannel()
     }
     
@@ -348,6 +483,12 @@ class ScanningService : Service() {
         cellularMonitor = null
         satelliteMonitor?.stopMonitoring()
         satelliteMonitor = null
+        rogueWifiMonitor?.destroy()
+        rogueWifiMonitor = null
+        rfSignalAnalyzer?.destroy()
+        rfSignalAnalyzer = null
+        ultrasonicDetector?.destroy()
+        ultrasonicDetector = null
         
         // Cancel watchdog if service is intentionally stopped
         // Only schedule restart if service should still be running
@@ -453,52 +594,78 @@ class ScanningService : Service() {
         
         // Start satellite monitoring
         startSatelliteMonitoring()
-        
-        // Start continuous scanning
+
+        // Start rogue WiFi monitoring
+        startRogueWifiMonitoring()
+
+        // Start RF signal analysis
+        startRfSignalAnalysis()
+
+        // Start ultrasonic detection
+        startUltrasonicDetection()
+
+        // Start heartbeat monitoring - sends periodic heartbeats to watchdog
+        ServiceRestartReceiver.scheduleHeartbeat(this)
+        ServiceRestartReceiver.scheduleJobSchedulerBackup(this)
+
+        // Start continuous scanning with burst pattern (25s on, 5s cooldown)
         scanJob = serviceScope.launch {
+            var scanCycleCount = 0
+
             while (isActive) {
                 val scanConfig = currentSettings.value // Re-read in case settings changed
-                
+
                 // Refresh wake lock to prevent timeout
                 acquireWakeLock()
-                
+
                 try {
-                    // Start BLE scan
+                    // === HEARTBEAT ===
+                    // Send heartbeat every cycle to prove we're alive
+                    ServiceRestartReceiver.recordHeartbeat(this@ScanningService)
+
+                    // === BLE BURST SCAN ===
+                    // Scan for 25 seconds in low-latency mode, then 5s cooldown
+                    // This prevents Android thermal throttling while maximizing detection
                     if (scanConfig.enableBle) {
-                        startBleScan()
+                        startBleScan(scanConfig.aggressiveBleMode)
                         delay(scanConfig.bleScanDuration)
                         stopBleScan()
+
+                        // Thermal cooldown period - prevents Android from force-stopping scans
+                        Log.d(TAG, "BLE cooldown: ${scanConfig.bleCooldown}ms")
+                        delay(scanConfig.bleCooldown)
                     }
-                    
-                    // Start WiFi scan
+
+                    // === WiFi SCAN ===
+                    // Trigger WiFi scan (results come via broadcast receiver)
                     if (scanConfig.enableWifi) {
                         startWifiScan()
                     }
-                    
-                    // Wait for the remainder of the interval
-                    val waitTime = if (scanConfig.enableBle) {
-                        scanConfig.wifiScanInterval - scanConfig.bleScanDuration
-                    } else {
-                        scanConfig.wifiScanInterval
-                    }
-                    delay(waitTime.coerceAtLeast(5000L))
-                    
+
                     // Update location
                     updateLocation()
-                    
+
                     // Mark old detections as inactive
                     val inactiveThreshold = System.currentTimeMillis() - scanConfig.inactiveTimeout
                     repository.markOldInactive(inactiveThreshold)
-                    
+
                     // Clean up old seen devices
                     if (scanConfig.trackSeenDevices) {
                         cleanupSeenDevices(scanConfig.seenDeviceTimeout)
                     }
-                    
+
                     // Update notification with status
                     val statusText = buildStatusText()
                     updateNotification(statusText)
-                    
+
+                    scanCycleCount++
+
+                    // Every 10 cycles, re-schedule the watchdog to ensure it stays active
+                    if (scanCycleCount % 10 == 0) {
+                        ServiceRestartReceiver.scheduleWatchdog(this@ScanningService)
+                        Log.d(TAG, "Completed $scanCycleCount scan cycles")
+                    }
+
                 } catch (e: Exception) {
                     Log.e(TAG, "Scanning error", e)
                     logError("Scanner", -1, "Scan cycle error: ${e.message}", recoverable = true)
@@ -559,7 +726,10 @@ class ScanningService : Service() {
         unregisterWifiReceiver()
         stopCellularMonitoring()
         stopSatelliteMonitoring()
-        
+        stopRogueWifiMonitoring()
+        stopRfSignalAnalysis()
+        stopUltrasonicDetection()
+
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
         wifiStatus.value = SubsystemStatus.Idle
@@ -567,7 +737,7 @@ class ScanningService : Service() {
         cellularStatus.value = SubsystemStatus.Idle
         satelliteStatus.value = SubsystemStatus.Idle
         scanStatus.value = ScanStatus.Idle
-        
+
         Log.d(TAG, "Stopped scanning")
     }
     
@@ -778,35 +948,326 @@ class ScanningService : Service() {
             Manifest.permission.READ_PHONE_STATE
         ) == PackageManager.PERMISSION_GRANTED
     }
-    
+
+    private fun hasAudioPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    // ==================== Rogue WiFi Monitoring ====================
+
+    private var rogueWifiStatusJob: Job? = null
+    private var rogueWifiAnomalyJob: Job? = null
+    private var rogueWifiEventsJob: Job? = null
+
+    private fun startRogueWifiMonitoring() {
+        Log.d(TAG, "Starting rogue WiFi monitoring")
+
+        rogueWifiMonitor?.startMonitoring()
+
+        // Collect status updates
+        rogueWifiStatusJob = serviceScope.launch {
+            rogueWifiMonitor?.wifiStatus?.collect { status ->
+                Companion.rogueWifiStatus.value = status
+            }
+        }
+
+        // Collect suspicious networks
+        serviceScope.launch {
+            rogueWifiMonitor?.suspiciousNetworks?.collect { networks ->
+                Companion.suspiciousNetworks.value = networks
+            }
+        }
+
+        // Collect events
+        rogueWifiEventsJob = serviceScope.launch {
+            rogueWifiMonitor?.wifiEvents?.collect { events ->
+                Companion.rogueWifiEvents.value = events
+            }
+        }
+
+        // Collect anomalies and convert to detections
+        rogueWifiAnomalyJob = serviceScope.launch {
+            rogueWifiMonitor?.anomalies?.collect { anomalies ->
+                Companion.rogueWifiAnomalies.value = anomalies
+
+                for (anomaly in anomalies) {
+                    val detection = rogueWifiMonitor?.anomalyToDetection(anomaly)
+                    detection?.let { det ->
+                        // Check if we already have this detection
+                        val existing = det.macAddress?.let { repository.getDetectionByMacAddress(it) }
+                            ?: det.ssid?.let { repository.getDetectionBySsid(it) }
+
+                        if (existing == null) {
+                            repository.insertDetection(det)
+
+                            if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                anomaly.severity == ThreatLevel.HIGH) {
+                                alertUser(det)
+                            }
+
+                            lastDetection.value = det
+                            detectionCount.value = repository.getTotalDetectionCount()
+
+                            Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update monitor location when GPS updates
+        serviceScope.launch {
+            while (isScanning.value) {
+                currentLocation?.let { loc ->
+                    rogueWifiMonitor?.updateLocation(loc.latitude, loc.longitude)
+                }
+                delay(5000)
+            }
+        }
+    }
+
+    private fun stopRogueWifiMonitoring() {
+        rogueWifiStatusJob?.cancel()
+        rogueWifiStatusJob = null
+        rogueWifiAnomalyJob?.cancel()
+        rogueWifiAnomalyJob = null
+        rogueWifiEventsJob?.cancel()
+        rogueWifiEventsJob = null
+        rogueWifiMonitor?.stopMonitoring()
+        Log.d(TAG, "Rogue WiFi monitoring stopped")
+    }
+
+    // ==================== RF Signal Analysis ====================
+
+    private var rfStatusJob: Job? = null
+    private var rfAnomalyJob: Job? = null
+    private var rfEventsJob: Job? = null
+    private var rfDronesJob: Job? = null
+
+    private fun startRfSignalAnalysis() {
+        Log.d(TAG, "Starting RF signal analysis")
+
+        rfSignalAnalyzer?.startMonitoring()
+
+        // Collect status updates
+        rfStatusJob = serviceScope.launch {
+            rfSignalAnalyzer?.rfStatus?.collect { status ->
+                Companion.rfStatus.value = status
+            }
+        }
+
+        // Collect events
+        rfEventsJob = serviceScope.launch {
+            rfSignalAnalyzer?.rfEvents?.collect { events ->
+                Companion.rfEvents.value = events
+            }
+        }
+
+        // Collect detected drones
+        rfDronesJob = serviceScope.launch {
+            rfSignalAnalyzer?.dronesDetected?.collect { drones ->
+                Companion.detectedDrones.value = drones
+
+                // Convert new drones to detections
+                for (drone in drones) {
+                    val detection = rfSignalAnalyzer?.droneToDetection(drone)
+                    detection?.let { det ->
+                        val existing = det.macAddress?.let { repository.getDetectionByMacAddress(it) }
+                        if (existing == null) {
+                            repository.insertDetection(det)
+                            alertUser(det)
+                            lastDetection.value = det
+                            detectionCount.value = repository.getTotalDetectionCount()
+                            Log.w(TAG, "DRONE DETECTED: ${drone.manufacturer} at ${drone.estimatedDistance}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect anomalies and convert to detections
+        rfAnomalyJob = serviceScope.launch {
+            rfSignalAnalyzer?.anomalies?.collect { anomalies ->
+                Companion.rfAnomalies.value = anomalies
+
+                for (anomaly in anomalies) {
+                    val detection = rfSignalAnalyzer?.anomalyToDetection(anomaly)
+                    detection?.let { det ->
+                        // Use timestamp-based unique ID for RF anomalies
+                        val existing = repository.getDetectionBySsid(det.deviceName ?: "")
+                        if (existing == null) {
+                            repository.insertDetection(det)
+
+                            if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                anomaly.severity == ThreatLevel.HIGH) {
+                                alertUser(det)
+                            }
+
+                            lastDetection.value = det
+                            detectionCount.value = repository.getTotalDetectionCount()
+
+                            Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update analyzer location
+        serviceScope.launch {
+            while (isScanning.value) {
+                currentLocation?.let { loc ->
+                    rfSignalAnalyzer?.updateLocation(loc.latitude, loc.longitude)
+                }
+                delay(5000)
+            }
+        }
+    }
+
+    private fun stopRfSignalAnalysis() {
+        rfStatusJob?.cancel()
+        rfStatusJob = null
+        rfAnomalyJob?.cancel()
+        rfAnomalyJob = null
+        rfEventsJob?.cancel()
+        rfEventsJob = null
+        rfDronesJob?.cancel()
+        rfDronesJob = null
+        rfSignalAnalyzer?.stopMonitoring()
+        Log.d(TAG, "RF signal analysis stopped")
+    }
+
+    // ==================== Ultrasonic Detection ====================
+
+    private var ultrasonicStatusJob: Job? = null
+    private var ultrasonicAnomalyJob: Job? = null
+    private var ultrasonicEventsJob: Job? = null
+    private var ultrasonicBeaconsJob: Job? = null
+
+    private fun startUltrasonicDetection() {
+        if (!hasAudioPermissions()) {
+            Log.w(TAG, "Missing audio permissions for ultrasonic detection")
+            return
+        }
+
+        Log.d(TAG, "Starting ultrasonic beacon detection")
+
+        ultrasonicDetector?.startMonitoring()
+
+        // Collect status updates
+        ultrasonicStatusJob = serviceScope.launch {
+            ultrasonicDetector?.status?.collect { status ->
+                Companion.ultrasonicStatus.value = status
+            }
+        }
+
+        // Collect events
+        ultrasonicEventsJob = serviceScope.launch {
+            ultrasonicDetector?.events?.collect { events ->
+                Companion.ultrasonicEvents.value = events
+            }
+        }
+
+        // Collect active beacons
+        ultrasonicBeaconsJob = serviceScope.launch {
+            ultrasonicDetector?.beaconsDetected?.collect { beacons ->
+                Companion.ultrasonicBeacons.value = beacons
+            }
+        }
+
+        // Collect anomalies and convert to detections
+        ultrasonicAnomalyJob = serviceScope.launch {
+            ultrasonicDetector?.anomalies?.collect { anomalies ->
+                Companion.ultrasonicAnomalies.value = anomalies
+
+                for (anomaly in anomalies) {
+                    val detection = ultrasonicDetector?.anomalyToDetection(anomaly)
+                    detection?.let { det ->
+                        // Use frequency as unique identifier
+                        val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
+                        if (existing == null) {
+                            repository.insertDetection(det)
+
+                            if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                anomaly.severity == ThreatLevel.HIGH) {
+                                alertUser(det)
+                            }
+
+                            lastDetection.value = det
+                            detectionCount.value = repository.getTotalDetectionCount()
+
+                            Log.w(TAG, "ULTRASONIC: ${anomaly.type.displayName} - ${anomaly.frequency}Hz")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update detector location
+        serviceScope.launch {
+            while (isScanning.value) {
+                currentLocation?.let { loc ->
+                    ultrasonicDetector?.updateLocation(loc.latitude, loc.longitude)
+                }
+                delay(5000)
+            }
+        }
+    }
+
+    private fun stopUltrasonicDetection() {
+        ultrasonicStatusJob?.cancel()
+        ultrasonicStatusJob = null
+        ultrasonicAnomalyJob?.cancel()
+        ultrasonicAnomalyJob = null
+        ultrasonicEventsJob?.cancel()
+        ultrasonicEventsJob = null
+        ultrasonicBeaconsJob?.cancel()
+        ultrasonicBeaconsJob = null
+        ultrasonicDetector?.stopMonitoring()
+        Log.d(TAG, "Ultrasonic detection stopped")
+    }
+
     // ==================== BLE Scanning ====================
     
     @SuppressLint("MissingPermission")
-    private fun startBleScan() {
+    private fun startBleScan(aggressiveMode: Boolean = true) {
         if (!hasBluetoothPermissions()) {
             bleStatus.value = SubsystemStatus.PermissionDenied("BLUETOOTH_SCAN")
             Log.w(TAG, "Missing Bluetooth permissions")
             return
         }
-        
+
         if (bluetoothAdapter?.isEnabled != true) {
             bleStatus.value = SubsystemStatus.Disabled
             Log.w(TAG, "Bluetooth is disabled")
             return
         }
-        
+
         if (isBleScanningActive) return
-        
+
+        // Build aggressive scan settings for maximum detection capability
         val scanSettings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .setReportDelay(0)
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)  // Continuous radio usage - highest detection rate
+            .setReportDelay(0)  // Immediate results, no batching
+            .apply {
+                // MATCH_MODE_AGGRESSIVE reports devices with weak signals that might otherwise be filtered
+                // This is critical for detecting fast-moving vehicles or distant surveillance equipment
+                if (aggressiveMode) {
+                    setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                    setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
+                    setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                }
+            }
             .build()
-        
+
         try {
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
             isBleScanningActive = true
             bleStatus.value = SubsystemStatus.Active
-            Log.d(TAG, "BLE scan started")
+            Log.d(TAG, "BLE scan started (aggressive=$aggressiveMode)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start BLE scan", e)
             bleStatus.value = SubsystemStatus.Error(-1, e.message ?: "Unknown error")
@@ -866,7 +1327,56 @@ class ScanningService : Service() {
         val deviceName = device.name
         val rssi = result.rssi
         val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
-        
+
+        // Extract manufacturer data for Axon Signal trigger detection
+        // Manufacturer ID 0x004C = Apple (often used as wrapper)
+        // Manufacturer ID 0x0059 = Nordic Semiconductor (used in Axon devices)
+        val manufacturerData = mutableMapOf<Int, String>()
+        result.scanRecord?.manufacturerSpecificData?.let { data ->
+            for (i in 0 until data.size()) {
+                val key = data.keyAt(i)
+                val value = data.valueAt(i)
+                manufacturerData[key] = value.joinToString("") { "%02X".format(it) }
+            }
+        }
+
+        // Track packet rate for Signal trigger spike detection
+        val advertisingRate = trackPacket(macAddress)
+
+        // Check for advertising rate spike (Signal trigger activation)
+        // Axon Signal devices advertise every ~1000ms normally, but spike to ~20-50ms when activated
+        if (advertisingRate >= HIGH_ACTIVITY_THRESHOLD) {
+            // Check if this is a Nordic Semiconductor device (common in Axon equipment)
+            val isNordic = manufacturerData.containsKey(0x0059)
+            val isAppleWrapper = manufacturerData.containsKey(0x004C)
+
+            if (isNordic || isAppleWrapper) {
+                Log.w(TAG, "⚠️ HIGH ADVERTISING RATE DETECTED: $macAddress ($advertisingRate pps) - possible Signal trigger activation!")
+
+                // Create a detection for this event
+                val detection = Detection(
+                    protocol = DetectionProtocol.BLUETOOTH_LE,
+                    detectionMethod = DetectionMethod.BLE_SERVICE_UUID,
+                    deviceType = DeviceType.AXON_POLICE_TECH,
+                    deviceName = deviceName ?: "Signal Trigger (Active)",
+                    macAddress = macAddress,
+                    rssi = rssi,
+                    signalStrength = rssiToSignalStrength(rssi),
+                    latitude = currentLocation?.latitude,
+                    longitude = currentLocation?.longitude,
+                    threatLevel = ThreatLevel.CRITICAL,
+                    threatScore = 95,
+                    manufacturer = if (isNordic) "Nordic Semiconductor (Axon)" else "Apple BLE Wrapper",
+                    matchedPatterns = gson.toJson(listOf(
+                        "Advertising spike: ${advertisingRate.toInt()} packets/sec",
+                        "Possible siren/gun draw activation"
+                    ))
+                )
+
+                handleDetection(detection)
+            }
+        }
+
         // Update scan stats
         scanStats.value = scanStats.value.copy(
             bleDevicesSeen = scanStats.value.bleDevicesSeen + 1,
@@ -957,14 +1467,71 @@ class ScanningService : Service() {
         
         // No match - track as seen device if enabled
         if (currentSettings.value.trackSeenDevices) {
-            trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids)
+            trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids, manufacturerData, advertisingRate)
+        }
+
+        // In learning mode, check if this device matches any learned signatures
+        if (learningModeEnabled.value) {
+            checkLearnedSignatures(macAddress, deviceName, rssi, serviceUuids, manufacturerData)
         }
     }
-    
-    private fun trackSeenBleDevice(macAddress: String, deviceName: String?, rssi: Int, serviceUuids: List<java.util.UUID>) {
+
+    private suspend fun checkLearnedSignatures(
+        macAddress: String,
+        deviceName: String?,
+        rssi: Int,
+        serviceUuids: List<java.util.UUID>,
+        manufacturerData: Map<Int, String>
+    ) {
+        val macPrefix = macAddress.take(8).uppercase()
+        val uuidStrings = serviceUuids.map { it.toString() }
+
+        for (signature in learnedSignatures.value) {
+            val matchesPrefix = signature.macPrefix == macPrefix
+            val matchesUuids = signature.serviceUuids.isNotEmpty() &&
+                    signature.serviceUuids.any { it in uuidStrings }
+            val matchesMfg = signature.manufacturerIds.isNotEmpty() &&
+                    signature.manufacturerIds.any { manufacturerData.containsKey(it) }
+
+            if (matchesPrefix || matchesUuids || matchesMfg) {
+                Log.w(TAG, "LEARNED SIGNATURE MATCH: $macAddress matches ${signature.id}")
+
+                val detection = Detection(
+                    protocol = DetectionProtocol.BLUETOOTH_LE,
+                    detectionMethod = DetectionMethod.BLE_DEVICE_NAME,
+                    deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+                    deviceName = deviceName ?: signature.name,
+                    macAddress = macAddress,
+                    rssi = rssi,
+                    signalStrength = rssiToSignalStrength(rssi),
+                    latitude = currentLocation?.latitude,
+                    longitude = currentLocation?.longitude,
+                    threatLevel = ThreatLevel.HIGH,
+                    threatScore = 85,
+                    manufacturer = "Learned Signature",
+                    matchedPatterns = gson.toJson(listOf(
+                        "Matches learned signature: ${signature.id}",
+                        signature.notes ?: "User-confirmed suspicious device"
+                    ))
+                )
+
+                handleDetection(detection)
+                break
+            }
+        }
+    }
+
+    private fun trackSeenBleDevice(
+        macAddress: String,
+        deviceName: String?,
+        rssi: Int,
+        serviceUuids: List<java.util.UUID>,
+        manufacturerData: Map<Int, String> = emptyMap(),
+        advertisingRate: Float = 0f
+    ) {
         val currentList = seenBleDevices.value.toMutableList()
         val existingIndex = currentList.indexOfFirst { it.id == macAddress }
-        
+
         if (existingIndex >= 0) {
             // Update existing
             val existing = currentList[existingIndex]
@@ -972,7 +1539,9 @@ class ScanningService : Service() {
                 name = deviceName ?: existing.name,
                 rssi = rssi,
                 lastSeen = System.currentTimeMillis(),
-                seenCount = existing.seenCount + 1
+                seenCount = existing.seenCount + 1,
+                manufacturerData = if (manufacturerData.isNotEmpty()) manufacturerData else existing.manufacturerData,
+                advertisingRate = advertisingRate
             )
         } else {
             // Add new
@@ -981,22 +1550,24 @@ class ScanningService : Service() {
                 val oui = macAddress.take(8).uppercase()
                 DetectionPatterns.getManufacturerFromOui(oui)
             } catch (e: Exception) { null }
-            
+
             currentList.add(0, SeenDevice(
                 id = macAddress,
                 name = deviceName,
                 type = "BLE",
                 rssi = rssi,
                 manufacturer = manufacturer,
-                serviceUuids = serviceUuids.map { it.toString() }
+                serviceUuids = serviceUuids.map { it.toString() },
+                manufacturerData = manufacturerData,
+                advertisingRate = advertisingRate
             ))
-            
+
             // Limit list size
             if (currentList.size > MAX_SEEN_DEVICES) {
                 currentList.removeAt(currentList.lastIndex)
             }
         }
-        
+
         seenBleDevices.value = currentList
     }
     
@@ -1091,16 +1662,22 @@ class ScanningService : Service() {
     @SuppressLint("MissingPermission")
     private suspend fun processWifiScanResults() {
         if (!hasLocationPermissions()) return
-        
+
         val results = wifiManager.scanResults
         Log.d(TAG, "Processing ${results.size} WiFi scan results")
-        
+
         // Update scan stats
         scanStats.value = scanStats.value.copy(
             wifiNetworksSeen = scanStats.value.wifiNetworksSeen + results.size,
             successfulWifiScans = scanStats.value.successfulWifiScans + 1,
             lastWifiSuccessTime = System.currentTimeMillis()
         )
+
+        // Feed results to Rogue WiFi Monitor for evil twin/rogue AP detection
+        rogueWifiMonitor?.processScanResults(results)
+
+        // Feed results to RF Signal Analyzer for spectrum analysis
+        rfSignalAnalyzer?.analyzeWifiScan(results)
         
         for (result in results) {
             val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

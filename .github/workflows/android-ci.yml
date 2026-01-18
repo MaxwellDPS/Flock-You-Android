@@ -41,6 +41,9 @@ env:
   JAVA_VERSION: '17'
   JAVA_DISTRIBUTION: 'temurin'
 
+permissions:
+  contents: read
+
 jobs:
   # ===========================================
   # Build Job - Always runs
@@ -48,11 +51,16 @@ jobs:
   build:
     name: 🔨 Build
     runs-on: ubuntu-latest
-    
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
     outputs:
       version_name: ${{ steps.version.outputs.version_name }}
       version_code: ${{ steps.version.outputs.version_code }}
-    
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -101,6 +109,48 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
+      - name: 🔏 Attest Debug APK
+        id: attest-debug
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: app/build/outputs/apk/debug/*.apk
+
+      - name: 📋 Build Summary
+        run: |
+          echo "## 🔨 Debug Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Build Info" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version** | ${{ steps.version.outputs.version_name }} (${{ steps.version.outputs.version_code }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${GITHUB_SHA}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Runner** | \`${{ runner.os }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Java** | ${{ env.JAVA_VERSION }} (${{ env.JAVA_DISTRIBUTION }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Signing" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Type** | Debug (Android debug keystore) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Key** | Default Android debug key |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔏 Attestation" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ✅ Attested |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Type** | [SLSA Build Provenance](https://slsa.dev/spec/v1.0/provenance) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Bundle** | [\`${{ steps.attest-debug.outputs.bundle-path }}\`](${{ github.server_url }}/${{ github.repository }}/attestations) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [📦 Download Artifact](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [🔏 View Attestations](${{ github.server_url }}/${{ github.repository }}/attestations)" >> $GITHUB_STEP_SUMMARY
+          echo "- [📜 Workflow File](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/.github/workflows/android-ci.yml)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Verify Attestation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "gh attestation verify app-debug.apk --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
   # ===========================================
   # Release Build Job - Only when release is requested
   # ===========================================
@@ -109,7 +159,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name == 'workflow_dispatch' && inputs.create_release == true
-    
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -152,13 +207,190 @@ jobs:
             -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
             --stacktrace
       
-      - name: 🔨 Build Release APK (Unsigned)
+      - name: 🔐 Install step CLI
         if: env.KEYSTORE_BASE64 == ''
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "⚠️ No keystore configured, building unsigned APK"
-          ./gradlew assembleRelease --stacktrace
+          wget -q https://dl.smallstep.com/cli/docs-cli-install/latest/step-cli_amd64.deb
+          sudo dpkg -i step-cli_amd64.deb
+          rm step-cli_amd64.deb
+          step version
+
+      # ===========================================
+      # Option 2: Step CA with JWK Provisioner
+      # Requires: STEP_CA_URL, STEP_CA_ROOT_CRT, STEP_CA_JWK_PROVISIONER, STEP_CA_JWK_KEY
+      # ===========================================
+      - name: 🔐 Configure Step CA
+        id: step-ca-config
+        if: env.KEYSTORE_BASE64 == '' && env.STEP_CA_URL != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+          STEP_CA_ROOT_CRT: ${{ secrets.STEP_CA_ROOT_CRT }}
+          STEP_CA_FINGERPRINT: ${{ secrets.STEP_CA_FINGERPRINT }}
+        run: |
+          echo "🔐 Configuring step CLI for CA: $STEP_CA_URL"
+
+          # Bootstrap step CLI with the CA
+          if [ -n "$STEP_CA_ROOT_CRT" ]; then
+            echo "$STEP_CA_ROOT_CRT" > /tmp/step-ca-root.crt
+            step ca bootstrap --ca-url "$STEP_CA_URL" --root /tmp/step-ca-root.crt --install
+          elif [ -n "$STEP_CA_FINGERPRINT" ]; then
+            step ca bootstrap --ca-url "$STEP_CA_URL" --fingerprint "$STEP_CA_FINGERPRINT" --install
+          else
+            echo "❌ Either STEP_CA_ROOT_CRT or STEP_CA_FINGERPRINT must be provided"
+            exit 1
+          fi
+
+          echo "✅ Step CA configured"
+          step ca health
+
+      - name: 🔐 Request Certificate from Step CA (JWK Auth)
+        id: step-ca-cert
+        if: env.KEYSTORE_BASE64 == '' && env.STEP_CA_URL != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+          STEP_CA_JWK_PROVISIONER: ${{ secrets.STEP_CA_JWK_PROVISIONER }}
+          STEP_CA_JWK_KEY: ${{ secrets.STEP_CA_JWK_KEY }}
+          STEP_CA_JWK_PASSWORD: ${{ secrets.STEP_CA_JWK_PASSWORD }}
+        run: |
+          echo "🔐 Requesting certificate from Step CA using JWK provisioner..."
+
+          # Write JWK private key to temp file
+          echo "$STEP_CA_JWK_KEY" > /tmp/jwk-key.json
+          chmod 600 /tmp/jwk-key.json
+
+          # Generate a new key pair for the certificate
+          step crypto keypair ca-cert-pub.pem ca-cert-key.pem \
+            --kty RSA \
+            --size 2048 \
+            --no-password \
+            --insecure
+
+          # Request certificate from CA using JWK provisioner
+          if [ -n "$STEP_CA_JWK_PASSWORD" ]; then
+            echo "$STEP_CA_JWK_PASSWORD" | step ca certificate \
+              "CN=Flock You Release,O=FlockYou,L=CI,ST=GitHub Actions,C=US" \
+              ca-cert.pem \
+              ca-cert-key.pem \
+              --provisioner "$STEP_CA_JWK_PROVISIONER" \
+              --provisioner-password-file /dev/stdin \
+              --not-after 8760h \
+              --force
+          else
+            step ca certificate \
+              "CN=Flock You Release,O=FlockYou,L=CI,ST=GitHub Actions,C=US" \
+              ca-cert.pem \
+              ca-cert-key.pem \
+              --provisioner "$STEP_CA_JWK_PROVISIONER" \
+              --not-after 8760h \
+              --force
+          fi
+
+          # Convert to PKCS12 keystore for Android signing
+          # Include the full certificate chain
+          step ca root ca-root.pem
+          cat ca-cert.pem ca-root.pem > ca-cert-chain.pem
+
+          openssl pkcs12 -export \
+            -in ca-cert-chain.pem \
+            -inkey ca-cert-key.pem \
+            -out app/ca-signed-keystore.p12 \
+            -name ca-signed \
+            -passout pass:ca-signed
+
+          # Verify the keystore
+          keytool -list -keystore app/ca-signed-keystore.p12 -storepass ca-signed -storetype PKCS12
+
+          echo "✅ CA-signed keystore created"
+
+          # Output certificate info for transparency
+          echo "📜 Certificate details:"
+          step certificate inspect ca-cert.pem
+
+          # Output certificate fingerprint for verification
+          echo "🔑 Certificate fingerprint:"
+          step certificate fingerprint ca-cert.pem
+
+          # Store signing type for summary
+          echo "signing_type=ca" >> $GITHUB_OUTPUT
+
+          # Cleanup sensitive files
+          rm -f /tmp/jwk-key.json ca-cert.pem ca-cert-key.pem ca-cert-chain.pem ca-root.pem ca-cert-pub.pem /tmp/step-ca-root.crt
+
+      - name: 🔨 Build Release APK (CA Signed)
+        if: env.KEYSTORE_BASE64 == '' && env.STEP_CA_URL != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+        run: |
+          echo "🔐 Building with CA-signed certificate from Step CA"
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/app/ca-signed-keystore.p12 \
+            -Pandroid.injected.signing.store.password=ca-signed \
+            -Pandroid.injected.signing.key.alias=ca-signed \
+            -Pandroid.injected.signing.key.password=ca-signed \
+            --stacktrace
+
+      # ===========================================
+      # Option 3: Ephemeral Self-Signed (Fallback)
+      # Used when no keystore or CA is configured
+      # ===========================================
+      - name: 🔐 Generate Ephemeral Self-Signed Certificate
+        if: env.KEYSTORE_BASE64 == '' && env.STEP_CA_URL == ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+        run: |
+          echo "🔐 Generating ephemeral self-signed certificate with step CLI..."
+
+          # Generate ephemeral key pair and self-signed certificate
+          step certificate create \
+            "CN=Flock You Ephemeral,O=FlockYou,L=CI,ST=GitHub Actions,C=US" \
+            ephemeral-cert.pem \
+            ephemeral-key.pem \
+            --profile leaf \
+            --not-after 8760h \
+            --no-password \
+            --insecure \
+            --kty RSA \
+            --size 2048
+
+          # Convert to PKCS12 keystore for Android signing
+          openssl pkcs12 -export \
+            -in ephemeral-cert.pem \
+            -inkey ephemeral-key.pem \
+            -out app/ephemeral-keystore.p12 \
+            -name ephemeral \
+            -passout pass:ephemeral
+
+          # Verify the keystore
+          keytool -list -keystore app/ephemeral-keystore.p12 -storepass ephemeral -storetype PKCS12
+
+          echo "✅ Ephemeral keystore created"
+
+          # Output certificate info for transparency
+          echo "📜 Certificate details:"
+          openssl x509 -in ephemeral-cert.pem -text -noout | head -30
+
+          # Cleanup PEM files (sensitive key material)
+          rm -f ephemeral-cert.pem ephemeral-key.pem
+
+      - name: 🔨 Build Release APK (Ephemeral Signed)
+        if: env.KEYSTORE_BASE64 == '' && env.STEP_CA_URL == ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+        run: |
+          echo "⚠️ No keystore or CA configured, building with ephemeral self-signed certificate"
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/app/ephemeral-keystore.p12 \
+            -Pandroid.injected.signing.store.password=ephemeral \
+            -Pandroid.injected.signing.key.alias=ephemeral \
+            -Pandroid.injected.signing.key.password=ephemeral \
+            --stacktrace
       
       - name: 📝 Rename APK with version
         run: |
@@ -183,10 +415,106 @@ jobs:
           name: app-release
           path: app/build/outputs/apk/release/*.apk
           retention-days: 90
-      
-      - name: 🧹 Cleanup keystore
+
+      - name: 🔏 Attest Release APK
+        id: attest-release
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: app/build/outputs/apk/release/*.apk
+
+      - name: 📋 Release Build Summary
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+          STEP_CA_JWK_PROVISIONER: ${{ secrets.STEP_CA_JWK_PROVISIONER }}
+        run: |
+          VERSION="${{ needs.build.outputs.version_name }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ inputs.release_version }}"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.0"
+          fi
+
+          echo "## 🚀 Release Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Build Info" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version** | v${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${GITHUB_SHA}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Runner** | \`${{ runner.os }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Java** | ${{ env.JAVA_VERSION }} (${{ env.JAVA_DISTRIBUTION }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🔐 Signing" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "| **Type** | ✅ Production (Configured Keystore) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Keystore** | Repository secret (\`KEYSTORE_BASE64\`) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Key Alias** | \`${{ secrets.KEY_ALIAS }}\` |" >> $GITHUB_STEP_SUMMARY
+          elif [ -n "$STEP_CA_URL" ]; then
+            echo "| **Type** | 🔐 CA-Signed ([Step CA](https://smallstep.com/docs/step-ca/)) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **CA URL** | \`$STEP_CA_URL\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Provisioner** | \`$STEP_CA_JWK_PROVISIONER\` (JWK) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Algorithm** | RSA 2048-bit |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Subject** | \`CN=Flock You Release,O=FlockYou,L=CI,ST=GitHub Actions,C=US\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Note:** This APK is signed with a certificate issued by your Step CA using JWK provisioner authentication." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Type** | ⚠️ Ephemeral (Self-Signed Certificate) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Generated By** | [Smallstep CLI](https://smallstep.com/docs/step-cli/) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Algorithm** | RSA 2048-bit |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Validity** | 1 year (ephemeral, CI-only) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Subject** | \`CN=Flock You Ephemeral,O=FlockYou,L=CI,ST=GitHub Actions,C=US\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Note:** This APK is signed with an ephemeral self-signed certificate generated during CI." >> $GITHUB_STEP_SUMMARY
+            echo "> For production releases, configure one of:" >> $GITHUB_STEP_SUMMARY
+            echo "> - **Keystore:** \`KEYSTORE_BASE64\`, \`KEYSTORE_PASSWORD\`, \`KEY_ALIAS\`, \`KEY_PASSWORD\`" >> $GITHUB_STEP_SUMMARY
+            echo "> - **Step CA:** \`STEP_CA_URL\`, \`STEP_CA_ROOT_CRT\`/\`STEP_CA_FINGERPRINT\`, \`STEP_CA_JWK_PROVISIONER\`, \`STEP_CA_JWK_KEY\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🔏 Attestation" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ✅ Attested |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Type** | [SLSA Build Provenance](https://slsa.dev/spec/v1.0/provenance) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Bundle** | [\`${{ steps.attest-release.outputs.bundle-path }}\`](${{ github.server_url }}/${{ github.repository }}/attestations) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          ls -lh app/build/outputs/apk/release/*.apk 2>/dev/null || echo "No APK found"
+          ls -lh app/build/outputs/apk/release/*.apk >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No APK found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🔗 Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [📦 Download Artifact](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [🔏 View Attestations](${{ github.server_url }}/${{ github.repository }}/attestations)" >> $GITHUB_STEP_SUMMARY
+          echo "- [📜 Workflow File](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/.github/workflows/android-ci.yml)" >> $GITHUB_STEP_SUMMARY
+          echo "- [🔐 Smallstep CLI Docs](https://smallstep.com/docs/step-cli/)" >> $GITHUB_STEP_SUMMARY
+          echo "- [📋 SLSA Provenance Spec](https://slsa.dev/spec/v1.0/provenance)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### ✅ Verify Attestation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Download and verify the APK attestation" >> $GITHUB_STEP_SUMMARY
+          echo "gh attestation verify FlockYou-v${VERSION}.apk --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# View attestation details" >> $GITHUB_STEP_SUMMARY
+          echo "gh attestation verify FlockYou-v${VERSION}.apk --owner ${{ github.repository_owner }} --format json | jq" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🧹 Cleanup keystores
         if: always()
-        run: rm -f app/release-keystore.jks
+        run: |
+          rm -f app/release-keystore.jks
+          rm -f app/ephemeral-keystore.p12
+          rm -f app/ca-signed-keystore.p12
 
   # ===========================================
   # Create GitHub Release

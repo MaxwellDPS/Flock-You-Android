@@ -7,6 +7,7 @@
 
 # Keep Room entities
 -keep class com.flockyou.data.model.Detection { *; }
+-keep class com.flockyou.data.model.OuiEntry { *; }
 
 # Hilt
 -keepclasseswithmembers class * {
@@ -28,3 +29,18 @@
 # Google Maps
 -keep class com.google.android.gms.maps.** { *; }
 -keep interface com.google.android.gms.maps.** { *; }
+
+# OkHttp
+-keepattributes Signature
+-keepattributes *Annotation*
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+
+# WorkManager
+-keep class * extends androidx.work.Worker
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context,androidx.work.WorkerParameters);
+}
+-keep class com.flockyou.worker.** { *; }

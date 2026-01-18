@@ -1,0 +1,10 @@
+# Screenshot Placeholders
+
+Add the following screenshots to this directory:
+
+- main_screen.png - Main detection screen with radar animation
+- timeline.png - Detection timeline/history view
+- satellite.png - Satellite monitoring screen
+- cellular.png - Cellular network monitoring view
+- settings.png - Main settings screen
+- rules.png - Rule settings/detection pattern toggles
