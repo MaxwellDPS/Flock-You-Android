@@ -442,7 +442,6 @@ class ScanningService : Service() {
     }
     
     @SuppressLint("MissingPermission")
-    @SuppressLint("MissingPermission")
     private suspend fun processBleScanResult(result: ScanResult) {
         val device = result.device
         val macAddress = device.address ?: return
@@ -671,7 +670,6 @@ class ScanningService : Service() {
         wifiScanReceiver = null
     }
     
-    @SuppressLint("MissingPermission")
     @SuppressLint("MissingPermission")
     private suspend fun processWifiScanResults() {
         if (!hasLocationPermissions()) return

@@ -148,7 +148,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         StatRow("BLE Devices Seen", scanStats.bleDevicesSeen.toString())
                         StatRow("WiFi Networks Seen", scanStats.wifiNetworksSeen.toString())
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
                         StatRow("Total BLE Scans", scanStats.totalBleScans.toString())
                         StatRow("Total WiFi Scans", scanStats.totalWifiScans.toString())
                         StatRow("Successful WiFi Scans", scanStats.successfulWifiScans.toString())
@@ -160,7 +160,7 @@ fun SettingsScreen(
                             else 
                                 MaterialTheme.colorScheme.onSurface
                         )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
                         scanStats.lastBleSuccessTime?.let { time ->
                             StatRow(
                                 "Last BLE Success",

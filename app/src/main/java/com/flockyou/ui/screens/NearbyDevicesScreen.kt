@@ -216,6 +216,7 @@ fun StatBox(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SeenDeviceCard(
     device: ScanningService.SeenDevice,
@@ -306,7 +307,7 @@ fun SeenDeviceCard(
             // Expanded details
             AnimatedVisibility(visible = expanded) {
                 Column(modifier = Modifier.padding(top = 12.dp)) {
-                    HorizontalDivider()
+                    Divider()
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     DetailRow("First Seen", dateFormat.format(Date(device.firstSeen)))
