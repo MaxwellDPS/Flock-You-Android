@@ -69,6 +69,9 @@ interface DetectionDao {
     @Query("SELECT * FROM detections WHERE id = :id")
     suspend fun getDetectionById(id: String): Detection?
     
+    @Query("SELECT COUNT(*) FROM detections")
+    suspend fun getTotalDetectionCountSync(): Int
+    
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDetection(detection: Detection)
     

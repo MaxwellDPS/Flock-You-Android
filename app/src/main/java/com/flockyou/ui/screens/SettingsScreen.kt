@@ -67,6 +67,7 @@ fun SettingsScreen(
     var bleDuration by remember { mutableStateOf(currentConfig.bleScanDuration / 1000) }
     var enableBle by remember { mutableStateOf(currentConfig.enableBle) }
     var enableWifi by remember { mutableStateOf(currentConfig.enableWifi) }
+    var enableCellular by remember { mutableStateOf(currentConfig.enableCellular) }
     var trackSeenDevices by remember { mutableStateOf(currentConfig.trackSeenDevices) }
     
     Scaffold(
@@ -206,7 +207,7 @@ fun SettingsScreen(
                                 onValueChangeFinished = {
                                     updateScanSettings(
                                         wifiInterval.toInt(), bleDuration.toInt(),
-                                        enableBle, enableWifi, trackSeenDevices
+                                        enableBle, enableWifi, enableCellular, trackSeenDevices
                                     )
                                 }
                             )
@@ -231,7 +232,7 @@ fun SettingsScreen(
                                 onValueChangeFinished = {
                                     updateScanSettings(
                                         wifiInterval.toInt(), bleDuration.toInt(),
-                                        enableBle, enableWifi, trackSeenDevices
+                                        enableBle, enableWifi, enableCellular, trackSeenDevices
                                     )
                                 }
                             )
@@ -253,7 +254,7 @@ fun SettingsScreen(
                                         enableBle = it
                                         updateScanSettings(
                                             wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, trackSeenDevices
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
                                         )
                                     }
                                 )
@@ -271,7 +272,32 @@ fun SettingsScreen(
                                         enableWifi = it
                                         updateScanSettings(
                                             wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, trackSeenDevices
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Cellular Monitoring")
+                                    Text(
+                                        text = "Detect IMSI catchers & anomalies",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = enableCellular,
+                                    onCheckedChange = { 
+                                        enableCellular = it
+                                        updateScanSettings(
+                                            wifiInterval.toInt(), bleDuration.toInt(),
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
                                         )
                                     }
                                 )
@@ -296,7 +322,7 @@ fun SettingsScreen(
                                         trackSeenDevices = it
                                         updateScanSettings(
                                             wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, trackSeenDevices
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
                                         )
                                     }
                                 )
@@ -479,6 +505,7 @@ private fun updateScanSettings(
     bleDurationSeconds: Int,
     enableBle: Boolean,
     enableWifi: Boolean,
+    enableCellular: Boolean,
     trackSeenDevices: Boolean
 ) {
     ScanningService.updateSettings(
@@ -486,6 +513,7 @@ private fun updateScanSettings(
         bleDurationSeconds = bleDurationSeconds,
         enableBle = enableBle,
         enableWifi = enableWifi,
+        enableCellular = enableCellular,
         trackSeenDevices = trackSeenDevices
     )
 }

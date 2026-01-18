@@ -563,23 +563,40 @@ class CellularMonitor(private val context: Context) {
      * Convert anomaly to Detection for unified handling
      */
     fun anomalyToDetection(anomaly: CellularAnomaly): Detection {
+        val detailsJson = try {
+            com.google.gson.Gson().toJson(anomaly.details)
+        } catch (e: Exception) {
+            "{}"
+        }
+        
         return Detection(
             id = anomaly.id,
-            identifier = "CELLULAR_${anomaly.type.name}",
+            timestamp = anomaly.timestamp,
+            protocol = DetectionProtocol.WIFI, // Using WIFI as proxy for "cellular"
+            detectionMethod = DetectionMethod.PROBE_REQUEST, // Closest match for cellular
             deviceType = DeviceType.STINGRAY_IMSI,
-            protocol = DetectionProtocol.WIFI, // Using WIFI as proxy for "radio"
+            deviceName = "Cellular: ${anomaly.type.displayName}",
+            macAddress = null,
+            ssid = "CELLULAR_${anomaly.type.name}_${anomaly.timestamp}",
+            rssi = lastSignalStrength,
+            signalStrength = rssiToSignalStrength(lastSignalStrength),
+            latitude = lastLatitude,
+            longitude = lastLongitude,
             threatLevel = anomaly.severity,
+            threatScore = when (anomaly.severity) {
+                ThreatLevel.CRITICAL -> 100
+                ThreatLevel.HIGH -> 85
+                ThreatLevel.MEDIUM -> 60
+                ThreatLevel.LOW -> 40
+                ThreatLevel.INFO -> 20
+            },
             manufacturer = "Unknown",
-            signalStrength = lastSignalStrength,
-            firstSeen = anomaly.timestamp,
-            lastSeen = anomaly.timestamp,
-            location = if (lastLatitude != null && lastLongitude != null) {
-                DetectionLocation(lastLatitude!!, lastLongitude!!, 50f)
-            } else null,
-            rawData = mapOf(
-                "anomaly_type" to anomaly.type.name,
-                "description" to anomaly.description
-            ) + anomaly.details
+            firmwareVersion = null,
+            serviceUuids = null,
+            matchedPatterns = "[\"${anomaly.type.name}\"]",
+            isActive = true,
+            seenCount = 1,
+            lastSeenTimestamp = anomaly.timestamp
         )
     }
     

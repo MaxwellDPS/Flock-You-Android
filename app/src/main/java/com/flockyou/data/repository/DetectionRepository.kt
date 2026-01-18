@@ -42,10 +42,6 @@ class DetectionRepository @Inject constructor(
         return detectionDao.getDetectionById(id)
     }
     
-    suspend fun getDetectionByIdentifier(identifier: String): Detection? {
-        return detectionDao.getDetectionByIdentifier(identifier)
-    }
-    
     suspend fun getTotalDetectionCount(): Int {
         return detectionDao.getTotalDetectionCountSync()
     }

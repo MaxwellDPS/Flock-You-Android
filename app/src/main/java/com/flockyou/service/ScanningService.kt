@@ -464,8 +464,8 @@ class ScanningService : Service() {
                     // Convert anomaly to detection
                     val detection = cellularMonitor?.anomalyToDetection(anomaly)
                     detection?.let { det ->
-                        // Check if we already have this detection
-                        val existing = repository.getDetectionByIdentifier(det.identifier)
+                        // Check if we already have this detection (use unique SSID)
+                        val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
                             repository.insertDetection(det)
                             
