@@ -1,5 +1,8 @@
 package com.flockyou.ui.screens
 
+import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -7,17 +10,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
 import com.flockyou.ui.components.ThreatBadge
 import com.flockyou.ui.components.toIcon
 import com.flockyou.ui.theme.*
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,25 +30,59 @@ fun MapScreen(
     viewModel: MapViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
+    var mapView by remember { mutableStateOf<MapView?>(null) }
     
-    val cameraPositionState = rememberCameraPositionState {
-        // Default to US center
-        position = CameraPosition.fromLatLngZoom(LatLng(39.8283, -98.5795), 4f)
+    // Initialize osmdroid configuration
+    LaunchedEffect(Unit) {
+        Configuration.getInstance().apply {
+            userAgentValue = context.packageName
+            osmdroidBasePath = context.getExternalFilesDir(null)
+            osmdroidTileCache = context.getExternalFilesDir("tiles")
+        }
     }
     
-    // Center on detections when they load
-    LaunchedEffect(uiState.detectionsWithLocation) {
-        uiState.detectionsWithLocation.firstOrNull()?.let { detection ->
-            if (detection.latitude != null && detection.longitude != null) {
-                cameraPositionState.animate(
-                    CameraUpdateFactory.newLatLngZoom(
-                        LatLng(detection.latitude, detection.longitude),
-                        14f
-                    )
+    // Update markers when detections change
+    LaunchedEffect(uiState.detectionsWithLocation, mapView) {
+        mapView?.let { map ->
+            // Clear existing markers
+            map.overlays.removeAll { it is Marker }
+            
+            // Add markers for each detection
+            uiState.detectionsWithLocation.forEach { detection ->
+                if (detection.latitude != null && detection.longitude != null) {
+                    val marker = Marker(map).apply {
+                        position = GeoPoint(detection.latitude, detection.longitude)
+                        title = detection.deviceType.name.replace("_", " ")
+                        snippet = detection.macAddress ?: detection.ssid ?: "Unknown"
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        icon = createMarkerDrawable(context, detection.threatLevel)
+                        
+                        setOnMarkerClickListener { _, _ ->
+                            selectedDetection = detection
+                            true
+                        }
+                    }
+                    map.overlays.add(marker)
+                }
+            }
+            
+            // Center on first detection
+            val firstWithLocation = uiState.detectionsWithLocation.firstOrNull {
+                it.latitude != null && it.longitude != null
+            }
+            
+            if (firstWithLocation != null) {
+                map.controller.animateTo(
+                    GeoPoint(firstWithLocation.latitude!!, firstWithLocation.longitude!!),
+                    14.0,
+                    1000L
                 )
             }
+            
+            map.invalidate()
         }
     }
     
@@ -57,14 +96,21 @@ fun MapScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleHeatmap() }) {
-                        Icon(
-                            imageVector = if (uiState.showHeatmap) 
-                                Icons.Default.Layers 
-                            else 
-                                Icons.Default.LayersClear,
-                            contentDescription = "Toggle heatmap"
-                        )
+                    IconButton(onClick = {
+                        mapView?.let { map ->
+                            val first = uiState.detectionsWithLocation.firstOrNull {
+                                it.latitude != null && it.longitude != null
+                            }
+                            if (first != null) {
+                                map.controller.animateTo(
+                                    GeoPoint(first.latitude!!, first.longitude!!),
+                                    14.0,
+                                    500L
+                                )
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Default.MyLocation, contentDescription = "Center")
                     }
                 }
             )
@@ -75,43 +121,25 @@ fun MapScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            GoogleMap(
+            // OpenStreetMap View
+            AndroidView(
                 modifier = Modifier.fillMaxSize(),
-                cameraPositionState = cameraPositionState,
-                properties = MapProperties(
-                    mapType = MapType.NORMAL,
-                    isMyLocationEnabled = false
-                ),
-                uiSettings = MapUiSettings(
-                    zoomControlsEnabled = true,
-                    compassEnabled = true
-                )
-            ) {
-                // Add markers for each detection with location
-                uiState.detectionsWithLocation.forEach { detection ->
-                    if (detection.latitude != null && detection.longitude != null) {
-                        val position = LatLng(detection.latitude, detection.longitude)
-                        val hue = when (detection.threatLevel) {
-                            ThreatLevel.CRITICAL -> BitmapDescriptorFactory.HUE_RED
-                            ThreatLevel.HIGH -> BitmapDescriptorFactory.HUE_ORANGE
-                            ThreatLevel.MEDIUM -> BitmapDescriptorFactory.HUE_YELLOW
-                            ThreatLevel.LOW -> BitmapDescriptorFactory.HUE_GREEN
-                            ThreatLevel.INFO -> BitmapDescriptorFactory.HUE_AZURE
-                        }
-                        
-                        Marker(
-                            state = MarkerState(position = position),
-                            title = detection.deviceType.name.replace("_", " "),
-                            snippet = detection.macAddress ?: detection.ssid,
-                            icon = BitmapDescriptorFactory.defaultMarker(hue),
-                            onClick = {
-                                selectedDetection = detection
-                                true
-                            }
+                factory = { ctx ->
+                    MapView(ctx).apply {
+                        setTileSource(TileSourceFactory.MAPNIK)
+                        setMultiTouchControls(true)
+                        controller.setZoom(4.0)
+                        controller.setCenter(GeoPoint(39.8283, -98.5795))
+                        zoomController.setVisibility(
+                            org.osmdroid.views.CustomZoomButtonsController.Visibility.SHOW_AND_FADEOUT
                         )
+                        mapView = this
                     }
+                },
+                update = { map ->
+                    mapView = map
                 }
-            }
+            )
             
             // Legend
             Card(
@@ -119,9 +147,7 @@ fun MapScreen(
                     .align(Alignment.BottomStart)
                     .padding(16.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(12.dp)
-                ) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Text(
                         text = "Threat Levels",
                         style = MaterialTheme.typography.labelMedium
@@ -135,7 +161,7 @@ fun MapScreen(
                 }
             }
             
-            // Detection count badge
+            // Detection count
             Card(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -158,6 +184,22 @@ fun MapScreen(
                     )
                 }
             }
+            
+            // Attribution
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                )
+            ) {
+                Text(
+                    text = "© OpenStreetMap",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
     }
     
@@ -167,6 +209,30 @@ fun MapScreen(
             detection = detection,
             onDismiss = { selectedDetection = null }
         )
+    }
+    
+    // Cleanup
+    DisposableEffect(Unit) {
+        onDispose {
+            mapView?.onDetach()
+        }
+    }
+}
+
+private fun createMarkerDrawable(context: Context, threatLevel: ThreatLevel): android.graphics.drawable.Drawable {
+    val color = when (threatLevel) {
+        ThreatLevel.CRITICAL -> Color.parseColor("#D32F2F")
+        ThreatLevel.HIGH -> Color.parseColor("#F57C00")
+        ThreatLevel.MEDIUM -> Color.parseColor("#FBC02D")
+        ThreatLevel.LOW -> Color.parseColor("#388E3C")
+        ThreatLevel.INFO -> Color.parseColor("#1976D2")
+    }
+    
+    return GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+        setStroke(4, Color.WHITE)
+        setSize(48, 48)
     }
 }
 
@@ -179,20 +245,13 @@ private fun LegendItem(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(vertical = 2.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(12.dp)
-                .padding(2.dp)
-        ) {
+        Box(modifier = Modifier.size(12.dp).padding(2.dp)) {
             androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                 drawCircle(color = color)
             }
         }
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall
-        )
+        Text(text = label, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -208,9 +267,7 @@ private fun MapDetectionSheet(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = detection.deviceType.toIcon(),
                     contentDescription = null,
