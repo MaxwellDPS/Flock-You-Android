@@ -530,11 +530,10 @@ class SatelliteMonitor(private val context: Context) {
             terrestrialSignalAtSwitch = lastTerrestrialSignal
         )
         
-        synchronized(connectionHistory) {
-            connectionHistory.add(event)
-            if (connectionHistory.size > maxHistorySize) {
-                connectionHistory.removeAt(0)
-            }
+        // Thread-safe list handles synchronization internally
+        connectionHistory.add(event)
+        if (connectionHistory.size > maxHistorySize) {
+            connectionHistory.removeAt(0)
         }
     }
     
@@ -610,29 +609,28 @@ class SatelliteMonitor(private val context: Context) {
      * Check for rapid switching anomaly
      */
     private suspend fun checkRapidSwitchingPattern() {
-        val anomalyToEmit: SatelliteAnomaly? = synchronized(connectionHistory) {
-            val recentEvents = connectionHistory
-                .filter { System.currentTimeMillis() - it.timestamp < 60000 } // Last minute
-            
-            if (recentEvents.size >= 3) {
-                // Multiple satellite connections in short time
-                SatelliteAnomaly(
-                    type = SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING,
-                    severity = AnomalySeverity.MEDIUM,
-                    description = "Detected ${recentEvents.size} satellite connection changes in the last minute",
-                    technicalDetails = mapOf(
-                        "eventCount" to recentEvents.size,
-                        "events" to recentEvents.map { "${it.connectionType}@${it.timestamp}" }
-                    ),
-                    recommendations = listOf(
-                        "Rapid switching could indicate interference or jamming",
-                        "May be caused by moving through coverage boundary",
-                        "Consider staying in one location to observe pattern"
-                    )
+        // Create a snapshot for thread-safe iteration
+        val historySnapshot = connectionHistory.toList()
+        val recentEvents = historySnapshot
+            .filter { System.currentTimeMillis() - it.timestamp < 60000 } // Last minute
+
+        if (recentEvents.size >= 3) {
+            // Multiple satellite connections in short time
+            _anomalies.emit(SatelliteAnomaly(
+                type = SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING,
+                severity = AnomalySeverity.MEDIUM,
+                description = "Detected ${recentEvents.size} satellite connection changes in the last minute",
+                technicalDetails = mapOf(
+                    "eventCount" to recentEvents.size,
+                    "events" to recentEvents.map { "${it.connectionType}@${it.timestamp}" }
+                ),
+                recommendations = listOf(
+                    "Rapid switching could indicate interference or jamming",
+                    "May be caused by moving through coverage boundary",
+                    "Consider staying in one location to observe pattern"
                 )
-            } else null
+            ))
         }
-        anomalyToEmit?.let { _anomalies.emit(it) }
     }
     
     /**
