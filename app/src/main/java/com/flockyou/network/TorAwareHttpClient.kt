@@ -5,7 +5,9 @@ import com.flockyou.data.NetworkSettings
 import com.flockyou.data.NetworkSettingsRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import okhttp3.Dns
 import okhttp3.OkHttpClient
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
@@ -32,14 +34,33 @@ class TorAwareHttpClient @Inject constructor(
             .build()
     }
 
+    // Cache Tor clients by host:port to avoid recreating them
+    private val torClientCache = mutableMapOf<String, OkHttpClient>()
+
+    /**
+     * DNS resolver that prevents DNS leaks when using Tor.
+     * Returns a fake address - the SOCKS5 proxy will handle DNS resolution.
+     */
+    private object TorSafeDns : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            // Return a placeholder - SOCKS5 proxy handles actual DNS
+            // This prevents DNS queries from leaking outside Tor
+            return listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
+        }
+    }
+
     private fun createTorClient(host: String, port: Int): OkHttpClient {
-        val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(host, port))
-        return OkHttpClient.Builder()
-            .proxy(proxy)
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .build()
+        val cacheKey = "$host:$port"
+        return torClientCache.getOrPut(cacheKey) {
+            val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress.createUnresolved(host, port))
+            OkHttpClient.Builder()
+                .proxy(proxy)
+                .dns(TorSafeDns) // Prevent DNS leaks
+                .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .build()
+        }
     }
 
     /**

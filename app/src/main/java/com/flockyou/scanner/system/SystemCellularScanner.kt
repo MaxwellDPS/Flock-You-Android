@@ -384,11 +384,11 @@ class SystemCellularScanner(
         val newAnomalies = mutableListOf<CellularAnomaly>()
 
         for (cellInfo in cellInfoList) {
-            when (cellInfo) {
-                is CellInfoLte -> analyzeLteCell(cellInfo, newAnomalies)
-                is CellInfoGsm -> analyzeGsmCell(cellInfo, newAnomalies)
-                is CellInfoWcdma -> analyzeWcdmaCell(cellInfo, newAnomalies)
-                is CellInfoNr -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            when {
+                cellInfo is CellInfoLte -> analyzeLteCell(cellInfo, newAnomalies)
+                cellInfo is CellInfoGsm -> analyzeGsmCell(cellInfo, newAnomalies)
+                cellInfo is CellInfoWcdma -> analyzeWcdmaCell(cellInfo, newAnomalies)
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cellInfo is CellInfoNr -> {
                     analyzeNrCell(cellInfo, newAnomalies)
                 }
             }
@@ -410,6 +410,8 @@ class SystemCellularScanner(
     private fun analyzeLteCell(cellInfo: CellInfoLte, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         // Update cell history
         updateCellHistory(identity.ci.toString(), identity.tac, signalStrength)
@@ -422,8 +424,8 @@ class SystemCellularScanner(
                     description = "LTE signal unusually strong: $signalStrength dBm (potential IMSI catcher)",
                     cellId = identity.ci.toString(),
                     lac = identity.tac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -437,8 +439,8 @@ class SystemCellularScanner(
                     description = "Invalid cell ID detected: ${identity.ci}",
                     cellId = identity.ci.toString(),
                     lac = identity.tac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -448,6 +450,8 @@ class SystemCellularScanner(
     private fun analyzeGsmCell(cellInfo: CellInfoGsm, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         updateCellHistory(identity.cid.toString(), identity.lac, signalStrength)
 
@@ -459,8 +463,8 @@ class SystemCellularScanner(
                     description = "Connected to 2G GSM network - vulnerable to interception",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength,
                     metadata = mapOf("network_type" to "GSM")
                 )
@@ -475,8 +479,8 @@ class SystemCellularScanner(
                     description = "GSM signal unusually strong: $signalStrength dBm",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -486,6 +490,8 @@ class SystemCellularScanner(
     private fun analyzeWcdmaCell(cellInfo: CellInfoWcdma, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         updateCellHistory(identity.cid.toString(), identity.lac, signalStrength)
 
@@ -496,8 +502,8 @@ class SystemCellularScanner(
                     description = "WCDMA signal unusually strong: $signalStrength dBm",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )

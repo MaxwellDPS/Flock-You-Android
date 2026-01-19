@@ -265,11 +265,11 @@ class StandardCellularScanner(
         val newAnomalies = mutableListOf<CellularAnomaly>()
 
         for (cellInfo in cellInfoList) {
-            when (cellInfo) {
-                is CellInfoLte -> analyzeLteCell(cellInfo, newAnomalies)
-                is CellInfoGsm -> analyzeGsmCell(cellInfo, newAnomalies)
-                is CellInfoWcdma -> analyzeWcdmaCell(cellInfo, newAnomalies)
-                is CellInfoNr -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            when {
+                cellInfo is CellInfoLte -> analyzeLteCell(cellInfo, newAnomalies)
+                cellInfo is CellInfoGsm -> analyzeGsmCell(cellInfo, newAnomalies)
+                cellInfo is CellInfoWcdma -> analyzeWcdmaCell(cellInfo, newAnomalies)
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cellInfo is CellInfoNr -> {
                     analyzeNrCell(cellInfo, newAnomalies)
                 }
             }
@@ -293,6 +293,8 @@ class StandardCellularScanner(
     private fun analyzeLteCell(cellInfo: CellInfoLte, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         // Check for abnormally strong signal (potential fake base station)
         if (signalStrength > -50) {
@@ -302,8 +304,8 @@ class StandardCellularScanner(
                     description = "LTE signal unusually strong: $signalStrength dBm",
                     cellId = identity.ci.toString(),
                     lac = identity.tac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -313,6 +315,8 @@ class StandardCellularScanner(
     private fun analyzeGsmCell(cellInfo: CellInfoGsm, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         // GSM is older and less secure - flag if primary network
         if (cellInfo.isRegistered) {
@@ -322,8 +326,8 @@ class StandardCellularScanner(
                     description = "Connected to 2G GSM network (lower security)",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -337,8 +341,8 @@ class StandardCellularScanner(
                     description = "GSM signal unusually strong: $signalStrength dBm",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -348,6 +352,8 @@ class StandardCellularScanner(
     private fun analyzeWcdmaCell(cellInfo: CellInfoWcdma, anomalies: MutableList<CellularAnomaly>) {
         val identity = cellInfo.cellIdentity
         val signalStrength = cellInfo.cellSignalStrength.dbm
+        val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mccString?.toIntOrNull() else null
+        val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) identity.mncString?.toIntOrNull() else null
 
         // Check for abnormally strong signal
         if (signalStrength > -50) {
@@ -357,8 +363,8 @@ class StandardCellularScanner(
                     description = "WCDMA signal unusually strong: $signalStrength dBm",
                     cellId = identity.cid.toString(),
                     lac = identity.lac,
-                    mcc = identity.mccString?.toIntOrNull(),
-                    mnc = identity.mncString?.toIntOrNull(),
+                    mcc = mcc,
+                    mnc = mnc,
                     signalStrength = signalStrength
                 )
             )
@@ -415,13 +421,13 @@ class StandardCellularScanner(
     }
 
     private fun getCellId(cellInfo: CellInfo): String? {
-        return when (cellInfo) {
-            is CellInfoLte -> cellInfo.cellIdentity.ci.toString()
-            is CellInfoGsm -> cellInfo.cellIdentity.cid.toString()
-            is CellInfoWcdma -> cellInfo.cellIdentity.cid.toString()
-            is CellInfoNr -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        return when {
+            cellInfo is CellInfoLte -> cellInfo.cellIdentity.ci.toString()
+            cellInfo is CellInfoGsm -> cellInfo.cellIdentity.cid.toString()
+            cellInfo is CellInfoWcdma -> cellInfo.cellIdentity.cid.toString()
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cellInfo is CellInfoNr -> {
                 (cellInfo.cellIdentity as? android.telephony.CellIdentityNr)?.nci?.toString()
-            } else null
+            }
             else -> null
         }
     }

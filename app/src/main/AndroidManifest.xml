@@ -212,6 +212,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Remove default WorkManager initializer since we use on-demand initialization -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <!-- Quick Settings Tile for Quick Wipe (Priority 2 Feature) -->
         <service
             android:name=".service.QuickWipeTileService"
