@@ -331,6 +331,7 @@ class RfSignalAnalyzer(private val context: Context) {
     /**
      * Analyze BLE scan for RF patterns
      */
+    @Suppress("UNUSED_PARAMETER")
     fun analyzeBleEnvironment(deviceCount: Int, averageRssi: Int) {
         // BLE can help detect jammer (if WiFi and BLE both drop simultaneously)
         // This is a supplementary signal
@@ -507,6 +508,7 @@ class RfSignalAnalyzer(private val context: Context) {
         _detectedDrones.value = detectedDrones.values.toList()
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun checkForSurveillanceArea(results: List<ScanResult>, snapshot: RfSnapshot) {
         // Count surveillance cameras
         val cameraCount = snapshot.surveillanceCameraCount

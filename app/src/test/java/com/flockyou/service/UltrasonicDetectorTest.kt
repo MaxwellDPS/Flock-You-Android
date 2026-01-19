@@ -616,7 +616,7 @@ class UltrasonicDetectorTest {
             val normalizedFreq = targetFreq.toDouble() / sampleRate
             val coeff = 2 * kotlin.math.cos(2 * Math.PI * normalizedFreq)
 
-            var s0 = 0.0
+            var s0: Double
             var s1 = 0.0
             var s2 = 0.0
 
@@ -655,6 +655,7 @@ class UltrasonicDetectorTest {
             }
         }
 
+        @Suppress("UNUSED_PARAMETER")
         fun classifyAnomalyType(source: String, frequency: Int): UltrasonicAnomalyType {
             return when {
                 source.contains("SilverPush") || source.contains("Alphonso") ->

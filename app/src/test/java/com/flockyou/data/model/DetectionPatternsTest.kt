@@ -58,6 +58,7 @@ class DetectionPatternsTest {
         assertNull("Should not match empty SSID", result)
     }
 
+    @Suppress("UNUSED_VARIABLE")
     @Test
     fun `matchSsidPattern is case insensitive for Flock`() {
         val result1 = DetectionPatterns.matchSsidPattern("FLOCK-ABC123")
@@ -118,6 +119,7 @@ class DetectionPatternsTest {
 
     // ==================== MAC Prefix Matching Tests ====================
 
+    @Suppress("UNUSED_VARIABLE")
     @Test
     fun `matchMacPrefix detects Flock Safety OUI`() {
         // Test with known Flock Safety MAC prefixes if defined
@@ -193,6 +195,7 @@ class DetectionPatternsTest {
 
     // ==================== Edge Cases ====================
 
+    @Suppress("UNUSED_VARIABLE")
     @Test
     fun `matchSsidPattern handles special characters`() {
         val result = DetectionPatterns.matchSsidPattern("Flock-ABC!@#123")

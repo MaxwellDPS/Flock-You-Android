@@ -304,10 +304,12 @@ class SystemCellularScanner(
     @Suppress("DEPRECATION")
     private fun registerPhoneStateListener() {
         phoneStateListener = object : PhoneStateListener() {
+            @Deprecated("Deprecated in Java")
             override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
                 cellInfo?.let { handleCellInfoUpdate(it) }
             }
 
+            @Deprecated("Deprecated in Java")
             override fun onServiceStateChanged(serviceState: android.telephony.ServiceState?) {
                 serviceState?.let { handleServiceStateChange(it) }
             }
@@ -571,6 +573,7 @@ class SystemCellularScanner(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun checkForRapidTowerChanges(cellInfoList: List<CellInfo>, anomalies: MutableList<CellularAnomaly>) {
         if (cellHistory.size < 5) return
 

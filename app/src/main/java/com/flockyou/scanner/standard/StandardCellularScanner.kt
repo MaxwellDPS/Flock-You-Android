@@ -211,6 +211,7 @@ class StandardCellularScanner(
     @Suppress("DEPRECATION")
     private fun registerPhoneStateListener() {
         phoneStateListener = object : PhoneStateListener() {
+            @Deprecated("Deprecated in Java")
             override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>?) {
                 cellInfo?.let { handleCellInfoUpdate(it) }
             }

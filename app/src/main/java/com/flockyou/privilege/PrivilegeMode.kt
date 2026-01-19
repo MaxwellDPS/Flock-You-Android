@@ -159,9 +159,6 @@ object PrivilegeModeDetector {
     }
 
     private fun detectInternal(context: Context): PrivilegeMode {
-        val pm = context.packageManager
-        val packageName = context.packageName
-
         // Check if app is a system app
         val isSystemApp = isSystemApp(context)
         val isPrivilegedApp = isPrivilegedApp(context)

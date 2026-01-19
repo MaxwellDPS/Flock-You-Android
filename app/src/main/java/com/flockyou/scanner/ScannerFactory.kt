@@ -183,7 +183,7 @@ data class ScannerCapabilities(
             is PrivilegeMode.Sideload -> "Standard (Sideload)"
             is PrivilegeMode.System -> "System Privileged"
             is PrivilegeMode.OEM -> {
-                val oem = (privilegeMode as PrivilegeMode.OEM).oemName
+                val oem = privilegeMode.oemName
                 if (oem != null) "OEM ($oem)" else "OEM Embedded"
             }
         }

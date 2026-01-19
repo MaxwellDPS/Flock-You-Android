@@ -638,6 +638,7 @@ class RogueWifiMonitorTest {
             return distinctLocations.size >= minDistinctLocations
         }
 
+        @Suppress("UNUSED_PARAMETER")
         fun isSuspiciousOpenNetwork(
             ssid: String,
             isOpen: Boolean,

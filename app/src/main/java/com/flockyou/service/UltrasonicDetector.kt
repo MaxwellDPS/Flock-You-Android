@@ -390,7 +390,7 @@ class UltrasonicDetector(private val context: Context) {
         val normalizedFreq = targetFreq.toDouble() / SAMPLE_RATE
         val coeff = 2 * kotlin.math.cos(2 * Math.PI * normalizedFreq)
 
-        var s0 = 0.0
+        var s0: Double
         var s1 = 0.0
         var s2 = 0.0
 

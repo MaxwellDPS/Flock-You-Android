@@ -64,6 +64,7 @@ class UsbWatchdogReceiver : BroadcastReceiver() {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun handleUsbEvent(context: Context, intent: Intent) {
         val settings = nukeSettingsRepository.settings.first()
 

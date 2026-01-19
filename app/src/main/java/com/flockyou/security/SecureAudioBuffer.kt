@@ -165,7 +165,7 @@ class SecureAudioBuffer(
             decrypted = cipher.doFinal(encrypted)
 
             // Convert bytes back to shorts
-            val byteBuffer = ByteBuffer.wrap(decrypted)
+            val byteBuffer = ByteBuffer.wrap(decrypted!!)
             byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
 
             val samples = ShortArray(sampleCount)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -391,7 +392,7 @@ fun SecuritySettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ExitToApp,
+                            imageVector = Icons.AutoMirrored.Filled.ExitToApp,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -409,7 +410,7 @@ fun SecuritySettingsScreen(
                         }
                         Switch(
                             checked = settings.lockOnBackground,
-                            onCheckedChange = { enabled ->
+                            onCheckedChange = { _ ->
                                 scope.launch {
                                     // Update lock on background setting
                                 }
@@ -448,7 +449,7 @@ fun SecuritySettingsScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Slider(
                             value = settings.lockTimeoutSeconds.toFloat(),
-                            onValueChange = { value ->
+                            onValueChange = { _ ->
                                 scope.launch {
                                     // Update timeout
                                 }

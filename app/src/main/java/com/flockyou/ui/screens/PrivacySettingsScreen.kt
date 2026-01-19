@@ -35,6 +35,7 @@ fun PrivacySettingsScreen(
     ephemeralRepository: EphemeralDetectionRepository,
     onNavigateBack: () -> Unit
 ) {
+    @Suppress("UNUSED_VARIABLE")
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by privacySettingsRepository.settings.collectAsState(initial = PrivacySettings())

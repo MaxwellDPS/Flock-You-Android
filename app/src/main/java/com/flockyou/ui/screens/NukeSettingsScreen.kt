@@ -716,6 +716,7 @@ private fun DangerZoneItem(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun SetDuressPinDialog(
     appLockManager: AppLockManager,
