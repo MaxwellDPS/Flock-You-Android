@@ -60,7 +60,8 @@ class DeadManSwitchWorker @AssistedInject constructor(
 
         /**
          * Get encrypted SharedPreferences for secure storage of dead man's switch data.
-         * Falls back to regular SharedPreferences if encryption fails.
+         * Throws SecurityException if encryption fails - falling back to unencrypted storage
+         * would be a security vulnerability allowing attackers to manipulate the auth time.
          */
         private fun getSecurePrefs(context: Context): SharedPreferences {
             return try {
@@ -76,9 +77,13 @@ class DeadManSwitchWorker @AssistedInject constructor(
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to create EncryptedSharedPreferences, using fallback", e)
-                // Fallback to regular prefs - better than crashing
-                context.getSharedPreferences("dead_man_switch_prefs_fallback", Context.MODE_PRIVATE)
+                Log.e(TAG, "CRITICAL: Failed to create EncryptedSharedPreferences", e)
+                // Do NOT fall back to unencrypted storage - this would allow attackers
+                // to manipulate the last auth time and bypass the dead man's switch
+                throw SecurityException(
+                    "Dead man's switch requires encrypted storage but encryption failed: ${e.message}",
+                    e
+                )
             }
         }
 

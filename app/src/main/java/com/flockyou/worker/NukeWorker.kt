@@ -239,7 +239,10 @@ class NukeWorker @AssistedInject constructor(
             Result.success()
         } else {
             Log.e(TAG, "Nuke failed: ${result.errorMessage}")
-            Result.failure()
+            // CRITICAL: Use retry() instead of failure() for emergency wipe.
+            // WorkManager will reschedule with exponential backoff.
+            // An emergency wipe MUST succeed - we cannot just give up.
+            Result.retry()
         }
     }
 }

@@ -8,9 +8,11 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.data.AiSettingsRepository
+import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.repository.OuiRepository
 import com.flockyou.util.NotificationChannelIds
+import com.flockyou.worker.DeadManSwitchWorker
 import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +40,9 @@ class FlockYouApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var detectionAnalyzer: DetectionAnalyzer
 
+    @Inject
+    lateinit var nukeSettingsRepository: NukeSettingsRepository
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val workManagerConfiguration: Configuration
@@ -59,6 +64,11 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // Initialize AI model if enabled
         applicationScope.launch {
             initializeAiModel()
+        }
+
+        // Initialize dead man's switch if enabled
+        applicationScope.launch {
+            initializeDeadManSwitch()
         }
     }
 
@@ -158,6 +168,21 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // Initialize the AI model if AI analysis is enabled
         if (settings.enabled) {
             detectionAnalyzer.initializeModel()
+        }
+    }
+
+    private suspend fun initializeDeadManSwitch() {
+        val settings = nukeSettingsRepository.settings.first()
+
+        // Schedule or cancel the dead man's switch based on settings
+        if (settings.nukeEnabled && settings.deadManSwitchEnabled) {
+            // Initialize the last auth time if this is the first run
+            DeadManSwitchWorker.initializeIfNeeded(this)
+            // Schedule periodic checks (every 30 minutes)
+            DeadManSwitchWorker.schedule(this, checkIntervalMinutes = 30)
+        } else {
+            // Cancel if disabled
+            DeadManSwitchWorker.cancel(this)
         }
     }
 }

@@ -142,10 +142,13 @@ class MediaPipeLlmClient @Inject constructor(
     }
 
     private fun markInferenceStarted() {
-        prefs.edit().putBoolean(KEY_INFERENCE_IN_PROGRESS, true).apply()
+        // Use commit() for synchronous write - critical to detect native crashes
+        // If we use apply() and the native code crashes immediately, the flag might not be saved
+        prefs.edit().putBoolean(KEY_INFERENCE_IN_PROGRESS, true).commit()
     }
 
     private fun markInferenceCompleted() {
+        // Can use apply() here since we've already passed the dangerous point
         prefs.edit().putBoolean(KEY_INFERENCE_IN_PROGRESS, false).apply()
     }
 

@@ -731,6 +731,28 @@ private fun ModelSelectionCard(
                                 Icon(Icons.Default.FileOpen, contentDescription = null)
                             }
                         }
+                        // Gemini Nano: show download button if not ready (managed by AICore, sizeMb=0)
+                        currentModel == AiModel.GEMINI_NANO && modelStatus !is AiModelStatus.Ready -> {
+                            OutlinedButton(
+                                onClick = onDownload,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Download Gemini Nano")
+                            }
+                        }
+                        // Gemini Nano: show reinitialize when ready
+                        currentModel == AiModel.GEMINI_NANO && modelStatus is AiModelStatus.Ready -> {
+                            OutlinedButton(
+                                onClick = onInitialize,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Reinitialize")
+                            }
+                        }
                         modelStatus is AiModelStatus.Ready && settings.modelSizeMb > 0 -> {
                             OutlinedButton(
                                 onClick = onInitialize,

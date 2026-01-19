@@ -66,6 +66,9 @@ class LlmEngineManager @Inject constructor(
     private val initMutex = Mutex()
     private var isInitialized = false
 
+    // Track the currently loaded model (for MediaPipe)
+    private var _currentModel: AiModel = AiModel.RULE_BASED
+
     init {
         // Initialize health tracking for all engines
         LlmEngine.entries.forEach { engine ->
@@ -151,14 +154,20 @@ class LlmEngineManager @Inject constructor(
 
         if (finalResult != null && finalResult.success) {
             _activeEngine.value = finalResult.engine
+            _currentModel = finalResult.model ?: when (finalResult.engine) {
+                LlmEngine.GEMINI_NANO -> AiModel.GEMINI_NANO
+                LlmEngine.MEDIAPIPE -> AiModel.GEMMA3_1B // Default MediaPipe model
+                LlmEngine.RULE_BASED -> AiModel.RULE_BASED
+            }
             _engineStatus.value = EngineStatus.Ready(finalResult.engine)
             isInitialized = true
-            Log.i(TAG, "Engine manager initialized successfully with: ${finalResult.engine}")
+            Log.i(TAG, "Engine manager initialized successfully with: ${finalResult.engine}, model: ${_currentModel.displayName}")
             return@withLock true
         }
 
         // Always have rule-based as final fallback
         _activeEngine.value = LlmEngine.RULE_BASED
+        _currentModel = AiModel.RULE_BASED
         _engineStatus.value = EngineStatus.Ready(LlmEngine.RULE_BASED)
         isInitialized = true
         Log.w(TAG, "No LLM engine available, using rule-based fallback")
@@ -362,7 +371,7 @@ class LlmEngineManager @Inject constructor(
                 }
                 LlmEngine.MEDIAPIPE -> {
                     if (mediaPipeLlmClient.isReady()) {
-                        val result = mediaPipeLlmClient.analyzeDetection(detection, AiModel.RULE_BASED)
+                        val result = mediaPipeLlmClient.analyzeDetection(detection, _currentModel)
                         if (result.success) {
                             recordSuccess(LlmEngine.MEDIAPIPE)
                         } else {
@@ -535,6 +544,7 @@ class LlmEngineManager @Inject constructor(
         isInitialized = false
         _engineStatus.value = EngineStatus.NotInitialized
         _activeEngine.value = LlmEngine.RULE_BASED
+        _currentModel = AiModel.RULE_BASED
     }
 
     /**
@@ -546,6 +556,7 @@ class LlmEngineManager @Inject constructor(
         isInitialized = false
         _engineStatus.value = EngineStatus.NotInitialized
         _activeEngine.value = LlmEngine.RULE_BASED
+        _currentModel = AiModel.RULE_BASED
     }
 }
 

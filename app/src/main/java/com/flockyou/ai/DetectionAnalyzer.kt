@@ -154,10 +154,11 @@ class DetectionAnalyzer @Inject constructor(
     private fun detectDeviceCapabilities(): DeviceCapabilities {
         val isPixel8OrNewer = Build.MODEL.lowercase().let { model ->
             model.contains("pixel 8") || model.contains("pixel 9") ||
+            model.contains("pixel 10") || model.contains("pixel 11") ||
             model.contains("pixel fold") || model.contains("pixel tablet")
         }
 
-        // NPU available on Pixel 8+ with Tensor G3/G4
+        // NPU available on Pixel 8+ with Tensor G3/G4/G5
         val hasNpu = isPixel8OrNewer && Build.VERSION.SDK_INT >= 34
 
         // Check if AICore is available for Gemini Nano
@@ -311,15 +312,19 @@ class DetectionAnalyzer @Inject constructor(
         when (status) {
             is GeminiNanoStatus.NeedsDownload -> {
                 Log.i(TAG, "Gemini Nano model needs to be downloaded first")
+                _modelStatus.value = AiModelStatus.NotDownloaded
             }
             is GeminiNanoStatus.Downloading -> {
                 Log.i(TAG, "Gemini Nano model is currently downloading")
+                _modelStatus.value = AiModelStatus.Downloading(0)
             }
             is GeminiNanoStatus.NotSupported -> {
                 Log.w(TAG, "Gemini Nano is not supported on this device")
+                _modelStatus.value = AiModelStatus.Error("Gemini Nano not supported on this device")
             }
             is GeminiNanoStatus.Error -> {
                 Log.e(TAG, "Gemini Nano error: ${status.message}")
+                _modelStatus.value = AiModelStatus.Error(status.message)
             }
             else -> {
                 Log.w(TAG, "Unexpected Gemini Nano status: $status")

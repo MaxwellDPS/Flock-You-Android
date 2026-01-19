@@ -94,6 +94,7 @@ class GeminiNanoClient @Inject constructor(
         val isPixel8OrNewer = model.contains("pixel 8") ||
                               model.contains("pixel 9") ||
                               model.contains("pixel 10") ||
+                              model.contains("pixel 11") ||
                               model.contains("pixel fold") ||
                               model.contains("pixel tablet")
 

@@ -9,30 +9,49 @@ import java.util.Arrays
 object SecureMemory {
 
     /**
+     * Volatile sink to prevent JIT compiler from optimizing away memory clearing.
+     * The compiler cannot eliminate writes if it sees they may be read through
+     * a volatile variable.
+     */
+    @Volatile
+    @JvmField
+    internal var volatileSink: Int = 0
+
+    /**
      * Securely clear a byte array from memory by overwriting with zeros.
+     * Uses a volatile read barrier to prevent JIT from optimizing away the fill.
      */
     fun clear(data: ByteArray?) {
         data?.let {
             Arrays.fill(it, 0.toByte())
+            // Volatile read prevents JIT from eliminating the fill above.
+            // The compiler must assume volatileSink could affect the array contents.
+            volatileSink = volatileSink or it.size
         }
     }
 
     /**
      * Securely clear a char array from memory by overwriting with null characters.
+     * Uses a volatile read barrier to prevent JIT from optimizing away the fill.
      */
     fun clear(data: CharArray?) {
         data?.let {
             Arrays.fill(it, '\u0000')
+            // Volatile read prevents JIT from eliminating the fill above
+            volatileSink = volatileSink or it.size
         }
     }
 
     /**
      * Securely clear a short array from memory by overwriting with zeros.
      * Used for audio sample buffers.
+     * Uses a volatile read barrier to prevent JIT from optimizing away the fill.
      */
     fun clear(data: ShortArray?) {
         data?.let {
             Arrays.fill(it, 0.toShort())
+            // Volatile read prevents JIT from eliminating the fill above
+            volatileSink = volatileSink or it.size
         }
     }
 
