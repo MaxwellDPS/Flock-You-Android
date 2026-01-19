@@ -5,6 +5,7 @@ import com.flockyou.data.NetworkSettingsRepository
 import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.SecuritySettingsRepository
+import com.flockyou.service.ScanningServiceConnection
 import com.flockyou.data.oui.OuiDownloader
 import com.flockyou.data.oui.OuiLookupService
 import com.flockyou.data.repository.DetectionDao
@@ -249,5 +250,20 @@ object AppModule {
         nukeManager: NukeManager
     ): GeofenceWatcher {
         return GeofenceWatcher(context, nukeSettingsRepository, nukeManager)
+    }
+
+    // ================================================================
+    // IPC Service Connection
+    // ================================================================
+
+    @Provides
+    @Singleton
+    fun provideScanningServiceConnection(
+        @ApplicationContext context: Context
+    ): ScanningServiceConnection {
+        return ScanningServiceConnection(context).also {
+            // Auto-bind when the connection is created
+            it.bind()
+        }
     }
 }

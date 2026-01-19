@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -31,6 +33,7 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import com.flockyou.ui.components.*
 import com.flockyou.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,12 +45,34 @@ fun MainScreen(
     onNavigateToRfDetection: () -> Unit = {},
     onNavigateToUltrasonicDetection: () -> Unit = {},
     onNavigateToSatelliteDetection: () -> Unit = {},
-    onNavigateToWifiSecurity: () -> Unit = {}
+    onNavigateToWifiSecurity: () -> Unit = {},
+    onNavigateToServiceHealth: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
+
+    // Pager state for swipe navigation between tabs
+    val pagerState = rememberPagerState(
+        initialPage = uiState.selectedTab,
+        pageCount = { 3 }
+    )
+    val coroutineScope = rememberCoroutineScope()
+
+    // Sync pager with tab selection
+    LaunchedEffect(uiState.selectedTab) {
+        if (pagerState.currentPage != uiState.selectedTab) {
+            pagerState.animateScrollToPage(uiState.selectedTab)
+        }
+    }
+
+    // Sync tab selection with pager swipe
+    LaunchedEffect(pagerState.currentPage) {
+        if (uiState.selectedTab != pagerState.currentPage) {
+            viewModel.selectTab(pagerState.currentPage)
+        }
+    }
     
     Scaffold(
         topBar = {
@@ -72,16 +97,28 @@ fun MainScreen(
                             contentDescription = "Refresh"
                         )
                     }
-                    IconButton(onClick = { showFilterSheet = true }) {
-                        Badge(
-                            containerColor = if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.surface
-                        ) {
+                    // Only show filter button on history tab
+                    if (uiState.selectedTab == 1) {
+                        IconButton(onClick = { showFilterSheet = true }) {
+                            Badge(
+                                containerColor = if (uiState.filterThreatLevel != null || uiState.filterDeviceTypes.isNotEmpty())
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.surface
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = "Filter"
+                                )
+                            }
+                        }
+                    }
+                    // Service health shortcut on home tab
+                    if (uiState.selectedTab == 0) {
+                        IconButton(onClick = onNavigateToServiceHealth) {
                             Icon(
-                                imageVector = Icons.Default.FilterList,
-                                contentDescription = "Filter"
+                                imageVector = Icons.Default.MonitorHeart,
+                                contentDescription = "Service Health"
                             )
                         }
                     }
@@ -114,14 +151,22 @@ fun MainScreen(
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home") },
-                    selected = uiState.selectedTab == 0,
-                    onClick = { viewModel.selectTab(0) }
+                    selected = pagerState.currentPage == 0,
+                    onClick = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(0)
+                        }
+                    }
                 )
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.History, contentDescription = "History") },
                     label = { Text("History") },
-                    selected = uiState.selectedTab == 1,
-                    onClick = { viewModel.selectTab(1) }
+                    selected = pagerState.currentPage == 1,
+                    onClick = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(1)
+                        }
+                    }
                 )
                 NavigationBarItem(
                     icon = {
@@ -136,71 +181,61 @@ fun MainScreen(
                         }
                     },
                     label = { Text("Cellular") },
-                    selected = uiState.selectedTab == 2,
-                    onClick = { viewModel.selectTab(2) }
+                    selected = pagerState.currentPage == 2,
+                    onClick = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(2)
+                        }
+                    }
                 )
             }
         }
     ) { paddingValues ->
-        // Show different content based on selected tab
-        when (uiState.selectedTab) {
-            2 -> {
-                // Cellular tab content
-                CellularTabContent(
-                    modifier = Modifier.padding(paddingValues),
-                    cellStatus = uiState.cellStatus,
-                    cellularStatus = uiState.cellularStatus,
-                    cellularAnomalies = uiState.cellularAnomalies,
-                    seenCellTowers = uiState.seenCellTowers,
-                    satelliteState = uiState.satelliteState,
-                    satelliteAnomalies = uiState.satelliteAnomalies,
-                    isScanning = uiState.isScanning,
-                    onToggleScan = { viewModel.toggleScanning() }
-                )
-            }
-            else -> {
-                // Home and History tabs
-                // Calculate filtered detections outside LazyColumn
-                val filteredDetections = viewModel.getFilteredDetections()
-        
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Status card
-                    item(key = "status_card") {
-                        StatusCard(
-                            isScanning = uiState.isScanning,
-                            totalDetections = uiState.totalCount,
-                            highThreatCount = uiState.highThreatCount,
-                            onToggleScan = { viewModel.toggleScanning() },
-                            scanStatus = uiState.scanStatus,
-                            bleStatus = uiState.bleStatus,
-                            wifiStatus = uiState.wifiStatus,
-                            locationStatus = uiState.locationStatus,
-                            cellularStatus = uiState.cellularStatus,
-                            satelliteStatus = uiState.satelliteStatus,
-                            recentErrors = uiState.recentErrors,
-                            onClearErrors = { viewModel.clearErrors() }
-                        )
-                    }
-                    
-                    // Cellular status card (show when scanning or has anomalies) - only on Home tab
-                    if (uiState.selectedTab == 0 && (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty())) {
-                        item(key = "cellular_status_card") {
-                            CellularStatusCard(
-                                cellStatus = uiState.cellStatus,
-                                anomalies = uiState.cellularAnomalies,
-                                isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
+        // Swipeable HorizontalPager for tab navigation
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) { page ->
+            when (page) {
+                0 -> {
+                    // Home tab - Status and modules only (no errors, no recent detections)
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Status card without errors
+                        item(key = "status_card") {
+                            StatusCard(
+                                isScanning = uiState.isScanning,
+                                totalDetections = uiState.totalCount,
+                                highThreatCount = uiState.highThreatCount,
+                                onToggleScan = { viewModel.toggleScanning() },
+                                scanStatus = uiState.scanStatus,
+                                bleStatus = uiState.bleStatus,
+                                wifiStatus = uiState.wifiStatus,
+                                locationStatus = uiState.locationStatus,
+                                cellularStatus = uiState.cellularStatus,
+                                satelliteStatus = uiState.satelliteStatus,
+                                recentErrors = emptyList(), // Don't show errors on home
+                                onClearErrors = { }
                             )
                         }
-                    }
 
-                    // Detection Modules section - only on Home tab
-                    if (uiState.selectedTab == 0) {
+                        // Cellular status card (show when scanning or has anomalies)
+                        if (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty()) {
+                            item(key = "cellular_status_card") {
+                                CellularStatusCard(
+                                    cellStatus = uiState.cellStatus,
+                                    anomalies = uiState.cellularAnomalies,
+                                    isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
+                                )
+                            }
+                        }
+
+                        // Detection Modules section
                         item(key = "detection_modules_header") {
                             Text(
                                 text = "DETECTION MODULES",
@@ -222,131 +257,224 @@ fun MainScreen(
                                 satelliteAnomalyCount = uiState.satelliteAnomalies.size
                             )
                         }
-                    }
 
-                    // Last detection alert
-                    uiState.lastDetection?.let { detection ->
-                        item(key = "last_detection_${detection.id}") {
-                            AnimatedVisibility(
-                                visible = true,
-                                enter = slideInVertically() + fadeIn(),
-                                exit = slideOutVertically() + fadeOut()
+                        // Service Health shortcut card
+                        item(key = "service_health_shortcut") {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                                ),
+                                onClick = onNavigateToServiceHealth
                             ) {
-                                LastDetectionAlert(
-                                    detection = detection,
-                                    onClick = { selectedDetection = detection }
-                                )
-                            }
-                        }
-                    }
-                    
-                    // Filter chips if filters active
-                    if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null) {
-                        item(key = "filter_chips") {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                uiState.filterThreatLevel?.let { level ->
-                                    FilterChip(
-                                        selected = true,
-                                        onClick = { viewModel.setThreatFilter(null) },
-                                        label = { Text(level.name) },
-                                        trailingIcon = {
-                                            Icon(
-                                                Icons.Default.Close,
-                                                contentDescription = "Remove filter",
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    )
-                                }
-                                uiState.filterDeviceType?.let { type ->
-                                    FilterChip(
-                                        selected = true,
-                                        onClick = { viewModel.setDeviceTypeFilter(null) },
-                                        label = { Text(type.name.replace("_", " ")) },
-                                        trailingIcon = {
-                                            Icon(
-                                                Icons.Default.Close,
-                                                contentDescription = "Remove filter",
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Section header
-                    item(key = "section_header") {
-                        Text(
-                            text = when (uiState.selectedTab) {
-                                1 -> "DETECTION HISTORY"
-                                else -> "RECENT DETECTIONS"
-                            },
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                    }
-                    
-                    when {
-                        uiState.isLoading -> {
-                            item(key = "loading_state") {
-                                Box(
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(32.dp),
-                                    contentAlignment = Alignment.Center
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator()
-                                        Spacer(modifier = Modifier.height(16.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.MonitorHeart,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Loading detections...",
-                                            style = MaterialTheme.typography.bodyMedium,
+                                            text = "Service Health",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "View detector status and errors",
+                                            style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = "Go",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                1 -> {
+                    // History tab - Detection list with filters
+                    val filteredDetections = viewModel.getFilteredDetections()
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Filter chips if filters active (only on history tab)
+                        if (uiState.filterThreatLevel != null || uiState.filterDeviceTypes.isNotEmpty()) {
+                            item(key = "filter_chips") {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    // Filter mode indicator
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Filter mode:",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        FilterChip(
+                                            selected = uiState.filterMatchAll,
+                                            onClick = { viewModel.setFilterMatchAll(!uiState.filterMatchAll) },
+                                            label = { Text(if (uiState.filterMatchAll) "Match ALL" else "Match ANY") },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = if (uiState.filterMatchAll) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        )
+                                    }
+
+                                    // Active filter chips
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        uiState.filterThreatLevel?.let { level ->
+                                            FilterChip(
+                                                selected = true,
+                                                onClick = { viewModel.setThreatFilter(null) },
+                                                label = { Text(level.name) },
+                                                trailingIcon = {
+                                                    Icon(
+                                                        Icons.Default.Close,
+                                                        contentDescription = "Remove filter",
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    // Device type filter chips (can have multiple now)
+                                    if (uiState.filterDeviceTypes.isNotEmpty()) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            uiState.filterDeviceTypes.take(3).forEach { type ->
+                                                FilterChip(
+                                                    selected = true,
+                                                    onClick = { viewModel.removeDeviceTypeFilter(type) },
+                                                    label = { Text(type.name.replace("_", " ")) },
+                                                    trailingIcon = {
+                                                        Icon(
+                                                            Icons.Default.Close,
+                                                            contentDescription = "Remove filter",
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                            if (uiState.filterDeviceTypes.size > 3) {
+                                                FilterChip(
+                                                    selected = true,
+                                                    onClick = { showFilterSheet = true },
+                                                    label = { Text("+${uiState.filterDeviceTypes.size - 3} more") }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                        filteredDetections.isEmpty() -> {
-                            item(key = "empty_state") {
-                                EmptyState(isScanning = uiState.isScanning)
-                            }
+
+                        // Section header
+                        item(key = "section_header") {
+                            Text(
+                                text = "DETECTION HISTORY",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
                         }
-                        else -> {
-                            items(
-                                items = filteredDetections,
-                                key = { it.id }
-                            ) { detection ->
-                                DetectionCard(
-                                    detection = detection,
-                                    onClick = { selectedDetection = detection },
-                                    advancedMode = uiState.advancedMode,
-                                    onAnalyzeClick = if (viewModel.isAiAnalysisAvailable()) {
-                                        { viewModel.analyzeDetection(it) }
-                                    } else null,
-                                    isAnalyzing = uiState.analyzingDetectionId == detection.id
-                                )
+
+                        when {
+                            uiState.isLoading -> {
+                                item(key = "loading_state") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(32.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            CircularProgressIndicator()
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                            Text(
+                                                text = "Loading detections...",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            filteredDetections.isEmpty() -> {
+                                item(key = "empty_state") {
+                                    EmptyState(isScanning = uiState.isScanning)
+                                }
+                            }
+                            else -> {
+                                items(
+                                    items = filteredDetections,
+                                    key = { it.id }
+                                ) { detection ->
+                                    DetectionCard(
+                                        detection = detection,
+                                        onClick = { selectedDetection = detection },
+                                        advancedMode = uiState.advancedMode,
+                                        onAnalyzeClick = if (viewModel.isAiAnalysisAvailable()) {
+                                            { viewModel.analyzeDetection(it) }
+                                        } else null,
+                                        isAnalyzing = uiState.analyzingDetectionId == detection.id
+                                    )
+                                }
                             }
                         }
                     }
-                } // end LazyColumn
-            } // end else
-        } // end when
+                }
+                2 -> {
+                    // Cellular tab content
+                    CellularTabContent(
+                        modifier = Modifier,
+                        cellStatus = uiState.cellStatus,
+                        cellularStatus = uiState.cellularStatus,
+                        cellularAnomalies = uiState.cellularAnomalies,
+                        seenCellTowers = uiState.seenCellTowers,
+                        satelliteState = uiState.satelliteState,
+                        satelliteAnomalies = uiState.satelliteAnomalies,
+                        isScanning = uiState.isScanning,
+                        onToggleScan = { viewModel.toggleScanning() }
+                    )
+                }
+            }
+        }
     }
     
     // Filter bottom sheet
     if (showFilterSheet) {
         FilterBottomSheet(
             currentThreatFilter = uiState.filterThreatLevel,
-            currentTypeFilter = uiState.filterDeviceType,
+            currentTypeFilters = uiState.filterDeviceTypes,
+            filterMatchAll = uiState.filterMatchAll,
             onThreatFilterChange = { viewModel.setThreatFilter(it) },
-            onTypeFilterChange = { viewModel.setDeviceTypeFilter(it) },
+            onTypeFilterToggle = { viewModel.toggleDeviceTypeFilter(it) },
+            onMatchAllChange = { viewModel.setFilterMatchAll(it) },
             onClearFilters = { viewModel.clearFilters() },
             onDismiss = { showFilterSheet = false }
         )
@@ -583,9 +711,11 @@ fun LastDetectionAlert(
 @Composable
 fun FilterBottomSheet(
     currentThreatFilter: ThreatLevel?,
-    currentTypeFilter: DeviceType?,
+    currentTypeFilters: Set<DeviceType>,
+    filterMatchAll: Boolean,
     onThreatFilterChange: (ThreatLevel?) -> Unit,
-    onTypeFilterChange: (DeviceType?) -> Unit,
+    onTypeFilterToggle: (DeviceType) -> Unit,
+    onMatchAllChange: (Boolean) -> Unit,
     onClearFilters: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -603,16 +733,59 @@ fun FilterBottomSheet(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
+            // AND/OR toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Filter Logic",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = filterMatchAll,
+                        onClick = { onMatchAllChange(true) },
+                        label = { Text("AND") },
+                        leadingIcon = if (filterMatchAll) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null
+                    )
+                    FilterChip(
+                        selected = !filterMatchAll,
+                        onClick = { onMatchAllChange(false) },
+                        label = { Text("OR") },
+                        leadingIcon = if (!filterMatchAll) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null
+                    )
+                }
+            }
+
+            Text(
+                text = if (filterMatchAll) "Show detections matching ALL selected filters"
+                       else "Show detections matching ANY selected filter",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             Text(
                 text = "Threat Level",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -631,16 +804,29 @@ fun FilterBottomSheet(
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
-            Text(
-                text = "Device Type",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Device Type",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (currentTypeFilters.isNotEmpty()) {
+                    Text(
+                        text = "${currentTypeFilters.size} selected",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -650,10 +836,8 @@ fun FilterBottomSheet(
                     ) {
                         row.forEach { type ->
                             FilterChip(
-                                selected = currentTypeFilter == type,
-                                onClick = {
-                                    onTypeFilterChange(if (currentTypeFilter == type) null else type)
-                                },
+                                selected = type in currentTypeFilters,
+                                onClick = { onTypeFilterToggle(type) },
                                 label = { Text(type.name.replace("_", " ")) },
                                 leadingIcon = {
                                     Icon(
@@ -667,9 +851,9 @@ fun FilterBottomSheet(
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -690,7 +874,7 @@ fun FilterBottomSheet(
                     Text("Apply")
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }

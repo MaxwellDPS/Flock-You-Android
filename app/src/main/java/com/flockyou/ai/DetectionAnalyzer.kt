@@ -2328,11 +2328,14 @@ class DetectionAnalyzer @Inject constructor(
             val modelFile = File(modelDir, "${model.id}$fileExtension")
             val tempFile = File(modelDir, "${model.id}$fileExtension.tmp")
 
+            // Get HF token from settings for authenticated downloads
+            val hfToken = aiSettingsRepository.settings.first().huggingFaceToken.takeIf { it.isNotBlank() }
+
             // Retry logic with exponential backoff
             var lastException: Exception? = null
             repeat(MAX_DOWNLOAD_RETRIES) { attempt ->
                 try {
-                    val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, safeProgress)
+                    val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, safeProgress, hfToken)
                     if (success) {
                         // Update settings - enable AI and set model
                         aiSettingsRepository.setEnabled(true)  // Enable AI so initializeModel() works
@@ -2364,19 +2367,27 @@ class DetectionAnalyzer @Inject constructor(
     /**
      * Download with resume support for interrupted downloads.
      * Progress callback is invoked from IO thread but should be safe (wrapped by caller).
+     * @param hfToken Optional Hugging Face token for authenticated downloads
      */
     private suspend fun downloadWithResume(
         downloadUrl: String,
         tempFile: File,
         finalFile: File,
         expectedSize: Long,
-        onProgress: suspend (Int) -> Unit
+        onProgress: suspend (Int) -> Unit,
+        hfToken: String? = null
     ): Boolean {
         // Check for existing partial download
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
         val requestBuilder = Request.Builder()
             .url(downloadUrl)
             .addHeader("User-Agent", "FlockYou/1.0")
+
+        // Add Hugging Face authorization header if token is provided
+        if (!hfToken.isNullOrBlank()) {
+            requestBuilder.addHeader("Authorization", "Bearer $hfToken")
+            Log.d(TAG, "Using Hugging Face token for authenticated download")
+        }
 
         // Add Range header for resume if we have partial data
         if (existingBytes > 0 && existingBytes < expectedSize) {

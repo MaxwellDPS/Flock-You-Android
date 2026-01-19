@@ -31,6 +31,9 @@ class RogueWifiMonitor(
     private val context: Context,
     private val errorCallback: ScanningService.DetectorCallback? = null
 ) {
+    // Minimum distance traveled (in meters) before reporting a tracking device
+    // Default: 1609 meters (1 mile) - can be configured via settings
+    var minTrackingDistanceMeters: Double = 1609.0
 
     companion object {
         private const val TAG = "RogueWifiMonitor"
@@ -217,6 +220,7 @@ class RogueWifiMonitor(
         val pathCorrelation: Float,              // 0.0-1.0, how closely network follows user path
         val leadsUser: Boolean,                   // Network appears before user arrives at location
         val lagTimeMs: Long?,                     // Average time delay behind user
+        val totalDistanceTraveledMeters: Double, // Total distance user traveled while being followed
 
         // Signal Analysis
         val signalConsistency: Float,             // 0-1, how consistent is signal strength
@@ -806,8 +810,12 @@ class RogueWifiMonitor(
             // Build enriched following analysis
             val analysis = buildFollowingAnalysis(bssid, sightings)
 
-            // Only report if we have significant following indicators
-            if (analysis.distinctLocations >= 3 || analysis.followingConfidence >= 50) {
+            // Only report if we have significant following indicators AND minimum distance traveled
+            // User must have traveled at least minTrackingDistanceMeters (default: 1 mile / 1609m)
+            val meetsDistanceThreshold = analysis.totalDistanceTraveledMeters >= minTrackingDistanceMeters
+            val hasSignificantIndicators = analysis.distinctLocations >= 3 || analysis.followingConfidence >= 50
+
+            if (hasSignificantIndicators && meetsDistanceThreshold) {
                 val history = networkHistory[bssid]
 
                 // Determine confidence based on enriched analysis
@@ -819,6 +827,7 @@ class RogueWifiMonitor(
                 }
 
                 // Build enriched description
+                val distanceMiles = analysis.totalDistanceTraveledMeters / 1609.0
                 val description = buildString {
                     append("Network appears to be following your movement")
                     if (analysis.vehicleMounted) {
@@ -826,6 +835,7 @@ class RogueWifiMonitor(
                     } else if (analysis.possibleFootSurveillance) {
                         append(" (possible foot surveillance)")
                     }
+                    append(" for ${String.format("%.1f", distanceMiles)} mi")
                     append(" - confidence: ${String.format("%.0f", analysis.followingConfidence)}%")
                 }
 
@@ -1248,6 +1258,11 @@ class RogueWifiMonitor(
         // Movement correlation
         val pathCorrelation = calculatePathCorrelation(sightings)
 
+        // Calculate total distance traveled by user while being followed
+        val totalDistanceTraveled = sightings.zipWithNext { a, b ->
+            haversineDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+        }.sum()
+
         // Check if network leads or follows user
         val leadsUser = false // Would need more sophisticated tracking
         val lagTimeMs: Long? = null
@@ -1297,6 +1312,7 @@ class RogueWifiMonitor(
             pathCorrelation = pathCorrelation,
             leadsUser = leadsUser,
             lagTimeMs = lagTimeMs,
+            totalDistanceTraveledMeters = totalDistanceTraveled,
             signalConsistency = signalConsistency,
             signalTrend = signalTrend,
             avgSignalStrength = avgSignal,

@@ -135,6 +135,12 @@ class AiSettingsViewModel @Inject constructor(
         }
     }
 
+    fun setHuggingFaceToken(token: String) {
+        viewModelScope.launch {
+            aiSettingsRepository.setHuggingFaceToken(token)
+        }
+    }
+
     fun setContextualAnalysis(enabled: Boolean) {
         viewModelScope.launch {
             aiSettingsRepository.setContextualAnalysis(enabled)

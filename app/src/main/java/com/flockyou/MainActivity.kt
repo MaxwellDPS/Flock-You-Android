@@ -282,7 +282,8 @@ fun AppNavigation(
                 onNavigateToRfDetection = { navController.navigate("rf_detection") },
                 onNavigateToUltrasonicDetection = { navController.navigate("ultrasonic_detection") },
                 onNavigateToSatelliteDetection = { navController.navigate("satellite_detection") },
-                onNavigateToWifiSecurity = { navController.navigate("wifi_security") }
+                onNavigateToWifiSecurity = { navController.navigate("wifi_security") },
+                onNavigateToServiceHealth = { navController.navigate("service_health") }
             )
         }
         composable("map") {

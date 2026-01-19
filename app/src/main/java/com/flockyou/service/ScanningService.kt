@@ -481,11 +481,16 @@ class ScanningService : Service() {
     @Inject
     lateinit var notificationSettingsRepository: com.flockyou.data.NotificationSettingsRepository
 
+    @Inject
+    lateinit var detectionSettingsRepository: com.flockyou.data.DetectionSettingsRepository
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
 
     private var currentNotificationSettings: com.flockyou.data.NotificationSettings = com.flockyou.data.NotificationSettings()
+
+    private var currentDetectionSettings: com.flockyou.data.DetectionSettings = com.flockyou.data.DetectionSettings()
 
     // Screen lock receiver for auto-purge feature (Priority 5)
     private var screenLockReceiver: ScreenLockReceiver? = null
@@ -520,6 +525,7 @@ class ScanningService : Service() {
     private var privacySettingsJob: Job? = null
     private var scanSettingsJob: Job? = null
     private var notificationSettingsJob: Job? = null
+    private var detectionSettingsJob: Job? = null
 
     // Location update jobs (for proper lifecycle management)
     private var cellularLocationJob: Job? = null
@@ -605,9 +611,12 @@ class ScanningService : Service() {
                         }
                     }
                     ScanningServiceIpc.MSG_REQUEST_STATE -> {
+                        Log.d(TAG, "MSG_REQUEST_STATE received, replyTo=${msg.replyTo}")
                         msg.replyTo?.let { client ->
+                            Log.d(TAG, "Sending state to client...")
                             sendStateToClient(client)
-                        }
+                            Log.d(TAG, "State sent to client")
+                        } ?: Log.w(TAG, "MSG_REQUEST_STATE received but replyTo is null!")
                     }
                     ScanningServiceIpc.MSG_START_SCANNING -> {
                         if (!isScanning.value) {
@@ -659,6 +668,7 @@ class ScanningService : Service() {
      * Send current state to a specific client (basic state only).
      */
     private fun sendStateToClient(client: Messenger) {
+        Log.d(TAG, "sendStateToClient() starting")
         try {
             val msg = Message.obtain(null, ScanningServiceIpc.MSG_STATE_UPDATE)
             msg.data = Bundle().apply {
@@ -671,10 +681,14 @@ class ScanningService : Service() {
                 putString(ScanningServiceIpc.KEY_CELLULAR_STATUS, cellularStatus.value.toIpcString())
                 putString(ScanningServiceIpc.KEY_SATELLITE_STATUS, satelliteStatus.value.toIpcString())
             }
+            Log.d(TAG, "Sending MSG_STATE_UPDATE: isScanning=${isScanning.value}, scanStatus=${scanStatus.value}")
             client.send(msg)
+            Log.d(TAG, "MSG_STATE_UPDATE sent")
 
             // Also send all complex data on state request (initial sync)
+            Log.d(TAG, "Calling sendAllDataToClient...")
             sendAllDataToClient(client)
+            Log.d(TAG, "sendAllDataToClient completed")
         } catch (e: RemoteException) {
             Log.e(TAG, "Failed to send state to client", e)
             ipcClients.remove(client)
@@ -685,8 +699,10 @@ class ScanningService : Service() {
      * Send all complex data to a specific client.
      */
     private fun sendAllDataToClient(client: Messenger) {
+        Log.d(TAG, "sendAllDataToClient() starting")
         try {
             // Send seen BLE devices
+            Log.d(TAG, "Sending BLE devices: ${seenBleDevices.value.size} devices")
             val bleMsg = Message.obtain(null, ScanningServiceIpc.MSG_SEEN_BLE_DEVICES)
             bleMsg.data = Bundle().apply {
                 putString(ScanningServiceIpc.KEY_JSON_DATA, ScanningServiceIpc.gson.toJson(seenBleDevices.value))
@@ -1341,6 +1357,18 @@ class ScanningService : Service() {
             }
         }
 
+        // Collect detection settings for RF anomaly and tracking thresholds
+        detectionSettingsJob = serviceScope.launch {
+            detectionSettingsRepository.settings.collect { settings ->
+                currentDetectionSettings = settings
+                // Update RF signal analyzer with hidden network anomaly setting
+                rfSignalAnalyzer?.enableHiddenNetworkRfAnomaly = settings.enableHiddenNetworkRfAnomaly
+                // Update rogue WiFi monitor with tracking distance threshold
+                rogueWifiMonitor?.minTrackingDistanceMeters = settings.wifiThresholds.minTrackingDistanceMeters
+                Log.d(TAG, "Detection settings updated - hidden network RF anomaly: ${settings.enableHiddenNetworkRfAnomaly}, min tracking distance: ${settings.wifiThresholds.minTrackingDistanceMeters}m")
+            }
+        }
+
         // Register screen lock receiver for auto-purge feature (Priority 5)
         try {
             screenLockReceiver = ScreenLockReceiver.register(this)
@@ -1626,6 +1654,8 @@ class ScanningService : Service() {
         scanSettingsJob = null
         notificationSettingsJob?.cancel()
         notificationSettingsJob = null
+        detectionSettingsJob?.cancel()
+        detectionSettingsJob = null
 
         scanJob?.cancel()
         stopBleScan()

@@ -27,6 +27,8 @@ class RfSignalAnalyzer(
     private val context: Context,
     private val errorCallback: ScanningService.DetectorCallback? = null
 ) {
+    // Setting to control hidden network RF anomaly detection (disabled by default)
+    var enableHiddenNetworkRfAnomaly: Boolean = false
 
     companion object {
         private const val TAG = "RfSignalAnalyzer"
@@ -872,7 +874,8 @@ class RfSignalAnalyzer(
         }
 
         // Hidden network detection - requires BOTH high density AND high hidden ratio
-        if (snapshot.wifiNetworkCount > DENSE_NETWORK_THRESHOLD) {
+        // Only check if enableHiddenNetworkRfAnomaly is true (disabled by default due to high false positive rate)
+        if (enableHiddenNetworkRfAnomaly && snapshot.wifiNetworkCount > DENSE_NETWORK_THRESHOLD) {
             val hiddenRatio = snapshot.hiddenNetworkCount.toFloat() / snapshot.wifiNetworkCount
 
             // Stricter threshold: 40% hidden AND at least 15 hidden networks

@@ -33,7 +33,8 @@ data class AiSettings(
     val enableFalsePositiveFiltering: Boolean = true, // Auto-filter likely false positives
     val maxTokens: Int = 1024,
     val temperatureTenths: Int = 7, // 0.7 stored as int to avoid float precision issues
-    val lastModelUpdate: Long = 0
+    val lastModelUpdate: Long = 0,
+    val huggingFaceToken: String = "" // HF token for authenticated model downloads
 )
 
 /**
@@ -370,6 +371,7 @@ class AiSettingsRepository @Inject constructor(
         val MAX_TOKENS = intPreferencesKey("ai_max_tokens")
         val TEMPERATURE_TENTHS = intPreferencesKey("ai_temperature_tenths")
         val LAST_MODEL_UPDATE = longPreferencesKey("ai_last_model_update")
+        val HUGGINGFACE_TOKEN = stringPreferencesKey("ai_huggingface_token")
     }
 
     val settings: Flow<AiSettings> = context.aiSettingsDataStore.data.map { prefs ->
@@ -390,8 +392,13 @@ class AiSettingsRepository @Inject constructor(
             enableFalsePositiveFiltering = prefs[Keys.FALSE_POSITIVE_FILTERING] ?: true,
             maxTokens = prefs[Keys.MAX_TOKENS] ?: 1024,
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
-            lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0
+            lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0,
+            huggingFaceToken = prefs[Keys.HUGGINGFACE_TOKEN] ?: ""
         )
+    }
+
+    suspend fun setHuggingFaceToken(token: String) {
+        context.aiSettingsDataStore.edit { it[Keys.HUGGINGFACE_TOKEN] = token }
     }
 
     suspend fun setEnabled(enabled: Boolean) {

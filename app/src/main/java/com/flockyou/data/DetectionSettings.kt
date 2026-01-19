@@ -105,13 +105,14 @@ data class BleThresholds(
 )
 
 /**
- * Threshold settings for WiFi detection  
+ * Threshold settings for WiFi detection
  */
 data class WifiThresholds(
     val minSignalForAlert: Int = -70,            // Min signal level for alert
     val strongSignalThreshold: Int = -50,        // Signal level for strong signal alert
     val trackingDurationMs: Long = 300000L,      // Time before tracking alert
-    val minSeenCountForTracking: Int = 3         // Min sightings for tracking alert
+    val minSeenCountForTracking: Int = 3,        // Min sightings for tracking alert
+    val minTrackingDistanceMeters: Double = 1609.0  // Min distance traveled (1 mile) for tracking alert
 )
 
 /**
@@ -139,6 +140,7 @@ data class DetectionSettings(
     val enableSatelliteDetection: Boolean = true,
     val enableBleDetection: Boolean = true,
     val enableWifiDetection: Boolean = true,
+    val enableHiddenNetworkRfAnomaly: Boolean = false,  // Disabled by default - high false positive rate
 
     // UI settings
     val advancedMode: Boolean = false
@@ -154,6 +156,7 @@ class DetectionSettingsRepository @Inject constructor(
         val ENABLE_SATELLITE = booleanPreferencesKey("detection_satellite_enabled")
         val ENABLE_BLE = booleanPreferencesKey("detection_ble_enabled")
         val ENABLE_WIFI = booleanPreferencesKey("detection_wifi_enabled")
+        val ENABLE_HIDDEN_NETWORK_RF_ANOMALY = booleanPreferencesKey("detection_hidden_network_rf_anomaly_enabled")
 
         // UI settings
         val ADVANCED_MODE = booleanPreferencesKey("ui_advanced_mode")
@@ -189,6 +192,7 @@ class DetectionSettingsRepository @Inject constructor(
         val WIFI_STRONG_SIGNAL = intPreferencesKey("wifi_strong_signal")
         val WIFI_TRACKING_DURATION = longPreferencesKey("wifi_tracking_duration")
         val WIFI_TRACKING_COUNT = intPreferencesKey("wifi_tracking_count")
+        val WIFI_MIN_TRACKING_DISTANCE = doublePreferencesKey("wifi_min_tracking_distance_meters")
     }
     
     val settings: Flow<DetectionSettings> = context.detectionDataStore.data.map { prefs ->
@@ -214,6 +218,7 @@ class DetectionSettingsRepository @Inject constructor(
             enableSatelliteDetection = prefs[Keys.ENABLE_SATELLITE] ?: true,
             enableBleDetection = prefs[Keys.ENABLE_BLE] ?: true,
             enableWifiDetection = prefs[Keys.ENABLE_WIFI] ?: true,
+            enableHiddenNetworkRfAnomaly = prefs[Keys.ENABLE_HIDDEN_NETWORK_RF_ANOMALY] ?: false,
             advancedMode = prefs[Keys.ADVANCED_MODE] ?: false,
             
             enabledCellularPatterns = CellularPattern.values().filter { it !in disabledCellular }.toSet(),
@@ -248,7 +253,8 @@ class DetectionSettingsRepository @Inject constructor(
                 minSignalForAlert = prefs[Keys.WIFI_MIN_SIGNAL] ?: -70,
                 strongSignalThreshold = prefs[Keys.WIFI_STRONG_SIGNAL] ?: -50,
                 trackingDurationMs = prefs[Keys.WIFI_TRACKING_DURATION] ?: 300000L,
-                minSeenCountForTracking = prefs[Keys.WIFI_TRACKING_COUNT] ?: 3
+                minSeenCountForTracking = prefs[Keys.WIFI_TRACKING_COUNT] ?: 3,
+                minTrackingDistanceMeters = prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] ?: 1609.0
             )
         )
     }
@@ -363,6 +369,14 @@ class DetectionSettingsRepository @Inject constructor(
             prefs[Keys.WIFI_STRONG_SIGNAL] = thresholds.strongSignalThreshold
             prefs[Keys.WIFI_TRACKING_DURATION] = thresholds.trackingDurationMs
             prefs[Keys.WIFI_TRACKING_COUNT] = thresholds.minSeenCountForTracking
+            prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] = thresholds.minTrackingDistanceMeters
+        }
+    }
+
+    // Toggle hidden network RF anomaly detection
+    suspend fun setHiddenNetworkRfAnomalyEnabled(enabled: Boolean) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.ENABLE_HIDDEN_NETWORK_RF_ANOMALY] = enabled
         }
     }
     

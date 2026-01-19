@@ -116,14 +116,19 @@ object ScanningServiceIpc {
         looper: Looper
     ) : Handler(looper) {
         override fun handleMessage(msg: Message) {
+            Log.d(TAG, "IncomingHandler received message: ${msg.what}")
             try {
                 when (msg.what) {
                     MSG_STATE_UPDATE -> {
+                        Log.d(TAG, "Processing MSG_STATE_UPDATE")
                         val bundle = msg.data
+                        val isScanning = bundle.getBoolean(KEY_IS_SCANNING, false)
+                        val scanStatus = bundle.getString(KEY_SCAN_STATUS, "Idle")
+                        Log.d(TAG, "State update: isScanning=$isScanning, scanStatus=$scanStatus")
                         connection.updateState(
-                            isScanning = bundle.getBoolean(KEY_IS_SCANNING, false),
+                            isScanning = isScanning,
                             detectionCount = bundle.getInt(KEY_DETECTION_COUNT, 0),
-                            scanStatus = bundle.getString(KEY_SCAN_STATUS, "Idle"),
+                            scanStatus = scanStatus,
                             bleStatus = bundle.getString(KEY_BLE_STATUS, "Idle"),
                             wifiStatus = bundle.getString(KEY_WIFI_STATUS, "Idle"),
                             locationStatus = bundle.getString(KEY_LOCATION_STATUS, "Idle"),
@@ -218,7 +223,9 @@ object ScanningServiceIpc {
                         )
                     }
                     MSG_DETECTOR_HEALTH -> {
+                        Log.d(TAG, "Processing MSG_DETECTOR_HEALTH")
                         val json = msg.data?.getString(KEY_DETECTOR_HEALTH_JSON)
+                        Log.d(TAG, "Detector health JSON length: ${json?.length ?: 0}")
                         connection.updateDetectorHealth(json)
                     }
                     MSG_ERROR_LOG -> {
@@ -385,18 +392,23 @@ class ScanningServiceConnection(private val context: Context) {
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.d(tag, "Service connected")
+            Log.d(tag, "onServiceConnected called, service=$service")
             serviceMessenger = Messenger(service)
             _isBound.value = true
+            Log.d(tag, "Service connected, isBound=${_isBound.value}")
 
             // Register this client with the service
             try {
+                Log.d(tag, "Registering client with service...")
                 val msg = Message.obtain(null, ScanningServiceIpc.MSG_REGISTER_CLIENT)
                 msg.replyTo = clientMessenger
                 serviceMessenger?.send(msg)
+                Log.d(tag, "Client registration message sent")
 
                 // Request current state
+                Log.d(tag, "Requesting initial state...")
                 requestState()
+                Log.d(tag, "Initial state request sent")
             } catch (e: RemoteException) {
                 Log.e(tag, "Failed to register client", e)
             }
@@ -413,10 +425,12 @@ class ScanningServiceConnection(private val context: Context) {
      * Bind to the scanning service.
      */
     fun bind() {
+        Log.d(tag, "bind() called, isBound=${_isBound.value}")
         if (_isBound.value) return
 
         val intent = Intent(context, ScanningService::class.java)
-        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        val result = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        Log.d(tag, "bindService result: $result")
     }
 
     /**
@@ -445,12 +459,18 @@ class ScanningServiceConnection(private val context: Context) {
      * Request current state from the service.
      */
     fun requestState() {
-        if (!_isBound.value) return
+        Log.d(tag, "requestState() called, isBound=${_isBound.value}")
+        if (!_isBound.value) {
+            Log.w(tag, "requestState() - not bound, skipping")
+            return
+        }
 
         try {
             val msg = Message.obtain(null, ScanningServiceIpc.MSG_REQUEST_STATE)
             msg.replyTo = clientMessenger
+            Log.d(tag, "Sending MSG_REQUEST_STATE, replyTo=$clientMessenger")
             serviceMessenger?.send(msg)
+            Log.d(tag, "MSG_REQUEST_STATE sent successfully")
         } catch (e: RemoteException) {
             Log.e(tag, "Failed to request state", e)
         }
@@ -798,7 +818,9 @@ class ScanningServiceConnection(private val context: Context) {
             val type = object : TypeToken<Map<String, ScanningService.DetectorHealthStatus>>() {}.type
             val health: Map<String, ScanningService.DetectorHealthStatus> = ScanningServiceIpc.gson.fromJson(json, type)
             Log.d(tag, "Parsed detector health: ${health.size} detectors, running=${health.values.count { it.isRunning }}")
+            Log.d(tag, "Current _detectorHealth value before update: ${_detectorHealth.value.size} detectors")
             _detectorHealth.value = health
+            Log.d(tag, "_detectorHealth value after update: ${_detectorHealth.value.size} detectors")
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse detector health JSON: $json", e)
         }

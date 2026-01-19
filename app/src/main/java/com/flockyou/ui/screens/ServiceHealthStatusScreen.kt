@@ -63,6 +63,10 @@ fun ServiceHealthStatusScreen(
                     }
                 },
                 actions = {
+                    // Manual refresh button
+                    IconButton(onClick = { viewModel.requestRefresh() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                    }
                     // Refresh indicator when scanning
                     if (isScanning) {
                         val infiniteTransition = rememberInfiniteTransition(label = "pulse")

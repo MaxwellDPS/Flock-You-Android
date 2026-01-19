@@ -47,7 +47,8 @@ data class MainUiState(
     val lastDetection: Detection? = null,
     val selectedTab: Int = 0,
     val filterThreatLevel: ThreatLevel? = null,
-    val filterDeviceType: DeviceType? = null,
+    val filterDeviceTypes: Set<DeviceType> = emptySet(), // Multiple device types now
+    val filterMatchAll: Boolean = true, // true = AND, false = OR
     // Status information
     val scanStatus: ScanningService.ScanStatus = ScanningService.ScanStatus.Idle,
     val bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
@@ -111,14 +112,12 @@ class MainViewModel @Inject constructor(
     private val orbotHelper: OrbotHelper,
     private val torAwareHttpClient: TorAwareHttpClient,
     private val workManager: WorkManager,
-    private val detectionAnalyzer: com.flockyou.ai.DetectionAnalyzer
+    private val detectionAnalyzer: com.flockyou.ai.DetectionAnalyzer,
+    private val serviceConnection: ScanningServiceConnection  // Injected singleton
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-
-    // IPC connection to the scanning service (runs in separate process)
-    private val serviceConnection = ScanningServiceConnection(application)
 
     // OUI Settings
     val ouiSettings: StateFlow<OuiSettings> = ouiSettingsRepository.settings
@@ -168,8 +167,10 @@ class MainViewModel @Inject constructor(
     val isTorTesting: StateFlow<Boolean> = _isTorTesting.asStateFlow()
 
     init {
-        // Bind to the scanning service for cross-process IPC
-        serviceConnection.bind()
+        // The serviceConnection is now a singleton injected via Hilt
+        // It is automatically bound when created by the provider
+        // Request the current state when ViewModel is initialized
+        serviceConnection.requestState()
 
         // Consolidated IPC state collection - combines all service connection flows into a single collection
         // This reduces context switching overhead and makes state updates more atomic
@@ -350,6 +351,7 @@ class MainViewModel @Inject constructor(
         // Detector health status collection
         viewModelScope.launch {
             serviceConnection.detectorHealth.collect { health ->
+                Log.d("MainViewModel", "Received detector health update: ${health.size} detectors, running=${health.values.count { it.isRunning }}")
                 _uiState.update { it.copy(detectorHealth = health) }
             }
         }
@@ -357,6 +359,7 @@ class MainViewModel @Inject constructor(
         // Scan statistics collection
         viewModelScope.launch {
             serviceConnection.scanStats.collect { stats ->
+                Log.d("MainViewModel", "Received scan stats update: totalBleScans=${stats.totalBleScans}, totalWifiScans=${stats.totalWifiScans}")
                 _uiState.update { it.copy(scanStats = stats) }
             }
         }
@@ -449,8 +452,8 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        // Unbind from the service when ViewModel is destroyed
-        serviceConnection.unbind()
+        // The serviceConnection is a singleton - do not unbind here
+        // It will remain bound for the lifetime of the application
     }
 
     fun startScanning() {
@@ -502,13 +505,31 @@ class MainViewModel @Inject constructor(
     fun setThreatFilter(threatLevel: ThreatLevel?) {
         _uiState.update { it.copy(filterThreatLevel = threatLevel) }
     }
-    
-    fun setDeviceTypeFilter(deviceType: DeviceType?) {
-        _uiState.update { it.copy(filterDeviceType = deviceType) }
+
+    fun addDeviceTypeFilter(deviceType: DeviceType) {
+        _uiState.update { it.copy(filterDeviceTypes = it.filterDeviceTypes + deviceType) }
     }
-    
+
+    fun removeDeviceTypeFilter(deviceType: DeviceType) {
+        _uiState.update { it.copy(filterDeviceTypes = it.filterDeviceTypes - deviceType) }
+    }
+
+    fun toggleDeviceTypeFilter(deviceType: DeviceType) {
+        _uiState.update { state ->
+            if (deviceType in state.filterDeviceTypes) {
+                state.copy(filterDeviceTypes = state.filterDeviceTypes - deviceType)
+            } else {
+                state.copy(filterDeviceTypes = state.filterDeviceTypes + deviceType)
+            }
+        }
+    }
+
+    fun setFilterMatchAll(matchAll: Boolean) {
+        _uiState.update { it.copy(filterMatchAll = matchAll) }
+    }
+
     fun clearFilters() {
-        _uiState.update { it.copy(filterThreatLevel = null, filterDeviceType = null) }
+        _uiState.update { it.copy(filterThreatLevel = null, filterDeviceTypes = emptySet()) }
     }
     
     fun deleteDetection(detection: Detection) {
@@ -569,8 +590,25 @@ class MainViewModel @Inject constructor(
         val state = _uiState.value
         return state.detections.filter { detection ->
             val threatMatch = state.filterThreatLevel?.let { detection.threatLevel == it } ?: true
-            val typeMatch = state.filterDeviceType?.let { detection.deviceType == it } ?: true
-            threatMatch && typeMatch
+            val typeMatch = if (state.filterDeviceTypes.isEmpty()) {
+                true
+            } else {
+                detection.deviceType in state.filterDeviceTypes
+            }
+
+            // Apply AND/OR logic
+            if (state.filterMatchAll) {
+                // AND: both conditions must match
+                threatMatch && typeMatch
+            } else {
+                // OR: either condition can match (if both are set)
+                if (state.filterThreatLevel != null && state.filterDeviceTypes.isNotEmpty()) {
+                    threatMatch || typeMatch
+                } else {
+                    // If only one filter type is set, just use that
+                    threatMatch && typeMatch
+                }
+            }
         }
     }
 

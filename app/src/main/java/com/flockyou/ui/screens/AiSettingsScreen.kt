@@ -5,8 +5,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -15,7 +17,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.AiModel
@@ -155,6 +160,14 @@ fun AiSettingsScreen(
                         deviceCapabilities = deviceCapabilities,
                         onGpuChange = { viewModel.setUseGpuAcceleration(it) },
                         onNpuChange = { viewModel.setUseNpuAcceleration(it) }
+                    )
+                }
+
+                // Hugging Face Token for authenticated downloads
+                item {
+                    HuggingFaceTokenCard(
+                        token = settings.huggingFaceToken,
+                        onTokenChange = { viewModel.setHuggingFaceToken(it) }
                     )
                 }
 
@@ -1270,6 +1283,142 @@ private fun PerformanceCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HuggingFaceTokenCard(
+    token: String,
+    onTokenChange: (String) -> Unit
+) {
+    var showToken by remember { mutableStateOf(false) }
+    var editingToken by remember { mutableStateOf(token) }
+    var isEditing by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    tint = if (token.isNotBlank()) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Hugging Face Token",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = if (token.isNotBlank()) "Token configured" else "Required for some model downloads",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (token.isNotBlank()) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (token.isNotBlank() && !isEditing) {
+                    IconButton(onClick = { showToken = !showToken }) {
+                        Icon(
+                            imageVector = if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (showToken) "Hide token" else "Show token"
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (isEditing) {
+                OutlinedTextField(
+                    value = editingToken,
+                    onValueChange = { editingToken = it },
+                    label = { Text("Enter HF Token") },
+                    placeholder = { Text("hf_...") },
+                    singleLine = true,
+                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showToken = !showToken }) {
+                            Icon(
+                                imageVector = if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showToken) "Hide" else "Show"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = {
+                        editingToken = token
+                        isEditing = false
+                    }) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = {
+                        onTokenChange(editingToken.trim())
+                        isEditing = false
+                    }) {
+                        Text("Save")
+                    }
+                }
+            } else {
+                if (token.isNotBlank() && showToken) {
+                    Text(
+                        text = token,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(8.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            editingToken = token
+                            isEditing = true
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (token.isBlank()) "Add Token" else "Edit")
+                    }
+                    if (token.isNotBlank()) {
+                        OutlinedButton(
+                            onClick = { onTokenChange("") }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove token", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+
+            // Help text
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Get your token at huggingface.co/settings/tokens",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
