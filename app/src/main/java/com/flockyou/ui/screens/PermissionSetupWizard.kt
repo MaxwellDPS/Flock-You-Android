@@ -551,6 +551,7 @@ private fun InfoRow(
 
 @Composable
 private fun FinalPage(
+    categories: List<PermissionCategory>,
     onGrantPermissions: () -> Unit,
     onPrevious: () -> Unit
 ) {
@@ -589,7 +590,7 @@ private fun FinalPage(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Summary cards
+        // Summary cards - only show permissions that will be requested
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -605,11 +606,13 @@ private fun FinalPage(
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                SummaryRow(icon = Icons.Default.LocationOn, text = "Location permission dialog will appear")
-                SummaryRow(icon = Icons.Default.Bluetooth, text = "Bluetooth permission dialog will appear")
-                SummaryRow(icon = Icons.Default.Notifications, text = "Notification permission dialog will appear")
-                SummaryRow(icon = Icons.Default.Mic, text = "Microphone permission dialog will appear")
-                SummaryRow(icon = Icons.Default.Phone, text = "Phone state permission dialog will appear")
+                // Dynamically show only the permission dialogs that will appear
+                categories.forEach { category ->
+                    SummaryRow(
+                        icon = category.icon,
+                        text = "${category.title} permission dialog will appear"
+                    )
+                }
             }
         }
 
