@@ -28,42 +28,46 @@ class RfSignalAnalyzer(private val context: Context) {
     companion object {
         private const val TAG = "RfSignalAnalyzer"
 
-        // Thresholds
+        // Thresholds - tuned to reduce false positives
         private const val JAMMER_DETECTION_WINDOW_MS = 30_000L // 30 seconds
-        private const val NORMAL_NETWORK_FLOOR = 3 // Expect at least 3 networks normally
-        private const val SIGNAL_HISTORY_SIZE = 60 // ~1 minute of samples at 1/sec
-        private const val JAMMER_SIGNAL_DROP_THRESHOLD = 20 // dBm drop
-        private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between same type
-        private const val DENSE_NETWORK_THRESHOLD = 30 // Many networks = possible surveillance area
+        private const val NORMAL_NETWORK_FLOOR = 5 // Minimum networks for reliable baseline
+        private const val SIGNAL_HISTORY_SIZE = 120 // ~2 minutes for stable baseline
+        private const val JAMMER_SIGNAL_DROP_THRESHOLD = 25 // dBm drop required
+        private const val ANOMALY_COOLDOWN_MS = 180_000L // 3 minutes between same alert type
+        private const val DENSE_NETWORK_THRESHOLD = 40 // High network density threshold
         private const val DRONE_DETECTION_COOLDOWN_MS = 300_000L // 5 minutes
 
-        // Drone WiFi patterns (common consumer/prosumer drones)
+        // Minimum observations to reduce transient false positives
+        private const val MIN_BASELINE_SAMPLES = 10 // Samples needed for reliable baseline
+        private const val MIN_CONSECUTIVE_ANOMALOUS_READINGS = 3 // Consecutive readings before alert
+        private const val MIN_DRONE_SIGHTINGS = 2 // See drone multiple times before alerting
+        private const val SIGNAL_INTERFERENCE_THRESHOLD_DBM = 20 // Significant signal change
+        private const val HIDDEN_NETWORK_SUSPICIOUS_RATIO = 0.4f // 40% hidden is suspicious
+        private const val MIN_SURVEILLANCE_CAMERAS = 8 // Camera count for surveillance alert
+        private const val JAMMER_NETWORK_DROP_RATIO = 0.33f // Networks must drop to 1/3 (was 1/2)
+
+        // Drone WiFi patterns - tightened to reduce false positives
+        // Only match patterns that are highly specific to drones
         private val DRONE_SSID_PATTERNS = listOf(
-            Regex("(?i)^dji[-_]?.*"),           // DJI drones
-            Regex("(?i)^phantom[-_]?.*"),       // DJI Phantom series
-            Regex("(?i)^mavic[-_]?.*"),         // DJI Mavic series
-            Regex("(?i)^spark[-_]?.*"),         // DJI Spark
-            Regex("(?i)^inspire[-_]?.*"),       // DJI Inspire
-            Regex("(?i)^mini[-_]?se?[_-]?.*"),  // DJI Mini series (but careful of false positives)
-            Regex("(?i)^tello[-_]?.*"),         // Ryze Tello (DJI)
-            Regex("(?i)^parrot[-_]?.*"),        // Parrot drones
-            Regex("(?i)^anafi[-_]?.*"),         // Parrot Anafi
-            Regex("(?i)^bebop[-_]?.*"),         // Parrot Bebop
-            Regex("(?i)^skydio[-_]?.*"),        // Skydio drones
-            Regex("(?i)^autel[-_]?.*"),         // Autel drones
-            Regex("(?i)^evo[-_]?(ii|2|lite).*"),// Autel EVO series
-            Regex("(?i)^yuneec[-_]?.*"),        // Yuneec drones
-            Regex("(?i)^typhoon[-_]?.*"),       // Yuneec Typhoon
-            Regex("(?i)^hubsan[-_]?.*"),        // Hubsan drones
-            Regex("(?i)^holy[-_]?stone[-_]?.*"),// Holy Stone drones
-            Regex("(?i)^potensic[-_]?.*"),      // Potensic drones
-            Regex("(?i)^snaptain[-_]?.*"),      // Snaptain drones
-            Regex("(?i)^drone[-_]?[0-9a-f]+"),  // Generic drone pattern
-            Regex("(?i)^fpv[-_]?.*"),           // FPV racing drones
-            Regex("(?i)^quad[-_]?.*"),          // Quadcopter generic
-            Regex("(?i)^uav[-_]?.*"),           // UAV generic
-            // Police/surveillance drones often use these patterns
-            Regex("(?i)^(pd|police|tactical|aerial)[-_]?(drone|uav|unit).*"),
+            Regex("(?i)^dji[-_].+"),              // DJI drones (require suffix)
+            Regex("(?i)^phantom[-_]?[0-9].*"),    // DJI Phantom with model number
+            Regex("(?i)^mavic[-_]?(pro|air|mini|[0-9]).*"), // DJI Mavic specific models
+            Regex("(?i)^inspire[-_]?[0-9].*"),    // DJI Inspire with number
+            Regex("(?i)^tello[-_]?[0-9a-f]+"),    // Ryze Tello with ID
+            Regex("(?i)^parrot[-_]?(anafi|bebop|disco|mambo).*"), // Parrot specific models
+            Regex("(?i)^anafi[-_]?.*"),           // Parrot Anafi
+            Regex("(?i)^bebop[-_]?[0-9].*"),      // Parrot Bebop with number
+            Regex("(?i)^skydio[-_]?[0-9].*"),     // Skydio with model
+            Regex("(?i)^autel[-_]?(evo|robotics).*"), // Autel specific
+            Regex("(?i)^evo[-_]?(ii|2|lite)[-_].*"), // Autel EVO (require more context)
+            Regex("(?i)^yuneec[-_]?(typhoon|mantis|breeze).*"), // Yuneec specific models
+            Regex("(?i)^typhoon[-_]?[hq4].*"),    // Yuneec Typhoon specific
+            Regex("(?i)^hubsan[-_]?(zino|x4).*"), // Hubsan specific models
+            Regex("(?i)^holy[-_]?stone[-_]?hs.*"),// Holy Stone with model prefix
+            Regex("(?i)^potensic[-_]?[a-z][0-9].*"), // Potensic with model
+            Regex("(?i)^snaptain[-_]?[a-z][0-9].*"), // Snaptain with model
+            // Removed overly broad patterns: drone-*, fpv-*, quad-*, uav-*, mini-*, spark-*
+            // These match too many non-drone devices
         )
 
         // DJI OUI prefixes (DJI drones use specific MAC ranges)
@@ -114,7 +118,13 @@ class RfSignalAnalyzer(private val context: Context) {
     private var lastScanNetworkCount = 0
     private var lastScanTimestamp = 0L
     private var baselineNetworkCount: Int? = null
+    private var baselineSignalStrength: Int? = null
     private var lastAnomalyTimes = mutableMapOf<RfAnomalyType, Long>()
+
+    // Consecutive anomaly counters to reduce false positives
+    private var consecutiveJammerReadings = 0
+    private var consecutiveInterferenceReadings = 0
+    private val pendingDroneSightings = mutableMapOf<String, Int>() // BSSID -> sighting count
 
     // Drone tracking
     private val detectedDrones = mutableMapOf<String, DroneInfo>()
@@ -304,9 +314,11 @@ class RfSignalAnalyzer(private val context: Context) {
             signalHistory.removeAt(0)
         }
 
-        // Set baseline if not set
-        if (baselineNetworkCount == null && signalHistory.size >= 3) {
+        // Set baseline after collecting enough samples for reliability
+        if (baselineNetworkCount == null && signalHistory.size >= MIN_BASELINE_SAMPLES) {
             baselineNetworkCount = signalHistory.map { it.wifiNetworkCount }.average().toInt()
+            baselineSignalStrength = signalHistory.map { it.averageSignalStrength }.average().toInt()
+            Log.d(TAG, "Baseline established: $baselineNetworkCount networks, ${baselineSignalStrength}dBm avg")
         }
 
         // Check for jammers
@@ -402,39 +414,52 @@ class RfSignalAnalyzer(private val context: Context) {
     }
 
     private fun checkForJammer(snapshot: RfSnapshot) {
-        // Jammer detection: sudden significant drop in visible networks
-        if (baselineNetworkCount == null) return
+        // Jammer detection: requires sustained significant drop in networks AND signal strength
+        if (baselineNetworkCount == null || baselineSignalStrength == null) return
 
         val baseline = baselineNetworkCount!!
+        val baselineSignal = baselineSignalStrength!!
         val current = snapshot.wifiNetworkCount
 
-        // If we had a reasonable baseline and it suddenly dropped significantly
-        if (baseline >= NORMAL_NETWORK_FLOOR && current < baseline / 2) {
-            // Also check signal strength - jammer would cause overall signal degradation
-            val recentAvgSignal = signalHistory.takeLast(3)
-                .map { it.averageSignalStrength }
-                .average()
-                .toInt()
+        // Check if current reading looks like jamming (significant drop to 1/3 or less)
+        val networkDropThreshold = (baseline * JAMMER_NETWORK_DROP_RATIO).toInt()
+        val looksLikeJamming = baseline >= NORMAL_NETWORK_FLOOR &&
+            current <= networkDropThreshold &&
+            snapshot.averageSignalStrength < baselineSignal - JAMMER_SIGNAL_DROP_THRESHOLD
 
-            val historicalAvgSignal = signalHistory.take(signalHistory.size / 2)
-                .map { it.averageSignalStrength }
-                .average()
-                .toInt()
-
-            if (recentAvgSignal < historicalAvgSignal - JAMMER_SIGNAL_DROP_THRESHOLD) {
-                reportAnomaly(
-                    type = RfAnomalyType.POSSIBLE_JAMMER,
-                    description = "Sudden drop in RF signals suggests possible jammer nearby",
-                    technicalDetails = "Network count dropped from $baseline to $current. " +
-                        "Average signal dropped from ${historicalAvgSignal}dBm to ${recentAvgSignal}dBm.",
-                    confidence = AnomalyConfidence.MEDIUM,
-                    contributingFactors = listOf(
-                        "Network count: $baseline → $current (${((baseline - current) * 100 / baseline)}% drop)",
-                        "Signal strength: ${historicalAvgSignal}dBm → ${recentAvgSignal}dBm",
-                        "Time window: ${JAMMER_DETECTION_WINDOW_MS / 1000}s"
-                    )
-                )
+        if (looksLikeJamming) {
+            consecutiveJammerReadings++
+            Log.d(TAG, "Potential jammer reading $consecutiveJammerReadings/$MIN_CONSECUTIVE_ANOMALOUS_READINGS")
+        } else {
+            // Reset counter if environment looks normal
+            if (consecutiveJammerReadings > 0) {
+                Log.d(TAG, "Jammer counter reset - environment normalized")
             }
+            consecutiveJammerReadings = 0
+            return
+        }
+
+        // Only alert after sustained anomalous readings
+        if (consecutiveJammerReadings >= MIN_CONSECUTIVE_ANOMALOUS_READINGS) {
+            val recentAvgSignal = signalHistory.takeLast(MIN_CONSECUTIVE_ANOMALOUS_READINGS)
+                .map { it.averageSignalStrength }
+                .average()
+                .toInt()
+
+            reportAnomaly(
+                type = RfAnomalyType.POSSIBLE_JAMMER,
+                description = "Sustained RF signal disruption detected - possible jammer",
+                technicalDetails = "Network count dropped from $baseline to $current for " +
+                    "$consecutiveJammerReadings consecutive scans. Signal: ${baselineSignal}dBm → ${recentAvgSignal}dBm.",
+                confidence = if (consecutiveJammerReadings >= 5) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
+                contributingFactors = listOf(
+                    "Network count: $baseline → $current (${((baseline - current) * 100 / baseline)}% drop)",
+                    "Signal strength: ${baselineSignal}dBm → ${recentAvgSignal}dBm",
+                    "Sustained for $consecutiveJammerReadings readings"
+                )
+            )
+            // Reset after alerting
+            consecutiveJammerReadings = 0
         }
     }
 
@@ -447,7 +472,15 @@ class RfSignalAnalyzer(private val context: Context) {
             val ssid = result.SSID ?: ""
             val oui = bssid.take(8)
 
-            val isDrone = oui in DRONE_OUIS || DRONE_SSID_PATTERNS.any { it.matches(ssid) }
+            // Require BOTH OUI match AND SSID pattern for higher confidence,
+            // OR just OUI for known drone manufacturers
+            val ouiMatch = oui in DRONE_OUIS
+            val ssidMatch = DRONE_SSID_PATTERNS.any { it.matches(ssid) }
+
+            // High confidence: OUI matches known drone manufacturer
+            // Medium confidence: SSID matches drone pattern (requires multiple sightings)
+            val isDrone = ouiMatch || ssidMatch
+            val isHighConfidence = ouiMatch
 
             if (isDrone) {
                 val existing = detectedDrones[bssid]
@@ -463,65 +496,81 @@ class RfSignalAnalyzer(private val context: Context) {
                 }
 
                 if (existing != null) {
+                    // Already tracking this drone
                     existing.lastSeen = now
                     existing.rssi = result.level
                     existing.seenCount++
                 } else {
-                    val drone = DroneInfo(
-                        bssid = bssid,
-                        ssid = ssid,
-                        manufacturer = manufacturer,
-                        firstSeen = now,
-                        lastSeen = now,
-                        rssi = result.level,
-                        latitude = currentLatitude,
-                        longitude = currentLongitude,
-                        estimatedDistance = rssiToDistance(result.level)
-                    )
-                    detectedDrones[bssid] = drone
+                    // New potential drone - track sightings before alerting
+                    val sightings = pendingDroneSightings.getOrDefault(bssid, 0) + 1
+                    pendingDroneSightings[bssid] = sightings
 
-                    // Report new drone detection
-                    reportAnomaly(
-                        type = RfAnomalyType.DRONE_DETECTED,
-                        description = "Drone WiFi signal detected: $manufacturer",
-                        technicalDetails = "SSID: '$ssid', Signal: ${result.level}dBm, " +
-                            "Estimated distance: ${rssiToDistance(result.level)}",
-                        confidence = AnomalyConfidence.HIGH,
-                        contributingFactors = listOf(
-                            "Manufacturer: $manufacturer",
-                            "SSID: $ssid",
-                            "Signal strength: ${result.level}dBm",
-                            "Estimated distance: ${rssiToDistance(result.level)}"
+                    // High confidence (OUI match) or seen multiple times -> confirm as drone
+                    val shouldConfirm = isHighConfidence || sightings >= MIN_DRONE_SIGHTINGS
+
+                    if (shouldConfirm) {
+                        val drone = DroneInfo(
+                            bssid = bssid,
+                            ssid = ssid,
+                            manufacturer = manufacturer,
+                            firstSeen = now,
+                            lastSeen = now,
+                            rssi = result.level,
+                            latitude = currentLatitude,
+                            longitude = currentLongitude,
+                            estimatedDistance = rssiToDistance(result.level)
                         )
-                    )
+                        detectedDrones[bssid] = drone
+                        pendingDroneSightings.remove(bssid)
 
-                    addTimelineEvent(
-                        type = RfEventType.DRONE_DETECTED,
-                        title = "🚁 Drone Detected",
-                        description = "$manufacturer drone at ${rssiToDistance(result.level)}",
-                        threatLevel = ThreatLevel.MEDIUM
-                    )
+                        val confidence = if (isHighConfidence) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM
+
+                        reportAnomaly(
+                            type = RfAnomalyType.DRONE_DETECTED,
+                            description = "Drone WiFi signal detected: $manufacturer",
+                            technicalDetails = "SSID: '$ssid', Signal: ${result.level}dBm, " +
+                                "Estimated distance: ${rssiToDistance(result.level)}" +
+                                if (!isHighConfidence) ", Seen $sightings times" else "",
+                            confidence = confidence,
+                            contributingFactors = listOf(
+                                "Manufacturer: $manufacturer",
+                                "SSID: $ssid",
+                                "Signal strength: ${result.level}dBm",
+                                "Estimated distance: ${rssiToDistance(result.level)}",
+                                if (ouiMatch) "MAC address matches drone OUI" else "SSID matches drone pattern"
+                            )
+                        )
+
+                        addTimelineEvent(
+                            type = RfEventType.DRONE_DETECTED,
+                            title = "🚁 Drone Detected",
+                            description = "$manufacturer drone at ${rssiToDistance(result.level)}",
+                            threatLevel = ThreatLevel.MEDIUM
+                        )
+                    } else {
+                        Log.d(TAG, "Potential drone '$ssid' sighting $sightings/$MIN_DRONE_SIGHTINGS")
+                    }
                 }
             }
         }
 
-        // Clean up old drone sightings
+        // Clean up old drone sightings and pending sightings
         detectedDrones.entries.removeIf { now - it.value.lastSeen > DRONE_DETECTION_COOLDOWN_MS }
         _detectedDrones.value = detectedDrones.values.toList()
     }
 
     @Suppress("UNUSED_PARAMETER")
     private fun checkForSurveillanceArea(results: List<ScanResult>, snapshot: RfSnapshot) {
-        // Count surveillance cameras
+        // Count surveillance cameras - require higher threshold to reduce FPs
         val cameraCount = snapshot.surveillanceCameraCount
 
-        if (cameraCount >= 5) {
+        if (cameraCount >= MIN_SURVEILLANCE_CAMERAS) {
             reportAnomaly(
                 type = RfAnomalyType.SURVEILLANCE_AREA,
                 description = "High concentration of surveillance cameras detected",
                 technicalDetails = "$cameraCount surveillance camera WiFi networks detected. " +
                     "This area has significant video surveillance infrastructure.",
-                confidence = if (cameraCount >= 10) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
+                confidence = if (cameraCount >= 15) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
                 contributingFactors = listOf(
                     "$cameraCount camera networks detected",
                     "Manufacturers: Hikvision, Dahua, Axis, etc.",
@@ -530,12 +579,12 @@ class RfSignalAnalyzer(private val context: Context) {
             )
         }
 
-        // Also check for unusual density of networks overall
+        // Hidden network detection - requires BOTH high density AND high hidden ratio
         if (snapshot.wifiNetworkCount > DENSE_NETWORK_THRESHOLD) {
-            // Many networks in one area - could be surveillance infrastructure
             val hiddenRatio = snapshot.hiddenNetworkCount.toFloat() / snapshot.wifiNetworkCount
 
-            if (hiddenRatio > 0.3) { // >30% hidden networks is suspicious
+            // Stricter threshold: 40% hidden AND at least 15 hidden networks
+            if (hiddenRatio > HIDDEN_NETWORK_SUSPICIOUS_RATIO && snapshot.hiddenNetworkCount >= 15) {
                 reportAnomaly(
                     type = RfAnomalyType.UNUSUAL_ACTIVITY,
                     description = "Unusually high number of hidden WiFi networks",
@@ -554,30 +603,44 @@ class RfSignalAnalyzer(private val context: Context) {
     }
 
     private fun checkForSpectrumAnomalies(snapshot: RfSnapshot) {
-        if (signalHistory.size < 10) return // Need history for comparison
+        if (signalHistory.size < MIN_BASELINE_SAMPLES) return // Need stable history
 
-        // Check for sudden signal strength changes across all networks
-        val recentSnapshots = signalHistory.takeLast(5)
-        val olderSnapshots = signalHistory.dropLast(5).takeLast(5)
+        // Check for sustained signal strength anomalies (not just single-scan fluctuations)
+        val recentSnapshots = signalHistory.takeLast(MIN_CONSECUTIVE_ANOMALOUS_READINGS)
+        val olderSnapshots = signalHistory.dropLast(MIN_CONSECUTIVE_ANOMALOUS_READINGS)
+            .takeLast(MIN_BASELINE_SAMPLES)
 
-        if (olderSnapshots.isEmpty()) return
+        if (olderSnapshots.size < MIN_BASELINE_SAMPLES / 2) return
 
         val recentAvg = recentSnapshots.map { it.averageSignalStrength }.average()
         val olderAvg = olderSnapshots.map { it.averageSignalStrength }.average()
+        val signalDelta = kotlin.math.abs(recentAvg - olderAvg)
 
-        // Significant overall signal change could indicate interference
-        if (kotlin.math.abs(recentAvg - olderAvg) > 15) {
+        // Check if the change is significant AND sustained
+        val isSignificantChange = signalDelta > SIGNAL_INTERFERENCE_THRESHOLD_DBM
+
+        if (isSignificantChange) {
+            consecutiveInterferenceReadings++
+        } else {
+            consecutiveInterferenceReadings = 0
+            return
+        }
+
+        // Only alert after sustained anomalous readings
+        if (consecutiveInterferenceReadings >= MIN_CONSECUTIVE_ANOMALOUS_READINGS) {
             reportAnomaly(
                 type = RfAnomalyType.SIGNAL_INTERFERENCE,
-                description = "Significant change in overall RF environment",
-                technicalDetails = "Average signal strength changed by ${kotlin.math.abs(recentAvg - olderAvg).toInt()}dBm " +
-                    "over the last few scans. This could indicate RF interference or environmental changes.",
+                description = "Sustained change in RF environment detected",
+                technicalDetails = "Average signal strength changed by ${signalDelta.toInt()}dBm " +
+                    "sustained over $consecutiveInterferenceReadings scans. May indicate interference.",
                 confidence = AnomalyConfidence.LOW,
                 contributingFactors = listOf(
                     "Signal change: ${olderAvg.toInt()}dBm → ${recentAvg.toInt()}dBm",
-                    "Networks visible: ${snapshot.wifiNetworkCount}"
+                    "Networks visible: ${snapshot.wifiNetworkCount}",
+                    "Sustained for $consecutiveInterferenceReadings readings"
                 )
             )
+            consecutiveInterferenceReadings = 0
         }
     }
 
@@ -614,7 +677,9 @@ class RfSignalAnalyzer(private val context: Context) {
         }
 
         val jammerSuspected = baselineNetworkCount?.let { baseline ->
-            snapshot.wifiNetworkCount < baseline / 2 && baseline >= NORMAL_NETWORK_FLOOR
+            val threshold = (baseline * JAMMER_NETWORK_DROP_RATIO).toInt()
+            snapshot.wifiNetworkCount <= threshold && baseline >= NORMAL_NETWORK_FLOOR &&
+                consecutiveJammerReadings >= MIN_CONSECUTIVE_ANOMALOUS_READINGS - 1
         } ?: false
 
         _rfStatus.value = RfEnvironmentStatus(
@@ -733,9 +798,13 @@ class RfSignalAnalyzer(private val context: Context) {
         signalHistory.clear()
         detectedDrones.clear()
         eventHistory.clear()
+        pendingDroneSightings.clear()
         _rfEvents.value = emptyList()
         _detectedDrones.value = emptyList()
         baselineNetworkCount = null
+        baselineSignalStrength = null
+        consecutiveJammerReadings = 0
+        consecutiveInterferenceReadings = 0
     }
 
     fun destroy() {

@@ -8,9 +8,14 @@ import android.os.*
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * IPC constants for communication between main process and scanning service process.
@@ -84,9 +89,13 @@ object ScanningServiceIpc {
 
     /**
      * Handler for incoming messages from the scanning service.
-     * Updates the local state flows with cross-process state.
+     * Uses a background HandlerThread to process messages and deserialize JSON
+     * off the main thread, then updates StateFlows (which are thread-safe).
      */
-    class IncomingHandler(private val connection: ScanningServiceConnection) : Handler(Looper.getMainLooper()) {
+    class IncomingHandler(
+        private val connection: ScanningServiceConnection,
+        looper: Looper
+    ) : Handler(looper) {
         override fun handleMessage(msg: Message) {
             when (msg.what) {
                 MSG_STATE_UPDATE -> {
@@ -194,8 +203,11 @@ class ScanningServiceConnection(private val context: Context) {
     // Messenger for sending messages to the service
     private var serviceMessenger: Messenger? = null
 
+    // Background HandlerThread for IPC message processing (JSON deserialization off main thread)
+    private val ipcHandlerThread = HandlerThread("IpcClientHandler").apply { start() }
+
     // Messenger for receiving messages from the service
-    private val clientMessenger = Messenger(ScanningServiceIpc.IncomingHandler(this))
+    private val clientMessenger = Messenger(ScanningServiceIpc.IncomingHandler(this, ipcHandlerThread.looper))
 
     // Connection state
     private val _isBound = MutableStateFlow(false)
@@ -343,6 +355,9 @@ class ScanningServiceConnection(private val context: Context) {
 
         context.unbindService(connection)
         _isBound.value = false
+
+        // Clean up the handler thread
+        ipcHandlerThread.quitSafely()
     }
 
     /**

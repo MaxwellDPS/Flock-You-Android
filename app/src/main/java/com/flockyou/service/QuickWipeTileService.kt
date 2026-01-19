@@ -52,12 +52,6 @@ class QuickWipeTileService : TileService() {
         serviceConnection.bind()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::serviceConnection.isInitialized) {
-            serviceConnection.unbind()
-        }
-    }
 
     override fun onStartListening() {
         super.onStartListening()
@@ -190,6 +184,9 @@ class QuickWipeTileService : TileService() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        if (::serviceConnection.isInitialized) {
+            serviceConnection.unbind()
+        }
         super.onDestroy()
     }
 }
