@@ -753,6 +753,20 @@ class ScanningService : Service() {
                 putString(ScanningServiceIpc.KEY_LAST_DETECTION_JSON, lastDetection.value?.let { ScanningServiceIpc.gson.toJson(it) })
             }
             client.send(detectionMsg)
+
+            // Send detector health
+            val healthMsg = Message.obtain(null, ScanningServiceIpc.MSG_DETECTOR_HEALTH)
+            healthMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_DETECTOR_HEALTH_JSON, ScanningServiceIpc.gson.toJson(detectorHealth.value))
+            }
+            client.send(healthMsg)
+
+            // Send error log
+            val errorMsg = Message.obtain(null, ScanningServiceIpc.MSG_ERROR_LOG)
+            errorMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_ERROR_LOG_JSON, ScanningServiceIpc.gson.toJson(errorLog.value))
+            }
+            client.send(errorMsg)
         } catch (e: RemoteException) {
             Log.e(TAG, "Failed to send all data to client", e)
         }
@@ -975,6 +989,16 @@ class ScanningService : Service() {
     }
 
     /**
+     * Broadcast detection refresh event to all IPC clients.
+     * Notifies UI to reload detections from database.
+     */
+    private fun broadcastDetectionRefresh() {
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_DETECTION_REFRESH)
+        }
+    }
+
+    /**
      * Broadcast all data to IPC clients. Called periodically to keep clients in sync.
      */
     private fun broadcastAllDataToClients() {
@@ -989,6 +1013,7 @@ class ScanningService : Service() {
         broadcastUltrasonicData()
         broadcastGnssData()
         broadcastLastDetection()
+        broadcastDetectorHealth()
     }
 
     override fun onCreate() {
@@ -1513,13 +1538,29 @@ class ScanningService : Service() {
             recoverable = recoverable
         )
         Log.e(TAG, "[$subsystem] Error $code: $message")
-        
+
         val currentErrors = errorLog.value.toMutableList()
         currentErrors.add(0, error)
         if (currentErrors.size > MAX_ERROR_LOG_SIZE) {
             currentErrors.removeAt(currentErrors.lastIndex)
         }
         errorLog.value = currentErrors
+        broadcastErrorLog()
+    }
+
+    /**
+     * Broadcast error log to all registered IPC clients.
+     */
+    private fun broadcastErrorLog() {
+        if (ipcClients.isEmpty()) return
+        val json = ScanningServiceIpc.gson.toJson(errorLog.value)
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_ERROR_LOG).apply {
+                data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_ERROR_LOG_JSON, json)
+                }
+            }
+        }
     }
     
     private fun stopScanning() {
@@ -1641,7 +1682,7 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
                                     Log.w(TAG, "CELLULAR ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
@@ -1871,7 +1912,7 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
                                     Log.w(TAG, "WIFI ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
@@ -1956,7 +1997,7 @@ class ScanningService : Service() {
                                 alertUser(det)
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
                                 Log.w(TAG, "DRONE DETECTED: ${drone.manufacturer} at ${drone.estimatedDistance}")
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error saving drone detection: ${e.message}", e)
@@ -1992,7 +2033,7 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
                                     Log.w(TAG, "RF ANOMALY: ${anomaly.type.displayName} - ${anomaly.description}")
@@ -2104,7 +2145,7 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
 
                                 Log.w(TAG, "ULTRASONIC: ${anomaly.type.displayName} - ${anomaly.frequency}Hz")
                             } catch (e: Exception) {
@@ -2220,7 +2261,7 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
-                                _detectionRefreshEvent.tryEmit(Unit)
+                                broadcastDetectionRefresh()
 
                                 Log.w(TAG, "GNSS: ${anomaly.type.displayName} - ${anomaly.description}")
                             } catch (e: Exception) {
@@ -2988,7 +3029,7 @@ class ScanningService : Service() {
             }
 
             // Emit refresh event to ensure UI updates even if Room Flow doesn't trigger
-            _detectionRefreshEvent.tryEmit(Unit)
+            broadcastDetectionRefresh()
         } catch (e: android.database.sqlite.SQLiteException) {
             // Database error - likely corrupted or wiped
             Log.e(TAG, "SQLite error handling detection: ${e.message}", e)
@@ -3479,6 +3520,7 @@ class ScanningService : Service() {
             DetectorHealthStatus.DETECTOR_SATELLITE to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_SATELLITE)
         )
         detectorHealth.value = initialHealth
+        broadcastDetectorHealth()
     }
 
     /**

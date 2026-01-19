@@ -372,9 +372,9 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        // Observe detection refresh events from service (ensures UI updates even if Room Flow fails)
+        // Observe detection refresh events from service via IPC (cross-process notification)
         viewModelScope.launch {
-            ScanningService.detectionRefreshEvent.collect {
+            serviceConnection.detectionRefreshEvent.collect {
                 refreshDetections()
             }
         }
@@ -400,6 +400,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.settings.collect { settings ->
                 _uiState.update { it.copy(advancedMode = settings.advancedMode) }
+            }
+        }
+
+        // Observe error log from service via IPC
+        viewModelScope.launch {
+            serviceConnection.errorLog.collect { errors ->
+                _uiState.update { it.copy(recentErrors = errors) }
             }
         }
     }

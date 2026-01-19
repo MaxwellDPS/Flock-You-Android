@@ -12,8 +12,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -56,6 +59,8 @@ object ScanningServiceIpc {
     const val MSG_LAST_DETECTION = 113
     const val MSG_GNSS_DATA = 114
     const val MSG_DETECTOR_HEALTH = 115
+    const val MSG_ERROR_LOG = 116
+    const val MSG_DETECTION_REFRESH = 117
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -94,6 +99,7 @@ object ScanningServiceIpc {
     const val KEY_GNSS_EVENTS_JSON = "gnss_events_json"
     const val KEY_GNSS_MEASUREMENTS_JSON = "gnss_measurements_json"
     const val KEY_DETECTOR_HEALTH_JSON = "detector_health_json"
+    const val KEY_ERROR_LOG_JSON = "error_log_json"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -208,6 +214,13 @@ object ScanningServiceIpc {
                 MSG_DETECTOR_HEALTH -> {
                     val json = msg.data?.getString(KEY_DETECTOR_HEALTH_JSON)
                     connection.updateDetectorHealth(json)
+                }
+                MSG_ERROR_LOG -> {
+                    val json = msg.data?.getString(KEY_ERROR_LOG_JSON)
+                    connection.updateErrorLog(json)
+                }
+                MSG_DETECTION_REFRESH -> {
+                    connection.notifyDetectionRefresh()
                 }
                 else -> super.handleMessage(msg)
             }
@@ -343,6 +356,14 @@ class ScanningServiceConnection(private val context: Context) {
     // Detector health status (mirrored from service process)
     private val _detectorHealth = MutableStateFlow<Map<String, ScanningService.DetectorHealthStatus>>(emptyMap())
     val detectorHealth: StateFlow<Map<String, ScanningService.DetectorHealthStatus>> = _detectorHealth.asStateFlow()
+
+    // Error log (mirrored from service process)
+    private val _errorLog = MutableStateFlow<List<ScanningService.ScanError>>(emptyList())
+    val errorLog: StateFlow<List<ScanningService.ScanError>> = _errorLog.asStateFlow()
+
+    // Detection refresh event (notifies UI to refresh detections from database)
+    private val _detectionRefreshEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
+    val detectionRefreshEvent: SharedFlow<Unit> = _detectionRefreshEvent.asSharedFlow()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -758,5 +779,20 @@ class ScanningServiceConnection(private val context: Context) {
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse detector health JSON", e)
         }
+    }
+
+    internal fun updateErrorLog(json: String?) {
+        if (json == null) return
+        try {
+            val type = object : TypeToken<List<ScanningService.ScanError>>() {}.type
+            val errors: List<ScanningService.ScanError> = ScanningServiceIpc.gson.fromJson(json, type)
+            _errorLog.value = errors
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse error log JSON", e)
+        }
+    }
+
+    internal fun notifyDetectionRefresh() {
+        _detectionRefreshEvent.tryEmit(Unit)
     }
 }
