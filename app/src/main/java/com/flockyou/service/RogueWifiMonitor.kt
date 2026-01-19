@@ -317,6 +317,7 @@ class RogueWifiMonitor(private val context: Context) {
 
         for (result in results) {
             val bssid = result.BSSID?.uppercase() ?: continue
+            @Suppress("DEPRECATION")
             val ssid = result.SSID ?: ""
             currentBssids.add(bssid)
 
@@ -423,6 +424,7 @@ class RogueWifiMonitor(private val context: Context) {
 
     private fun analyzeNetwork(result: ScanResult, history: NetworkHistory): SuspiciousNetwork? {
         val bssid = result.BSSID?.uppercase() ?: return null
+        @Suppress("DEPRECATION")
         val ssid = result.SSID ?: ""
         val oui = bssid.take(8)
 
@@ -515,6 +517,7 @@ class RogueWifiMonitor(private val context: Context) {
         return null
     }
 
+    @Suppress("DEPRECATION")
     private fun checkForEvilTwins(results: List<ScanResult>) {
         for ((ssid, bssids) in ssidToBssids) {
             if (bssids.size < 2) continue
@@ -738,6 +741,7 @@ class RogueWifiMonitor(private val context: Context) {
         _wifiEvents.value = eventHistory.toList()
     }
 
+    @Suppress("DEPRECATION")
     private fun registerReceivers() {
         // Connection state receiver
         connectionReceiver = object : BroadcastReceiver() {
@@ -747,8 +751,7 @@ class RogueWifiMonitor(private val context: Context) {
                     val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO, android.net.NetworkInfo::class.java)
                     } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO)
+                        intent.getParcelableExtra<android.net.NetworkInfo>(WifiManager.EXTRA_NETWORK_INFO)
                     }
                     if (info?.isConnected == false) {
                         onDisconnect()

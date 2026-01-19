@@ -40,6 +40,7 @@ class BootWatcher : BroadcastReceiver() {
         /**
          * Initialize boot tracking on app startup.
          */
+        @Suppress("UNUSED_PARAMETER")
         fun initialize(context: Context) {
             // Record current boot time if not already recorded this boot
             val currentBoot = android.os.SystemClock.elapsedRealtime()

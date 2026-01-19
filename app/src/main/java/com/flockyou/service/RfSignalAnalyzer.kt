@@ -367,6 +367,7 @@ class RfSignalAnalyzer(private val context: Context) {
                 openCount++
             }
 
+            @Suppress("DEPRECATION")
             val ssid = result.SSID ?: ""
             if (ssid.isEmpty()) hiddenCount++
 
@@ -442,6 +443,7 @@ class RfSignalAnalyzer(private val context: Context) {
 
         for (result in results) {
             val bssid = result.BSSID?.uppercase() ?: continue
+            @Suppress("DEPRECATION")
             val ssid = result.SSID ?: ""
             val oui = bssid.take(8)
 

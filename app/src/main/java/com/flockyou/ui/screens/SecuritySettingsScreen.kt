@@ -599,6 +599,7 @@ private fun ChangePinDialog(
     onDismiss: () -> Unit,
     onPinChanged: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var currentPin by remember { mutableStateOf("") }
     var newPin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
@@ -649,11 +650,13 @@ private fun ChangePinDialog(
                 onClick = {
                     when (step) {
                         1 -> {
-                            if (!appLockManager.verifyPin(currentPin)) {
-                                error = "Incorrect PIN"
-                                currentPin = ""
-                            } else {
-                                step = 2
+                            scope.launch {
+                                if (!appLockManager.verifyPinAsync(currentPin)) {
+                                    error = "Incorrect PIN"
+                                    currentPin = ""
+                                } else {
+                                    step = 2
+                                }
                             }
                         }
                         2 -> {
@@ -699,6 +702,7 @@ private fun RemovePinDialog(
     onDismiss: () -> Unit,
     onPinRemoved: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -739,12 +743,14 @@ private fun RemovePinDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (appLockManager.verifyPin(pin)) {
-                        appLockManager.removePin()
-                        onPinRemoved()
-                    } else {
-                        error = "Incorrect PIN"
-                        pin = ""
+                    scope.launch {
+                        if (appLockManager.verifyPinAsync(pin)) {
+                            appLockManager.removePin()
+                            onPinRemoved()
+                        } else {
+                            error = "Incorrect PIN"
+                            pin = ""
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(

@@ -27,6 +27,7 @@ import com.flockyou.data.LockMethod
 import com.flockyou.data.SecuritySettings
 import com.flockyou.security.AppLockManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val TAG = "LockScreen"
 
@@ -37,6 +38,7 @@ fun LockScreen(
     onUnlocked: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var enteredPin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var isLockedOut by remember { mutableStateOf(appLockManager.isLockedOut()) }
@@ -165,17 +167,20 @@ fun LockScreen(
 
                                 // Auto-verify when 4+ digits entered
                                 if (enteredPin.length >= 4) {
-                                    if (appLockManager.verifyPin(enteredPin)) {
-                                        onUnlocked()
-                                    } else {
-                                        val attempts = appLockManager.getFailedAttempts()
-                                        error = if (attempts >= 5) {
-                                            "Too many attempts. Please wait."
+                                    val pinToVerify = enteredPin
+                                    scope.launch {
+                                        if (appLockManager.verifyPinAsync(pinToVerify)) {
+                                            onUnlocked()
                                         } else {
-                                            "Incorrect PIN (${5 - attempts} attempts remaining)"
+                                            val attempts = appLockManager.getFailedAttempts()
+                                            error = if (attempts >= 5) {
+                                                "Too many attempts. Please wait."
+                                            } else {
+                                                "Incorrect PIN (${5 - attempts} attempts remaining)"
+                                            }
+                                            enteredPin = ""
+                                            isLockedOut = appLockManager.isLockedOut()
                                         }
-                                        enteredPin = ""
-                                        isLockedOut = appLockManager.isLockedOut()
                                     }
                                 }
                             }

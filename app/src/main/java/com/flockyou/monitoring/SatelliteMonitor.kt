@@ -9,7 +9,6 @@ import android.telephony.CellInfo
 import android.telephony.CellInfoNr
 import android.telephony.CellSignalStrengthNr
 import android.telephony.NetworkRegistrationInfo
-import android.telephony.PhoneStateListener
 import android.telephony.ServiceState
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
