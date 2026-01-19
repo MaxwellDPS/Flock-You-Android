@@ -1601,6 +1601,7 @@ class ScanningService : Service() {
         rogueWifiAnomalyJob = serviceScope.launch {
             rogueWifiMonitor?.anomalies?.collect { anomalies ->
                 Companion.rogueWifiAnomalies.value = anomalies
+                broadcastRogueWifiData()
 
                 for (anomaly in anomalies) {
                     // Send broadcast for automation apps

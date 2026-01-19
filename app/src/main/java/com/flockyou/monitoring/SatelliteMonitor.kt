@@ -129,8 +129,11 @@ class SatelliteMonitor(private val context: Context) {
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     }
     
-    private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    
+    private var coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Telephony callback reference for proper cleanup
+    private var telephonyCallback: TelephonyCallback? = null
+
     // State flows
     private val _satelliteState = MutableStateFlow(SatelliteConnectionState())
     val satelliteState: StateFlow<SatelliteConnectionState> = _satelliteState.asStateFlow()
@@ -138,8 +141,8 @@ class SatelliteMonitor(private val context: Context) {
     private val _anomalies = MutableSharedFlow<SatelliteAnomaly>(replay = 100)
     val anomalies: SharedFlow<SatelliteAnomaly> = _anomalies.asSharedFlow()
     
-    // Connection history for pattern detection
-    private val connectionHistory = mutableListOf<SatelliteConnectionEvent>()
+    // Connection history for pattern detection (thread-safe)
+    private val connectionHistory = java.util.Collections.synchronizedList(mutableListOf<SatelliteConnectionEvent>())
     private val maxHistorySize = 1000
     
     // Terrestrial signal baseline
@@ -263,7 +266,18 @@ class SatelliteMonitor(private val context: Context) {
      */
     fun stopMonitoring() {
         Log.i(TAG, "Stopping Satellite Monitor")
+
+        // Unregister telephony callback to prevent memory leak
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            telephonyCallback?.let {
+                telephonyManager.unregisterTelephonyCallback(it)
+                telephonyCallback = null
+            }
+        }
+
+        // Cancel and recreate scope for potential restart
         coroutineScope.cancel()
+        coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     }
     
     /**
@@ -272,24 +286,32 @@ class SatelliteMonitor(private val context: Context) {
     @RequiresPermission(Manifest.permission.READ_PHONE_STATE)
     private fun registerTelephonyCallback() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val callback = object : TelephonyCallback(), 
+            // Unregister existing callback if any
+            telephonyCallback?.let {
+                telephonyManager.unregisterTelephonyCallback(it)
+            }
+
+            val callback = object : TelephonyCallback(),
                 TelephonyCallback.DisplayInfoListener,
                 TelephonyCallback.ServiceStateListener,
                 TelephonyCallback.SignalStrengthsListener {
-                
+
                 override fun onDisplayInfoChanged(displayInfo: TelephonyDisplayInfo) {
                     handleDisplayInfoChange(displayInfo)
                 }
-                
+
                 override fun onServiceStateChanged(serviceState: ServiceState) {
                     handleServiceStateChange(serviceState)
                 }
-                
+
                 override fun onSignalStrengthsChanged(signalStrength: TelephonySignalStrength) {
                     handleSignalStrengthChange(signalStrength)
                 }
             }
-            
+
+            // Store reference for cleanup
+            telephonyCallback = callback
+
             telephonyManager.registerTelephonyCallback(
                 context.mainExecutor,
                 callback
@@ -303,11 +325,8 @@ class SatelliteMonitor(private val context: Context) {
     @RequiresApi(Build.VERSION_CODES.R)
     private fun handleDisplayInfoChange(displayInfo: TelephonyDisplayInfo) {
         coroutineScope.launch {
-            @Suppress("UNUSED_VARIABLE")
             val networkType = displayInfo.networkType
-            @Suppress("UNUSED_VARIABLE")
-            val overrideNetworkType = displayInfo.overrideNetworkType
-            
+
             // Check for satellite indicators
             val operatorName = telephonyManager.networkOperatorName ?: ""
             val simOperator = telephonyManager.simOperatorName ?: ""
@@ -351,8 +370,6 @@ class SatelliteMonitor(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun handleServiceStateChange(serviceState: ServiceState) {
         coroutineScope.launch {
-            @Suppress("UNUSED_VARIABLE")
-            val roaming = serviceState.roaming
             val operatorName = serviceState.operatorAlphaLong ?: ""
             
             // Check for NTN-specific service state

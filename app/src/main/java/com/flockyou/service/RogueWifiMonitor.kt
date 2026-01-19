@@ -523,32 +523,42 @@ class RogueWifiMonitor(private val context: Context) {
             if (bssids.size < 2) continue
             if (COMMON_LEGITIMATE_SSIDS.any { ssid.lowercase().contains(it) }) continue
 
-            // Get signal strengths for all APs with this SSID
-            val apSignals = results
+            // Get all APs with this SSID including their frequencies
+            val apDetails = results
                 .filter { it.SSID == ssid && it.BSSID != null }
-                .map { it.BSSID!!.uppercase() to it.level }
+                .map { ApDetails(it.BSSID!!.uppercase(), it.level, it.frequency) }
 
-            if (apSignals.size >= 2) {
-                // Check if signal strengths are suspiciously similar (could be same device)
-                // or very different (could be evil twin)
-                val signals = apSignals.map { it.second }
+            if (apDetails.size >= 2) {
+                // Group BSSIDs that likely belong to the same physical device
+                // (dual-band/tri-band routers broadcasting on 2.4GHz, 5GHz, and/or 6GHz)
+                val deviceGroups = groupBssidsByDevice(apDetails)
+
+                // If all BSSIDs belong to the same device group, this is likely a dual/tri-band router
+                if (deviceGroups.size <= 1) {
+                    Log.d(TAG, "SSID '$ssid' has ${apDetails.size} BSSIDs but they appear to be from same dual/tri-band device")
+                    continue
+                }
+
+                // We have multiple distinct devices - check for evil twin
+                val signals = apDetails.map { it.rssi }
                 val maxDiff = (signals.maxOrNull() ?: 0) - (signals.minOrNull() ?: 0)
 
                 if (maxDiff > EVIL_TWIN_SIGNAL_DIFF_THRESHOLD) {
-                    // Different signal strengths - possible evil twin
-                    val strongestAp = apSignals.maxByOrNull { it.second }
+                    // Different signal strengths from different devices - possible evil twin
+                    val strongestAp = apDetails.maxByOrNull { it.rssi }
 
                     reportAnomaly(
                         type = WifiAnomalyType.EVIL_TWIN,
                         description = "Multiple APs advertising same SSID with different signal strengths",
-                        technicalDetails = "SSID '$ssid' seen from ${bssids.size} different BSSIDs. " +
-                            "Signal variance: ${maxDiff}dBm suggests different physical locations/devices.",
+                        technicalDetails = "SSID '$ssid' seen from ${deviceGroups.size} different devices " +
+                            "(${apDetails.size} total BSSIDs). Signal variance: ${maxDiff}dBm suggests " +
+                            "different physical locations/devices. Dual-band APs from the same router were excluded.",
                         ssid = ssid,
-                        bssid = strongestAp?.first,
-                        rssi = strongestAp?.second,
+                        bssid = strongestAp?.bssid,
+                        rssi = strongestAp?.rssi,
                         confidence = AnomalyConfidence.MEDIUM,
                         contributingFactors = listOf(
-                            "${bssids.size} APs with same SSID",
+                            "${deviceGroups.size} distinct devices with same SSID",
                             "Signal difference: ${maxDiff}dBm",
                             "BSSIDs: ${bssids.take(3).joinToString(", ")}"
                         ),
@@ -557,6 +567,136 @@ class RogueWifiMonitor(private val context: Context) {
                 }
             }
         }
+    }
+
+    private data class ApDetails(
+        val bssid: String,
+        val rssi: Int,
+        val frequency: Int
+    )
+
+    /**
+     * Groups BSSIDs that likely belong to the same physical device.
+     * Dual-band and tri-band routers broadcast the same SSID on multiple frequencies
+     * (2.4GHz, 5GHz, 6GHz) with different BSSIDs that typically share the same OUI
+     * and have similar/sequential MAC addresses.
+     *
+     * @return List of device groups, where each group contains BSSIDs from the same physical device
+     */
+    private fun groupBssidsByDevice(apDetails: List<ApDetails>): List<List<ApDetails>> {
+        if (apDetails.isEmpty()) return emptyList()
+        if (apDetails.size == 1) return listOf(apDetails)
+
+        // Get the frequency bands for each AP
+        val withBands = apDetails.map { ap ->
+            ap to getFrequencyBand(ap.frequency)
+        }
+
+        // Group by OUI (first 8 characters of BSSID, e.g., "AA:BB:CC")
+        val ouiGroups = withBands.groupBy { it.first.bssid.take(8) }
+
+        val deviceGroups = mutableListOf<List<ApDetails>>()
+
+        for ((_, apsInOui) in ouiGroups) {
+            // Within the same OUI, check if BSSIDs are on different bands
+            // If they're on different bands, they're likely from the same dual/tri-band device
+            val bandsCovered = apsInOui.map { it.second }.toSet()
+
+            if (bandsCovered.size > 1 && areBssidsFromSameDevice(apsInOui.map { it.first })) {
+                // Multiple bands from same OUI with similar BSSIDs = same device
+                deviceGroups.add(apsInOui.map { it.first })
+            } else {
+                // Either single band or BSSIDs too different - treat each as separate
+                // But still group truly identical devices (same band could be mesh nodes)
+                val subGroups = groupBySimilarBssid(apsInOui.map { it.first })
+                deviceGroups.addAll(subGroups.map { group -> group })
+            }
+        }
+
+        return deviceGroups
+    }
+
+    private enum class FrequencyBand {
+        BAND_2_4GHZ,
+        BAND_5GHZ,
+        BAND_6GHZ,
+        UNKNOWN
+    }
+
+    private fun getFrequencyBand(frequency: Int): FrequencyBand {
+        return when {
+            frequency in 2400..2500 -> FrequencyBand.BAND_2_4GHZ
+            frequency in 5150..5900 -> FrequencyBand.BAND_5GHZ
+            frequency in 5925..7125 -> FrequencyBand.BAND_6GHZ
+            else -> FrequencyBand.UNKNOWN
+        }
+    }
+
+    /**
+     * Checks if BSSIDs are likely from the same physical device.
+     * Dual-band routers often have sequential or very similar MAC addresses
+     * that differ only in the last few characters.
+     */
+    private fun areBssidsFromSameDevice(aps: List<ApDetails>): Boolean {
+        if (aps.size < 2) return true
+
+        // Extract the MAC addresses without colons for easier comparison
+        val macs = aps.map { it.bssid.replace(":", "") }
+
+        // Check if MACs share the first 10 characters (differ only in last 2 hex digits)
+        // This is common for dual-band routers: AA:BB:CC:DD:EE:F0 and AA:BB:CC:DD:EE:F1
+        val prefixes10 = macs.map { it.take(10) }.toSet()
+        if (prefixes10.size == 1) return true
+
+        // Check if the numeric difference between MACs is small (e.g., <= 16)
+        // This handles cases where the last octet differs by a small amount
+        val macValues = macs.mapNotNull { mac ->
+            try {
+                mac.takeLast(4).toLong(16)
+            } catch (e: NumberFormatException) {
+                null
+            }
+        }
+
+        if (macValues.size == macs.size && macValues.isNotEmpty()) {
+            val minVal = macValues.minOrNull() ?: return false
+            val maxVal = macValues.maxOrNull() ?: return false
+            // If the last 2 bytes differ by 16 or less, likely same device
+            // (covers dual-band and tri-band with some margin)
+            if (maxVal - minVal <= 16) return true
+        }
+
+        return false
+    }
+
+    /**
+     * Groups APs by similar BSSID (for mesh networks or APs with very close MACs)
+     */
+    private fun groupBySimilarBssid(aps: List<ApDetails>): List<List<ApDetails>> {
+        if (aps.isEmpty()) return emptyList()
+        if (aps.size == 1) return listOf(aps)
+
+        val groups = mutableListOf<MutableList<ApDetails>>()
+        val assigned = mutableSetOf<String>()
+
+        for (ap in aps) {
+            if (ap.bssid in assigned) continue
+
+            val group = mutableListOf(ap)
+            assigned.add(ap.bssid)
+
+            for (other in aps) {
+                if (other.bssid in assigned) continue
+                if (areBssidsFromSameDevice(listOf(ap, other))) {
+                    group.add(other)
+                    assigned.add(other.bssid)
+                }
+            }
+
+            groups.add(group)
+        }
+
+        return groups
     }
 
     private fun checkForFollowingNetworks() {
