@@ -25,6 +25,8 @@ import com.flockyou.monitoring.GnssSatelliteMonitor
 import com.flockyou.monitoring.GnssSatelliteMonitor.*
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
+import com.flockyou.service.UltrasonicDetector
+import com.flockyou.service.UltrasonicDetector.*
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -56,8 +58,13 @@ fun NearbyDevicesScreen(
     val gnssSatellites = uiState.gnssSatellites
     val gnssAnomalies = uiState.gnssAnomalies
 
+    // Ultrasonic detection data
+    val ultrasonicStatus = uiState.ultrasonicStatus
+    val ultrasonicAnomalies = uiState.ultrasonicAnomalies
+    val ultrasonicBeacons = uiState.ultrasonicBeacons
+
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("BLE", "WiFi", "Cellular", "GNSS", "Satellite")
+    val tabs = listOf("BLE", "WiFi", "Cell", "GNSS", "Audio", "Sat")
     
     Scaffold(
         topBar = {
@@ -90,27 +97,38 @@ fun NearbyDevicesScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Tab row
-            TabRow(selectedTabIndex = selectedTab) {
+            // Tab row - scrollable to fit all tabs
+            ScrollableTabRow(
+                selectedTabIndex = selectedTab,
+                edgePadding = 8.dp
+            ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
-                        text = { 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            ) {
                                 Icon(
                                     imageVector = when (index) {
                                         0 -> Icons.Default.Bluetooth
                                         1 -> Icons.Default.Wifi
                                         2 -> Icons.Default.CellTower
                                         3 -> Icons.Default.GpsFixed
+                                        4 -> Icons.Default.Mic
                                         else -> Icons.Default.SatelliteAlt
                                     },
                                     contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(title)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = title,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                                 when (index) {
                                     0 -> if (seenBleDevices.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -124,7 +142,13 @@ fun NearbyDevicesScreen(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge { Text(gnssSatellites.size.toString()) }
                                     }
-                                    4 -> if (satelliteAnomalies.isNotEmpty()) {
+                                    4 -> if (ultrasonicBeacons.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        ) { Text(ultrasonicBeacons.size.toString()) }
+                                    }
+                                    5 -> if (satelliteAnomalies.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge(
                                             containerColor = MaterialTheme.colorScheme.error
@@ -264,6 +288,15 @@ fun NearbyDevicesScreen(
                     )
                 }
                 4 -> {
+                    // Ultrasonic tab
+                    UltrasonicStatusContent(
+                        ultrasonicStatus = ultrasonicStatus,
+                        ultrasonicBeacons = ultrasonicBeacons,
+                        ultrasonicAnomalies = ultrasonicAnomalies,
+                        isScanning = isScanning
+                    )
+                }
+                5 -> {
                     // Satellite tab
                     SatelliteStatusContent(
                         satelliteState = satelliteState,
@@ -273,6 +306,450 @@ fun NearbyDevicesScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun UltrasonicStatusContent(
+    ultrasonicStatus: UltrasonicStatus?,
+    ultrasonicBeacons: List<BeaconDetection>,
+    ultrasonicAnomalies: List<UltrasonicAnomaly>,
+    isScanning: Boolean
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val isActive = ultrasonicStatus?.isScanning == true
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Main status card
+        item {
+            val threatColor = when (ultrasonicStatus?.threatLevel) {
+                com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+                com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336)
+                com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800)
+                com.flockyou.data.model.ThreatLevel.LOW -> Color(0xFFFFC107)
+                else -> Color(0xFF4CAF50)
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isActive) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = if (isActive) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            when {
+                                                isActive -> Color(0xFF4CAF50)
+                                                isScanning -> Color(0xFFFFC107)
+                                                else -> Color(0xFF9E9E9E)
+                                            }
+                                        )
+                                )
+                            }
+
+                            Column {
+                                Text(
+                                    text = if (isActive) "Ultrasonic Detection Active" else "Ultrasonic Detection",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = when {
+                                        isActive -> "Monitoring 18-22 kHz frequencies"
+                                        isScanning -> "Starting audio monitoring..."
+                                        else -> "Audio monitoring inactive"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // Threat level indicator
+                        if (ultrasonicStatus != null) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = threatColor.copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = ultrasonicStatus.threatLevel.displayName,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = threatColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (ultrasonicStatus != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider()
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            UltrasonicMetricItem(
+                                label = "Noise Floor",
+                                value = "${String.format("%.1f", ultrasonicStatus.noiseFloorDb)} dB"
+                            )
+                            UltrasonicMetricItem(
+                                label = "Active Beacons",
+                                value = "${ultrasonicStatus.activeBeaconCount}"
+                            )
+                            ultrasonicStatus.peakFrequency?.let { freq ->
+                                UltrasonicMetricItem(
+                                    label = "Peak Freq",
+                                    value = "${freq} Hz"
+                                )
+                            } ?: UltrasonicMetricItem(
+                                label = "Peak Freq",
+                                value = "-"
+                            )
+                            ultrasonicStatus.peakAmplitudeDb?.let { amp ->
+                                UltrasonicMetricItem(
+                                    label = "Peak Amp",
+                                    value = "${String.format("%.1f", amp)} dB"
+                                )
+                            } ?: UltrasonicMetricItem(
+                                label = "Peak Amp",
+                                value = "-"
+                            )
+                        }
+
+                        // Last scan time
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Last scan: ${dateFormat.format(Date(ultrasonicStatus.lastScanTime))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // Active beacons section
+        if (ultrasonicBeacons.isNotEmpty()) {
+            item {
+                Text(
+                    text = "ACTIVE BEACONS (${ultrasonicBeacons.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(
+                items = ultrasonicBeacons.sortedByDescending { it.lastDetected },
+                key = { it.frequency }
+            ) { beacon ->
+                UltrasonicBeaconCard(beacon = beacon, dateFormat = dateFormat)
+            }
+        }
+
+        // Anomalies section
+        if (ultrasonicAnomalies.isNotEmpty()) {
+            item {
+                Text(
+                    text = "DETECTED ANOMALIES (${ultrasonicAnomalies.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(
+                items = ultrasonicAnomalies.sortedByDescending { it.timestamp },
+                key = { it.id }
+            ) { anomaly ->
+                UltrasonicAnomalyCard(anomaly = anomaly, dateFormat = dateFormat)
+            }
+        }
+
+        // Info card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "About Ultrasonic Detection",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Detects inaudible ultrasonic tones (18-22 kHz) used for:\n" +
+                            "• Cross-device tracking (SilverPush, Alphonso)\n" +
+                            "• TV ad tracking beacons\n" +
+                            "• Retail location tracking\n" +
+                            "• Audio fingerprinting\n\n" +
+                            "Audio is analyzed in real-time and never stored.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Empty state
+        if (!isScanning && ultrasonicBeacons.isEmpty() && ultrasonicAnomalies.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No ultrasonic activity",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Start scanning to detect audio beacons",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun UltrasonicMetricItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+@Composable
+private fun UltrasonicBeaconCard(
+    beacon: BeaconDetection,
+    dateFormat: SimpleDateFormat
+) {
+    val sourceColor = when {
+        beacon.possibleSource.contains("SilverPush") || beacon.possibleSource.contains("Alphonso") ->
+            Color(0xFFF44336)
+        beacon.possibleSource.contains("Retail") -> Color(0xFFFF9800)
+        beacon.possibleSource.contains("Cross-Device") -> Color(0xFFE91E63)
+        else -> Color(0xFFFFC107)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = sourceColor.copy(alpha = 0.1f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "📢",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "${beacon.frequency} Hz",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = beacon.possibleSource,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = sourceColor
+                        )
+                    }
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${String.format("%.1f", beacon.peakAmplitudeDb)} dB",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "${beacon.detectionCount}x detected",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "First: ${dateFormat.format(Date(beacon.firstDetected))}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Last: ${dateFormat.format(Date(beacon.lastDetected))}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UltrasonicAnomalyCard(
+    anomaly: UltrasonicAnomaly,
+    dateFormat: SimpleDateFormat
+) {
+    val severityColor = when (anomaly.severity) {
+        com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+        com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336)
+        com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800)
+        com.flockyou.data.model.ThreatLevel.LOW -> Color(0xFFFFC107)
+        com.flockyou.data.model.ThreatLevel.INFO -> Color(0xFF2196F3)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = severityColor.copy(alpha = 0.1f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = anomaly.type.emoji,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = anomaly.type.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = dateFormat.format(Date(anomaly.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    anomaly.frequency?.let { freq ->
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = "${freq}Hz",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = severityColor.copy(alpha = 0.2f)
+                    ) {
+                        Text(
+                            text = anomaly.confidence.displayName.split(" ").first(),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = severityColor
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = anomaly.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

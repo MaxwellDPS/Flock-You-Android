@@ -27,17 +27,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.flockyou.data.BuiltInRuleCategory
-import com.flockyou.data.CustomRule
-import com.flockyou.data.RuleSettingsRepository
-import com.flockyou.data.RuleType
+import com.flockyou.data.*
 import com.flockyou.data.model.DetectionPatterns
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.PatternType
 import com.flockyou.ui.theme.*
 
 /**
- * All Detections Screen - Shows all detection patterns (built-in + custom)
+ * All Detections Screen - Shows all detection patterns (built-in + custom + heuristic)
  * in a unified, browsable view with the ability to manage custom rules
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,11 +46,14 @@ fun AllDetectionsScreen(
     val settings by viewModel.settings.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
     var showAddRuleSheet by remember { mutableStateOf(false) }
+    var showAddHeuristicSheet by remember { mutableStateOf(false) }
     var editingRule by remember { mutableStateOf<CustomRule?>(null) }
+    var editingHeuristicRule by remember { mutableStateOf<HeuristicRule?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var selectedScannerType by remember { mutableStateOf<ScannerType?>(null) }
 
-    val tabs = listOf("All Patterns", "Custom Rules", "Categories")
+    val tabs = listOf("All Patterns", "Custom Rules", "Heuristic Rules", "Categories")
 
     Scaffold(
         topBar = {
@@ -62,7 +62,7 @@ fun AllDetectionsScreen(
                     Column {
                         Text("All Detections")
                         Text(
-                            text = "Built-in and custom patterns",
+                            text = "Pattern matching and behavioral rules",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -74,8 +74,14 @@ fun AllDetectionsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showAddRuleSheet = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Custom Rule")
+                    // Show appropriate add button based on tab
+                    when (selectedTab) {
+                        1 -> IconButton(onClick = { showAddRuleSheet = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Custom Rule")
+                        }
+                        2 -> IconButton(onClick = { showAddHeuristicSheet = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Heuristic Rule")
+                        }
                     }
                 }
             )
@@ -93,7 +99,9 @@ fun AllDetectionsScreen(
                     DetectionPatterns.macPrefixes.size +
                     DetectionPatterns.ravenServiceUuids.size,
                 customCount = settings.customRules.size,
-                enabledCustomCount = settings.customRules.count { it.enabled }
+                heuristicCount = settings.heuristicRules.size,
+                enabledCustomCount = settings.customRules.count { it.enabled },
+                enabledHeuristicCount = settings.heuristicRules.count { it.enabled }
             )
 
             // Search bar
@@ -103,7 +111,7 @@ fun AllDetectionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search patterns...") },
+                placeholder = { Text("Search patterns and rules...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -116,8 +124,17 @@ fun AllDetectionsScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
+            // Scanner Type Filter (horizontal scroll)
+            ScannerTypeFilterRow(
+                selectedType = selectedScannerType,
+                onTypeSelected = { selectedScannerType = if (selectedScannerType == it) null else it }
+            )
+
             // Tabs
-            TabRow(selectedTabIndex = selectedTab) {
+            ScrollableTabRow(
+                selectedTabIndex = selectedTab,
+                edgePadding = 8.dp
+            ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
@@ -125,9 +142,15 @@ fun AllDetectionsScreen(
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(title)
-                                if (index == 1 && settings.customRules.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Badge { Text("${settings.customRules.size}") }
+                                when (index) {
+                                    1 -> if (settings.customRules.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge { Text("${settings.customRules.size}") }
+                                    }
+                                    2 -> if (settings.heuristicRules.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge { Text("${settings.heuristicRules.size}") }
+                                    }
                                 }
                             }
                         }
@@ -141,17 +164,28 @@ fun AllDetectionsScreen(
                     searchQuery = searchQuery,
                     customRules = settings.customRules,
                     selectedCategory = selectedCategory,
+                    selectedScannerType = selectedScannerType,
                     onCategorySelected = { selectedCategory = if (selectedCategory == it) null else it }
                 )
                 1 -> CustomRulesTabEnhanced(
                     customRules = settings.customRules,
                     searchQuery = searchQuery,
+                    selectedScannerType = selectedScannerType,
                     onToggleRule = viewModel::toggleCustomRule,
                     onEditRule = { editingRule = it },
                     onDeleteRule = viewModel::deleteCustomRule,
                     onAddRule = { showAddRuleSheet = true }
                 )
-                2 -> CategoriesTab(
+                2 -> HeuristicRulesTab(
+                    heuristicRules = settings.heuristicRules,
+                    searchQuery = searchQuery,
+                    selectedScannerType = selectedScannerType,
+                    onToggleRule = viewModel::toggleHeuristicRule,
+                    onEditRule = { editingHeuristicRule = it },
+                    onDeleteRule = viewModel::deleteHeuristicRule,
+                    onAddRule = { showAddHeuristicSheet = true }
+                )
+                3 -> CategoriesTab(
                     settings = settings,
                     onToggleCategory = viewModel::toggleCategory
                 )
@@ -159,7 +193,7 @@ fun AllDetectionsScreen(
         }
     }
 
-    // Add/Edit rule bottom sheet
+    // Add/Edit custom rule bottom sheet
     if (showAddRuleSheet || editingRule != null) {
         AddEditRuleBottomSheet(
             existingRule = editingRule,
@@ -178,13 +212,60 @@ fun AllDetectionsScreen(
             }
         )
     }
+
+    // Add/Edit heuristic rule bottom sheet
+    if (showAddHeuristicSheet || editingHeuristicRule != null) {
+        AddEditHeuristicRuleBottomSheet(
+            existingRule = editingHeuristicRule,
+            onDismiss = {
+                showAddHeuristicSheet = false
+                editingHeuristicRule = null
+            },
+            onSave = { rule ->
+                if (editingHeuristicRule != null) {
+                    viewModel.updateHeuristicRule(rule)
+                } else {
+                    viewModel.addHeuristicRule(rule)
+                }
+                showAddHeuristicSheet = false
+                editingHeuristicRule = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun ScannerTypeFilterRow(
+    selectedType: ScannerType?,
+    onTypeSelected: (ScannerType) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ScannerType.entries.forEach { scannerType ->
+            FilterChip(
+                selected = selectedType == scannerType,
+                onClick = { onTypeSelected(scannerType) },
+                label = { Text(scannerType.displayName, style = MaterialTheme.typography.labelSmall) },
+                leadingIcon = if (selectedType == scannerType) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null
+            )
+        }
+    }
 }
 
 @Composable
 private fun DetectionSummaryCard(
     builtInCount: Int,
     customCount: Int,
-    enabledCustomCount: Int
+    heuristicCount: Int,
+    enabledCustomCount: Int,
+    enabledHeuristicCount: Int
 ) {
     Card(
         modifier = Modifier
@@ -207,12 +288,18 @@ private fun DetectionSummaryCard(
             )
             SummaryStatBox(
                 count = customCount,
-                label = "Custom",
+                label = "Pattern",
                 icon = Icons.Default.Edit,
                 subtitle = if (customCount > 0) "$enabledCustomCount enabled" else null
             )
             SummaryStatBox(
-                count = builtInCount + customCount,
+                count = heuristicCount,
+                label = "Heuristic",
+                icon = Icons.Default.Psychology,
+                subtitle = if (heuristicCount > 0) "$enabledHeuristicCount enabled" else null
+            )
+            SummaryStatBox(
+                count = builtInCount + customCount + heuristicCount,
                 label = "Total",
                 icon = Icons.Default.Visibility,
                 isPrimary = true
@@ -264,6 +351,7 @@ private fun AllPatternsTab(
     searchQuery: String,
     customRules: List<CustomRule>,
     selectedCategory: String?,
+    selectedScannerType: ScannerType?,
     onCategorySelected: (String) -> Unit
 ) {
     // Combine all patterns into unified list
@@ -273,6 +361,7 @@ private fun AllPatternsTab(
         val pattern: String,
         val type: String,
         val category: String,
+        val scannerType: ScannerType,
         val deviceType: DeviceType,
         val threatScore: Int,
         val description: String,
@@ -281,7 +370,7 @@ private fun AllPatternsTab(
         val isEnabled: Boolean = true
     )
 
-    val allPatterns = remember(customRules, searchQuery, selectedCategory) {
+    val allPatterns = remember(customRules, searchQuery, selectedCategory, selectedScannerType) {
         val patterns = mutableListOf<UnifiedPattern>()
 
         // Add SSID patterns
@@ -299,6 +388,7 @@ private fun AllPatternsTab(
                     DeviceType.BODY_CAMERA, DeviceType.POLICE_RADIO, DeviceType.STINGRAY_IMSI -> "Police Tech"
                     else -> "Generic"
                 },
+                scannerType = ScannerType.WIFI,
                 deviceType = p.deviceType,
                 threatScore = p.threatScore,
                 description = p.description,
@@ -317,6 +407,7 @@ private fun AllPatternsTab(
                 category = if (p.deviceType == DeviceType.RAVEN_GUNSHOT_DETECTOR) "Acoustic Sensors"
                     else if (p.deviceType == DeviceType.FLOCK_SAFETY_CAMERA) "Flock Safety"
                     else "Generic",
+                scannerType = ScannerType.BLUETOOTH,
                 deviceType = p.deviceType,
                 threatScore = p.threatScore,
                 description = p.description,
@@ -333,6 +424,7 @@ private fun AllPatternsTab(
                 pattern = p.prefix,
                 type = "MAC",
                 category = "MAC Prefixes",
+                scannerType = ScannerType.WIFI,
                 deviceType = p.deviceType,
                 threatScore = p.threatScore,
                 description = p.description,
@@ -347,12 +439,9 @@ private fun AllPatternsTab(
                 id = "custom_${rule.id}",
                 name = rule.name,
                 pattern = rule.pattern,
-                type = when (rule.type) {
-                    RuleType.SSID_REGEX -> "SSID"
-                    RuleType.BLE_NAME_REGEX -> "BLE"
-                    RuleType.MAC_PREFIX -> "MAC"
-                },
+                type = rule.type.displayName,
                 category = "Custom",
+                scannerType = rule.scannerType,
                 deviceType = rule.deviceType,
                 threatScore = rule.threatScore,
                 description = rule.description,
@@ -362,7 +451,7 @@ private fun AllPatternsTab(
             ))
         }
 
-        // Filter by search query
+        // Filter by search query, category, and scanner type
         patterns.filter { p ->
             val matchesSearch = searchQuery.isEmpty() ||
                 p.name.contains(searchQuery, ignoreCase = true) ||
@@ -370,7 +459,8 @@ private fun AllPatternsTab(
                 p.description.contains(searchQuery, ignoreCase = true) ||
                 p.deviceType.name.contains(searchQuery, ignoreCase = true)
             val matchesCategory = selectedCategory == null || p.category == selectedCategory
-            matchesSearch && matchesCategory
+            val matchesScannerType = selectedScannerType == null || p.scannerType == selectedScannerType
+            matchesSearch && matchesCategory && matchesScannerType
         }.sortedWith(compareBy({ !it.isCustom }, { it.category }, { it.threatScore * -1 }))
     }
 
@@ -436,6 +526,7 @@ private fun AllPatternsTab(
                     fullPattern = pattern.pattern,
                     type = pattern.type,
                     category = pattern.category,
+                    scannerType = pattern.scannerType,
                     deviceType = pattern.deviceType,
                     threatScore = pattern.threatScore,
                     description = pattern.description,
@@ -455,6 +546,7 @@ private fun UnifiedPatternCard(
     fullPattern: String,
     type: String,
     category: String,
+    scannerType: ScannerType,
     deviceType: DeviceType,
     threatScore: Int,
     description: String,
@@ -491,6 +583,23 @@ private fun UnifiedPatternCard(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Scanner type icon
+                    Icon(
+                        imageVector = when (scannerType) {
+                            ScannerType.WIFI -> Icons.Default.Wifi
+                            ScannerType.BLUETOOTH -> Icons.Default.Bluetooth
+                            ScannerType.CELLULAR -> Icons.Default.CellTower
+                            ScannerType.SATELLITE -> Icons.Default.SatelliteAlt
+                            ScannerType.GNSS -> Icons.Default.GpsFixed
+                            ScannerType.RF -> Icons.Default.Radio
+                            ScannerType.ULTRASONIC -> Icons.Default.GraphicEq
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+
                     // Custom badge
                     if (isCustom) {
                         Surface(
@@ -602,7 +711,7 @@ private fun UnifiedPatternCard(
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Divider()
+                    HorizontalDivider()
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
@@ -631,17 +740,20 @@ private fun UnifiedPatternCard(
 private fun CustomRulesTabEnhanced(
     customRules: List<CustomRule>,
     searchQuery: String,
+    selectedScannerType: ScannerType?,
     onToggleRule: (String, Boolean) -> Unit,
     onEditRule: (CustomRule) -> Unit,
     onDeleteRule: (String) -> Unit,
     onAddRule: () -> Unit
 ) {
-    val filteredRules = remember(customRules, searchQuery) {
-        if (searchQuery.isEmpty()) customRules
-        else customRules.filter {
-            it.name.contains(searchQuery, ignoreCase = true) ||
-            it.pattern.contains(searchQuery, ignoreCase = true) ||
-            it.description.contains(searchQuery, ignoreCase = true)
+    val filteredRules = remember(customRules, searchQuery, selectedScannerType) {
+        customRules.filter {
+            val matchesSearch = searchQuery.isEmpty() ||
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                it.pattern.contains(searchQuery, ignoreCase = true) ||
+                it.description.contains(searchQuery, ignoreCase = true)
+            val matchesScannerType = selectedScannerType == null || it.scannerType == selectedScannerType
+            matchesSearch && matchesScannerType
         }
     }
 
@@ -662,19 +774,19 @@ private fun CustomRulesTabEnhanced(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = if (searchQuery.isEmpty()) "No Custom Rules" else "No Matching Rules",
+                    text = if (searchQuery.isEmpty() && selectedScannerType == null) "No Custom Rules" else "No Matching Rules",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = if (searchQuery.isEmpty())
-                        "Add your own regex patterns to detect specific devices"
+                    text = if (searchQuery.isEmpty() && selectedScannerType == null)
+                        "Add pattern-based rules to detect specific devices"
                     else
-                        "Try a different search term",
+                        "Try a different search or filter",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
-                if (searchQuery.isEmpty()) {
+                if (searchQuery.isEmpty() && selectedScannerType == null) {
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(onClick = onAddRule) {
                         Icon(Icons.Default.Add, contentDescription = null)
@@ -738,6 +850,22 @@ private fun EnhancedCustomRuleCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Scanner type icon
+                        Icon(
+                            imageVector = when (rule.scannerType) {
+                                ScannerType.WIFI -> Icons.Default.Wifi
+                                ScannerType.BLUETOOTH -> Icons.Default.Bluetooth
+                                ScannerType.CELLULAR -> Icons.Default.CellTower
+                                ScannerType.SATELLITE -> Icons.Default.SatelliteAlt
+                                ScannerType.GNSS -> Icons.Default.GpsFixed
+                                ScannerType.RF -> Icons.Default.Radio
+                                ScannerType.ULTRASONIC -> Icons.Default.GraphicEq
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = rule.name,
                             style = MaterialTheme.typography.titleSmall,
@@ -860,6 +988,342 @@ private fun EnhancedCustomRuleCard(
             onDismissRequest = { showDeleteDialog = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null) },
             title = { Text("Delete Rule?") },
+            text = { Text("Delete \"${rule.name}\"? This cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete()
+                        showDeleteDialog = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun HeuristicRulesTab(
+    heuristicRules: List<HeuristicRule>,
+    searchQuery: String,
+    selectedScannerType: ScannerType?,
+    onToggleRule: (String, Boolean) -> Unit,
+    onEditRule: (HeuristicRule) -> Unit,
+    onDeleteRule: (String) -> Unit,
+    onAddRule: () -> Unit
+) {
+    val filteredRules = remember(heuristicRules, searchQuery, selectedScannerType) {
+        heuristicRules.filter {
+            val matchesSearch = searchQuery.isEmpty() ||
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                it.description.contains(searchQuery, ignoreCase = true)
+            val matchesScannerType = selectedScannerType == null || it.scannerType == selectedScannerType
+            matchesSearch && matchesScannerType
+        }
+    }
+
+    if (filteredRules.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = if (searchQuery.isEmpty() && selectedScannerType == null) "No Heuristic Rules" else "No Matching Rules",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (searchQuery.isEmpty() && selectedScannerType == null)
+                        "Add behavioral rules to detect anomalies"
+                    else
+                        "Try a different search or filter",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                if (searchQuery.isEmpty() && selectedScannerType == null) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(onClick = onAddRule) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Add Heuristic Rule")
+                    }
+                }
+            }
+        }
+    } else {
+        LazyColumn(
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(filteredRules, key = { it.id }) { rule ->
+                HeuristicRuleCard(
+                    rule = rule,
+                    onToggle = { onToggleRule(rule.id, it) },
+                    onEdit = { onEditRule(rule) },
+                    onDelete = { onDeleteRule(rule.id) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HeuristicRuleCard(
+    rule: HeuristicRule,
+    onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
+
+    val threatColor = when {
+        rule.threatScore >= 90 -> ThreatCritical
+        rule.threatScore >= 75 -> ThreatHigh
+        rule.threatScore >= 50 -> ThreatMedium
+        rule.threatScore >= 25 -> ThreatLow
+        else -> ThreatInfo
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded },
+        colors = CardDefaults.cardColors(
+            containerColor = if (rule.enabled)
+                MaterialTheme.colorScheme.surface
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Scanner type icon
+                        Icon(
+                            imageVector = when (rule.scannerType) {
+                                ScannerType.WIFI -> Icons.Default.Wifi
+                                ScannerType.BLUETOOTH -> Icons.Default.Bluetooth
+                                ScannerType.CELLULAR -> Icons.Default.CellTower
+                                ScannerType.SATELLITE -> Icons.Default.SatelliteAlt
+                                ScannerType.GNSS -> Icons.Default.GpsFixed
+                                ScannerType.RF -> Icons.Default.Radio
+                                ScannerType.ULTRASONIC -> Icons.Default.GraphicEq
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = "Heuristic",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = rule.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (!rule.enabled) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    text = "DISABLED",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            Text(
+                                text = "${rule.conditions.size} condition${if (rule.conditions.size != 1) "s" else ""}",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = rule.conditionLogic.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = threatColor.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "Score: ${rule.threatScore}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = threatColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Switch(
+                    checked = rule.enabled,
+                    onCheckedChange = onToggle
+                )
+            }
+
+            if (rule.description.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = rule.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Expanded content showing conditions
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Conditions:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    rule.conditions.forEachIndexed { index, condition ->
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = condition.field.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = condition.operator.symbol,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (condition.operator == HeuristicOperator.BETWEEN)
+                                        "${condition.value} - ${condition.secondValue}"
+                                    else condition.value,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                if (condition.field.unit.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = condition.field.unit,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        if (index < rule.conditions.size - 1) {
+                            Text(
+                                text = if (rule.conditionLogic == ConditionLogic.AND) "AND" else "OR",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Cooldown: ${rule.cooldownMs / 1000}s",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row {
+                            TextButton(onClick = onEdit) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Edit")
+                            }
+                            TextButton(
+                                onClick = { showDeleteDialog = true },
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Delete")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+            title = { Text("Delete Heuristic Rule?") },
             text = { Text("Delete \"${rule.name}\"? This cannot be undone.") },
             confirmButton = {
                 TextButton(
@@ -1041,6 +1505,7 @@ private fun AddEditRuleBottomSheet(
 ) {
     var name by remember { mutableStateOf(existingRule?.name ?: "") }
     var pattern by remember { mutableStateOf(existingRule?.pattern ?: "") }
+    var selectedScannerType by remember { mutableStateOf(existingRule?.scannerType ?: ScannerType.WIFI) }
     var type by remember { mutableStateOf(existingRule?.type ?: RuleType.SSID_REGEX) }
     var deviceType by remember { mutableStateOf(existingRule?.deviceType ?: DeviceType.UNKNOWN_SURVEILLANCE) }
     var threatScore by remember { mutableStateOf(existingRule?.threatScore?.toString() ?: "50") }
@@ -1050,36 +1515,62 @@ private fun AddEditRuleBottomSheet(
     var testInput by remember { mutableStateOf("") }
     var testResult by remember { mutableStateOf<Boolean?>(null) }
 
+    // Get rule types for selected scanner type
+    val availableRuleTypes = remember(selectedScannerType) {
+        RuleType.entries.filter { it.scannerType == selectedScannerType }
+    }
+
+    // Update type when scanner type changes
+    LaunchedEffect(selectedScannerType) {
+        if (type.scannerType != selectedScannerType) {
+            type = availableRuleTypes.firstOrNull() ?: RuleType.SSID_REGEX
+        }
+    }
+
     // Test the pattern
     fun testPattern(): Boolean {
         return try {
-            if (type == RuleType.MAC_PREFIX) {
-                testInput.uppercase().startsWith(pattern.uppercase())
-            } else {
-                Regex(pattern).containsMatchIn(testInput)
+            when (type) {
+                RuleType.MAC_PREFIX -> testInput.uppercase().startsWith(pattern.uppercase())
+                RuleType.CELLULAR_MCC_MNC -> testInput.matches(Regex(pattern.replace("*", ".*")))
+                RuleType.CELLULAR_LAC_RANGE -> {
+                    val parts = pattern.split("-")
+                    if (parts.size == 2) {
+                        val num = testInput.toIntOrNull() ?: return false
+                        num in parts[0].toInt()..parts[1].toInt()
+                    } else false
+                }
+                RuleType.RF_FREQUENCY_RANGE, RuleType.ULTRASONIC_FREQUENCY -> {
+                    val parts = pattern.split("-")
+                    if (parts.size == 2) {
+                        val num = testInput.toIntOrNull() ?: return false
+                        num in parts[0].toInt()..parts[1].toInt()
+                    } else false
+                }
+                else -> Regex(pattern).containsMatchIn(testInput)
             }
         } catch (e: Exception) {
             false
         }
     }
 
-    // Validate regex pattern
+    // Validate pattern
     fun validatePattern(): Boolean {
         return try {
-            if (type == RuleType.MAC_PREFIX) {
-                pattern.matches(Regex("^([0-9A-Fa-f]{2}:){0,2}[0-9A-Fa-f]{2}$"))
-            } else {
-                Regex(pattern)
-                true
+            when (type) {
+                RuleType.MAC_PREFIX -> pattern.matches(Regex("^([0-9A-Fa-f]{2}:){0,2}[0-9A-Fa-f]{2}$"))
+                RuleType.CELLULAR_LAC_RANGE, RuleType.RF_FREQUENCY_RANGE, RuleType.ULTRASONIC_FREQUENCY -> {
+                    pattern.matches(Regex("^\\d+-\\d+$"))
+                }
+                RuleType.BLE_SERVICE_UUID -> pattern.matches(Regex("^[0-9a-fA-F-]+$"))
+                else -> { Regex(pattern); true }
             }
         } catch (e: Exception) {
             false
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss
-    ) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1109,14 +1600,50 @@ private fun AddEditRuleBottomSheet(
                 )
             }
 
-            // Pattern type
+            // Scanner type selector
+            item {
+                Text("Scanner Type", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ScannerType.entries.forEach { scannerType ->
+                        FilterChip(
+                            selected = selectedScannerType == scannerType,
+                            onClick = { selectedScannerType = scannerType },
+                            label = { Text(scannerType.displayName) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = when (scannerType) {
+                                        ScannerType.WIFI -> Icons.Default.Wifi
+                                        ScannerType.BLUETOOTH -> Icons.Default.Bluetooth
+                                        ScannerType.CELLULAR -> Icons.Default.CellTower
+                                        ScannerType.SATELLITE -> Icons.Default.SatelliteAlt
+                                        ScannerType.GNSS -> Icons.Default.GpsFixed
+                                        ScannerType.RF -> Icons.Default.Radio
+                                        ScannerType.ULTRASONIC -> Icons.Default.GraphicEq
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Pattern type (filtered by scanner type)
             item {
                 Text("Pattern Type", style = MaterialTheme.typography.labelMedium)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    RuleType.entries.forEach { ruleType ->
+                    availableRuleTypes.forEach { ruleType ->
                         FilterChip(
                             selected = type == ruleType,
                             onClick = {
@@ -1139,26 +1666,13 @@ private fun AddEditRuleBottomSheet(
                         testResult = null
                     },
                     label = { Text("Pattern") },
-                    placeholder = {
-                        Text(
-                            when (type) {
-                                RuleType.SSID_REGEX -> "(?i)^mycity[_-]?.*"
-                                RuleType.BLE_NAME_REGEX -> "(?i)^patrol[_-]?.*"
-                                RuleType.MAC_PREFIX -> "AA:BB:CC"
-                            }
-                        )
-                    },
+                    placeholder = { Text(type.patternHint) },
                     isError = patternError != null,
                     supportingText = {
                         if (patternError != null) {
                             Text(patternError!!, color = MaterialTheme.colorScheme.error)
                         } else {
-                            Text(
-                                when (type) {
-                                    RuleType.SSID_REGEX, RuleType.BLE_NAME_REGEX -> "Java regex pattern. (?i) = case insensitive"
-                                    RuleType.MAC_PREFIX -> "MAC address prefix (e.g., AA:BB:CC)"
-                                }
-                            )
+                            Text("Pattern hint: ${type.patternHint}")
                         }
                     },
                     singleLine = true,
@@ -1190,15 +1704,7 @@ private fun AddEditRuleBottomSheet(
                                     testInput = it
                                     testResult = null
                                 },
-                                placeholder = {
-                                    Text(
-                                        when (type) {
-                                            RuleType.SSID_REGEX -> "Test SSID name"
-                                            RuleType.BLE_NAME_REGEX -> "Test BLE name"
-                                            RuleType.MAC_PREFIX -> "Test MAC address"
-                                        }
-                                    )
-                                },
+                                placeholder = { Text("Test input...") },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
@@ -1370,4 +1876,534 @@ private fun AddEditRuleBottomSheet(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddEditHeuristicRuleBottomSheet(
+    existingRule: HeuristicRule?,
+    onDismiss: () -> Unit,
+    onSave: (HeuristicRule) -> Unit
+) {
+    var name by remember { mutableStateOf(existingRule?.name ?: "") }
+    var description by remember { mutableStateOf(existingRule?.description ?: "") }
+    var selectedScannerType by remember { mutableStateOf(existingRule?.scannerType ?: ScannerType.CELLULAR) }
+    var conditions by remember { mutableStateOf(existingRule?.conditions ?: emptyList()) }
+    var conditionLogic by remember { mutableStateOf(existingRule?.conditionLogic ?: ConditionLogic.AND) }
+    var deviceType by remember { mutableStateOf(existingRule?.deviceType ?: DeviceType.UNKNOWN_SURVEILLANCE) }
+    var threatScore by remember { mutableStateOf(existingRule?.threatScore?.toString() ?: "50") }
+    var cooldownSeconds by remember { mutableStateOf((existingRule?.cooldownMs ?: 60000L) / 1000) }
+    var showDeviceTypePicker by remember { mutableStateOf(false) }
+    var showAddConditionDialog by remember { mutableStateOf(false) }
+
+    // Get available fields for selected scanner type
+    val availableFields = remember(selectedScannerType) {
+        HeuristicField.entries.filter { it.scannerType == selectedScannerType }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(
+                bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Text(
+                    text = if (existingRule != null) "Edit Heuristic Rule" else "Add Heuristic Rule",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Define behavioral conditions to detect anomalies",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Rule name
+            item {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Rule Name") },
+                    placeholder = { Text("e.g., IMSI Catcher Detection") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Scanner type selector
+            item {
+                Text("Scanner Type", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ScannerType.entries.forEach { scannerType ->
+                        FilterChip(
+                            selected = selectedScannerType == scannerType,
+                            onClick = {
+                                selectedScannerType = scannerType
+                                // Clear conditions when scanner type changes
+                                conditions = emptyList()
+                            },
+                            label = { Text(scannerType.displayName) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = when (scannerType) {
+                                        ScannerType.WIFI -> Icons.Default.Wifi
+                                        ScannerType.BLUETOOTH -> Icons.Default.Bluetooth
+                                        ScannerType.CELLULAR -> Icons.Default.CellTower
+                                        ScannerType.SATELLITE -> Icons.Default.SatelliteAlt
+                                        ScannerType.GNSS -> Icons.Default.GpsFixed
+                                        ScannerType.RF -> Icons.Default.Radio
+                                        ScannerType.ULTRASONIC -> Icons.Default.GraphicEq
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Conditions section
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Conditions", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { showAddConditionDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Condition")
+                    }
+                }
+
+                if (conditions.isEmpty()) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.Psychology,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(32.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "No conditions added",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    "Add at least one condition",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        conditions.forEachIndexed { index, condition ->
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = condition.field.displayName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = "${condition.operator.symbol} ${condition.value}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            if (condition.secondValue != null) {
+                                                Text(
+                                                    text = " - ${condition.secondValue}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            }
+                                            if (condition.field.unit.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = condition.field.unit,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            conditions = conditions.toMutableList().also { it.removeAt(index) }
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Remove",
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            if (index < conditions.size - 1) {
+                                Text(
+                                    text = conditionLogic.displayName.substringBefore(" "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Condition logic
+            if (conditions.size > 1) {
+                item {
+                    Text("Condition Logic", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ConditionLogic.entries.forEach { logic ->
+                            FilterChip(
+                                selected = conditionLogic == logic,
+                                onClick = { conditionLogic = logic },
+                                label = { Text(logic.displayName) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Device type selector
+            item {
+                Text("Device Type", style = MaterialTheme.typography.labelMedium)
+                OutlinedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showDeviceTypePicker = true }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = deviceType.name.replace("_", " "),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showDeviceTypePicker,
+                    onDismissRequest = { showDeviceTypePicker = false }
+                ) {
+                    DeviceType.entries.forEach { dt ->
+                        DropdownMenuItem(
+                            text = { Text(dt.name.replace("_", " ")) },
+                            onClick = {
+                                deviceType = dt
+                                showDeviceTypePicker = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Threat score
+            item {
+                OutlinedTextField(
+                    value = threatScore,
+                    onValueChange = {
+                        if (it.isEmpty() || it.toIntOrNull() != null) {
+                            threatScore = it
+                        }
+                    },
+                    label = { Text("Threat Score (0-100)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Cooldown
+            item {
+                OutlinedTextField(
+                    value = cooldownSeconds.toString(),
+                    onValueChange = {
+                        cooldownSeconds = it.toLongOrNull() ?: 60L
+                    },
+                    label = { Text("Cooldown (seconds)") },
+                    supportingText = { Text("Minimum time between alerts from this rule") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Description
+            item {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description (optional)") },
+                    placeholder = { Text("What does this rule detect?") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+            }
+
+            // Action buttons
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = {
+                            val score = threatScore.toIntOrNull()?.coerceIn(0, 100) ?: 50
+
+                            onSave(
+                                HeuristicRule(
+                                    id = existingRule?.id ?: java.util.UUID.randomUUID().toString(),
+                                    name = name.ifBlank { "Heuristic Rule" },
+                                    description = description,
+                                    scannerType = selectedScannerType,
+                                    conditions = conditions,
+                                    conditionLogic = conditionLogic,
+                                    deviceType = deviceType,
+                                    threatScore = score,
+                                    cooldownMs = cooldownSeconds * 1000L,
+                                    enabled = existingRule?.enabled ?: true,
+                                    createdAt = existingRule?.createdAt ?: System.currentTimeMillis()
+                                )
+                            )
+                        },
+                        enabled = name.isNotBlank() && conditions.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Save")
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Add condition dialog
+    if (showAddConditionDialog) {
+        AddConditionDialog(
+            availableFields = availableFields,
+            onDismiss = { showAddConditionDialog = false },
+            onAdd = { condition ->
+                conditions = conditions + condition
+                showAddConditionDialog = false
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddConditionDialog(
+    availableFields: List<HeuristicField>,
+    onDismiss: () -> Unit,
+    onAdd: (HeuristicCondition) -> Unit
+) {
+    var selectedField by remember { mutableStateOf(availableFields.firstOrNull()) }
+    var selectedOperator by remember { mutableStateOf(HeuristicOperator.GREATER_THAN) }
+    var value by remember { mutableStateOf("") }
+    var secondValue by remember { mutableStateOf("") }
+    var showFieldPicker by remember { mutableStateOf(false) }
+
+    // Update default value when field changes
+    LaunchedEffect(selectedField) {
+        selectedField?.let {
+            value = it.defaultThreshold
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Condition") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Field selector
+                Text("Field", style = MaterialTheme.typography.labelMedium)
+                OutlinedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showFieldPicker = true }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = selectedField?.displayName ?: "Select field",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            selectedField?.let {
+                                Text(
+                                    text = it.description,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showFieldPicker,
+                    onDismissRequest = { showFieldPicker = false }
+                ) {
+                    availableFields.forEach { field ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(field.displayName)
+                                    Text(
+                                        field.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = {
+                                selectedField = field
+                                showFieldPicker = false
+                            }
+                        )
+                    }
+                }
+
+                // Operator selector
+                Text("Operator", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    HeuristicOperator.entries.forEach { op ->
+                        FilterChip(
+                            selected = selectedOperator == op,
+                            onClick = { selectedOperator = op },
+                            label = { Text(op.symbol) }
+                        )
+                    }
+                }
+
+                // Value input
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    label = { Text(if (selectedOperator == HeuristicOperator.BETWEEN) "Min Value" else "Value") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        selectedField?.unit?.takeIf { it.isNotEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                )
+
+                // Second value for BETWEEN operator
+                if (selectedOperator == HeuristicOperator.BETWEEN) {
+                    OutlinedTextField(
+                        value = secondValue,
+                        onValueChange = { secondValue = it },
+                        label = { Text("Max Value") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            selectedField?.unit?.takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    selectedField?.let { field ->
+                        onAdd(
+                            HeuristicCondition(
+                                field = field,
+                                operator = selectedOperator,
+                                value = value,
+                                secondValue = if (selectedOperator == HeuristicOperator.BETWEEN) secondValue else null
+                            )
+                        )
+                    }
+                },
+                enabled = selectedField != null && value.isNotBlank() &&
+                    (selectedOperator != HeuristicOperator.BETWEEN || secondValue.isNotBlank())
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

@@ -20,6 +20,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.flockyou.data.BuiltInRuleCategory
 import com.flockyou.data.CustomRule
+import com.flockyou.data.HeuristicRule
 import com.flockyou.data.RuleSettingsRepository
 import com.flockyou.data.RuleType
 import com.flockyou.data.model.DeviceType
@@ -34,40 +35,66 @@ import javax.inject.Inject
 class RuleSettingsViewModel @Inject constructor(
     private val repository: RuleSettingsRepository
 ) : ViewModel() {
-    
+
     val settings = repository.settings.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
         RuleSettingsRepository.RuleSettings()
     )
-    
+
     fun toggleCategory(category: BuiltInRuleCategory, enabled: Boolean) {
         viewModelScope.launch {
             repository.setCategoryEnabled(category, enabled)
         }
     }
-    
+
+    // Custom Rule operations
     fun addCustomRule(rule: CustomRule) {
         viewModelScope.launch {
             repository.addCustomRule(rule)
         }
     }
-    
+
     fun updateCustomRule(rule: CustomRule) {
         viewModelScope.launch {
             repository.updateCustomRule(rule)
         }
     }
-    
+
     fun deleteCustomRule(ruleId: String) {
         viewModelScope.launch {
             repository.deleteCustomRule(ruleId)
         }
     }
-    
+
     fun toggleCustomRule(ruleId: String, enabled: Boolean) {
         viewModelScope.launch {
             repository.toggleCustomRule(ruleId, enabled)
+        }
+    }
+
+    // Heuristic Rule operations
+    fun addHeuristicRule(rule: HeuristicRule) {
+        viewModelScope.launch {
+            repository.addHeuristicRule(rule)
+        }
+    }
+
+    fun updateHeuristicRule(rule: HeuristicRule) {
+        viewModelScope.launch {
+            repository.updateHeuristicRule(rule)
+        }
+    }
+
+    fun deleteHeuristicRule(ruleId: String) {
+        viewModelScope.launch {
+            repository.deleteHeuristicRule(ruleId)
+        }
+    }
+
+    fun toggleHeuristicRule(ruleId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.toggleHeuristicRule(ruleId, enabled)
         }
     }
 }
@@ -569,23 +596,25 @@ private fun AddEditRuleDialog(
     var threatScore by remember { mutableStateOf(existingRule?.threatScore?.toString() ?: "50") }
     var description by remember { mutableStateOf(existingRule?.description ?: "") }
     var patternError by remember { mutableStateOf<String?>(null) }
-    
-    // Validate regex pattern
+
+    // Filter to show only common WiFi/BLE rule types in this simple dialog
+    val basicRuleTypes = listOf(RuleType.SSID_REGEX, RuleType.BLE_NAME_REGEX, RuleType.MAC_PREFIX)
+
+    // Validate pattern based on type
     fun validatePattern(): Boolean {
         return try {
-            if (type == RuleType.MAC_PREFIX) {
-                // MAC prefix validation
-                pattern.matches(Regex("^([0-9A-Fa-f]{2}:){1,2}[0-9A-Fa-f]{2}$"))
-            } else {
-                // Regex validation
-                Regex(pattern)
-                true
+            when (type) {
+                RuleType.MAC_PREFIX -> pattern.matches(Regex("^([0-9A-Fa-f]{2}:){0,2}[0-9A-Fa-f]{2}$"))
+                RuleType.BLE_SERVICE_UUID -> pattern.matches(Regex("^[0-9a-fA-F-]+$"))
+                RuleType.CELLULAR_LAC_RANGE, RuleType.RF_FREQUENCY_RANGE, RuleType.ULTRASONIC_FREQUENCY ->
+                    pattern.matches(Regex("^\\d+-\\d+$"))
+                else -> { Regex(pattern); true }
             }
         } catch (e: Exception) {
             false
         }
     }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existingRule != null) "Edit Rule" else "Add Custom Rule") },
@@ -601,13 +630,13 @@ private fun AddEditRuleDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                
-                // Type selector
+
+                // Type selector (show basic types for simple dialog)
                 Text("Pattern Type", style = MaterialTheme.typography.labelMedium)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    RuleType.entries.forEach { ruleType ->
+                    basicRuleTypes.forEach { ruleType ->
                         FilterChip(
                             selected = type == ruleType,
                             onClick = { type = ruleType },
@@ -615,43 +644,30 @@ private fun AddEditRuleDialog(
                         )
                     }
                 }
-                
+
                 OutlinedTextField(
                     value = pattern,
-                    onValueChange = { 
+                    onValueChange = {
                         pattern = it
                         patternError = null
                     },
                     label = { Text("Pattern") },
-                    placeholder = { 
-                        Text(
-                            when (type) {
-                                RuleType.SSID_REGEX -> "(?i)^mycity[_-]?.*"
-                                RuleType.BLE_NAME_REGEX -> "(?i)^patrol[_-]?.*"
-                                RuleType.MAC_PREFIX -> "AA:BB:CC"
-                            }
-                        )
-                    },
+                    placeholder = { Text(type.patternHint) },
                     isError = patternError != null,
                     supportingText = {
                         if (patternError != null) {
                             Text(patternError!!, color = MaterialTheme.colorScheme.error)
                         } else {
-                            Text(
-                                when (type) {
-                                    RuleType.SSID_REGEX, RuleType.BLE_NAME_REGEX -> "Java regex pattern. (?i) = case insensitive"
-                                    RuleType.MAC_PREFIX -> "MAC address prefix (e.g., AA:BB:CC)"
-                                }
-                            )
+                            Text("Pattern hint: ${type.patternHint}")
                         }
                     },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                
+
                 OutlinedTextField(
                     value = threatScore,
-                    onValueChange = { 
+                    onValueChange = {
                         if (it.isEmpty() || it.toIntOrNull() != null) {
                             threatScore = it
                         }
@@ -661,7 +677,7 @@ private fun AddEditRuleDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                
+
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
@@ -678,9 +694,9 @@ private fun AddEditRuleDialog(
                         patternError = "Invalid pattern"
                         return@TextButton
                     }
-                    
+
                     val score = threatScore.toIntOrNull()?.coerceIn(0, 100) ?: 50
-                    
+
                     onSave(
                         CustomRule(
                             id = existingRule?.id ?: java.util.UUID.randomUUID().toString(),
