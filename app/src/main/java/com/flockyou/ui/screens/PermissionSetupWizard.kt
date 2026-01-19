@@ -1,6 +1,7 @@
 package com.flockyou.ui.screens
 
 import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -26,8 +27,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 
 /**
  * Permission category with associated detection methods
@@ -56,6 +59,7 @@ data class DetectionMethodInfo(
 
 /**
  * Main permission setup wizard composable
+ * Only shows pages for permission categories that have missing permissions.
  */
 @Suppress("UNUSED_PARAMETER") // onRequestBackgroundLocation reserved for separate background location flow
 @Composable
@@ -64,9 +68,23 @@ fun PermissionSetupWizard(
     onRequestBackgroundLocation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var currentPage by remember { mutableIntStateOf(0) }
 
-    val permissionCategories = remember { getPermissionCategories() }
+    // Filter categories to only show those with missing permissions
+    val permissionCategories = remember {
+        getPermissionCategories().filter { category ->
+            // Check SDK requirement
+            if (Build.VERSION.SDK_INT < category.minSdk) return@filter false
+            // Check if category has any missing permissions
+            category.permissions.any { permission ->
+                ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+            }
+        }
+    }
+
+    // Total pages = welcome + permission categories + final (but no final if no missing permissions)
+    val totalPages = if (permissionCategories.isEmpty()) 1 else permissionCategories.size + 2
 
     Column(
         modifier = modifier
@@ -75,7 +93,7 @@ fun PermissionSetupWizard(
     ) {
         // Progress indicator
         LinearProgressIndicator(
-            progress = (currentPage + 1).toFloat() / (permissionCategories.size + 1),
+            progress = { (currentPage + 1).toFloat() / totalPages },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -90,7 +108,7 @@ fun PermissionSetupWizard(
                 .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.Center
         ) {
-            repeat(permissionCategories.size + 1) { index ->
+            repeat(totalPages) { index ->
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
@@ -109,29 +127,30 @@ fun PermissionSetupWizard(
         when {
             currentPage == 0 -> {
                 WelcomePage(
-                    onNext = { currentPage++ }
+                    onNext = { currentPage++ },
+                    hasPermissionsToRequest = permissionCategories.isNotEmpty()
                 )
+            }
+            permissionCategories.isEmpty() -> {
+                // All permissions already granted - this shouldn't normally happen
+                // as wizard wouldn't be shown, but handle gracefully
+                LaunchedEffect(Unit) {
+                    onRequestPermissions()
+                }
             }
             currentPage <= permissionCategories.size -> {
                 val category = permissionCategories[currentPage - 1]
-                // Only show if SDK requirement is met
-                if (Build.VERSION.SDK_INT >= category.minSdk) {
-                    PermissionCategoryPage(
-                        category = category,
-                        pageNumber = currentPage,
-                        totalPages = permissionCategories.size,
-                        onNext = { currentPage++ },
-                        onPrevious = { currentPage-- }
-                    )
-                } else {
-                    // Skip to next page if SDK not met
-                    LaunchedEffect(currentPage) {
-                        currentPage++
-                    }
-                }
+                PermissionCategoryPage(
+                    category = category,
+                    pageNumber = currentPage,
+                    totalPages = permissionCategories.size,
+                    onNext = { currentPage++ },
+                    onPrevious = { currentPage-- }
+                )
             }
             else -> {
                 FinalPage(
+                    categories = permissionCategories,
                     onGrantPermissions = onRequestPermissions,
                     onPrevious = { currentPage-- }
                 )
@@ -142,7 +161,8 @@ fun PermissionSetupWizard(
 
 @Composable
 private fun WelcomePage(
-    onNext: () -> Unit
+    onNext: () -> Unit,
+    hasPermissionsToRequest: Boolean = true
 ) {
     Column(
         modifier = Modifier
@@ -239,7 +259,7 @@ private fun WelcomePage(
             onClick = onNext,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("See Required Permissions")
+            Text(if (hasPermissionsToRequest) "See Required Permissions" else "Continue")
             Spacer(modifier = Modifier.width(8.dp))
             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
         }
@@ -941,7 +961,7 @@ private fun getPermissionCategories(): List<PermissionCategory> = listOf(
                 )
             )
         ),
-        isRequired = true // Actually required for ultrasonic detection
+        isRequired = false // Optional - ultrasonic beacon detection is a nice-to-have
     ),
 
     // Notification Permission
