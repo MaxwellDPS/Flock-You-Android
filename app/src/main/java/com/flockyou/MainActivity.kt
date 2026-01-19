@@ -59,6 +59,7 @@ import com.flockyou.ui.screens.RfDetectionScreen
 import com.flockyou.ui.screens.UltrasonicDetectionScreen
 import com.flockyou.ui.screens.SatelliteDetectionScreen
 import com.flockyou.ui.screens.WifiSecurityScreen
+import com.flockyou.ui.screens.AiSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -296,7 +297,8 @@ fun AppNavigation(
                 onNavigateToSecurity = { navController.navigate("security") },
                 onNavigateToPrivacy = { navController.navigate("privacy") },
                 onNavigateToNuke = { navController.navigate("nuke_settings") },
-                onNavigateToAllDetections = { navController.navigate("all_detections") }
+                onNavigateToAllDetections = { navController.navigate("all_detections") },
+                onNavigateToAiSettings = { navController.navigate("ai_settings") }
             )
         }
         composable("nearby") {
@@ -368,6 +370,11 @@ fun AppNavigation(
         }
         composable("wifi_security") {
             WifiSecurityScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("ai_settings") {
+            AiSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

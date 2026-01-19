@@ -49,7 +49,7 @@ class Converters {
 
     @TypeConverter
     fun toDeviceType(value: String): DeviceType =
-        try { DeviceType.valueOf(value) } catch (e: IllegalArgumentException) { DeviceType.UNKNOWN }
+        try { DeviceType.valueOf(value) } catch (e: IllegalArgumentException) { DeviceType.UNKNOWN_SURVEILLANCE }
 
     @TypeConverter
     fun fromSignalStrength(value: SignalStrength): String = value.name

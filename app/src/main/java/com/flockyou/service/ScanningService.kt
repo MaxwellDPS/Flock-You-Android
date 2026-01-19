@@ -2816,10 +2816,6 @@ class ScanningService : Service() {
             // Database error - likely corrupted or wiped
             Log.e(TAG, "SQLite error handling detection: ${e.message}", e)
             handleDatabaseError(e)
-        } catch (e: net.zetetic.database.sqlcipher.SQLiteException) {
-            // SQLCipher-specific error - database corrupted or key mismatch
-            Log.e(TAG, "SQLCipher error handling detection: ${e.message}", e)
-            handleDatabaseError(e)
         } catch (e: Exception) {
             // Check for wrapped database errors
             if (isDatabaseError(e)) {

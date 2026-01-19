@@ -46,7 +46,8 @@ fun SettingsScreen(
     onNavigateToSecurity: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToNuke: () -> Unit = {},
-    onNavigateToAllDetections: () -> Unit = {}
+    onNavigateToAllDetections: () -> Unit = {},
+    onNavigateToAiSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -511,7 +512,22 @@ fun SettingsScreen(
                     onClick = onNavigateToNotifications
                 )
             }
-            
+
+            // AI Analysis Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                SectionHeader(title = "AI Analysis")
+            }
+
+            item {
+                SettingsItem(
+                    icon = Icons.Default.Psychology,
+                    title = "AI-Powered Analysis",
+                    subtitle = "On-device LLM for threat insights",
+                    onClick = onNavigateToAiSettings
+                )
+            }
+
             // Scan Statistics Section
             item {
                 Spacer(modifier = Modifier.height(16.dp))

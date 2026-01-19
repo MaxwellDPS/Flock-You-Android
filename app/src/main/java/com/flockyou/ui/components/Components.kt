@@ -90,6 +90,47 @@ fun DeviceType.toIcon(): ImageVector = when (this) {
     DeviceType.SATELLITE_NTN -> Icons.Default.SatelliteAlt
     DeviceType.GNSS_SPOOFER -> Icons.Default.GpsOff
     DeviceType.GNSS_JAMMER -> Icons.Default.GpsOff
+    // Smart home/IoT devices
+    DeviceType.RING_DOORBELL -> Icons.Default.Doorbell
+    DeviceType.NEST_CAMERA -> Icons.Default.CameraOutdoor
+    DeviceType.AMAZON_SIDEWALK -> Icons.Default.SettingsInputAntenna
+    DeviceType.WYZE_CAMERA -> Icons.Default.CameraAlt
+    DeviceType.ARLO_CAMERA -> Icons.Default.Videocam
+    DeviceType.EUFY_CAMERA -> Icons.Default.Home
+    DeviceType.BLINK_CAMERA -> Icons.Default.RemoveRedEye
+    DeviceType.SIMPLISAFE_DEVICE -> Icons.Default.Shield
+    DeviceType.ADT_DEVICE -> Icons.Default.Security
+    DeviceType.VIVINT_DEVICE -> Icons.Default.Home
+    // Retail/commercial tracking
+    DeviceType.BLUETOOTH_BEACON -> Icons.Default.Bluetooth
+    DeviceType.RETAIL_TRACKER -> Icons.Default.Store
+    DeviceType.CROWD_ANALYTICS -> Icons.Default.Groups
+    DeviceType.FACIAL_RECOGNITION -> Icons.Default.Face
+    // AirTag/tracker devices
+    DeviceType.AIRTAG -> Icons.Default.LocationOn
+    DeviceType.TILE_TRACKER -> Icons.Default.LocationSearching
+    DeviceType.SAMSUNG_SMARTTAG -> Icons.Default.LocationOn
+    DeviceType.GENERIC_BLE_TRACKER -> Icons.Default.BluetoothSearching
+    // Traffic enforcement
+    DeviceType.SPEED_CAMERA -> Icons.Default.Speed
+    DeviceType.RED_LIGHT_CAMERA -> Icons.Default.Traffic
+    DeviceType.TOLL_READER -> Icons.Default.CreditCard
+    DeviceType.TRAFFIC_SENSOR -> Icons.Default.Sensors
+    // Law enforcement specific
+    DeviceType.SHOTSPOTTER -> Icons.Default.Mic
+    DeviceType.CLEARVIEW_AI -> Icons.Default.Face
+    DeviceType.PALANTIR_DEVICE -> Icons.Default.Hub
+    DeviceType.GRAYKEY_DEVICE -> Icons.Default.PhonelinkLock
+    // Network surveillance
+    DeviceType.WIFI_PINEAPPLE -> Icons.Default.Router
+    DeviceType.PACKET_SNIFFER -> Icons.Default.NetworkCheck
+    DeviceType.MAN_IN_MIDDLE -> Icons.Default.SwapHoriz
+    // Misc surveillance
+    DeviceType.LICENSE_PLATE_READER -> Icons.Default.DirectionsCar
+    DeviceType.CCTV_CAMERA -> Icons.Default.Videocam
+    DeviceType.PTZ_CAMERA -> Icons.Default.CameraAlt
+    DeviceType.THERMAL_CAMERA -> Icons.Default.Thermostat
+    DeviceType.NIGHT_VISION -> Icons.Default.NightsStay
     DeviceType.UNKNOWN_SURVEILLANCE -> Icons.Default.QuestionMark
 }
 

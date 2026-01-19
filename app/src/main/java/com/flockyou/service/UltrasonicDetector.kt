@@ -674,6 +674,66 @@ class UltrasonicDetector(private val context: Context) {
     }
 
     /**
+     * Trigger a test detection to verify ultrasonic detection is working.
+     * Simulates detecting an 18kHz SilverPush advertising beacon.
+     */
+    fun triggerTestDetection() {
+        Log.i(TAG, "Triggering test ultrasonic detection")
+
+        val testFrequency = 18000
+        val testAmplitude = -35.0
+
+        val beacon = BeaconDetection(
+            frequency = testFrequency,
+            firstDetected = System.currentTimeMillis(),
+            lastDetected = System.currentTimeMillis(),
+            peakAmplitudeDb = testAmplitude,
+            detectionCount = 1,
+            possibleSource = "TEST: SilverPush/Ad Tracking",
+            latitude = currentLatitude,
+            longitude = currentLongitude
+        )
+        activeBeacons[testFrequency] = beacon
+        _activeBeacons.value = activeBeacons.values.toList()
+
+        addTimelineEvent(
+            type = UltrasonicEventType.BEACON_DETECTED,
+            title = "TEST: Beacon Detected: ${testFrequency}Hz",
+            description = "Test detection - SilverPush/Ad Tracking",
+            frequency = testFrequency,
+            threatLevel = ThreatLevel.HIGH
+        )
+
+        reportAnomaly(
+            type = UltrasonicAnomalyType.ADVERTISING_BEACON,
+            description = "TEST: Ultrasonic advertising beacon detected at ${testFrequency}Hz",
+            technicalDetails = "Test detection to verify ultrasonic pipeline. " +
+                "Peak amplitude: ${String.format("%.1f", testAmplitude)}dB",
+            frequency = testFrequency,
+            amplitudeDb = testAmplitude,
+            confidence = AnomalyConfidence.HIGH,
+            contributingFactors = listOf(
+                "TEST DETECTION",
+                "Frequency: ${testFrequency}Hz",
+                "Amplitude: ${String.format("%.1f", testAmplitude)}dB"
+            )
+        )
+
+        _status.value = UltrasonicStatus(
+            isScanning = isMonitoring,
+            lastScanTime = System.currentTimeMillis(),
+            noiseFloorDb = noiseFloorDb,
+            ultrasonicActivityDetected = true,
+            activeBeaconCount = activeBeacons.size,
+            peakFrequency = testFrequency,
+            peakAmplitudeDb = testAmplitude,
+            threatLevel = ThreatLevel.HIGH
+        )
+
+        Log.i(TAG, "Test detection triggered successfully")
+    }
+
+    /**
      * Convert ultrasonic anomaly to Detection for storage
      */
     fun anomalyToDetection(anomaly: UltrasonicAnomaly): Detection {

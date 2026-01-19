@@ -308,6 +308,163 @@ object DetectionPatterns {
             manufacturer = "Panasonic",
             threatScore = 55,
             description = "Panasonic Toughbook (commonly used by law enforcement)"
+        ),
+
+        // ==================== Smart Home / IoT Surveillance Patterns ====================
+
+        // Ring Doorbells
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^ring[_-]?(doorbell|cam|setup|stick).*",
+            deviceType = DeviceType.RING_DOORBELL,
+            manufacturer = "Ring (Amazon)",
+            threatScore = 40,
+            description = "Ring doorbell/camera - shares footage with 2,500+ law enforcement agencies"
+        ),
+
+        // Nest/Google Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(nest|google)[_-]?(cam|doorbell|hello).*",
+            deviceType = DeviceType.NEST_CAMERA,
+            manufacturer = "Google/Nest",
+            threatScore = 35,
+            description = "Nest/Google camera - cloud-connected home surveillance"
+        ),
+
+        // Amazon Sidewalk
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(amazon[_-]?sidewalk|sidewalk[_-]?bridge).*",
+            deviceType = DeviceType.AMAZON_SIDEWALK,
+            manufacturer = "Amazon",
+            threatScore = 45,
+            description = "Amazon Sidewalk mesh network - shares bandwidth with neighbors/Amazon"
+        ),
+
+        // Wyze Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^wyze[_-]?(cam|doorbell|setup).*",
+            deviceType = DeviceType.WYZE_CAMERA,
+            manufacturer = "Wyze",
+            threatScore = 35,
+            description = "Wyze camera - budget smart home camera"
+        ),
+
+        // Arlo Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^arlo[_-]?(cam|pro|ultra|setup).*",
+            deviceType = DeviceType.ARLO_CAMERA,
+            manufacturer = "Arlo",
+            threatScore = 35,
+            description = "Arlo security camera"
+        ),
+
+        // Eufy/Anker Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^eufy[_-]?(cam|doorbell|security).*",
+            deviceType = DeviceType.EUFY_CAMERA,
+            manufacturer = "Eufy/Anker",
+            threatScore = 35,
+            description = "Eufy security camera"
+        ),
+
+        // Blink Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^blink[_-]?(cam|mini|setup).*",
+            deviceType = DeviceType.BLINK_CAMERA,
+            manufacturer = "Blink (Amazon)",
+            threatScore = 40,
+            description = "Blink camera (Amazon) - cloud-connected surveillance"
+        ),
+
+        // SimpliSafe
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^simplisafe[_-]?.*",
+            deviceType = DeviceType.SIMPLISAFE_DEVICE,
+            manufacturer = "SimpliSafe",
+            threatScore = 35,
+            description = "SimpliSafe security system"
+        ),
+
+        // ADT Security
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^adt[_-]?(pulse|cam|security).*",
+            deviceType = DeviceType.ADT_DEVICE,
+            manufacturer = "ADT",
+            threatScore = 40,
+            description = "ADT security system - may share with law enforcement"
+        ),
+
+        // Vivint
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^vivint[_-]?.*",
+            deviceType = DeviceType.VIVINT_DEVICE,
+            manufacturer = "Vivint",
+            threatScore = 40,
+            description = "Vivint smart home security"
+        ),
+
+        // ==================== Traffic Enforcement Patterns ====================
+
+        // Speed Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(speed[_-]?cam|redflex|verra|xerox[_-]?ats).*",
+            deviceType = DeviceType.SPEED_CAMERA,
+            manufacturer = null,
+            threatScore = 70,
+            description = "Speed enforcement camera"
+        ),
+
+        // Red Light Cameras
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(red[_-]?light|intersection[_-]?cam|ats[_-]?).*",
+            deviceType = DeviceType.RED_LIGHT_CAMERA,
+            manufacturer = null,
+            threatScore = 65,
+            description = "Red light enforcement camera"
+        ),
+
+        // Toll Systems
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(ezpass|sunpass|fastrak|toll[_-]?gantry).*",
+            deviceType = DeviceType.TOLL_READER,
+            manufacturer = null,
+            threatScore = 50,
+            description = "Electronic toll collection system"
+        ),
+
+        // ==================== Network Attack/Pentest Device Patterns ====================
+
+        // WiFi Pineapple
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(pineapple|hak5|wifi[_-]?pineapple).*",
+            deviceType = DeviceType.WIFI_PINEAPPLE,
+            manufacturer = "Hak5",
+            threatScore = 90,
+            description = "WiFi Pineapple - network auditing/attack tool"
+        ),
+
+        // ==================== Retail/Commercial Tracking Patterns ====================
+
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(retailnext|shoppertrak|footfall).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = null,
+            threatScore = 50,
+            description = "Retail foot traffic analytics system"
         )
     )
     
@@ -568,6 +725,154 @@ object DetectionPatterns {
             manufacturer = "SoundOff Signal",
             threatScore = 80,
             description = "SoundOff Signal emergency equipment"
+        ),
+
+        // ==================== Tracker/AirTag Detection Patterns ====================
+
+        // Apple AirTag
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(airtag|find[_-]?my).*",
+            deviceType = DeviceType.AIRTAG,
+            manufacturer = "Apple",
+            threatScore = 60,
+            description = "Apple AirTag - potential tracking device"
+        ),
+
+        // Tile Trackers
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^tile[_-]?(mate|pro|slim|sticker)?.*",
+            deviceType = DeviceType.TILE_TRACKER,
+            manufacturer = "Tile",
+            threatScore = 55,
+            description = "Tile Bluetooth tracker"
+        ),
+
+        // Samsung SmartTag
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(smart[_-]?tag|galaxy[_-]?tag).*",
+            deviceType = DeviceType.SAMSUNG_SMARTTAG,
+            manufacturer = "Samsung",
+            threatScore = 55,
+            description = "Samsung SmartTag tracker"
+        ),
+
+        // Generic BLE Trackers
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(chipolo|nut[_-]?find|pebblebee|cube[_-]?tracker).*",
+            deviceType = DeviceType.GENERIC_BLE_TRACKER,
+            manufacturer = null,
+            threatScore = 50,
+            description = "Generic Bluetooth tracker device"
+        ),
+
+        // ==================== Smart Home IoT BLE Patterns ====================
+
+        // Ring
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^ring[_-]?(doorbell|cam|chime|setup).*",
+            deviceType = DeviceType.RING_DOORBELL,
+            manufacturer = "Ring (Amazon)",
+            threatScore = 40,
+            description = "Ring doorbell/camera BLE setup"
+        ),
+
+        // Nest/Google
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(nest|google)[_-]?(cam|doorbell|hello|hub).*",
+            deviceType = DeviceType.NEST_CAMERA,
+            manufacturer = "Google/Nest",
+            threatScore = 35,
+            description = "Google Nest camera/doorbell"
+        ),
+
+        // Wyze
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^wyze[_-]?.*",
+            deviceType = DeviceType.WYZE_CAMERA,
+            manufacturer = "Wyze",
+            threatScore = 35,
+            description = "Wyze smart home device"
+        ),
+
+        // Arlo
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^arlo[_-]?.*",
+            deviceType = DeviceType.ARLO_CAMERA,
+            manufacturer = "Arlo",
+            threatScore = 35,
+            description = "Arlo security camera"
+        ),
+
+        // Eufy
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^eufy[_-]?.*",
+            deviceType = DeviceType.EUFY_CAMERA,
+            manufacturer = "Eufy/Anker",
+            threatScore = 35,
+            description = "Eufy security device"
+        ),
+
+        // Blink
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^blink[_-]?.*",
+            deviceType = DeviceType.BLINK_CAMERA,
+            manufacturer = "Blink (Amazon)",
+            threatScore = 40,
+            description = "Blink camera"
+        ),
+
+        // ==================== Retail Beacon Patterns ====================
+
+        // iBeacon / Eddystone patterns
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(ibeacon|eddystone|estimote|kontakt).*",
+            deviceType = DeviceType.BLUETOOTH_BEACON,
+            manufacturer = null,
+            threatScore = 45,
+            description = "Retail/location Bluetooth beacon"
+        ),
+
+        // Retail analytics
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(retailnext|shoppertrak|sensoro).*",
+            deviceType = DeviceType.RETAIL_TRACKER,
+            manufacturer = null,
+            threatScore = 50,
+            description = "Retail foot traffic sensor"
+        ),
+
+        // ==================== Law Enforcement Specific BLE Patterns ====================
+
+        // ShotSpotter/Acoustic
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(shotspot|soundthink|acoustic[_-]?sens).*",
+            deviceType = DeviceType.SHOTSPOTTER,
+            manufacturer = "SoundThinking",
+            threatScore = 95,
+            description = "ShotSpotter acoustic gunshot sensor"
+        ),
+
+        // GrayKey
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^graykey.*",
+            deviceType = DeviceType.GRAYKEY_DEVICE,
+            manufacturer = "Grayshift",
+            threatScore = 95,
+            description = "GrayKey mobile forensics device"
         )
     )
     
@@ -1375,6 +1680,264 @@ object DetectionPatterns {
                     "but the specific manufacturer/model is unknown.",
                 capabilities = listOf("Unknown - potentially ALPR or audio surveillance"),
                 privacyConcerns = listOf("Unknown data collection practices")
+            )
+            // Smart Home / IoT Surveillance Devices
+            DeviceType.RING_DOORBELL -> DeviceTypeInfo(
+                name = "Ring Doorbell/Camera",
+                shortDescription = "Amazon Smart Doorbell",
+                fullDescription = "Ring doorbells and cameras are connected to Amazon's Neighbors network. " +
+                    "Ring has partnerships with over 2,500 police departments allowing law enforcement to " +
+                    "request video footage, sometimes without a warrant.",
+                capabilities = listOf(
+                    "Video recording (1080p-4K)",
+                    "Two-way audio",
+                    "Motion detection",
+                    "Police footage sharing via Neighbors"
+                ),
+                privacyConcerns = listOf(
+                    "Footage shared with 2,500+ police agencies",
+                    "Neighbors app creates surveillance network",
+                    "Cloud storage on Amazon servers"
+                )
+            )
+            DeviceType.NEST_CAMERA -> DeviceTypeInfo(
+                name = "Nest/Google Camera",
+                shortDescription = "Google Smart Camera",
+                fullDescription = "Nest cameras are connected to Google's cloud infrastructure.",
+                capabilities = listOf("HD/4K video", "AI-powered detection", "Google Home integration"),
+                privacyConcerns = listOf("Data processed by Google AI", "Cloud storage", "May be subpoenaed")
+            )
+            DeviceType.AMAZON_SIDEWALK -> DeviceTypeInfo(
+                name = "Amazon Sidewalk Device",
+                shortDescription = "Amazon Mesh Network",
+                fullDescription = "Amazon Sidewalk creates a shared mesh network using Echo and Ring devices.",
+                capabilities = listOf("Mesh network connectivity", "Extends smart home range"),
+                privacyConcerns = listOf("Shares your bandwidth", "Creates neighborhood tracking network")
+            )
+            DeviceType.WYZE_CAMERA -> DeviceTypeInfo(
+                name = "Wyze Camera",
+                shortDescription = "Budget Smart Camera",
+                fullDescription = "Wyze cameras are budget-friendly smart home cameras with cloud connectivity.",
+                capabilities = listOf("HD video", "Motion detection", "Cloud storage"),
+                privacyConcerns = listOf("Cloud-dependent", "Data breach history")
+            )
+            DeviceType.ARLO_CAMERA -> DeviceTypeInfo(
+                name = "Arlo Camera",
+                shortDescription = "Wireless Security Camera",
+                fullDescription = "Arlo wireless security cameras with cloud storage and AI features.",
+                capabilities = listOf("4K video", "Wire-free operation", "AI detection"),
+                privacyConcerns = listOf("Cloud storage required", "Subscription model")
+            )
+            DeviceType.EUFY_CAMERA -> DeviceTypeInfo(
+                name = "Eufy Camera",
+                shortDescription = "Anker Security Camera",
+                fullDescription = "Eufy security cameras advertise local storage but have been found to send data to cloud.",
+                capabilities = listOf("Local storage option", "AI detection"),
+                privacyConcerns = listOf("Misleading local storage claims", "Unencrypted cloud uploads discovered")
+            )
+            DeviceType.BLINK_CAMERA -> DeviceTypeInfo(
+                name = "Blink Camera",
+                shortDescription = "Amazon Blink Camera",
+                fullDescription = "Blink cameras are Amazon-owned, similar privacy concerns to Ring.",
+                capabilities = listOf("HD video", "Battery powered", "Cloud storage"),
+                privacyConcerns = listOf("Amazon ecosystem", "Cloud storage", "Police partnership potential")
+            )
+            DeviceType.SIMPLISAFE_DEVICE -> DeviceTypeInfo(
+                name = "SimpliSafe Device",
+                shortDescription = "SimpliSafe Security",
+                fullDescription = "SimpliSafe home security system with professional monitoring option.",
+                capabilities = listOf("Intrusion detection", "Video doorbells"),
+                privacyConcerns = listOf("Professional monitoring access", "Cloud connectivity")
+            )
+            DeviceType.ADT_DEVICE -> DeviceTypeInfo(
+                name = "ADT Security Device",
+                shortDescription = "ADT Security System",
+                fullDescription = "ADT is a major security provider with deep law enforcement relationships.",
+                capabilities = listOf("Professional monitoring", "Video surveillance"),
+                privacyConcerns = listOf("Law enforcement partnerships", "Central monitoring station")
+            )
+            DeviceType.VIVINT_DEVICE -> DeviceTypeInfo(
+                name = "Vivint Smart Home",
+                shortDescription = "Vivint Security",
+                fullDescription = "Vivint smart home security with AI-powered cameras and monitoring.",
+                capabilities = listOf("AI camera analytics", "Professional monitoring"),
+                privacyConcerns = listOf("Professional monitoring", "AI video analysis")
+            )
+            // Retail/Commercial Tracking
+            DeviceType.BLUETOOTH_BEACON -> DeviceTypeInfo(
+                name = "Bluetooth Beacon",
+                shortDescription = "Location Beacon",
+                fullDescription = "Bluetooth beacons are used for indoor positioning and retail tracking.",
+                capabilities = listOf("Indoor positioning", "Proximity detection"),
+                privacyConcerns = listOf("Tracks movement in stores", "Links to mobile apps")
+            )
+            DeviceType.RETAIL_TRACKER -> DeviceTypeInfo(
+                name = "Retail Tracker",
+                shortDescription = "Store Tracking System",
+                fullDescription = "Retail tracking systems monitor customer movement and dwell time in stores.",
+                capabilities = listOf("Foot traffic analysis", "Dwell time tracking"),
+                privacyConcerns = listOf("Tracks without consent", "Links to purchase data")
+            )
+            DeviceType.CROWD_ANALYTICS -> DeviceTypeInfo(
+                name = "Crowd Analytics Sensor",
+                shortDescription = "People Counting System",
+                fullDescription = "Sensors that count people and analyze crowd movement patterns.",
+                capabilities = listOf("People counting", "Flow analysis"),
+                privacyConcerns = listOf("Mass tracking", "Behavior analysis")
+            )
+            DeviceType.FACIAL_RECOGNITION -> DeviceTypeInfo(
+                name = "Facial Recognition System",
+                shortDescription = "Face Detection Camera",
+                fullDescription = "Camera system with facial recognition capabilities for identification.",
+                capabilities = listOf("Face detection", "Identity matching"),
+                privacyConcerns = listOf("Biometric data collection", "Identity tracking")
+            )
+            // Tracker Devices
+            DeviceType.AIRTAG -> DeviceTypeInfo(
+                name = "Apple AirTag",
+                shortDescription = "Apple Tracker",
+                fullDescription = "Apple AirTag Bluetooth tracker. Can be misused for stalking.",
+                capabilities = listOf("Precision Finding", "Find My network"),
+                privacyConcerns = listOf("Stalking potential", "Movement tracking"),
+                recommendations = listOf("Check if you're being tracked unexpectedly", "iOS alerts to unknown AirTags")
+            )
+            DeviceType.TILE_TRACKER -> DeviceTypeInfo(
+                name = "Tile Tracker",
+                shortDescription = "Tile Bluetooth Tracker",
+                fullDescription = "Tile Bluetooth trackers for finding lost items. Now owned by Life360.",
+                capabilities = listOf("Bluetooth tracking", "Community finding"),
+                privacyConcerns = listOf("Life360 data practices", "Stalking potential")
+            )
+            DeviceType.SAMSUNG_SMARTTAG -> DeviceTypeInfo(
+                name = "Samsung SmartTag",
+                shortDescription = "Samsung Tracker",
+                fullDescription = "Samsung's Bluetooth tracker using Galaxy Find Network.",
+                capabilities = listOf("UWB precision finding", "Galaxy network"),
+                privacyConcerns = listOf("Movement tracking", "Stalking potential")
+            )
+            DeviceType.GENERIC_BLE_TRACKER -> DeviceTypeInfo(
+                name = "BLE Tracker",
+                shortDescription = "Bluetooth Tracker Device",
+                fullDescription = "Generic Bluetooth tracker device detected.",
+                capabilities = listOf("Bluetooth tracking"),
+                privacyConcerns = listOf("Movement tracking", "Stalking potential")
+            )
+            // Traffic Enforcement
+            DeviceType.SPEED_CAMERA -> DeviceTypeInfo(
+                name = "Speed Camera",
+                shortDescription = "Speed Enforcement Camera",
+                fullDescription = "Automated speed enforcement camera that photographs speeding vehicles.",
+                capabilities = listOf("Speed measurement", "License plate capture"),
+                privacyConcerns = listOf("Vehicle tracking", "Photo evidence stored")
+            )
+            DeviceType.RED_LIGHT_CAMERA -> DeviceTypeInfo(
+                name = "Red Light Camera",
+                shortDescription = "Intersection Enforcement Camera",
+                fullDescription = "Camera that captures vehicles running red lights.",
+                capabilities = listOf("Intersection monitoring", "License plate capture"),
+                privacyConcerns = listOf("Intersection surveillance", "Data retention")
+            )
+            DeviceType.TOLL_READER -> DeviceTypeInfo(
+                name = "Toll/E-ZPass Reader",
+                shortDescription = "Electronic Toll Collection",
+                fullDescription = "Electronic toll collection system that reads transponders and plates.",
+                capabilities = listOf("Transponder reading", "License plate capture"),
+                privacyConcerns = listOf("Travel pattern tracking", "Government data access")
+            )
+            DeviceType.TRAFFIC_SENSOR -> DeviceTypeInfo(
+                name = "Traffic Sensor",
+                shortDescription = "Traffic Monitoring Sensor",
+                fullDescription = "Sensor for monitoring traffic flow and conditions.",
+                capabilities = listOf("Vehicle counting", "Speed estimation"),
+                privacyConcerns = listOf("Movement pattern data")
+            )
+            // Law Enforcement Specific
+            DeviceType.SHOTSPOTTER -> DeviceTypeInfo(
+                name = "ShotSpotter Sensor",
+                shortDescription = "Gunshot Detection System",
+                fullDescription = "ShotSpotter acoustic sensors detect gunfire and continuously monitor audio.",
+                capabilities = listOf("Gunshot detection", "Audio triangulation"),
+                privacyConcerns = listOf("Continuous audio surveillance", "May capture conversations", "False positive issues")
+            )
+            DeviceType.CLEARVIEW_AI -> DeviceTypeInfo(
+                name = "Clearview AI System",
+                shortDescription = "Facial Recognition Database",
+                fullDescription = "Clearview AI scraped billions of photos to create a massive facial recognition database.",
+                capabilities = listOf("Face matching from any photo", "Social media linking"),
+                privacyConcerns = listOf("Scraped photos without consent", "Used by thousands of agencies", "No opt-out")
+            )
+            DeviceType.PALANTIR_DEVICE -> DeviceTypeInfo(
+                name = "Palantir Device",
+                shortDescription = "Data Analytics Platform",
+                fullDescription = "Palantir provides data integration and analytics to law enforcement.",
+                capabilities = listOf("Cross-database linking", "Pattern analysis"),
+                privacyConcerns = listOf("Aggregates multiple data sources", "Predictive policing")
+            )
+            DeviceType.GRAYKEY_DEVICE -> DeviceTypeInfo(
+                name = "GrayKey Forensics",
+                shortDescription = "Phone Cracking Device",
+                fullDescription = "GrayKey devices can unlock iPhones and Android phones for data extraction.",
+                capabilities = listOf("iPhone unlocking", "Full data extraction"),
+                privacyConcerns = listOf("Breaks phone security", "Full data access")
+            )
+            // Network Surveillance
+            DeviceType.WIFI_PINEAPPLE -> DeviceTypeInfo(
+                name = "WiFi Pineapple",
+                shortDescription = "Network Auditing/Attack Tool",
+                fullDescription = "Hak5 WiFi Pineapple is used for network security testing but can be misused.",
+                capabilities = listOf("Evil twin attacks", "Credential capture"),
+                privacyConcerns = listOf("MITM attacks", "Password theft"),
+                recommendations = listOf("Don't connect to unknown WiFi", "Use VPN")
+            )
+            DeviceType.PACKET_SNIFFER -> DeviceTypeInfo(
+                name = "Packet Sniffer",
+                shortDescription = "Network Traffic Analyzer",
+                fullDescription = "Device capturing network traffic for analysis.",
+                capabilities = listOf("Traffic capture", "Protocol analysis"),
+                privacyConcerns = listOf("Captures unencrypted data", "Password interception")
+            )
+            DeviceType.MAN_IN_MIDDLE -> DeviceTypeInfo(
+                name = "MITM Device",
+                shortDescription = "Man-in-the-Middle Attack Device",
+                fullDescription = "Device positioned between user and network to intercept communications.",
+                capabilities = listOf("Traffic interception", "SSL stripping"),
+                privacyConcerns = listOf("All traffic exposed", "Identity theft risk")
+            )
+            // Misc Surveillance
+            DeviceType.LICENSE_PLATE_READER -> DeviceTypeInfo(
+                name = "License Plate Reader",
+                shortDescription = "ALPR Camera",
+                fullDescription = "Automated License Plate Reader camera system.",
+                capabilities = listOf("Plate capture", "Vehicle identification"),
+                privacyConcerns = listOf("Mass vehicle tracking", "Location history")
+            )
+            DeviceType.CCTV_CAMERA -> DeviceTypeInfo(
+                name = "CCTV Camera",
+                shortDescription = "Closed-Circuit Camera",
+                fullDescription = "Standard surveillance camera system.",
+                capabilities = listOf("Video recording", "Motion detection"),
+                privacyConcerns = listOf("Continuous monitoring", "Recording retention")
+            )
+            DeviceType.PTZ_CAMERA -> DeviceTypeInfo(
+                name = "PTZ Camera",
+                shortDescription = "Pan-Tilt-Zoom Camera",
+                fullDescription = "Camera with remote pan, tilt, and zoom capabilities for active surveillance.",
+                capabilities = listOf("Remote directional control", "Optical zoom"),
+                privacyConcerns = listOf("Active tracking capability")
+            )
+            DeviceType.THERMAL_CAMERA -> DeviceTypeInfo(
+                name = "Thermal Camera",
+                shortDescription = "Infrared/Thermal Imaging",
+                fullDescription = "Camera using thermal imaging to detect heat signatures.",
+                capabilities = listOf("Heat detection", "Night operation"),
+                privacyConcerns = listOf("Sees through concealment", "Activity detection in private spaces")
+            )
+            DeviceType.NIGHT_VISION -> DeviceTypeInfo(
+                name = "Night Vision Device",
+                shortDescription = "Low-Light Imaging",
+                fullDescription = "Device using infrared or image intensification for night surveillance.",
+                capabilities = listOf("Low-light operation"),
+                privacyConcerns = listOf("Surveillance in darkness")
             )
         }
     }
