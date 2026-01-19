@@ -24,6 +24,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -367,7 +369,8 @@ private fun AllPatternsTab(
         val description: String,
         val manufacturer: String?,
         val isCustom: Boolean,
-        val isEnabled: Boolean = true
+        val isEnabled: Boolean = true,
+        val sourceUrl: String? = null
     )
 
     val allPatterns = remember(customRules, searchQuery, selectedCategory, selectedScannerType) {
@@ -393,7 +396,8 @@ private fun AllPatternsTab(
                 threatScore = p.threatScore,
                 description = p.description,
                 manufacturer = p.manufacturer,
-                isCustom = false
+                isCustom = false,
+                sourceUrl = p.sourceUrl
             ))
         }
 
@@ -412,7 +416,8 @@ private fun AllPatternsTab(
                 threatScore = p.threatScore,
                 description = p.description,
                 manufacturer = p.manufacturer,
-                isCustom = false
+                isCustom = false,
+                sourceUrl = p.sourceUrl
             ))
         }
 
@@ -429,7 +434,8 @@ private fun AllPatternsTab(
                 threatScore = p.threatScore,
                 description = p.description,
                 manufacturer = p.manufacturer,
-                isCustom = false
+                isCustom = false,
+                sourceUrl = p.sourceUrl
             ))
         }
 
@@ -532,7 +538,8 @@ private fun AllPatternsTab(
                     description = pattern.description,
                     manufacturer = pattern.manufacturer,
                     isCustom = pattern.isCustom,
-                    isEnabled = pattern.isEnabled
+                    isEnabled = pattern.isEnabled,
+                    sourceUrl = pattern.sourceUrl
                 )
             }
         }
@@ -552,7 +559,8 @@ private fun UnifiedPatternCard(
     description: String,
     manufacturer: String?,
     isCustom: Boolean,
-    isEnabled: Boolean
+    isEnabled: Boolean,
+    sourceUrl: String?
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -709,9 +717,10 @@ private fun UnifiedPatternCard(
 
             // Expanded content
             AnimatedVisibility(visible = expanded) {
+                val uriHandler = LocalUriHandler.current
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Divider()
+                    HorizontalDivider()
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
@@ -729,6 +738,31 @@ private fun UnifiedPatternCard(
                             fontFamily = FontFamily.Monospace,
                             modifier = Modifier.padding(8.dp)
                         )
+                    }
+
+                    // Source link
+                    sourceUrl?.let { url ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { uriHandler.openUri(url) }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Source",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        }
                     }
                 }
             }
@@ -1776,7 +1810,7 @@ private fun AddEditRuleBottomSheet(
                 ) {
                     DeviceType.entries.forEach { dt ->
                         DropdownMenuItem(
-                            text = { Text(dt.name.replace("_", " ")) },
+                            text = { Text(dt.name.replace("_", " "), maxLines = 1, softWrap = false) },
                             onClick = {
                                 deviceType = dt
                                 showDeviceTypePicker = false
@@ -1808,7 +1842,9 @@ private fun AddEditRuleBottomSheet(
                                 score >= 50 -> "MEDIUM - Notable"
                                 score >= 25 -> "LOW - Minor concern"
                                 else -> "INFO - Informational only"
-                            }
+                            },
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 )
@@ -2138,7 +2174,7 @@ private fun AddEditHeuristicRuleBottomSheet(
                 ) {
                     DeviceType.entries.forEach { dt ->
                         DropdownMenuItem(
-                            text = { Text(dt.name.replace("_", " ")) },
+                            text = { Text(dt.name.replace("_", " "), maxLines = 1, softWrap = false) },
                             onClick = {
                                 deviceType = dt
                                 showDeviceTypePicker = false
@@ -2291,16 +2327,21 @@ private fun AddConditionDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = selectedField?.displayName ?: "Select field",
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             selectedField?.let {
                                 Text(
                                     text = it.description,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -2316,11 +2357,14 @@ private fun AddConditionDialog(
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text(field.displayName)
+                                    Text(field.displayName, maxLines = 1, softWrap = false)
                                     Text(
                                         field.description,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             },

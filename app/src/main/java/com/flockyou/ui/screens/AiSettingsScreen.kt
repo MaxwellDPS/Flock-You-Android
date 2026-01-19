@@ -1,8 +1,11 @@
 package com.flockyou.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -15,6 +18,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.AiModel
 import com.flockyou.data.AiModelStatus
 import com.flockyou.data.AiSettings
+import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.ui.components.SectionHeader
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -28,6 +32,12 @@ fun AiSettingsScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val isAnalyzing by viewModel.isAnalyzing.collectAsState()
     val testResult by viewModel.testResult.collectAsState()
+    val availableModels by viewModel.availableModels.collectAsState()
+    val deviceCapabilities by viewModel.deviceCapabilities.collectAsState()
+    val selectedModelForDownload by viewModel.selectedModelForDownload.collectAsState()
+
+    // Model selection dialog
+    var showModelSelector by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -58,17 +68,21 @@ fun AiSettingsScreen(
                 AiEnableCard(
                     enabled = settings.enabled,
                     modelStatus = modelStatus,
+                    currentModel = AiModel.fromId(settings.selectedModel),
                     onEnabledChange = { viewModel.setEnabled(it) }
                 )
             }
 
-            // Model Status & Download
+            // Model Selection
             item {
-                ModelStatusCard(
+                ModelSelectionCard(
+                    settings = settings,
                     modelStatus = modelStatus,
                     downloadProgress = downloadProgress,
-                    settings = settings,
-                    onDownload = { viewModel.downloadModel() },
+                    availableModels = availableModels,
+                    deviceCapabilities = deviceCapabilities,
+                    onSelectModel = { showModelSelector = true },
+                    onDownload = { viewModel.downloadModel(AiModel.fromId(settings.selectedModel)) },
                     onDelete = { viewModel.deleteModel() },
                     onInitialize = { viewModel.initializeModel() }
                 )
@@ -91,6 +105,21 @@ fun AiSettingsScreen(
                     )
                 }
 
+                // Advanced Features
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SectionHeader(title = "Advanced Features")
+                }
+
+                item {
+                    AdvancedFeaturesCard(
+                        settings = settings,
+                        onContextualAnalysisChange = { viewModel.setContextualAnalysis(it) },
+                        onBatchAnalysisChange = { viewModel.setBatchAnalysis(it) },
+                        onTrackFeedbackChange = { viewModel.setTrackFeedback(it) }
+                    )
+                }
+
                 // Performance Settings
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -100,7 +129,9 @@ fun AiSettingsScreen(
                 item {
                     PerformanceCard(
                         settings = settings,
-                        onGpuChange = { viewModel.setUseGpuAcceleration(it) }
+                        deviceCapabilities = deviceCapabilities,
+                        onGpuChange = { viewModel.setUseGpuAcceleration(it) },
+                        onNpuChange = { viewModel.setUseNpuAcceleration(it) }
                     )
                 }
 
@@ -124,12 +155,62 @@ fun AiSettingsScreen(
             // Info Card
             item {
                 Spacer(modifier = Modifier.height(8.dp))
-                InfoCard()
+                InfoCard(availableModels = availableModels)
             }
 
             item {
                 Spacer(modifier = Modifier.height(32.dp))
             }
+        }
+    }
+
+    // Model Selection Dialog
+    if (showModelSelector) {
+        ModelSelectorDialog(
+            availableModels = availableModels,
+            currentModelId = settings.selectedModel,
+            deviceCapabilities = deviceCapabilities,
+            onSelectModel = { model ->
+                viewModel.selectModel(model)
+                showModelSelector = false
+            },
+            onDownloadModel = { model ->
+                viewModel.selectModelForDownload(model)
+                viewModel.downloadModel(model)
+                showModelSelector = false
+            },
+            onDismiss = { showModelSelector = false }
+        )
+    }
+
+    // Download confirmation dialog
+    selectedModelForDownload?.let { model ->
+        if (model != AiModel.RULE_BASED && modelStatus !is AiModelStatus.Downloading) {
+            AlertDialog(
+                onDismissRequest = { viewModel.clearSelectedModel() },
+                title = { Text("Download ${model.displayName}?") },
+                text = {
+                    Column {
+                        Text("This will download approximately ${model.sizeMb} MB.")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            model.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { viewModel.downloadModel(model) }) {
+                        Text("Download")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.clearSelectedModel() }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
@@ -160,7 +241,7 @@ private fun PrivacyNoticeCard() {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "All AI analysis runs entirely on your device. Your detection data never leaves your phone.",
+                    text = "All AI analysis runs entirely on your device. Your detection data never leaves your phone - no cloud, no servers, no tracking.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -173,6 +254,7 @@ private fun PrivacyNoticeCard() {
 private fun AiEnableCard(
     enabled: Boolean,
     modelStatus: AiModelStatus,
+    currentModel: AiModel,
     onEnabledChange: (Boolean) -> Unit
 ) {
     Card(
@@ -207,9 +289,10 @@ private fun AiEnableCard(
                 Text(
                     text = when {
                         !enabled -> "Enable to get intelligent threat insights"
-                        modelStatus is AiModelStatus.Ready -> "Ready for analysis"
+                        modelStatus is AiModelStatus.Ready -> "Using ${currentModel.displayName}"
                         modelStatus is AiModelStatus.Downloading -> "Downloading model..."
-                        else -> "Using rule-based analysis"
+                        modelStatus is AiModelStatus.Initializing -> "Initializing..."
+                        else -> "Ready"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -224,17 +307,28 @@ private fun AiEnableCard(
 }
 
 @Composable
-private fun ModelStatusCard(
+private fun ModelSelectionCard(
+    settings: AiSettings,
     modelStatus: AiModelStatus,
     downloadProgress: Int,
-    settings: AiSettings,
+    availableModels: List<AiModel>,
+    deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    onSelectModel: () -> Unit,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onInitialize: () -> Unit
 ) {
+    val currentModel = AiModel.fromId(settings.selectedModel)
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Current model info
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = settings.enabled) { onSelectModel() },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(
                     imageVector = when (modelStatus) {
                         is AiModelStatus.Ready -> Icons.Default.CheckCircle
@@ -253,16 +347,16 @@ private fun ModelStatusCard(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "On-Device Model",
+                        text = currentModel.displayName,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
                         text = when (modelStatus) {
-                            is AiModelStatus.NotDownloaded -> "Optional: Gemini Nano (~300 MB)"
+                            is AiModelStatus.NotDownloaded -> "Not downloaded"
                             is AiModelStatus.Downloading -> "Downloading... $downloadProgress%"
                             is AiModelStatus.Initializing -> "Initializing..."
-                            is AiModelStatus.Ready -> if (settings.modelSizeMb > 0) "Ready (${settings.modelSizeMb} MB)" else "Ready (rule-based)"
+                            is AiModelStatus.Ready -> if (settings.modelSizeMb > 0) "${settings.modelSizeMb} MB" else "Ready"
                             is AiModelStatus.Error -> modelStatus.message
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -272,9 +366,16 @@ private fun ModelStatusCard(
                             MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (settings.enabled) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowRight,
+                        contentDescription = "Select model",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
-            // Download progress bar
+            // Download progress
             AnimatedVisibility(visible = modelStatus is AiModelStatus.Downloading) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -285,54 +386,94 @@ private fun ModelStatusCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Info about rule-based fallback
-            if (modelStatus is AiModelStatus.NotDownloaded) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
+            // Model capabilities
+            if (currentModel != AiModel.RULE_BASED && settings.enabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Rule-based analysis works without downloading. The LLM model is optional and provides enhanced natural language explanations.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    currentModel.capabilities.take(3).forEach { capability ->
+                        SuggestionChip(
+                            onClick = { },
+                            label = { Text(capability, style = MaterialTheme.typography.labelSmall) }
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Device capabilities info
+            deviceCapabilities?.let { caps ->
+                if (settings.enabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // NPU status
+                    if (caps.hasNpu) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Tensor NPU available",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                    }
+
+                    // AICore status (for Gemini Nano)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (caps.hasAiCore) Icons.Default.CheckCircle else Icons.Default.Info,
+                            contentDescription = null,
+                            tint = if (caps.hasAiCore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (caps.hasAiCore) "Google AICore ready" else "AICore not installed",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (caps.hasAiCore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             // Action buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                when (modelStatus) {
-                    is AiModelStatus.NotDownloaded, is AiModelStatus.Error -> {
-                        OutlinedButton(
-                            onClick = onDownload,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download LLM")
+            if (settings.enabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    when {
+                        modelStatus is AiModelStatus.Downloading || modelStatus is AiModelStatus.Initializing -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
                         }
-                    }
-                    is AiModelStatus.Ready -> {
-                        if (settings.modelSizeMb > 0) {
+                        currentModel == AiModel.RULE_BASED -> {
+                            OutlinedButton(
+                                onClick = onSelectModel,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Download LLM")
+                            }
+                        }
+                        modelStatus is AiModelStatus.Ready && settings.modelSizeMb > 0 -> {
                             OutlinedButton(
                                 onClick = onInitialize,
                                 modifier = Modifier.weight(1f)
@@ -350,17 +491,120 @@ private fun ModelStatusCard(
                                 Icon(Icons.Default.Delete, contentDescription = null)
                             }
                         }
-                    }
-                    is AiModelStatus.Downloading, is AiModelStatus.Initializing -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
+                        modelStatus is AiModelStatus.NotDownloaded || modelStatus is AiModelStatus.Error -> {
+                            OutlinedButton(
+                                onClick = onDownload,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Download")
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelSelectorDialog(
+    availableModels: List<AiModel>,
+    currentModelId: String,
+    deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    onSelectModel: (AiModel) -> Unit,
+    onDownloadModel: (AiModel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select AI Model") },
+        text = {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(availableModels) { model ->
+                    val isSelected = model.id == currentModelId
+                    val isDownloaded = model == AiModel.RULE_BASED || model == AiModel.GEMINI_NANO // Simplified check
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (isDownloaded || model == AiModel.RULE_BASED) {
+                                    onSelectModel(model)
+                                } else {
+                                    onDownloadModel(model)
+                                }
+                            },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected)
+                                MaterialTheme.colorScheme.primaryContainer
+                            else
+                                MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = model.displayName,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        if (model.requiresNpu) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            SuggestionChip(
+                                                onClick = { },
+                                                label = { Text("NPU", style = MaterialTheme.typography.labelSmall) }
+                                            )
+                                        }
+                                    }
+                                    if (model.sizeMb > 0) {
+                                        Text(
+                                            text = "${model.sizeMb} MB • ${model.quantization}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                } else if (model.sizeMb > 0 && model != AiModel.GEMINI_NANO) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Download required",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = model.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 @Composable
@@ -376,7 +620,7 @@ private fun CapabilitiesCard(
             CapabilityToggle(
                 icon = Icons.Default.Analytics,
                 title = "Detection Analysis",
-                description = "Explain detected devices and their capabilities",
+                description = "Explain detected devices and their surveillance capabilities",
                 checked = settings.analyzeDetections,
                 onCheckedChange = onAnalyzeDetectionsChange
             )
@@ -386,7 +630,7 @@ private fun CapabilitiesCard(
             CapabilityToggle(
                 icon = Icons.Default.Security,
                 title = "Threat Assessments",
-                description = "Generate contextual risk analysis",
+                description = "Generate contextual risk analysis for your environment",
                 checked = settings.generateThreatAssessments,
                 onCheckedChange = onThreatAssessmentsChange
             )
@@ -396,7 +640,7 @@ private fun CapabilitiesCard(
             CapabilityToggle(
                 icon = Icons.Default.DeviceUnknown,
                 title = "Device Identification",
-                description = "Help identify unknown devices",
+                description = "Help identify unknown surveillance devices",
                 checked = settings.identifyUnknownDevices,
                 onCheckedChange = onIdentifyUnknownChange
             )
@@ -409,6 +653,46 @@ private fun CapabilitiesCard(
                 description = "Automatically analyze when new devices are found",
                 checked = settings.autoAnalyzeNewDetections,
                 onCheckedChange = onAutoAnalyzeChange
+            )
+        }
+    }
+}
+
+@Composable
+private fun AdvancedFeaturesCard(
+    settings: AiSettings,
+    onContextualAnalysisChange: (Boolean) -> Unit,
+    onBatchAnalysisChange: (Boolean) -> Unit,
+    onTrackFeedbackChange: (Boolean) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            CapabilityToggle(
+                icon = Icons.Default.Timeline,
+                title = "Contextual Analysis",
+                description = "Include location patterns, time correlation, and historical data",
+                checked = settings.enableContextualAnalysis,
+                onCheckedChange = onContextualAnalysisChange
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+            CapabilityToggle(
+                icon = Icons.Default.Map,
+                title = "Batch Analysis",
+                description = "Enable surveillance density mapping and cluster detection",
+                checked = settings.enableBatchAnalysis,
+                onCheckedChange = onBatchAnalysisChange
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+            CapabilityToggle(
+                icon = Icons.Default.ThumbUp,
+                title = "Feedback Learning",
+                description = "Track feedback to improve analysis accuracy over time",
+                checked = settings.trackAnalysisFeedback,
+                onCheckedChange = onTrackFeedbackChange
             )
         }
     }
@@ -455,7 +739,9 @@ private fun CapabilityToggle(
 @Composable
 private fun PerformanceCard(
     settings: AiSettings,
-    onGpuChange: (Boolean) -> Unit
+    deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    onGpuChange: (Boolean) -> Unit,
+    onNpuChange: (Boolean) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -477,7 +763,7 @@ private fun PerformanceCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "Use GPU for faster LLM inference (when available)",
+                        text = "Use GPU for faster LLM inference",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -486,6 +772,73 @@ private fun PerformanceCard(
                     checked = settings.useGpuAcceleration,
                     onCheckedChange = onGpuChange
                 )
+            }
+
+            // NPU Acceleration (only show if device supports it)
+            if (deviceCapabilities?.hasNpu == true) {
+                Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Memory,
+                        contentDescription = null,
+                        tint = if (settings.useNpuAcceleration) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "NPU Acceleration",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            SuggestionChip(
+                                onClick = { },
+                                label = { Text("Pixel 8+", style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                        Text(
+                            text = "Use Tensor NPU for Gemini Nano",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.useNpuAcceleration,
+                        onCheckedChange = onNpuChange
+                    )
+                }
+            }
+
+            // RAM info
+            deviceCapabilities?.let { caps ->
+                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Storage,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Available RAM",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "${caps.availableRamMb} MB available for model inference",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
@@ -508,7 +861,7 @@ private fun TestAnalysisCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Run a test analysis to see how the AI analyzes a sample detection.",
+                text = "Run a test analysis on a sample Flock Safety camera detection to see the AI in action.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -579,7 +932,7 @@ private fun TestAnalysisCard(
 }
 
 @Composable
-private fun InfoCard() {
+private fun InfoCard(availableModels: List<AiModel>) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -595,7 +948,7 @@ private fun InfoCard() {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "About Local AI Analysis",
+                    text = "About On-Device AI",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Medium
                 )
@@ -604,15 +957,14 @@ private fun InfoCard() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "All analysis runs 100% on your device. No data is ever sent to any server.\n\n" +
-                        "Two analysis modes are available:",
+                text = "All analysis runs 100% on your device using local LLM inference. Choose from multiple models based on your needs:",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            AiModel.entries.forEach { model ->
+            availableModels.take(4).forEach { model ->
                 Row(
                     modifier = Modifier.padding(vertical = 4.dp),
                     verticalAlignment = Alignment.Top
@@ -630,12 +982,21 @@ private fun InfoCard() {
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = model.description,
+                            text = model.description.take(80) + if (model.description.length > 80) "..." else "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+            }
+
+            if (availableModels.size > 4) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "+ ${availableModels.size - 4} more models available",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

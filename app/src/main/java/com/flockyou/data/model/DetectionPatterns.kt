@@ -25,7 +25,8 @@ object DetectionPatterns {
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             manufacturer = "Flock Safety",
             threatScore = 95,
-            description = "Flock Safety ALPR Camera - captures license plates and vehicle characteristics"
+            description = "Flock Safety ALPR Camera - captures license plates and vehicle characteristics",
+            sourceUrl = "https://www.eff.org/deeplinks/2024/03/how-flock-safety-cameras-can-be-used-track-your-car"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -33,7 +34,8 @@ object DetectionPatterns {
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             manufacturer = "Flock Safety",
             threatScore = 90,
-            description = "Flock Safety Camera (FS prefix variant)"
+            description = "Flock Safety Camera (FS prefix variant)",
+            sourceUrl = "https://www.flocksafety.com/products/flock-safety-cameras"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -41,7 +43,8 @@ object DetectionPatterns {
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             manufacturer = "Flock Safety",
             threatScore = 90,
-            description = "Flock Falcon ALPR - standard pole-mounted camera"
+            description = "Flock Falcon ALPR - standard pole-mounted camera",
+            sourceUrl = "https://www.flocksafety.com/products/falcon"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -49,7 +52,8 @@ object DetectionPatterns {
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             manufacturer = "Flock Safety",
             threatScore = 90,
-            description = "Flock Sparrow ALPR - compact camera model"
+            description = "Flock Sparrow ALPR - compact camera model",
+            sourceUrl = "https://www.flocksafety.com/products/sparrow"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -57,7 +61,8 @@ object DetectionPatterns {
             deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
             manufacturer = "Flock Safety",
             threatScore = 90,
-            description = "Flock Condor ALPR - high-speed multi-lane camera"
+            description = "Flock Condor ALPR - high-speed multi-lane camera",
+            sourceUrl = "https://www.flocksafety.com/products/condor"
         ),
         
         // Penguin surveillance
@@ -157,7 +162,8 @@ object DetectionPatterns {
             deviceType = DeviceType.AXON_POLICE_TECH,
             manufacturer = "Axon Enterprise",
             threatScore = 85,
-            description = "Axon police equipment (body camera, TASER, etc.)"
+            description = "Axon police equipment (body camera, TASER, etc.)",
+            sourceUrl = "https://www.axon.com/products"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -165,7 +171,8 @@ object DetectionPatterns {
             deviceType = DeviceType.BODY_CAMERA,
             manufacturer = "Axon Enterprise",
             threatScore = 80,
-            description = "Axon Body Camera (Body 2/3/4, Flex)"
+            description = "Axon Body Camera (Body 2/3/4, Flex)",
+            sourceUrl = "https://www.axon.com/products/body-cameras"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -199,7 +206,8 @@ object DetectionPatterns {
             deviceType = DeviceType.STINGRAY_IMSI,
             manufacturer = "L3Harris Technologies",
             threatScore = 100,
-            description = "StingRay Cell Site Simulator (IMSI Catcher)"
+            description = "StingRay Cell Site Simulator (IMSI Catcher)",
+            sourceUrl = "https://www.eff.org/pages/cell-site-simulatorsimsi-catchers"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -207,7 +215,8 @@ object DetectionPatterns {
             deviceType = DeviceType.STINGRAY_IMSI,
             manufacturer = "L3Harris Technologies",
             threatScore = 100,
-            description = "Hailstorm/Kingfish Cell Site Simulator"
+            description = "Hailstorm/Kingfish Cell Site Simulator",
+            sourceUrl = "https://www.aclu.org/issues/privacy-technology/surveillance-technologies/stingray-tracking-devices"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -243,7 +252,8 @@ object DetectionPatterns {
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Cellebrite",
             threatScore = 90,
-            description = "Cellebrite mobile forensics device"
+            description = "Cellebrite mobile forensics device",
+            sourceUrl = "https://www.eff.org/pages/cellebrite"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -251,9 +261,10 @@ object DetectionPatterns {
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Cellebrite",
             threatScore = 90,
-            description = "Cellebrite UFED (Universal Forensic Extraction Device)"
+            description = "Cellebrite UFED (Universal Forensic Extraction Device)",
+            sourceUrl = "https://cellebrite.com/en/ufed/"
         ),
-        
+
         // Graykey/Magnet
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -261,7 +272,8 @@ object DetectionPatterns {
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Grayshift",
             threatScore = 90,
-            description = "GrayKey iPhone forensics device"
+            description = "GrayKey iPhone forensics device",
+            sourceUrl = "https://www.vice.com/en/article/graykey-iphone-unlocker-goes-on-sale-to-cops/"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
@@ -1050,7 +1062,8 @@ object DetectionPatterns {
         val deviceType: DeviceType,
         val manufacturer: String,
         val threatScore: Int,
-        val description: String = ""
+        val description: String = "",
+        val sourceUrl: String? = null
     )
     
     /**

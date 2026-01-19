@@ -568,7 +568,9 @@ fun DetectionCard(
     detection: Detection,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    advancedMode: Boolean = false
+    advancedMode: Boolean = false,
+    onAnalyzeClick: ((Detection) -> Unit)? = null,
+    isAnalyzing: Boolean = false
 ) {
     val threatColor = detection.threatLevel.toColor()
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -867,6 +869,40 @@ fun DetectionCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
+            // AI Analysis Button
+            if (onAnalyzeClick != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { onAnalyzeClick(detection) },
+                    enabled = !isAnalyzing,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    if (isAnalyzing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Analyzing...",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "AI Analysis",
+                            style = MaterialTheme.typography.labelMedium
                         )
                     }
                 }

@@ -280,7 +280,8 @@ data class DetectionPattern(
     val deviceType: DeviceType,
     val manufacturer: String?,
     val threatScore: Int,
-    val description: String
+    val description: String,
+    val sourceUrl: String? = null // Link to research/documentation about this pattern
 )
 
 enum class PatternType {

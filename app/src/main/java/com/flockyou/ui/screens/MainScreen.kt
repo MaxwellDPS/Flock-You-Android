@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -324,7 +326,11 @@ fun MainScreen(
                                 DetectionCard(
                                     detection = detection,
                                     onClick = { selectedDetection = detection },
-                                    advancedMode = uiState.advancedMode
+                                    advancedMode = uiState.advancedMode,
+                                    onAnalyzeClick = if (viewModel.isAiAnalysisAvailable()) {
+                                        { viewModel.analyzeDetection(it) }
+                                    } else null,
+                                    isAnalyzing = uiState.analyzingDetectionId == detection.id
                                 )
                             }
                         }
@@ -386,6 +392,145 @@ fun MainScreen(
             advancedMode = uiState.advancedMode
         )
     }
+
+    // AI Analysis result dialog
+    uiState.analysisResult?.let { result ->
+        AiAnalysisResultDialog(
+            result = result,
+            onDismiss = { viewModel.clearAnalysisResult() }
+        )
+    }
+}
+
+@Composable
+fun AiAnalysisResultDialog(
+    result: com.flockyou.data.AiAnalysisResult,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Psychology,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        },
+        title = {
+            Column {
+                Text("AI Analysis")
+                Text(
+                    text = "Model: ${result.modelUsed} | ${result.processingTimeMs}ms",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                if (result.success) {
+                    // Main analysis
+                    result.analysis?.let { analysis ->
+                        Text(
+                            text = analysis,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+
+                    // Threat assessment
+                    result.threatAssessment?.let { threat ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Threat Assessment",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = threat,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+
+                    // Recommendations
+                    if (result.recommendations.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Recommendations",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        result.recommendations.forEach { rec ->
+                            Row(
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            ) {
+                                Text("• ", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    text = rec,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+
+                    // Confidence indicator
+                    if (result.confidence > 0f) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Confidence: ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            LinearProgressIndicator(
+                                progress = result.confidence,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = when {
+                                    result.confidence > 0.8f -> Color(0xFF4CAF50)
+                                    result.confidence > 0.5f -> Color(0xFFFFC107)
+                                    else -> Color(0xFFF44336)
+                                }
+                            )
+                            Text(
+                                text = " ${(result.confidence * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    // Error state
+                    Text(
+                        text = result.error ?: "Analysis failed",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -109,7 +109,8 @@ fun NearbyDevicesScreen(
                         text = {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 4.dp)
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier.wrapContentWidth()
                             ) {
                                 Icon(
                                     imageVector = when (index) {

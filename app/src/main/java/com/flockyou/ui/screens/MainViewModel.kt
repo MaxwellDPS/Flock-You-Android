@@ -86,7 +86,11 @@ data class MainUiState(
     val gnssEvents: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent> = emptyList(),
     val gnssMeasurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData? = null,
     // UI settings
-    val advancedMode: Boolean = false
+    val advancedMode: Boolean = false,
+    // AI Analysis
+    val analyzingDetectionId: String? = null,
+    val analysisResult: com.flockyou.data.AiAnalysisResult? = null,
+    val isAiAnalysisAvailable: Boolean = false
 )
 
 @HiltViewModel
@@ -101,7 +105,8 @@ class MainViewModel @Inject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val orbotHelper: OrbotHelper,
     private val torAwareHttpClient: TorAwareHttpClient,
-    private val workManager: WorkManager
+    private val workManager: WorkManager,
+    private val detectionAnalyzer: com.flockyou.ai.DetectionAnalyzer
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -763,5 +768,46 @@ class MainViewModel @Inject constructor(
      */
     fun clearSeenDevices() {
         serviceConnection.clearSeenDevices()
+    }
+
+    // ========== AI Analysis ==========
+
+    /**
+     * Analyze a detection using the on-device AI.
+     */
+    fun analyzeDetection(detection: Detection) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(analyzingDetectionId = detection.id, analysisResult = null) }
+
+            try {
+                val result = detectionAnalyzer.analyzeDetection(detection)
+                _uiState.update { it.copy(analyzingDetectionId = null, analysisResult = result) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        analyzingDetectionId = null,
+                        analysisResult = com.flockyou.data.AiAnalysisResult(
+                            success = false,
+                            error = e.message ?: "Analysis failed"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Clear the analysis result.
+     */
+    fun clearAnalysisResult() {
+        _uiState.update { it.copy(analysisResult = null) }
+    }
+
+    /**
+     * Check if AI analysis is available (always true since rule-based fallback exists).
+     */
+    fun isAiAnalysisAvailable(): Boolean {
+        // Rule-based analysis is always available as a fallback
+        return true
     }
 }
