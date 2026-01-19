@@ -2100,7 +2100,8 @@ class DetectionAnalyzer @Inject constructor(
                 try {
                     val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, safeProgress)
                     if (success) {
-                        // Update settings and current model after successful download
+                        // Update settings - enable AI and set model
+                        aiSettingsRepository.setEnabled(true)  // Enable AI so initializeModel() works
                         aiSettingsRepository.setSelectedModel(model.id)
                         aiSettingsRepository.setModelDownloaded(true, modelFile.length() / (1024 * 1024))
                         currentModel = model
@@ -2264,14 +2265,15 @@ class DetectionAnalyzer @Inject constructor(
 
             Log.i(TAG, "Model imported: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
 
-            // Update settings and initialize
+            // Update settings - enable AI and set model
+            aiSettingsRepository.setEnabled(true)  // Enable AI so initializeModel() works
             aiSettingsRepository.setModelDownloaded(true, modelFile.length() / (1024 * 1024))
             aiSettingsRepository.setSelectedModel(modelId)
             currentModel = model
             _modelStatus.value = AiModelStatus.Ready
             onProgress(100)
 
-            // Try to initialize the model
+            // Initialize the model (AI is now enabled)
             initializeModel()
         } catch (e: Exception) {
             Log.e(TAG, "Error importing model", e)

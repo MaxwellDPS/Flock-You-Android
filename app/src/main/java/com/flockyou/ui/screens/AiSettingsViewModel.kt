@@ -191,11 +191,14 @@ class AiSettingsViewModel @Inject constructor(
                 }
 
                 if (success) {
+                    // Enable AI analysis after successful download
+                    aiSettingsRepository.setEnabled(true)
                     Toast.makeText(
                         application,
                         "${model.displayName} ready",
                         Toast.LENGTH_SHORT
                     ).show()
+                    // Now initialize the model (AI is enabled so this will work)
                     detectionAnalyzer.initializeModel()
                 } else {
                     val errorMsg = "Failed to download ${model.displayName}"
@@ -366,11 +369,14 @@ class AiSettingsViewModel @Inject constructor(
                 }
 
                 if (success) {
+                    // Enable AI analysis after successful import
+                    aiSettingsRepository.setEnabled(true)
                     Toast.makeText(
                         application,
                         "${model.displayName} imported successfully",
                         Toast.LENGTH_SHORT
                     ).show()
+                    // Note: DetectionAnalyzer.importModel() already calls initializeModel()
                 } else {
                     val errorMsg = "Failed to import ${model.displayName}"
                     _downloadError.value = errorMsg
