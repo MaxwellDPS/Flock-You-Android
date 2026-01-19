@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
@@ -26,20 +27,25 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NearbyDevicesScreen(
+    viewModel: MainViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit
 ) {
-    val seenBleDevices by ScanningService.seenBleDevices.collectAsState()
-    val seenWifiNetworks by ScanningService.seenWifiNetworks.collectAsState()
-    val cellStatus by ScanningService.cellStatus.collectAsState()
-    val cellularStatus by ScanningService.cellularStatus.collectAsState()
-    val seenCellTowers by ScanningService.seenCellTowers.collectAsState()
-    val cellularAnomalies by ScanningService.cellularAnomalies.collectAsState()
-    val isScanning by ScanningService.isScanning.collectAsState()
-    
+    // Collect UI state from ViewModel (data comes via IPC from service process)
+    val uiState by viewModel.uiState.collectAsState()
+
+    // Extract values from UI state
+    val seenBleDevices = uiState.seenBleDevices
+    val seenWifiNetworks = uiState.seenWifiNetworks
+    val cellStatus = uiState.cellStatus
+    val cellularStatus = uiState.cellularStatus
+    val seenCellTowers = uiState.seenCellTowers
+    val cellularAnomalies = uiState.cellularAnomalies
+    val isScanning = uiState.isScanning
+
     // Satellite state
-    val satelliteState by ScanningService.satelliteState.collectAsState()
-    val satelliteAnomalies by ScanningService.satelliteAnomalies.collectAsState()
-    val satelliteStatus by ScanningService.satelliteStatus.collectAsState()
+    val satelliteState = uiState.satelliteState
+    val satelliteAnomalies = uiState.satelliteAnomalies
+    val satelliteStatus = uiState.satelliteStatus
     
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("BLE", "WiFi", "Cellular", "Satellite")
@@ -63,7 +69,7 @@ fun NearbyDevicesScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { ScanningService.clearSeenDevices() }) {
+                    IconButton(onClick = { viewModel.clearSeenDevices() }) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Clear")
                     }
                 }

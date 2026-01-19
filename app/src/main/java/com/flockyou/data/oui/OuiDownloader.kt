@@ -1,8 +1,10 @@
 package com.flockyou.data.oui
 
+import android.content.Context
 import android.util.Log
 import com.flockyou.data.model.OuiEntry
 import com.flockyou.network.TorAwareHttpClient
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -12,17 +14,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 sealed class OuiDownloadResult {
-    data class Success(val entries: List<OuiEntry>, val totalParsed: Int) : OuiDownloadResult()
+    data class Success(val entries: List<OuiEntry>, val totalParsed: Int, val fromBundled: Boolean = false) : OuiDownloadResult()
     data class Error(val message: String, val exception: Exception? = null) : OuiDownloadResult()
 }
 
 @Singleton
 class OuiDownloader @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val torAwareHttpClient: TorAwareHttpClient
 ) {
     companion object {
         private const val TAG = "OuiDownloader"
         const val IEEE_OUI_CSV_URL = "https://standards-oui.ieee.org/oui/oui.csv"
+        private const val BUNDLED_OUI_ASSET = "oui.csv"
 
         // Maximum allowed length for organization name (prevents buffer overflow attacks)
         private const val MAX_ORGANIZATION_NAME_LENGTH = 256
@@ -69,6 +73,43 @@ class OuiDownloader @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error downloading OUI data", e)
             OuiDownloadResult.Error("Unexpected error: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Load OUI data from bundled assets.
+     * Used as fallback when network download fails or for initial app startup.
+     */
+    suspend fun loadFromBundledAssets(): OuiDownloadResult = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Loading OUI data from bundled assets: $BUNDLED_OUI_ASSET")
+
+            context.assets.open(BUNDLED_OUI_ASSET).use { inputStream ->
+                when (val result = parseOuiCsv(inputStream)) {
+                    is OuiDownloadResult.Success -> {
+                        Log.d(TAG, "Loaded ${result.entries.size} OUI entries from bundled assets")
+                        OuiDownloadResult.Success(result.entries, result.totalParsed, fromBundled = true)
+                    }
+                    is OuiDownloadResult.Error -> result
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Failed to load bundled OUI data", e)
+            OuiDownloadResult.Error("Failed to load bundled OUI data: ${e.message}", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error loading bundled OUI data", e)
+            OuiDownloadResult.Error("Unexpected error: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Check if bundled OUI assets exist.
+     */
+    fun hasBundledAssets(): Boolean {
+        return try {
+            context.assets.open(BUNDLED_OUI_ASSET).use { true }
+        } catch (e: IOException) {
+            false
         }
     }
 

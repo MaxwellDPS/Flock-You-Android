@@ -16,13 +16,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.BuildConfig
 import com.flockyou.data.PrivacySettings
 import com.flockyou.data.PrivacySettingsRepository
 import com.flockyou.data.RetentionPeriod
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.EphemeralDetectionRepository
-import com.flockyou.service.ScanningService
 import com.flockyou.ui.components.SectionHeader
 import kotlinx.coroutines.launch
 
@@ -32,7 +32,8 @@ fun PrivacySettingsScreen(
     privacySettingsRepository: PrivacySettingsRepository,
     detectionRepository: DetectionRepository,
     ephemeralRepository: EphemeralDetectionRepository,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    viewModel: MainViewModel = hiltViewModel()
 ) {
     @Suppress("UNUSED_VARIABLE")
     val context = LocalContext.current
@@ -638,18 +639,8 @@ fun PrivacySettingsScreen(
                 Button(
                     onClick = {
                         showQuickWipeDialog = false
-                        scope.launch {
-                            // Clear all data
-                            detectionRepository.deleteAllDetections()
-                            ephemeralRepository.clearAll()
-                            ScanningService.clearSeenDevices()
-                            ScanningService.clearCellularHistory()
-                            ScanningService.clearSatelliteHistory()
-                            ScanningService.clearErrors()
-                            ScanningService.clearLearnedSignatures()
-                            ScanningService.detectionCount.value = 0
-                            ScanningService.lastDetection.value = null
-                        }
+                        // Use ViewModel's performQuickWipe which handles IPC correctly
+                        viewModel.performQuickWipe()
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error

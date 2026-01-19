@@ -27,6 +27,7 @@ import com.flockyou.service.CellularMonitor
 import com.flockyou.service.RfSignalAnalyzer
 import com.flockyou.service.RogueWifiMonitor
 import com.flockyou.service.ScanningService
+import com.flockyou.service.ScanningServiceConnection
 import com.flockyou.service.UltrasonicDetector
 import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -53,11 +54,18 @@ data class MainUiState(
     val cellularStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val satelliteStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
     val recentErrors: List<ScanningService.ScanError> = emptyList(),
+    // Seen devices (from IPC)
+    val seenBleDevices: List<ScanningService.SeenDevice> = emptyList(),
+    val seenWifiNetworks: List<ScanningService.SeenDevice> = emptyList(),
     // Cellular monitoring
     val cellStatus: CellularMonitor.CellStatus? = null,
     val cellularAnomalies: List<CellularMonitor.CellularAnomaly> = emptyList(),
     val seenCellTowers: List<CellularMonitor.SeenCellTower> = emptyList(),
     val cellularEvents: List<CellularMonitor.CellularEvent> = emptyList(),
+    // Satellite monitoring
+    val satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState? = null,
+    val satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly> = emptyList(),
+    val satelliteHistory: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionEvent> = emptyList(),
     // Rogue WiFi monitoring
     val rogueWifiStatus: RogueWifiMonitor.WifiEnvironmentStatus? = null,
     val rogueWifiAnomalies: List<RogueWifiMonitor.WifiAnomaly> = emptyList(),
@@ -91,6 +99,9 @@ class MainViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    // IPC connection to the scanning service (runs in separate process)
+    private val serviceConnection = ScanningServiceConnection(application)
 
     // OUI Settings
     val ouiSettings: StateFlow<OuiSettings> = ouiSettingsRepository.settings
@@ -140,6 +151,56 @@ class MainViewModel @Inject constructor(
     val isTorTesting: StateFlow<Boolean> = _isTorTesting.asStateFlow()
 
     init {
+        // Bind to the scanning service for cross-process IPC
+        serviceConnection.bind()
+
+        // Observe scanning state from IPC service connection (cross-process)
+        viewModelScope.launch {
+            serviceConnection.isScanning.collect { isScanning ->
+                _uiState.update { it.copy(isScanning = isScanning) }
+            }
+        }
+
+        // Observe scan status from IPC
+        viewModelScope.launch {
+            serviceConnection.scanStatus.collect { statusStr ->
+                val status = ScanningService.ScanStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(scanStatus = status) }
+            }
+        }
+
+        // Observe subsystem statuses from IPC
+        viewModelScope.launch {
+            serviceConnection.bleStatus.collect { statusStr ->
+                val status = ScanningService.SubsystemStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(bleStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.wifiStatus.collect { statusStr ->
+                val status = ScanningService.SubsystemStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(wifiStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.locationStatus.collect { statusStr ->
+                val status = ScanningService.SubsystemStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(locationStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.cellularStatus.collect { statusStr ->
+                val status = ScanningService.SubsystemStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(cellularStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.satelliteStatus.collect { statusStr ->
+                val status = ScanningService.SubsystemStatus.fromIpcString(statusStr)
+                _uiState.update { it.copy(satelliteStatus = status) }
+            }
+        }
+
         // Check Orbot status periodically
         viewModelScope.launch {
             while (true) {
@@ -156,22 +217,15 @@ class MainViewModel @Inject constructor(
                 delay(5000) // Check every 5 seconds
             }
         }
-
-        // Observe scanning state from service
-        viewModelScope.launch {
-            ScanningService.isScanning.collect { isScanning ->
-                _uiState.update { it.copy(isScanning = isScanning) }
-            }
-        }
         
-        // Observe last detection from service
+        // Observe last detection from IPC service connection
         viewModelScope.launch {
-            ScanningService.lastDetection.collect { detection ->
+            serviceConnection.lastDetection.collect { detection ->
                 _uiState.update { it.copy(lastDetection = detection) }
             }
         }
-        
-        // Observe all detections
+
+        // Observe all detections from database
         viewModelScope.launch {
             repository.allDetections.collect { detections ->
                 _uiState.update { it.copy(detections = detections, isLoading = false) }
@@ -186,156 +240,120 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        // Observe total count
+        // Observe total count from database
         viewModelScope.launch {
             repository.totalDetectionCount.collect { count ->
                 _uiState.update { it.copy(totalCount = count) }
             }
         }
 
-        // Observe high threat count
+        // Observe high threat count from database
         viewModelScope.launch {
             repository.highThreatCount.collect { count ->
                 _uiState.update { it.copy(highThreatCount = count) }
             }
         }
-        
-        // Observe scan status
+
+        // Observe seen BLE devices from IPC
         viewModelScope.launch {
-            ScanningService.scanStatus.collect { status ->
-                _uiState.update { it.copy(scanStatus = status) }
+            serviceConnection.seenBleDevices.collect { devices ->
+                _uiState.update { it.copy(seenBleDevices = devices) }
             }
         }
-        
-        // Observe BLE status
+
+        // Observe seen WiFi networks from IPC
         viewModelScope.launch {
-            ScanningService.bleStatus.collect { status ->
-                _uiState.update { it.copy(bleStatus = status) }
+            serviceConnection.seenWifiNetworks.collect { networks ->
+                _uiState.update { it.copy(seenWifiNetworks = networks) }
             }
         }
-        
-        // Observe WiFi status
+
+        // Observe cellular data from IPC
         viewModelScope.launch {
-            ScanningService.wifiStatus.collect { status ->
-                _uiState.update { it.copy(wifiStatus = status) }
-            }
-        }
-        
-        // Observe location status
-        viewModelScope.launch {
-            ScanningService.locationStatus.collect { status ->
-                _uiState.update { it.copy(locationStatus = status) }
-            }
-        }
-        
-        // Observe error log (only keep last 5 for UI)
-        viewModelScope.launch {
-            ScanningService.errorLog.collect { errors ->
-                _uiState.update { it.copy(recentErrors = errors.take(5)) }
-            }
-        }
-        
-        // Observe cellular status
-        viewModelScope.launch {
-            ScanningService.cellularStatus.collect { status ->
-                _uiState.update { it.copy(cellularStatus = status) }
-            }
-        }
-        
-        // Observe satellite status
-        viewModelScope.launch {
-            ScanningService.satelliteStatus.collect { status ->
-                _uiState.update { it.copy(satelliteStatus = status) }
-            }
-        }
-        
-        // Observe cell tower status
-        viewModelScope.launch {
-            ScanningService.cellStatus.collect { status ->
+            serviceConnection.cellStatus.collect { status ->
                 _uiState.update { it.copy(cellStatus = status) }
             }
         }
-        
-        // Observe cellular anomalies
         viewModelScope.launch {
-            ScanningService.cellularAnomalies.collect { anomalies ->
-                _uiState.update { it.copy(cellularAnomalies = anomalies) }
-            }
-        }
-        
-        // Observe seen cell towers
-        viewModelScope.launch {
-            ScanningService.seenCellTowers.collect { towers ->
+            serviceConnection.seenCellTowers.collect { towers ->
                 _uiState.update { it.copy(seenCellTowers = towers) }
             }
         }
-        
-        // Observe cellular events timeline
         viewModelScope.launch {
-            ScanningService.cellularEvents.collect { events ->
+            serviceConnection.cellularAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(cellularAnomalies = anomalies) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.cellularEvents.collect { events ->
                 _uiState.update { it.copy(cellularEvents = events) }
             }
         }
 
-        // Observe rogue WiFi status
+        // Observe satellite data from IPC
         viewModelScope.launch {
-            ScanningService.rogueWifiStatus.collect { status ->
+            serviceConnection.satelliteState.collect { state ->
+                _uiState.update { it.copy(satelliteState = state) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.satelliteAnomalies.collect { anomalies ->
+                _uiState.update { it.copy(satelliteAnomalies = anomalies) }
+            }
+        }
+        viewModelScope.launch {
+            serviceConnection.satelliteHistory.collect { history ->
+                _uiState.update { it.copy(satelliteHistory = history) }
+            }
+        }
+
+        // Observe rogue WiFi data from IPC
+        viewModelScope.launch {
+            serviceConnection.rogueWifiStatus.collect { status ->
                 _uiState.update { it.copy(rogueWifiStatus = status) }
             }
         }
-
-        // Observe rogue WiFi anomalies
         viewModelScope.launch {
-            ScanningService.rogueWifiAnomalies.collect { anomalies ->
+            serviceConnection.rogueWifiAnomalies.collect { anomalies ->
                 _uiState.update { it.copy(rogueWifiAnomalies = anomalies) }
             }
         }
-
-        // Observe suspicious networks
         viewModelScope.launch {
-            ScanningService.suspiciousNetworks.collect { networks ->
+            serviceConnection.suspiciousNetworks.collect { networks ->
                 _uiState.update { it.copy(suspiciousNetworks = networks) }
             }
         }
 
-        // Observe RF status
+        // Observe RF data from IPC
         viewModelScope.launch {
-            ScanningService.rfStatus.collect { status ->
+            serviceConnection.rfStatus.collect { status ->
                 _uiState.update { it.copy(rfStatus = status) }
             }
         }
-
-        // Observe RF anomalies
         viewModelScope.launch {
-            ScanningService.rfAnomalies.collect { anomalies ->
+            serviceConnection.rfAnomalies.collect { anomalies ->
                 _uiState.update { it.copy(rfAnomalies = anomalies) }
             }
         }
-
-        // Observe detected drones
         viewModelScope.launch {
-            ScanningService.detectedDrones.collect { drones ->
+            serviceConnection.detectedDrones.collect { drones ->
                 _uiState.update { it.copy(detectedDrones = drones) }
             }
         }
 
-        // Observe ultrasonic status
+        // Observe ultrasonic data from IPC
         viewModelScope.launch {
-            ScanningService.ultrasonicStatus.collect { status ->
+            serviceConnection.ultrasonicStatus.collect { status ->
                 _uiState.update { it.copy(ultrasonicStatus = status) }
             }
         }
-
-        // Observe ultrasonic anomalies
         viewModelScope.launch {
-            ScanningService.ultrasonicAnomalies.collect { anomalies ->
+            serviceConnection.ultrasonicAnomalies.collect { anomalies ->
                 _uiState.update { it.copy(ultrasonicAnomalies = anomalies) }
             }
         }
-
-        // Observe ultrasonic beacons
         viewModelScope.launch {
-            ScanningService.ultrasonicBeacons.collect { beacons ->
+            serviceConnection.ultrasonicBeacons.collect { beacons ->
                 _uiState.update { it.copy(ultrasonicBeacons = beacons) }
             }
         }
@@ -347,21 +365,33 @@ class MainViewModel @Inject constructor(
             }
         }
     }
-    
+
+    override fun onCleared() {
+        super.onCleared()
+        // Unbind from the service when ViewModel is destroyed
+        serviceConnection.unbind()
+    }
+
     fun startScanning() {
+        // First, start the service (required for foreground service)
         val intent = Intent(application, ScanningService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             application.startForegroundService(intent)
         } else {
             application.startService(intent)
         }
+        // Also send IPC command (service will receive both, but IPC ensures state sync)
+        serviceConnection.startScanning()
     }
-    
+
     fun stopScanning() {
+        // Send IPC command to stop scanning
+        serviceConnection.stopScanning()
+        // Also stop the service
         val intent = Intent(application, ScanningService::class.java)
         application.stopService(intent)
     }
-    
+
     fun toggleScanning() {
         if (_uiState.value.isScanning) {
             stopScanning()
@@ -369,7 +399,7 @@ class MainViewModel @Inject constructor(
             startScanning()
         }
     }
-    
+
     fun selectTab(index: Int) {
         _uiState.update { it.copy(selectedTab = index) }
     }
@@ -629,14 +659,20 @@ class MainViewModel @Inject constructor(
             // Clear ephemeral storage
             ephemeralRepository.clearAll()
 
-            // Clear service runtime data
-            ScanningService.clearSeenDevices()
-            ScanningService.clearCellularHistory()
-            ScanningService.clearSatelliteHistory()
-            ScanningService.clearErrors()
-            ScanningService.clearLearnedSignatures()
-            ScanningService.detectionCount.value = 0
-            ScanningService.lastDetection.value = null
+            // Clear service runtime data via IPC
+            serviceConnection.clearSeenDevices()
+            serviceConnection.clearCellularHistory()
+            serviceConnection.clearSatelliteHistory()
+            serviceConnection.clearErrors()
+            serviceConnection.clearLearnedSignatures()
+            serviceConnection.resetDetectionCount()
         }
+    }
+
+    /**
+     * Clear seen devices via IPC.
+     */
+    fun clearSeenDevices() {
+        serviceConnection.clearSeenDevices()
     }
 }

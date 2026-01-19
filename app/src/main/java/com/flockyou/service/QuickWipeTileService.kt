@@ -43,6 +43,22 @@ class QuickWipeTileService : TileService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // IPC connection to the scanning service
+    private lateinit var serviceConnection: ScanningServiceConnection
+
+    override fun onCreate() {
+        super.onCreate()
+        serviceConnection = ScanningServiceConnection(applicationContext)
+        serviceConnection.bind()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::serviceConnection.isInitialized) {
+            serviceConnection.unbind()
+        }
+    }
+
     override fun onStartListening() {
         super.onStartListening()
         updateTile()
@@ -121,14 +137,15 @@ class QuickWipeTileService : TileService() {
             // Clear ephemeral storage
             ephemeralRepository.clearAll()
 
-            // Clear service runtime data
-            ScanningService.clearSeenDevices()
-            ScanningService.clearCellularHistory()
-            ScanningService.clearSatelliteHistory()
-            ScanningService.clearErrors()
-            ScanningService.clearLearnedSignatures()
-            ScanningService.detectionCount.value = 0
-            ScanningService.lastDetection.value = null
+            // Clear service runtime data via IPC
+            if (::serviceConnection.isInitialized) {
+                serviceConnection.clearSeenDevices()
+                serviceConnection.clearCellularHistory()
+                serviceConnection.clearSatelliteHistory()
+                serviceConnection.clearErrors()
+                serviceConnection.clearLearnedSignatures()
+                serviceConnection.resetDetectionCount()
+            }
 
             Log.i(TAG, "Quick Wipe completed successfully")
 

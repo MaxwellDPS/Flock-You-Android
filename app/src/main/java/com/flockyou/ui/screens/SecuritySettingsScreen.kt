@@ -121,8 +121,15 @@ fun SecuritySettingsScreen(
                                     if (enabled && !isPinSet && !canUseBiometric) {
                                         showSetPinDialog = true
                                     } else {
-                                        appLockManager.settings.collect { }
-                                        // Update via repository
+                                        appLockManager.setAppLockEnabled(enabled)
+                                        // Auto-select appropriate lock method when enabling
+                                        if (enabled && settings.lockMethod == LockMethod.NONE) {
+                                            when {
+                                                isPinSet && canUseBiometric -> appLockManager.setLockMethod(LockMethod.PIN_OR_BIOMETRIC)
+                                                canUseBiometric -> appLockManager.setLockMethod(LockMethod.BIOMETRIC)
+                                                isPinSet -> appLockManager.setLockMethod(LockMethod.PIN)
+                                            }
+                                        }
                                     }
                                 }
                             },
@@ -149,7 +156,7 @@ fun SecuritySettingsScreen(
                                 .fillMaxWidth()
                                 .clickable(enabled = isPinSet) {
                                     scope.launch {
-                                        // Set lock method to PIN
+                                        appLockManager.setLockMethod(LockMethod.PIN)
                                     }
                                 }
                                 .padding(vertical = 8.dp),
@@ -157,7 +164,11 @@ fun SecuritySettingsScreen(
                         ) {
                             RadioButton(
                                 selected = settings.lockMethod == LockMethod.PIN,
-                                onClick = null,
+                                onClick = {
+                                    if (isPinSet) {
+                                        scope.launch { appLockManager.setLockMethod(LockMethod.PIN) }
+                                    }
+                                },
                                 enabled = isPinSet
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -181,7 +192,7 @@ fun SecuritySettingsScreen(
                                 .fillMaxWidth()
                                 .clickable(enabled = canUseBiometric) {
                                     scope.launch {
-                                        // Set lock method to biometric
+                                        appLockManager.setLockMethod(LockMethod.BIOMETRIC)
                                     }
                                 }
                                 .padding(vertical = 8.dp),
@@ -189,7 +200,11 @@ fun SecuritySettingsScreen(
                         ) {
                             RadioButton(
                                 selected = settings.lockMethod == LockMethod.BIOMETRIC,
-                                onClick = null,
+                                onClick = {
+                                    if (canUseBiometric) {
+                                        scope.launch { appLockManager.setLockMethod(LockMethod.BIOMETRIC) }
+                                    }
+                                },
                                 enabled = canUseBiometric
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -213,7 +228,7 @@ fun SecuritySettingsScreen(
                                 .fillMaxWidth()
                                 .clickable(enabled = isPinSet && canUseBiometric) {
                                     scope.launch {
-                                        // Set lock method to PIN or biometric
+                                        appLockManager.setLockMethod(LockMethod.PIN_OR_BIOMETRIC)
                                     }
                                 }
                                 .padding(vertical = 8.dp),
@@ -221,7 +236,11 @@ fun SecuritySettingsScreen(
                         ) {
                             RadioButton(
                                 selected = settings.lockMethod == LockMethod.PIN_OR_BIOMETRIC,
-                                onClick = null,
+                                onClick = {
+                                    if (isPinSet && canUseBiometric) {
+                                        scope.launch { appLockManager.setLockMethod(LockMethod.PIN_OR_BIOMETRIC) }
+                                    }
+                                },
                                 enabled = isPinSet && canUseBiometric
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -408,9 +427,9 @@ fun SecuritySettingsScreen(
                         }
                         Switch(
                             checked = settings.lockOnBackground,
-                            onCheckedChange = { _ ->
+                            onCheckedChange = { enabled ->
                                 scope.launch {
-                                    // Update lock on background setting
+                                    appLockManager.setLockOnBackground(enabled)
                                 }
                             }
                         )
@@ -447,9 +466,9 @@ fun SecuritySettingsScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Slider(
                             value = settings.lockTimeoutSeconds.toFloat(),
-                            onValueChange = { _ ->
+                            onValueChange = { value ->
                                 scope.launch {
-                                    // Update timeout
+                                    appLockManager.setLockTimeoutSeconds(value.toInt())
                                 }
                             },
                             valueRange = 0f..120f,

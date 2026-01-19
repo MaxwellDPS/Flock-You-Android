@@ -143,6 +143,23 @@ class AppLockManager @Inject constructor(
 
     val settings: Flow<SecuritySettings> = securitySettingsRepository.settings
 
+    // Settings update methods
+    suspend fun setAppLockEnabled(enabled: Boolean) {
+        securitySettingsRepository.setAppLockEnabled(enabled)
+    }
+
+    suspend fun setLockMethod(method: LockMethod) {
+        securitySettingsRepository.setLockMethod(method)
+    }
+
+    suspend fun setLockOnBackground(enabled: Boolean) {
+        securitySettingsRepository.setLockOnBackground(enabled)
+    }
+
+    suspend fun setLockTimeoutSeconds(seconds: Int) {
+        securitySettingsRepository.setLockTimeoutSeconds(seconds)
+    }
+
     /**
      * Check if a PIN has been set.
      */

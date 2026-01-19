@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.flockyou.data.model.*
 import com.flockyou.data.model.OuiEntry
 import kotlinx.coroutines.flow.Flow
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -366,10 +366,11 @@ object DatabaseKeyManager {
             Log.d(TAG, "Requesting StrongBox-backed database key")
         }
 
-        // Require device to be unlocked (API 28+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            builder.setUnlockedDeviceRequired(true)
-        }
+        // Note: We intentionally do NOT use setUnlockedDeviceRequired(true) here.
+        // While it adds security, it causes crashes when:
+        // 1. App launches before user unlocks device after boot (Direct Boot)
+        // 2. Background workers run while device is locked
+        // The hardware-backed key still provides strong protection.
 
         return try {
             keyGenerator.init(builder.build())
@@ -505,9 +506,12 @@ abstract class FlockYouDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
+                // Load SQLCipher native library
+                System.loadLibrary("sqlcipher")
+
                 // Get or create encryption passphrase
                 val passphrase = DatabaseKeyManager.getOrCreatePassphrase(context)
-                val factory = SupportFactory(passphrase)
+                val factory = SupportOpenHelperFactory(passphrase)
 
                 // Clear passphrase from memory after factory creation
                 // The factory has already copied the passphrase internally

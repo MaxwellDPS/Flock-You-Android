@@ -19,7 +19,8 @@ data class OuiSettings(
     val lastUpdateSuccess: Boolean = true,
     val lastUpdateError: String? = null,
     val totalEntries: Int = 0,
-    val useWifiOnly: Boolean = true // Only download on WiFi
+    val useWifiOnly: Boolean = true, // Only download on WiFi
+    val lastUpdateFromBundled: Boolean = false // Was last update from bundled assets
 )
 
 enum class OuiUpdateInterval(val hours: Int, val displayName: String) {
@@ -42,6 +43,7 @@ class OuiSettingsRepository @Inject constructor(
         val LAST_UPDATE_ERROR = stringPreferencesKey("oui_last_update_error")
         val TOTAL_ENTRIES = intPreferencesKey("oui_total_entries")
         val USE_WIFI_ONLY = booleanPreferencesKey("oui_use_wifi_only")
+        val LAST_UPDATE_FROM_BUNDLED = booleanPreferencesKey("oui_last_update_from_bundled")
     }
 
     val settings: Flow<OuiSettings> = context.ouiDataStore.data.map { prefs ->
@@ -52,7 +54,8 @@ class OuiSettingsRepository @Inject constructor(
             lastUpdateSuccess = prefs[PreferencesKeys.LAST_UPDATE_SUCCESS] ?: true,
             lastUpdateError = prefs[PreferencesKeys.LAST_UPDATE_ERROR],
             totalEntries = prefs[PreferencesKeys.TOTAL_ENTRIES] ?: 0,
-            useWifiOnly = prefs[PreferencesKeys.USE_WIFI_ONLY] ?: true
+            useWifiOnly = prefs[PreferencesKeys.USE_WIFI_ONLY] ?: true,
+            lastUpdateFromBundled = prefs[PreferencesKeys.LAST_UPDATE_FROM_BUNDLED] ?: false
         )
     }
 
@@ -74,10 +77,11 @@ class OuiSettingsRepository @Inject constructor(
         }
     }
 
-    suspend fun recordUpdateResult(success: Boolean, error: String? = null, entryCount: Int = 0) {
+    suspend fun recordUpdateResult(success: Boolean, error: String? = null, entryCount: Int = 0, fromBundled: Boolean = false) {
         context.ouiDataStore.edit { prefs ->
             prefs[PreferencesKeys.LAST_UPDATE_TIMESTAMP] = System.currentTimeMillis()
             prefs[PreferencesKeys.LAST_UPDATE_SUCCESS] = success
+            prefs[PreferencesKeys.LAST_UPDATE_FROM_BUNDLED] = fromBundled
             if (error != null) {
                 prefs[PreferencesKeys.LAST_UPDATE_ERROR] = error
             } else {

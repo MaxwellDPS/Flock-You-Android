@@ -195,8 +195,11 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideOuiDownloader(torAwareHttpClient: TorAwareHttpClient): OuiDownloader {
-        return OuiDownloader(torAwareHttpClient)
+    fun provideOuiDownloader(
+        @ApplicationContext context: Context,
+        torAwareHttpClient: TorAwareHttpClient
+    ): OuiDownloader {
+        return OuiDownloader(context, torAwareHttpClient)
     }
 
     // ================================================================

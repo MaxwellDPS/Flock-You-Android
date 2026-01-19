@@ -155,6 +155,9 @@ fun MainScreen(
                     cellStatus = uiState.cellStatus,
                     cellularStatus = uiState.cellularStatus,
                     cellularAnomalies = uiState.cellularAnomalies,
+                    seenCellTowers = uiState.seenCellTowers,
+                    satelliteState = uiState.satelliteState,
+                    satelliteAnomalies = uiState.satelliteAnomalies,
                     isScanning = uiState.isScanning,
                     onToggleScan = { viewModel.toggleScanning() }
                 )
@@ -1235,12 +1238,12 @@ private fun CellularTabContent(
     cellStatus: CellularMonitor.CellStatus?,
     cellularStatus: ScanningService.SubsystemStatus,
     cellularAnomalies: List<CellularMonitor.CellularAnomaly>,
+    seenCellTowers: List<CellularMonitor.SeenCellTower>,
+    satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?,
+    satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>,
     isScanning: Boolean,
     onToggleScan: () -> Unit
 ) {
-    val seenCellTowers by ScanningService.seenCellTowers.collectAsState()
-    val satelliteState by ScanningService.satelliteState.collectAsState()
-    val satelliteAnomalies by ScanningService.satelliteAnomalies.collectAsState()
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     
     LazyColumn(

@@ -40,8 +40,13 @@ class QuickWipeConfirmationActivity : ComponentActivity() {
     @Inject
     lateinit var ephemeralRepository: EphemeralDetectionRepository
 
+    // IPC connection to the scanning service
+    private lateinit var serviceConnection: ScanningServiceConnection
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        serviceConnection = ScanningServiceConnection(applicationContext)
+        serviceConnection.bind()
 
         setContent {
             FlockYouTheme {
@@ -57,6 +62,13 @@ class QuickWipeConfirmationActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::serviceConnection.isInitialized) {
+            serviceConnection.unbind()
+        }
+    }
+
     private fun performQuickWipe() {
         Log.w(TAG, "Performing Quick Wipe from confirmation dialog")
 
@@ -68,14 +80,15 @@ class QuickWipeConfirmationActivity : ComponentActivity() {
                 // Clear ephemeral storage
                 ephemeralRepository.clearAll()
 
-                // Clear service runtime data
-                ScanningService.clearSeenDevices()
-                ScanningService.clearCellularHistory()
-                ScanningService.clearSatelliteHistory()
-                ScanningService.clearErrors()
-                ScanningService.clearLearnedSignatures()
-                ScanningService.detectionCount.value = 0
-                ScanningService.lastDetection.value = null
+                // Clear service runtime data via IPC
+                if (::serviceConnection.isInitialized) {
+                    serviceConnection.clearSeenDevices()
+                    serviceConnection.clearCellularHistory()
+                    serviceConnection.clearSatelliteHistory()
+                    serviceConnection.clearErrors()
+                    serviceConnection.clearLearnedSignatures()
+                    serviceConnection.resetDetectionCount()
+                }
 
                 Log.i(TAG, "Quick Wipe completed successfully")
             } catch (e: Exception) {

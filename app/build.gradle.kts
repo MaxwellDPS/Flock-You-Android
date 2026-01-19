@@ -147,7 +147,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
-    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("net.zetetic:sqlcipher-android:4.12.0@aar")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
     
     // Location
@@ -202,4 +202,71 @@ dependencies {
     // Debug implementations
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// ================================================================
+// OUI Database Update Task
+// ================================================================
+
+/**
+ * Task to download/refresh the IEEE OUI database CSV for bundled assets.
+ * This ensures the app ships with an up-to-date manufacturer database.
+ *
+ * Run manually: ./gradlew updateOuiDatabase
+ * Runs automatically before release builds.
+ */
+tasks.register("updateOuiDatabase") {
+    group = "assets"
+    description = "Downloads the latest IEEE OUI database for bundled assets"
+
+    val ouiUrl = "https://standards-oui.ieee.org/oui/oui.csv"
+    val assetsDir = file("src/main/assets")
+    val ouiFile = file("src/main/assets/oui.csv")
+
+    doLast {
+        // Create assets directory if it doesn't exist
+        if (!assetsDir.exists()) {
+            assetsDir.mkdirs()
+            println("Created assets directory: ${assetsDir.absolutePath}")
+        }
+
+        println("Downloading OUI database from IEEE...")
+        try {
+            val url = uri(ouiUrl).toURL()
+            val connection = url.openConnection() as javax.net.ssl.HttpsURLConnection
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "text/csv")
+            connection.setRequestProperty("User-Agent", "FlockYou-Build/1.0")
+            connection.connectTimeout = 30000
+            connection.readTimeout = 60000
+
+            if (connection.responseCode == 200) {
+                connection.inputStream.use { input ->
+                    ouiFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val lineCount = ouiFile.readLines().size
+                println("Successfully downloaded OUI database: ${ouiFile.length() / 1024} KB, $lineCount entries")
+            } else {
+                println("Warning: Failed to download OUI database (HTTP ${connection.responseCode})")
+                println("Using existing bundled database if available")
+                if (!ouiFile.exists()) {
+                    throw GradleException("No OUI database available and download failed")
+                }
+            }
+        } catch (e: Exception) {
+            println("Warning: Could not download OUI database: ${e.message}")
+            if (!ouiFile.exists()) {
+                throw GradleException("No OUI database available: ${e.message}")
+            }
+            println("Using existing bundled database")
+        }
+    }
+}
+
+// Hook OUI update into release builds
+tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }.configureEach {
+    dependsOn("updateOuiDatabase")
 }

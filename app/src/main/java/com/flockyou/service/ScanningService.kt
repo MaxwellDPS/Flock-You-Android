@@ -325,6 +325,27 @@ class ScanningService : Service() {
         object Active : ScanStatus()
         object Stopping : ScanStatus()
         data class Error(val message: String, val recoverable: Boolean = true) : ScanStatus()
+
+        /** Convert to IPC-friendly string representation */
+        fun toIpcString(): String = when (this) {
+            is Idle -> "Idle"
+            is Starting -> "Starting"
+            is Active -> "Active"
+            is Stopping -> "Stopping"
+            is Error -> "Error:${this.message}"
+        }
+
+        companion object {
+            /** Parse IPC string back to ScanStatus */
+            fun fromIpcString(str: String): ScanStatus = when {
+                str == "Idle" -> Idle
+                str == "Starting" -> Starting
+                str == "Active" -> Active
+                str == "Stopping" -> Stopping
+                str.startsWith("Error:") -> Error(str.removePrefix("Error:"))
+                else -> Idle
+            }
+        }
     }
     
     /** Individual subsystem status */
@@ -334,8 +355,32 @@ class ScanningService : Service() {
         object Disabled : SubsystemStatus()
         data class Error(val code: Int, val message: String) : SubsystemStatus()
         data class PermissionDenied(val permission: String) : SubsystemStatus()
+
+        /** Convert to IPC-friendly string representation */
+        fun toIpcString(): String = when (this) {
+            is Idle -> "Idle"
+            is Active -> "Active"
+            is Disabled -> "Disabled"
+            is Error -> "Error:${this.code}:${this.message}"
+            is PermissionDenied -> "PermissionDenied:${this.permission}"
+        }
+
+        companion object {
+            /** Parse IPC string back to SubsystemStatus */
+            fun fromIpcString(str: String): SubsystemStatus = when {
+                str == "Idle" -> Idle
+                str == "Active" -> Active
+                str == "Disabled" -> Disabled
+                str.startsWith("Error:") -> {
+                    val parts = str.removePrefix("Error:").split(":", limit = 2)
+                    Error(parts.getOrNull(0)?.toIntOrNull() ?: -1, parts.getOrElse(1) { "Unknown" })
+                }
+                str.startsWith("PermissionDenied:") -> PermissionDenied(str.removePrefix("PermissionDenied:"))
+                else -> Idle
+            }
+        }
     }
-    
+
     /** Error log entry */
     data class ScanError(
         val timestamp: Long = System.currentTimeMillis(),
@@ -404,7 +449,424 @@ class ScanningService : Service() {
     // Wake lock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var powerManager: PowerManager
-    
+
+    // IPC: Messenger for cross-process communication
+    private val ipcClients = mutableListOf<Messenger>()
+    private val ipcHandler = object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            when (msg.what) {
+                ScanningServiceIpc.MSG_REGISTER_CLIENT -> {
+                    msg.replyTo?.let { client ->
+                        if (!ipcClients.contains(client)) {
+                            ipcClients.add(client)
+                            Log.d(TAG, "IPC client registered (total: ${ipcClients.size})")
+                        }
+                    }
+                }
+                ScanningServiceIpc.MSG_UNREGISTER_CLIENT -> {
+                    msg.replyTo?.let { client ->
+                        ipcClients.remove(client)
+                        Log.d(TAG, "IPC client unregistered (total: ${ipcClients.size})")
+                    }
+                }
+                ScanningServiceIpc.MSG_REQUEST_STATE -> {
+                    msg.replyTo?.let { client ->
+                        sendStateToClient(client)
+                    }
+                }
+                ScanningServiceIpc.MSG_START_SCANNING -> {
+                    if (!isScanning.value) {
+                        startScanning()
+                    }
+                }
+                ScanningServiceIpc.MSG_STOP_SCANNING -> {
+                    if (isScanning.value) {
+                        stopScanning()
+                    }
+                }
+                ScanningServiceIpc.MSG_CLEAR_SEEN_DEVICES -> {
+                    clearSeenDevices()
+                }
+                ScanningServiceIpc.MSG_RESET_DETECTION_COUNT -> {
+                    detectionCount.value = 0
+                    lastDetection.value = null
+                    broadcastStateToClients()
+                }
+                ScanningServiceIpc.MSG_CLEAR_CELLULAR_HISTORY -> {
+                    clearCellularHistory()
+                    broadcastCellularData()
+                }
+                ScanningServiceIpc.MSG_CLEAR_SATELLITE_HISTORY -> {
+                    clearSatelliteHistory()
+                    broadcastSatelliteData()
+                }
+                ScanningServiceIpc.MSG_CLEAR_ERRORS -> {
+                    clearErrors()
+                }
+                ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
+                    clearLearnedSignatures()
+                }
+                else -> super.handleMessage(msg)
+            }
+        }
+    }
+    private val ipcMessenger = Messenger(ipcHandler)
+
+    /**
+     * Send current state to a specific client (basic state only).
+     */
+    private fun sendStateToClient(client: Messenger) {
+        try {
+            val msg = Message.obtain(null, ScanningServiceIpc.MSG_STATE_UPDATE)
+            msg.data = Bundle().apply {
+                putBoolean(ScanningServiceIpc.KEY_IS_SCANNING, isScanning.value)
+                putInt(ScanningServiceIpc.KEY_DETECTION_COUNT, detectionCount.value)
+                putString(ScanningServiceIpc.KEY_SCAN_STATUS, scanStatus.value.toIpcString())
+                putString(ScanningServiceIpc.KEY_BLE_STATUS, bleStatus.value.toIpcString())
+                putString(ScanningServiceIpc.KEY_WIFI_STATUS, wifiStatus.value.toIpcString())
+                putString(ScanningServiceIpc.KEY_LOCATION_STATUS, locationStatus.value.toIpcString())
+                putString(ScanningServiceIpc.KEY_CELLULAR_STATUS, cellularStatus.value.toIpcString())
+                putString(ScanningServiceIpc.KEY_SATELLITE_STATUS, satelliteStatus.value.toIpcString())
+            }
+            client.send(msg)
+
+            // Also send all complex data on state request (initial sync)
+            sendAllDataToClient(client)
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to send state to client", e)
+            ipcClients.remove(client)
+        }
+    }
+
+    /**
+     * Send all complex data to a specific client.
+     */
+    private fun sendAllDataToClient(client: Messenger) {
+        try {
+            // Send seen BLE devices
+            val bleMsg = Message.obtain(null, ScanningServiceIpc.MSG_SEEN_BLE_DEVICES)
+            bleMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_JSON_DATA, ScanningServiceIpc.gson.toJson(seenBleDevices.value))
+            }
+            client.send(bleMsg)
+
+            // Send seen WiFi networks
+            val wifiMsg = Message.obtain(null, ScanningServiceIpc.MSG_SEEN_WIFI_NETWORKS)
+            wifiMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_JSON_DATA, ScanningServiceIpc.gson.toJson(seenWifiNetworks.value))
+            }
+            client.send(wifiMsg)
+
+            // Send cellular data
+            val cellularMsg = Message.obtain(null, ScanningServiceIpc.MSG_CELLULAR_DATA)
+            cellularMsg.data = Bundle().apply {
+                cellStatus.value?.let { putString(ScanningServiceIpc.KEY_CELL_STATUS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_SEEN_TOWERS_JSON, ScanningServiceIpc.gson.toJson(seenCellTowers.value))
+                putString(ScanningServiceIpc.KEY_CELLULAR_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(cellularAnomalies.value))
+                putString(ScanningServiceIpc.KEY_CELLULAR_EVENTS_JSON, ScanningServiceIpc.gson.toJson(cellularEvents.value))
+            }
+            client.send(cellularMsg)
+
+            // Send satellite data
+            val satelliteMsg = Message.obtain(null, ScanningServiceIpc.MSG_SATELLITE_DATA)
+            satelliteMsg.data = Bundle().apply {
+                satelliteState.value?.let { putString(ScanningServiceIpc.KEY_SATELLITE_STATE_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_SATELLITE_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(satelliteAnomalies.value))
+                putString(ScanningServiceIpc.KEY_SATELLITE_HISTORY_JSON, ScanningServiceIpc.gson.toJson(satelliteHistory.value))
+            }
+            client.send(satelliteMsg)
+
+            // Send rogue WiFi data
+            val rogueWifiMsg = Message.obtain(null, ScanningServiceIpc.MSG_ROGUE_WIFI_DATA)
+            rogueWifiMsg.data = Bundle().apply {
+                rogueWifiStatus.value?.let { putString(ScanningServiceIpc.KEY_ROGUE_WIFI_STATUS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_ROGUE_WIFI_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(rogueWifiAnomalies.value))
+                putString(ScanningServiceIpc.KEY_SUSPICIOUS_NETWORKS_JSON, ScanningServiceIpc.gson.toJson(suspiciousNetworks.value))
+            }
+            client.send(rogueWifiMsg)
+
+            // Send RF data
+            val rfMsg = Message.obtain(null, ScanningServiceIpc.MSG_RF_DATA)
+            rfMsg.data = Bundle().apply {
+                rfStatus.value?.let { putString(ScanningServiceIpc.KEY_RF_STATUS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_RF_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(rfAnomalies.value))
+                putString(ScanningServiceIpc.KEY_DETECTED_DRONES_JSON, ScanningServiceIpc.gson.toJson(detectedDrones.value))
+            }
+            client.send(rfMsg)
+
+            // Send ultrasonic data
+            val ultrasonicMsg = Message.obtain(null, ScanningServiceIpc.MSG_ULTRASONIC_DATA)
+            ultrasonicMsg.data = Bundle().apply {
+                ultrasonicStatus.value?.let { putString(ScanningServiceIpc.KEY_ULTRASONIC_STATUS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_ULTRASONIC_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(ultrasonicAnomalies.value))
+                putString(ScanningServiceIpc.KEY_ULTRASONIC_BEACONS_JSON, ScanningServiceIpc.gson.toJson(ultrasonicBeacons.value))
+            }
+            client.send(ultrasonicMsg)
+
+            // Send last detection
+            val detectionMsg = Message.obtain(null, ScanningServiceIpc.MSG_LAST_DETECTION)
+            detectionMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_LAST_DETECTION_JSON, lastDetection.value?.let { ScanningServiceIpc.gson.toJson(it) })
+            }
+            client.send(detectionMsg)
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to send all data to client", e)
+        }
+    }
+
+    /**
+     * Broadcast state update to all registered IPC clients.
+     */
+    private fun broadcastStateToClients() {
+        val deadClients = mutableListOf<Messenger>()
+        for (client in ipcClients) {
+            try {
+                sendStateToClient(client)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast scanning started to all registered IPC clients.
+     */
+    private fun broadcastScanningStarted() {
+        val deadClients = mutableListOf<Messenger>()
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_SCANNING_STARTED)
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast scanning stopped to all registered IPC clients.
+     */
+    private fun broadcastScanningStopped() {
+        val deadClients = mutableListOf<Messenger>()
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_SCANNING_STOPPED)
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast seen BLE devices to all registered IPC clients.
+     */
+    private fun broadcastSeenBleDevices() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val json = ScanningServiceIpc.gson.toJson(seenBleDevices.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_SEEN_BLE_DEVICES)
+                msg.data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_JSON_DATA, json)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast seen WiFi networks to all registered IPC clients.
+     */
+    private fun broadcastSeenWifiNetworks() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val json = ScanningServiceIpc.gson.toJson(seenWifiNetworks.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_SEEN_WIFI_NETWORKS)
+                msg.data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_JSON_DATA, json)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast cellular monitoring data to all registered IPC clients.
+     */
+    private fun broadcastCellularData() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val cellStatusJson = cellStatus.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val towersJson = ScanningServiceIpc.gson.toJson(seenCellTowers.value)
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(cellularAnomalies.value)
+        val eventsJson = ScanningServiceIpc.gson.toJson(cellularEvents.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_CELLULAR_DATA)
+                msg.data = Bundle().apply {
+                    cellStatusJson?.let { putString(ScanningServiceIpc.KEY_CELL_STATUS_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_SEEN_TOWERS_JSON, towersJson)
+                    putString(ScanningServiceIpc.KEY_CELLULAR_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_CELLULAR_EVENTS_JSON, eventsJson)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast satellite monitoring data to all registered IPC clients.
+     */
+    private fun broadcastSatelliteData() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val stateJson = satelliteState.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(satelliteAnomalies.value)
+        val historyJson = ScanningServiceIpc.gson.toJson(satelliteHistory.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_SATELLITE_DATA)
+                msg.data = Bundle().apply {
+                    stateJson?.let { putString(ScanningServiceIpc.KEY_SATELLITE_STATE_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_SATELLITE_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_SATELLITE_HISTORY_JSON, historyJson)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast rogue WiFi monitoring data to all registered IPC clients.
+     */
+    private fun broadcastRogueWifiData() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val statusJson = rogueWifiStatus.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(rogueWifiAnomalies.value)
+        val suspiciousJson = ScanningServiceIpc.gson.toJson(suspiciousNetworks.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_ROGUE_WIFI_DATA)
+                msg.data = Bundle().apply {
+                    statusJson?.let { putString(ScanningServiceIpc.KEY_ROGUE_WIFI_STATUS_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_ROGUE_WIFI_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_SUSPICIOUS_NETWORKS_JSON, suspiciousJson)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast RF signal analysis data to all registered IPC clients.
+     */
+    private fun broadcastRfData() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val statusJson = rfStatus.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(rfAnomalies.value)
+        val dronesJson = ScanningServiceIpc.gson.toJson(detectedDrones.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_RF_DATA)
+                msg.data = Bundle().apply {
+                    statusJson?.let { putString(ScanningServiceIpc.KEY_RF_STATUS_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_RF_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_DETECTED_DRONES_JSON, dronesJson)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast ultrasonic detection data to all registered IPC clients.
+     */
+    private fun broadcastUltrasonicData() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val statusJson = ultrasonicStatus.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(ultrasonicAnomalies.value)
+        val beaconsJson = ScanningServiceIpc.gson.toJson(ultrasonicBeacons.value)
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_ULTRASONIC_DATA)
+                msg.data = Bundle().apply {
+                    statusJson?.let { putString(ScanningServiceIpc.KEY_ULTRASONIC_STATUS_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_ULTRASONIC_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_ULTRASONIC_BEACONS_JSON, beaconsJson)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast last detection to all registered IPC clients.
+     */
+    private fun broadcastLastDetection() {
+        if (ipcClients.isEmpty()) return
+        val deadClients = mutableListOf<Messenger>()
+        val json = lastDetection.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        for (client in ipcClients) {
+            try {
+                val msg = Message.obtain(null, ScanningServiceIpc.MSG_LAST_DETECTION)
+                msg.data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_LAST_DETECTION_JSON, json)
+                }
+                client.send(msg)
+            } catch (e: RemoteException) {
+                deadClients.add(client)
+            }
+        }
+        ipcClients.removeAll(deadClients)
+    }
+
+    /**
+     * Broadcast all data to IPC clients. Called periodically to keep clients in sync.
+     */
+    private fun broadcastAllDataToClients() {
+        if (ipcClients.isEmpty()) return
+        broadcastStateToClients()
+        broadcastSeenBleDevices()
+        broadcastSeenWifiNetworks()
+        broadcastCellularData()
+        broadcastSatelliteData()
+        broadcastRogueWifiData()
+        broadcastRfData()
+        broadcastUltrasonicData()
+        broadcastLastDetection()
+    }
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
@@ -509,7 +971,10 @@ class ScanningService : Service() {
         }
     }
     
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? {
+        Log.d(TAG, "Client binding to service")
+        return ipcMessenger.binder
+    }
     
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
@@ -667,7 +1132,10 @@ class ScanningService : Service() {
         
         isScanning.value = true
         scanStatus.value = ScanStatus.Active
-        
+
+        // Notify IPC clients that scanning has started
+        broadcastScanningStarted()
+
         // Get initial location
         updateLocation()
         
@@ -753,6 +1221,9 @@ class ScanningService : Service() {
                     val statusText = buildStatusText()
                     updateNotification(statusText)
 
+                    // Broadcast all data to IPC clients every scan cycle
+                    broadcastAllDataToClients()
+
                     scanCycleCount++
 
                     // Every 10 cycles, re-schedule the watchdog to ensure it stays active
@@ -818,6 +1289,10 @@ class ScanningService : Service() {
     private fun stopScanning() {
         scanStatus.value = ScanStatus.Stopping
         isScanning.value = false
+
+        // Notify IPC clients that scanning has stopped
+        broadcastScanningStopped()
+
         scanJob?.cancel()
         stopBleScan()
         unregisterWifiReceiver()

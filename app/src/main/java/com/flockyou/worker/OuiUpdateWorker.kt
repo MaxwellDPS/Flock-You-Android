@@ -106,6 +106,14 @@ class OuiUpdateWorker @AssistedInject constructor(
         Log.d(TAG, "Starting OUI database update")
 
         try {
+            // Check if database is empty - if so, try to load from bundled assets first
+            val hasExistingData = ouiRepository.hasData()
+            if (!hasExistingData && ouiDownloader.hasBundledAssets()) {
+                Log.d(TAG, "Database empty, loading bundled OUI data first")
+                loadBundledData()
+            }
+
+            // Try to download fresh data from IEEE
             val result = ouiDownloader.downloadAndParse()
 
             return@withContext when (result) {
@@ -128,7 +136,13 @@ class OuiUpdateWorker @AssistedInject constructor(
                 }
 
                 is OuiDownloadResult.Error -> {
-                    Log.e(TAG, "OUI update failed: ${result.message}", result.exception)
+                    Log.e(TAG, "OUI network update failed: ${result.message}", result.exception)
+
+                    // If network failed and we have no data, fall back to bundled assets
+                    if (!ouiRepository.hasData() && ouiDownloader.hasBundledAssets()) {
+                        Log.d(TAG, "Falling back to bundled OUI data")
+                        return@withContext loadBundledData()
+                    }
 
                     // Record failure
                     ouiSettingsRepository.recordUpdateResult(
@@ -136,8 +150,8 @@ class OuiUpdateWorker @AssistedInject constructor(
                         error = result.message
                     )
 
-                    // Retry if it might be transient
-                    if (result.exception is IOException) {
+                    // Retry if it might be transient (and we already have some data)
+                    if (result.exception is IOException && ouiRepository.hasData()) {
                         Result.retry()
                     } else {
                         Result.failure()
@@ -151,6 +165,40 @@ class OuiUpdateWorker @AssistedInject constructor(
                 error = e.message ?: "Unknown error"
             )
             return@withContext Result.failure()
+        }
+    }
+
+    /**
+     * Load OUI data from bundled assets.
+     * Used as fallback when network download fails or for initial app startup.
+     */
+    private suspend fun loadBundledData(): Result {
+        return when (val bundledResult = ouiDownloader.loadFromBundledAssets()) {
+            is OuiDownloadResult.Success -> {
+                Log.d(TAG, "Loaded ${bundledResult.entries.size} OUI entries from bundled assets")
+
+                // Replace all with bundled data
+                ouiRepository.replaceAllEntries(bundledResult.entries)
+
+                // Record success (from bundled)
+                ouiSettingsRepository.recordUpdateResult(
+                    success = true,
+                    entryCount = bundledResult.entries.size,
+                    fromBundled = true
+                )
+
+                Log.d(TAG, "OUI database initialized from bundled assets: ${bundledResult.entries.size} entries")
+                Result.success()
+            }
+
+            is OuiDownloadResult.Error -> {
+                Log.e(TAG, "Failed to load bundled OUI data: ${bundledResult.message}")
+                ouiSettingsRepository.recordUpdateResult(
+                    success = false,
+                    error = "Bundled data load failed: ${bundledResult.message}"
+                )
+                Result.failure()
+            }
         }
     }
 }
