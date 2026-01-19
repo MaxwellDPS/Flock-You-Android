@@ -52,7 +52,7 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > app/release-keystore.jks
       
-      - name: 🔨 Build Release APK
+      - name: 🔨 Build Sideload Release APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -60,19 +60,19 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            ./gradlew assembleRelease \
+            ./gradlew assembleSideloadRelease \
               -Pandroid.injected.signing.store.file=${{ github.workspace }}/app/release-keystore.jks \
               -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
               -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
               -Pandroid.injected.signing.key.password=$KEY_PASSWORD
           else
-            ./gradlew assembleRelease
+            ./gradlew assembleSideloadRelease
           fi
-      
+
       - name: 📝 Rename APK
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          mv "$APK_PATH" "app/build/outputs/apk/release/FlockYou-${{ steps.version.outputs.tag }}.apk"
+          APK_PATH=$(find app/build/outputs/apk/sideload/release -name "*.apk" | head -1)
+          mv "$APK_PATH" "app/build/outputs/apk/sideload/release/FlockYou-${{ steps.version.outputs.tag }}.apk"
       
       - name: 🚀 Create Release
         uses: softprops/action-gh-release@v1
@@ -82,7 +82,7 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
           generate_release_notes: true
           files: |
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/sideload/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
