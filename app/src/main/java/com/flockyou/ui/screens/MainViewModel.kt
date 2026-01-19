@@ -30,6 +30,7 @@ import com.flockyou.service.ScanningService
 import com.flockyou.service.ScanningServiceConnection
 import com.flockyou.service.UltrasonicDetector
 import com.flockyou.worker.OuiUpdateWorker
+import android.util.Log
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -85,6 +86,8 @@ data class MainUiState(
     val gnssAnomalies: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly> = emptyList(),
     val gnssEvents: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent> = emptyList(),
     val gnssMeasurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData? = null,
+    // Detector health status
+    val detectorHealth: Map<String, ScanningService.DetectorHealthStatus> = emptyMap(),
     // UI settings
     val advancedMode: Boolean = false,
     // AI Analysis
@@ -339,6 +342,13 @@ class MainViewModel @Inject constructor(
                         gnssMeasurements = update.measurements
                     )
                 }
+            }
+        }
+
+        // Detector health status collection
+        viewModelScope.launch {
+            serviceConnection.detectorHealth.collect { health ->
+                _uiState.update { it.copy(detectorHealth = health) }
             }
         }
 
@@ -777,12 +787,16 @@ class MainViewModel @Inject constructor(
      */
     fun analyzeDetection(detection: Detection) {
         viewModelScope.launch {
+            Log.d("MainViewModel", "Starting AI analysis for detection: ${detection.id} (${detection.deviceType})")
             _uiState.update { it.copy(analyzingDetectionId = detection.id, analysisResult = null) }
 
             try {
                 val result = detectionAnalyzer.analyzeDetection(detection)
+                Log.d("MainViewModel", "AI analysis complete: success=${result.success}, model=${result.modelUsed}, " +
+                    "error=${result.error}, analysisLength=${result.analysis?.length ?: 0}")
                 _uiState.update { it.copy(analyzingDetectionId = null, analysisResult = result) }
             } catch (e: Exception) {
+                Log.e("MainViewModel", "AI analysis failed with exception", e)
                 _uiState.update {
                     it.copy(
                         analyzingDetectionId = null,

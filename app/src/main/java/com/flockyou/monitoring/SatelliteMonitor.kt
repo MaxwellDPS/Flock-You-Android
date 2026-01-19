@@ -43,7 +43,10 @@ import java.time.Duration
  * - Unusual NTN parameters suggesting IMSI catcher activity
  * - Satellite connection when terrestrial coverage is available
  */
-class SatelliteMonitor(private val context: Context) {
+class SatelliteMonitor(
+    private val context: Context,
+    private val errorCallback: com.flockyou.service.ScanningService.DetectorCallback? = null
+) {
     
     companion object {
         private const val TAG = "SatelliteMonitor"
@@ -255,18 +258,29 @@ class SatelliteMonitor(private val context: Context) {
     ])
     fun startMonitoring() {
         Log.i(TAG, "Starting Satellite Monitor")
-        
-        // Register telephony callback for network changes
-        registerTelephonyCallback()
-        
-        // Start periodic satellite state checks
-        startPeriodicChecks()
-        
-        // Start anomaly detection
-        startAnomalyDetection()
-        
-        // Check for satellite support on device
-        checkDeviceSatelliteSupport()
+
+        try {
+            // Register telephony callback for network changes
+            registerTelephonyCallback()
+
+            // Start periodic satellite state checks
+            startPeriodicChecks()
+
+            // Start anomaly detection
+            startAnomalyDetection()
+
+            // Check for satellite support on device
+            checkDeviceSatelliteSupport()
+
+            errorCallback?.onDetectorStarted(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_SATELLITE)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting satellite monitoring", e)
+            errorCallback?.onError(
+                com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_SATELLITE,
+                "Failed to start monitoring: ${e.message}",
+                recoverable = true
+            )
+        }
     }
     
     /**
@@ -285,17 +299,23 @@ class SatelliteMonitor(private val context: Context) {
     fun stopMonitoring() {
         Log.i(TAG, "Stopping Satellite Monitor")
 
-        // Unregister telephony callback to prevent memory leak
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            telephonyCallback?.let {
-                telephonyManager.unregisterTelephonyCallback(it)
-                telephonyCallback = null
+        try {
+            // Unregister telephony callback to prevent memory leak
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                telephonyCallback?.let {
+                    telephonyManager.unregisterTelephonyCallback(it)
+                    telephonyCallback = null
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering telephony callback", e)
         }
 
         // Cancel and recreate scope for potential restart
         coroutineScope.cancel()
         coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+        errorCallback?.onDetectorStopped(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_SATELLITE)
     }
     
     /**

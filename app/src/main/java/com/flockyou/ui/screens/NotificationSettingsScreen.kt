@@ -1,5 +1,8 @@
 package com.flockyou.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
@@ -9,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -276,7 +280,39 @@ fun NotificationSettingsScreen(
                     }
                 )
             }
-            
+
+            item {
+                SettingsToggleRow(
+                    icon = Icons.Default.DoNotDisturb,
+                    title = "Bypass Do Not Disturb",
+                    subtitle = "Critical alerts sound even in DND mode",
+                    checked = settings.bypassDnd,
+                    onCheckedChange = { enabled ->
+                        viewModel.updateSettings { it.copy(bypassDnd = enabled) }
+                    }
+                )
+            }
+
+            // Emergency popup section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "EMERGENCY ALERTS",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                EmergencyPopupSettingCard(
+                    enabled = settings.emergencyPopupEnabled,
+                    onToggle = { enabled ->
+                        viewModel.updateSettings { it.copy(emergencyPopupEnabled = enabled) }
+                    }
+                )
+            }
+
             // Quiet Hours section
             item {
                 Spacer(modifier = Modifier.height(16.dp))
@@ -561,5 +597,126 @@ private fun formatHour(hour: Int): String {
         hour < 12 -> "$hour AM"
         hour == 12 -> "12 PM"
         else -> "${hour - 12} PM"
+    }
+}
+
+@Composable
+private fun EmergencyPopupSettingCard(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val hasOverlayPermission = remember {
+        mutableStateOf(Settings.canDrawOverlays(context))
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (enabled)
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Emergency Popup",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Full-screen CMAS/WEA-style alert for critical threats",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { newValue ->
+                        if (newValue && !hasOverlayPermission.value) {
+                            // Request overlay permission
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                        } else {
+                            onToggle(newValue)
+                        }
+                    }
+                )
+            }
+
+            if (enabled && !hasOverlayPermission.value) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Permission Required",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = "Allow \"Display over other apps\" to show emergency alerts",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                                context.startActivity(intent)
+                            }
+                        ) {
+                            Text("Grant")
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Shows a full-screen alert like government emergency broadcasts when CRITICAL surveillance threats are detected. Displays above lock screen.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        }
     }
 }

@@ -35,7 +35,10 @@ import kotlin.math.sqrt
  * Privacy Note: This detector samples audio but does NOT record or store it.
  * Audio data is analyzed in real-time for frequency content only.
  */
-class UltrasonicDetector(private val context: Context) {
+class UltrasonicDetector(
+    private val context: Context,
+    private val errorCallback: ScanningService.DetectorCallback? = null
+) {
 
     companion object {
         private const val TAG = "UltrasonicDetector"
@@ -81,6 +84,10 @@ class UltrasonicDetector(private val context: Context) {
     private var isMonitoring = false
     private var detectorJob: Job? = null
     private val detectorScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Error tracking for graceful restart
+    private var consecutiveFailures = 0
+    private val maxConsecutiveFailures = 3
 
     // Configurable timing
     private var scanDurationMs: Long = DEFAULT_SCAN_DURATION_MS
@@ -278,10 +285,16 @@ class UltrasonicDetector(private val context: Context) {
 
         if (!hasPermission()) {
             Log.w(TAG, "Missing RECORD_AUDIO permission")
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC,
+                "Missing RECORD_AUDIO permission",
+                recoverable = false
+            )
             return
         }
 
         isMonitoring = true
+        consecutiveFailures = 0
         Log.d(TAG, "Starting ultrasonic beacon detection")
 
         addTimelineEvent(
@@ -289,6 +302,8 @@ class UltrasonicDetector(private val context: Context) {
             title = "Ultrasonic Detection Started",
             description = "Monitoring for tracking beacons (18-22 kHz)"
         )
+
+        errorCallback?.onDetectorStarted(ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC)
 
         // Start periodic scanning
         detectorJob = detectorScope.launch {
@@ -311,6 +326,7 @@ class UltrasonicDetector(private val context: Context) {
             description = "Beacon monitoring paused"
         )
 
+        errorCallback?.onDetectorStopped(ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC)
         Log.d(TAG, "Stopped ultrasonic detection")
     }
 
@@ -369,6 +385,12 @@ class UltrasonicDetector(private val context: Context) {
 
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                     Log.e(TAG, "AudioRecord failed to initialize")
+                    consecutiveFailures++
+                    errorCallback?.onError(
+                        ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC,
+                        "AudioRecord failed to initialize (attempt $consecutiveFailures)",
+                        recoverable = consecutiveFailures < maxConsecutiveFailures
+                    )
                     return@withContext
                 }
 
@@ -436,8 +458,18 @@ class UltrasonicDetector(private val context: Context) {
                     description = "Found ${detectedFrequencies.size} ultrasonic frequencies"
                 )
 
+                // Report successful scan
+                consecutiveFailures = 0
+                errorCallback?.onScanSuccess(ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC)
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error during ultrasonic scan", e)
+                consecutiveFailures++
+                errorCallback?.onError(
+                    ScanningService.DetectorHealthStatus.DETECTOR_ULTRASONIC,
+                    "Scan error: ${e.message ?: "Unknown error"} (attempt $consecutiveFailures)",
+                    recoverable = consecutiveFailures < maxConsecutiveFailures
+                )
                 releaseAudioRecord()
             } finally {
                 // CRITICAL: Always destroy secure buffer to wipe encryption keys

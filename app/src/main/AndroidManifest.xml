@@ -55,6 +55,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Draw over other apps for emergency popup alerts (CMAS/WEA style) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- ================================================================== -->
     <!-- SYSTEM/OEM PRIVILEGED PERMISSIONS                                 -->
     <!-- These permissions are only granted when app is installed as:      -->
@@ -158,6 +161,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- CMAS/WEA-style emergency alert popup - displays above lock screen -->
+        <activity
+            android:name=".ui.EmergencyAlertActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.FlockYou.EmergencyAlert" />
         
         <!-- Scanning service with multiple foreground types for robust background operation -->
         <service

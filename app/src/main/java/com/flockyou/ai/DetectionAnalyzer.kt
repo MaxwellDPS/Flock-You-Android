@@ -57,7 +57,8 @@ class DetectionAnalyzer @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val detectionRepository: DetectionRepository,
     private val geminiNanoClient: GeminiNanoClient,
-    private val mediaPipeLlmClient: MediaPipeLlmClient
+    private val mediaPipeLlmClient: MediaPipeLlmClient,
+    private val falsePositiveAnalyzer: FalsePositiveAnalyzer
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -186,12 +187,14 @@ class DetectionAnalyzer @Inject constructor(
      * Uses mutex to prevent race conditions during concurrent initialization attempts.
      */
     suspend fun initializeModel(): Boolean = modelStateMutex.withLock {
+        Log.i(TAG, "=== initializeModel START ===")
         withContext(Dispatchers.IO) {
             try {
                 val settings = aiSettingsRepository.settings.first()
+                Log.d(TAG, "initializeModel settings: enabled=${settings.enabled}, selectedModel=${settings.selectedModel}")
 
                 if (!settings.enabled) {
-                    Log.d(TAG, "AI analysis is disabled")
+                    Log.w(TAG, "AI analysis is disabled in settings - returning false")
                     return@withContext false
                 }
 
@@ -349,17 +352,33 @@ class DetectionAnalyzer @Inject constructor(
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
+        Log.i(TAG, "=== analyzeDetection START ===")
+        Log.d(TAG, "Detection: ${detection.id} (${detection.deviceType})")
 
         // Lazy initialization: ensure model is loaded before analysis
         // This handles cases where model was downloaded but not yet initialized
         val settings = aiSettingsRepository.settings.first()
         val modelFromSettings = AiModel.fromId(settings.selectedModel)
+
+        Log.d(TAG, "Settings check:")
+        Log.d(TAG, "  - enabled: ${settings.enabled}")
+        Log.d(TAG, "  - analyzeDetections: ${settings.analyzeDetections}")
+        Log.d(TAG, "  - selectedModel: ${settings.selectedModel}")
+        Log.d(TAG, "  - modelFromSettings: ${modelFromSettings.id} (${modelFromSettings.displayName})")
+        Log.d(TAG, "  - currentModel (in-memory): ${currentModel.id}")
+        Log.d(TAG, "  - isModelLoaded: $isModelLoaded")
+        Log.d(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
+
         if (settings.enabled && modelFromSettings != AiModel.RULE_BASED && !isModelLoaded) {
-            Log.d(TAG, "Model not loaded, attempting lazy initialization for: ${modelFromSettings.displayName}")
+            Log.i(TAG, "Model not loaded, attempting lazy initialization for: ${modelFromSettings.displayName}")
             val initialized = initializeModel()
+            Log.d(TAG, "Lazy initialization result: $initialized")
+            Log.d(TAG, "After init - isModelLoaded: $isModelLoaded, mediaPipeReady: ${mediaPipeLlmClient.isReady()}")
             if (!initialized) {
                 Log.w(TAG, "Lazy initialization failed, will use rule-based fallback")
             }
+        } else {
+            Log.d(TAG, "Skipping lazy init: enabled=${settings.enabled}, modelFromSettings=${modelFromSettings.id}, isModelLoaded=$isModelLoaded")
         }
 
         // Check if already analyzing - return early with informative message
@@ -391,6 +410,7 @@ class DetectionAnalyzer @Inject constructor(
 
             // Settings already loaded above for lazy initialization
             if (!settings.enabled || !settings.analyzeDetections) {
+                Log.w(TAG, "Returning 'AI analysis is disabled': enabled=${settings.enabled}, analyzeDetections=${settings.analyzeDetections}")
                 return@withContext AiAnalysisResult(
                     success = false,
                     error = "AI analysis is disabled"
@@ -432,8 +452,24 @@ class DetectionAnalyzer @Inject constructor(
 
             // Generate analysis
             val result = generateAnalysis(detection, contextualInsights, settings)
+
+            // Check for cancellation before FP analysis
+            coroutineContext.ensureActive()
+
+            // Run false positive analysis if enabled
+            val fpResult = if (settings.enableFalsePositiveFiltering) {
+                val contextInfo = buildFpContextInfo(detection, contextualInsights)
+                falsePositiveAnalyzer.analyzeForFalsePositive(detection, contextInfo)
+            } else null
+
             val processingTime = System.currentTimeMillis() - startTime
-            val finalResult = result.copy(processingTimeMs = processingTime)
+            val finalResult = result.copy(
+                processingTimeMs = processingTime,
+                isFalsePositive = fpResult?.isFalsePositive ?: false,
+                falsePositiveConfidence = fpResult?.confidence ?: 0f,
+                falsePositiveBanner = fpResult?.bannerMessage,
+                falsePositiveReasons = fpResult?.allReasons?.map { it.description } ?: emptyList()
+            )
 
             // Check for cancellation before caching
             coroutineContext.ensureActive()
@@ -488,6 +524,48 @@ class DetectionAnalyzer @Inject constructor(
         }
         Log.d(TAG, "Analysis cancellation requested")
     }
+
+    // ==================== FALSE POSITIVE ANALYSIS ====================
+
+    /**
+     * Check a single detection for false positive likelihood.
+     * Returns the FP result with banner message if applicable.
+     */
+    suspend fun checkForFalsePositive(detection: Detection): FalsePositiveResult {
+        return falsePositiveAnalyzer.analyzeForFalsePositive(detection)
+    }
+
+    /**
+     * Filter a list of detections, removing likely false positives.
+     * Returns filtered results with FP explanations.
+     *
+     * @param detections List of detections to filter
+     * @param confidenceThreshold Minimum FP confidence to filter (0.0-1.0, default 0.6)
+     */
+    suspend fun filterFalsePositives(
+        detections: List<Detection>,
+        confidenceThreshold: Float = 0.6f
+    ): FilteredDetections {
+        return falsePositiveAnalyzer.filterFalsePositives(
+            detections = detections,
+            threshold = confidenceThreshold
+        )
+    }
+
+    /**
+     * Batch analyze detections for false positives.
+     * Returns a map of detection ID to FP result.
+     */
+    suspend fun batchCheckFalsePositives(
+        detections: List<Detection>
+    ): Map<String, FalsePositiveResult> {
+        return falsePositiveAnalyzer.analyzeMultiple(detections)
+    }
+
+    /**
+     * Get the false positive analyzer for direct access if needed.
+     */
+    fun getFalsePositiveAnalyzer(): FalsePositiveAnalyzer = falsePositiveAnalyzer
 
     private suspend fun gatherContextualInsights(detection: Detection): ContextualInsights {
         val allDetections = detectionRepository.getAllDetectionsSnapshot()
@@ -561,12 +639,46 @@ class DetectionAnalyzer @Inject constructor(
         return r * c
     }
 
+    /**
+     * Build context information for false positive analysis.
+     * Uses contextual insights and detection location to determine user context.
+     */
+    private fun buildFpContextInfo(
+        detection: Detection,
+        contextualInsights: ContextualInsights?
+    ): FpContextInfo {
+        // Determine time of day
+        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val isNightTime = currentHour < 6 || currentHour >= 22
+
+        // Check if at a known/familiar location
+        val isKnownLocation = contextualInsights?.isKnownLocation ?: false
+
+        return FpContextInfo(
+            isAtHome = isKnownLocation && detection.latitude != null,
+            homeLatitude = if (isKnownLocation) detection.latitude else null,
+            homeLongitude = if (isKnownLocation) detection.longitude else null,
+            isAtWork = false, // Would need user preference storage
+            isKnownSafeArea = isKnownLocation,
+            isNightTime = isNightTime,
+            recentlyTraveled = false // Would need location history
+        )
+    }
+
     @Suppress("UNUSED_PARAMETER")
     private suspend fun generateAnalysis(
         detection: Detection,
         contextualInsights: ContextualInsights?,
         settings: AiSettings // Reserved for future use with inference configuration
     ): AiAnalysisResult {
+        Log.i(TAG, "=== generateAnalysis START ===")
+        Log.d(TAG, "State at generateAnalysis:")
+        Log.d(TAG, "  - currentModel: ${currentModel.id} (${currentModel.displayName})")
+        Log.d(TAG, "  - isModelLoaded: $isModelLoaded")
+        Log.d(TAG, "  - geminiNanoInitialized: $geminiNanoInitialized")
+        Log.d(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
+        Log.d(TAG, "  - mediaPipeLlmClient.getStatus(): ${mediaPipeLlmClient.getStatus()}")
+
         // Use Gemini Nano if available and selected
         if (currentModel == AiModel.GEMINI_NANO && geminiNanoInitialized) {
             val geminiResult = geminiNanoClient.analyzeDetection(detection)

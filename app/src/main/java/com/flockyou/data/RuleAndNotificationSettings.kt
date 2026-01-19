@@ -26,6 +26,8 @@ data class NotificationSettings(
     val vibratePattern: VibratePattern = VibratePattern.DEFAULT,
     val showOnLockScreen: Boolean = true,
     val persistentNotification: Boolean = true,
+    val bypassDnd: Boolean = true, // Allow critical alerts to bypass Do Not Disturb
+    val emergencyPopupEnabled: Boolean = true, // Show full-screen CMAS/WEA-style emergency popup for critical alerts
     val criticalAlertsEnabled: Boolean = true,
     val highAlertsEnabled: Boolean = true,
     val mediumAlertsEnabled: Boolean = true,
@@ -55,6 +57,8 @@ class NotificationSettingsRepository @Inject constructor(
         val VIBRATE_PATTERN = stringPreferencesKey("notifications_vibrate_pattern")
         val SHOW_LOCK_SCREEN = booleanPreferencesKey("notifications_lock_screen")
         val PERSISTENT = booleanPreferencesKey("notifications_persistent")
+        val BYPASS_DND = booleanPreferencesKey("notifications_bypass_dnd")
+        val EMERGENCY_POPUP = booleanPreferencesKey("notifications_emergency_popup")
         val CRITICAL_ALERTS = booleanPreferencesKey("alerts_critical")
         val HIGH_ALERTS = booleanPreferencesKey("alerts_high")
         val MEDIUM_ALERTS = booleanPreferencesKey("alerts_medium")
@@ -70,11 +74,13 @@ class NotificationSettingsRepository @Inject constructor(
             enabled = prefs[Keys.ENABLED] ?: true,
             sound = prefs[Keys.SOUND] ?: true,
             vibrate = prefs[Keys.VIBRATE] ?: true,
-            vibratePattern = prefs[Keys.VIBRATE_PATTERN]?.let { 
+            vibratePattern = prefs[Keys.VIBRATE_PATTERN]?.let {
                 try { VibratePattern.valueOf(it) } catch (e: Exception) { VibratePattern.DEFAULT }
             } ?: VibratePattern.DEFAULT,
             showOnLockScreen = prefs[Keys.SHOW_LOCK_SCREEN] ?: true,
             persistentNotification = prefs[Keys.PERSISTENT] ?: true,
+            bypassDnd = prefs[Keys.BYPASS_DND] ?: true,
+            emergencyPopupEnabled = prefs[Keys.EMERGENCY_POPUP] ?: true,
             criticalAlertsEnabled = prefs[Keys.CRITICAL_ALERTS] ?: true,
             highAlertsEnabled = prefs[Keys.HIGH_ALERTS] ?: true,
             mediumAlertsEnabled = prefs[Keys.MEDIUM_ALERTS] ?: true,
@@ -92,11 +98,13 @@ class NotificationSettingsRepository @Inject constructor(
                 enabled = prefs[Keys.ENABLED] ?: true,
                 sound = prefs[Keys.SOUND] ?: true,
                 vibrate = prefs[Keys.VIBRATE] ?: true,
-                vibratePattern = prefs[Keys.VIBRATE_PATTERN]?.let { 
+                vibratePattern = prefs[Keys.VIBRATE_PATTERN]?.let {
                     try { VibratePattern.valueOf(it) } catch (e: Exception) { VibratePattern.DEFAULT }
                 } ?: VibratePattern.DEFAULT,
                 showOnLockScreen = prefs[Keys.SHOW_LOCK_SCREEN] ?: true,
                 persistentNotification = prefs[Keys.PERSISTENT] ?: true,
+                bypassDnd = prefs[Keys.BYPASS_DND] ?: true,
+                emergencyPopupEnabled = prefs[Keys.EMERGENCY_POPUP] ?: true,
                 criticalAlertsEnabled = prefs[Keys.CRITICAL_ALERTS] ?: true,
                 highAlertsEnabled = prefs[Keys.HIGH_ALERTS] ?: true,
                 mediumAlertsEnabled = prefs[Keys.MEDIUM_ALERTS] ?: true,
@@ -113,6 +121,8 @@ class NotificationSettingsRepository @Inject constructor(
             prefs[Keys.VIBRATE_PATTERN] = updated.vibratePattern.name
             prefs[Keys.SHOW_LOCK_SCREEN] = updated.showOnLockScreen
             prefs[Keys.PERSISTENT] = updated.persistentNotification
+            prefs[Keys.BYPASS_DND] = updated.bypassDnd
+            prefs[Keys.EMERGENCY_POPUP] = updated.emergencyPopupEnabled
             prefs[Keys.CRITICAL_ALERTS] = updated.criticalAlertsEnabled
             prefs[Keys.HIGH_ALERTS] = updated.highAlertsEnabled
             prefs[Keys.MEDIUM_ALERTS] = updated.mediumAlertsEnabled

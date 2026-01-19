@@ -16,9 +16,9 @@
 </p>
 
 <p align="center">
-  <h3 align="center">Watch the Watchers.</h3>
+  <h3 align="center">Watch the Watchers 🥰</h3>
   
-  <p align="center"><b style="color: #eb2a2a;">FUCK</b> Palantir, <b style="color: #eb2a2a;">FUCK</b> ICE, <b style="color: #eb2a2a;">FUCK</b> ANY FASCIST PRICK.</p>
+  <p align="center"><b style="color: #eb2a2a;">CHAOS ANTI-ICE-ING TOOL</b></p>
   <p align="center">WE SEE YOU TOO, <b>WE WONT FORGET <b style="color: #eb2a2a;">YOUR ACTIONS</b></b></p>
 
    <p align="center"><b>Brought to you by <span style="color: #0883f6">CHAOS.CORP</span></b></p>

@@ -55,6 +55,7 @@ object ScanningServiceIpc {
     const val MSG_ULTRASONIC_DATA = 112
     const val MSG_LAST_DETECTION = 113
     const val MSG_GNSS_DATA = 114
+    const val MSG_DETECTOR_HEALTH = 115
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -92,6 +93,7 @@ object ScanningServiceIpc {
     const val KEY_GNSS_ANOMALIES_JSON = "gnss_anomalies_json"
     const val KEY_GNSS_EVENTS_JSON = "gnss_events_json"
     const val KEY_GNSS_MEASUREMENTS_JSON = "gnss_measurements_json"
+    const val KEY_DETECTOR_HEALTH_JSON = "detector_health_json"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -202,6 +204,10 @@ object ScanningServiceIpc {
                         eventsJson = bundle?.getString(KEY_GNSS_EVENTS_JSON),
                         measurementsJson = bundle?.getString(KEY_GNSS_MEASUREMENTS_JSON)
                     )
+                }
+                MSG_DETECTOR_HEALTH -> {
+                    val json = msg.data?.getString(KEY_DETECTOR_HEALTH_JSON)
+                    connection.updateDetectorHealth(json)
                 }
                 else -> super.handleMessage(msg)
             }
@@ -333,6 +339,10 @@ class ScanningServiceConnection(private val context: Context) {
 
     private val _gnssMeasurements = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?>(null)
     val gnssMeasurements: StateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?> = _gnssMeasurements.asStateFlow()
+
+    // Detector health status (mirrored from service process)
+    private val _detectorHealth = MutableStateFlow<Map<String, ScanningService.DetectorHealthStatus>>(emptyMap())
+    val detectorHealth: StateFlow<Map<String, ScanningService.DetectorHealthStatus>> = _detectorHealth.asStateFlow()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -736,6 +746,17 @@ class ScanningServiceConnection(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse GNSS data JSON", e)
+        }
+    }
+
+    internal fun updateDetectorHealth(json: String?) {
+        if (json == null) return
+        try {
+            val type = object : TypeToken<Map<String, ScanningService.DetectorHealthStatus>>() {}.type
+            val health: Map<String, ScanningService.DetectorHealthStatus> = ScanningServiceIpc.gson.fromJson(json, type)
+            _detectorHealth.value = health
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse detector health JSON", e)
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.flockyou.ui.screens
 
 import android.app.Application
+import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,10 @@ class AiSettingsViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val detectionAnalyzer: DetectionAnalyzer
 ) : AndroidViewModel(application) {
+
+    companion object {
+        private const val TAG = "AiSettingsViewModel"
+    }
 
     val aiSettings: StateFlow<AiSettings> = aiSettingsRepository.settings
         .stateIn(
@@ -148,6 +153,12 @@ class AiSettingsViewModel @Inject constructor(
         }
     }
 
+    fun setFalsePositiveFiltering(enabled: Boolean) {
+        viewModelScope.launch {
+            aiSettingsRepository.setFalsePositiveFiltering(enabled)
+        }
+    }
+
     fun selectModelForDownload(model: AiModel) {
         _selectedModelForDownload.value = model
     }
@@ -191,15 +202,18 @@ class AiSettingsViewModel @Inject constructor(
                 }
 
                 if (success) {
+                    Log.i(TAG, "Download succeeded for ${model.displayName}, enabling AI and initializing...")
                     // Enable AI analysis after successful download
                     aiSettingsRepository.setEnabled(true)
+                    Log.d(TAG, "AI enabled, now calling initializeModel()...")
                     Toast.makeText(
                         application,
                         "${model.displayName} ready",
                         Toast.LENGTH_SHORT
                     ).show()
                     // Now initialize the model (AI is enabled so this will work)
-                    detectionAnalyzer.initializeModel()
+                    val initResult = detectionAnalyzer.initializeModel()
+                    Log.i(TAG, "initializeModel() returned: $initResult")
                 } else {
                     val errorMsg = "Failed to download ${model.displayName}"
                     _downloadError.value = errorMsg
@@ -275,6 +289,8 @@ class AiSettingsViewModel @Inject constructor(
 
     fun testAnalysis() {
         viewModelScope.launch {
+            Log.i(TAG, "=== testAnalysis START ===")
+
             // Create a test detection
             val testDetection = Detection(
                 protocol = DetectionProtocol.WIFI,
@@ -289,12 +305,15 @@ class AiSettingsViewModel @Inject constructor(
                 manufacturer = "Flock Safety"
             )
 
+            Log.d(TAG, "Calling detectionAnalyzer.analyzeDetection()...")
             val result = detectionAnalyzer.analyzeDetection(testDetection)
+            Log.i(TAG, "testAnalysis result: success=${result.success}, model=${result.modelUsed}, error=${result.error}")
 
             when {
                 result.success -> {
                     _testResult.value = result.analysis
                     val modelInfo = if (result.modelUsed == "rule-based") "rule-based" else result.modelUsed
+                    Log.i(TAG, "Test analysis succeeded with model: $modelInfo")
                     Toast.makeText(
                         application,
                         "Analysis completed in ${result.processingTimeMs}ms ($modelInfo)",
@@ -303,10 +322,12 @@ class AiSettingsViewModel @Inject constructor(
                 }
                 result.wasCancelled -> {
                     _testResult.value = null
+                    Log.d(TAG, "Test analysis was cancelled")
                     // No toast for cancellation - user initiated it
                 }
                 else -> {
                     _testResult.value = null
+                    Log.w(TAG, "Test analysis failed: ${result.error}")
                     Toast.makeText(
                         application,
                         result.error ?: "Analysis failed",

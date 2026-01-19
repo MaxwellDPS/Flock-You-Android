@@ -17,9 +17,11 @@ import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import android.provider.Settings
 import com.flockyou.BuildConfig
 import com.flockyou.MainActivity
 import com.flockyou.R
+import com.flockyou.ui.EmergencyAlertActivity
 import com.flockyou.data.model.*
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.FlockYouDatabase
@@ -127,6 +129,15 @@ class ScanningService : Service() {
         val gnssEvents = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>>(emptyList())
         val gnssMeasurements = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?>(null)
         val gnssMonitorStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+
+        // Detector health tracking for all subsystems
+        val detectorHealth = MutableStateFlow<Map<String, DetectorHealthStatus>>(emptyMap())
+
+        // Constants for health monitoring
+        private const val MAX_CONSECUTIVE_FAILURES = 5
+        private const val MAX_RESTART_ATTEMPTS = 5
+        private const val HEALTH_CHECK_INTERVAL_MS = 30_000L // 30 seconds
+        private const val DETECTOR_STALE_THRESHOLD_MS = 120_000L // 2 minutes without scan = stale
 
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
@@ -420,7 +431,38 @@ class ScanningService : Service() {
         val message: String,
         val recoverable: Boolean = true
     )
-    
+
+    /** Detector health status for monitoring individual detector subsystems */
+    data class DetectorHealthStatus(
+        val name: String,
+        val isRunning: Boolean = false,
+        val lastSuccessfulScan: Long? = null,
+        val consecutiveFailures: Int = 0,
+        val lastError: String? = null,
+        val lastErrorTime: Long? = null,
+        val restartCount: Int = 0,
+        val isHealthy: Boolean = true
+    ) {
+        companion object {
+            const val DETECTOR_ULTRASONIC = "Ultrasonic"
+            const val DETECTOR_ROGUE_WIFI = "RogueWiFi"
+            const val DETECTOR_RF_SIGNAL = "RfSignal"
+            const val DETECTOR_CELLULAR = "Cellular"
+            const val DETECTOR_GNSS = "GNSS"
+            const val DETECTOR_SATELLITE = "Satellite"
+            const val DETECTOR_BLE = "BLE"
+            const val DETECTOR_WIFI = "WiFi"
+        }
+    }
+
+    /** Callback interface for detectors to report errors and health status */
+    interface DetectorCallback {
+        fun onError(detectorName: String, error: String, recoverable: Boolean = true)
+        fun onScanSuccess(detectorName: String)
+        fun onDetectorStarted(detectorName: String)
+        fun onDetectorStopped(detectorName: String)
+    }
+
     @Inject
     lateinit var repository: DetectionRepository
 
@@ -436,9 +478,14 @@ class ScanningService : Service() {
     @Inject
     lateinit var scanSettingsRepository: com.flockyou.data.ScanSettingsRepository
 
+    @Inject
+    lateinit var notificationSettingsRepository: com.flockyou.data.NotificationSettingsRepository
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
+
+    private var currentNotificationSettings: com.flockyou.data.NotificationSettings = com.flockyou.data.NotificationSettings()
 
     // Screen lock receiver for auto-purge feature (Priority 5)
     private var screenLockReceiver: ScreenLockReceiver? = null
@@ -472,6 +519,7 @@ class ScanningService : Service() {
     private var broadcastSettingsJob: Job? = null
     private var privacySettingsJob: Job? = null
     private var scanSettingsJob: Job? = null
+    private var notificationSettingsJob: Job? = null
 
     // Location update jobs (for proper lifecycle management)
     private var cellularLocationJob: Job? = null
@@ -498,6 +546,34 @@ class ScanningService : Service() {
 
     // GNSS satellite monitor
     private var gnssSatelliteMonitor: com.flockyou.monitoring.GnssSatelliteMonitor? = null
+
+    // Health check job for monitoring detector health
+    private var healthCheckJob: Job? = null
+
+    // Detector callback implementation for handling errors and health updates
+    private val detectorCallbackImpl = object : DetectorCallback {
+        override fun onError(detectorName: String, error: String, recoverable: Boolean) {
+            handleDetectorError(detectorName, error, recoverable)
+        }
+
+        override fun onScanSuccess(detectorName: String) {
+            handleDetectorSuccess(detectorName)
+        }
+
+        override fun onDetectorStarted(detectorName: String) {
+            updateDetectorHealth(detectorName) { current ->
+                current.copy(isRunning = true)
+            }
+            broadcastDetectorHealth()
+        }
+
+        override fun onDetectorStopped(detectorName: String) {
+            updateDetectorHealth(detectorName) { current ->
+                current.copy(isRunning = false)
+            }
+            broadcastDetectorHealth()
+        }
+    }
 
     // Wake lock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
@@ -943,22 +1019,22 @@ class ScanningService : Service() {
         }
         
         // Initialize Cellular Monitor
-        cellularMonitor = CellularMonitor(applicationContext)
+        cellularMonitor = CellularMonitor(applicationContext, detectorCallbackImpl)
 
-        // Initialize Satellite Monitor
-        satelliteMonitor = com.flockyou.monitoring.SatelliteMonitor(applicationContext)
+        // Initialize Satellite Monitor with error callback
+        satelliteMonitor = com.flockyou.monitoring.SatelliteMonitor(applicationContext, detectorCallbackImpl)
 
-        // Initialize Rogue WiFi Monitor
-        rogueWifiMonitor = RogueWifiMonitor(applicationContext)
+        // Initialize Rogue WiFi Monitor with error callback
+        rogueWifiMonitor = RogueWifiMonitor(applicationContext, detectorCallbackImpl)
 
-        // Initialize RF Signal Analyzer
-        rfSignalAnalyzer = RfSignalAnalyzer(applicationContext)
+        // Initialize RF Signal Analyzer with error callback
+        rfSignalAnalyzer = RfSignalAnalyzer(applicationContext, detectorCallbackImpl)
 
-        // Initialize Ultrasonic Detector
-        ultrasonicDetector = UltrasonicDetector(applicationContext)
+        // Initialize Ultrasonic Detector with error callback
+        ultrasonicDetector = UltrasonicDetector(applicationContext, detectorCallbackImpl)
 
-        // Initialize GNSS Satellite Monitor
-        gnssSatelliteMonitor = com.flockyou.monitoring.GnssSatelliteMonitor(applicationContext)
+        // Initialize GNSS Satellite Monitor with error callback
+        gnssSatelliteMonitor = com.flockyou.monitoring.GnssSatelliteMonitor(applicationContext, detectorCallbackImpl)
 
         createNotificationChannel()
     }
@@ -1209,6 +1285,14 @@ class ScanningService : Service() {
             }
         }
 
+        // Collect notification settings for emergency popup feature
+        notificationSettingsJob = serviceScope.launch {
+            notificationSettingsRepository.settings.collect { settings ->
+                currentNotificationSettings = settings
+                Log.d(TAG, "Notification settings updated - emergency popup: ${settings.emergencyPopupEnabled}")
+            }
+        }
+
         // Register screen lock receiver for auto-purge feature (Priority 5)
         try {
             screenLockReceiver = ScreenLockReceiver.register(this)
@@ -1221,7 +1305,7 @@ class ScanningService : Service() {
         registerNukeReceiver()
 
         val config = currentSettings.value
-        
+
         // Check permissions first
         if (!hasBluetoothPermissions()) {
             bleStatus.value = SubsystemStatus.PermissionDenied("BLUETOOTH_SCAN")
@@ -1269,6 +1353,10 @@ class ScanningService : Service() {
 
         // Start GNSS satellite monitoring (uses location permission already granted)
         startGnssMonitoring()
+
+        // Initialize and start detector health monitoring
+        initializeDetectorHealth()
+        startHealthCheckJob()
 
         // Start heartbeat monitoring - sends periodic heartbeats to watchdog
         ServiceRestartReceiver.scheduleHeartbeat(this)
@@ -1448,6 +1536,8 @@ class ScanningService : Service() {
         privacySettingsJob = null
         scanSettingsJob?.cancel()
         scanSettingsJob = null
+        notificationSettingsJob?.cancel()
+        notificationSettingsJob = null
 
         scanJob?.cancel()
         stopBleScan()
@@ -1458,6 +1548,9 @@ class ScanningService : Service() {
         stopRfSignalAnalysis()
         stopUltrasonicDetection()
         stopGnssMonitoring()
+
+        // Stop health check job
+        stopHealthCheckJob()
 
         // Unregister screen lock receiver
         screenLockReceiver?.let {
@@ -2917,6 +3010,19 @@ class ScanningService : Service() {
     }
     
     private fun alertUser(detection: Detection) {
+        val notifSettings = currentNotificationSettings
+
+        // Check if we should show emergency popup for CRITICAL threats
+        if (detection.threatLevel == ThreatLevel.CRITICAL &&
+            notifSettings.emergencyPopupEnabled &&
+            Settings.canDrawOverlays(this)
+        ) {
+            showEmergencyPopup(detection)
+            // Emergency popup handles its own sound and vibration, skip regular alert
+            sendDetectionBroadcast(detection)
+            return
+        }
+
         // Vibrate based on threat level
         val pattern = when (detection.threatLevel) {
             ThreatLevel.CRITICAL -> longArrayOf(0, 200, 100, 200, 100, 200)
@@ -2924,19 +3030,56 @@ class ScanningService : Service() {
             ThreatLevel.MEDIUM -> longArrayOf(0, 100, 100, 100)
             else -> longArrayOf(0, 100, 100)
         }
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
         } else {
             @Suppress("DEPRECATION")
             vibrator.vibrate(pattern, -1)
         }
-        
+
         // Send notification
         sendDetectionNotification(detection)
 
         // Send broadcast for automation apps
         sendDetectionBroadcast(detection)
+    }
+
+    /**
+     * Shows a full-screen CMAS/WEA-style emergency alert popup for critical threats.
+     * This displays above the lock screen and plays an alarm sound.
+     */
+    private fun showEmergencyPopup(detection: Detection) {
+        Log.w(TAG, "Showing emergency popup for CRITICAL detection: ${detection.deviceType}")
+
+        val notifSettings = currentNotificationSettings
+
+        val title = "SURVEILLANCE ALERT"
+        val message = buildString {
+            append("A ")
+            append(detection.deviceType.name.replace("_", " "))
+            append(" has been detected in your vicinity.\n\n")
+            if (detection.deviceName.isNotBlank()) {
+                append("Device: ${detection.deviceName}\n")
+            }
+            if (detection.ssid.isNotBlank()) {
+                append("Network: ${detection.ssid}\n")
+            }
+            append("\nTake appropriate security measures.")
+        }
+
+        val intent = EmergencyAlertActivity.createIntent(
+            context = this,
+            title = title,
+            message = message,
+            deviceType = detection.deviceType.name.replace("_", " "),
+            threatLevel = detection.threatLevel,
+            detectionId = detection.id,
+            playSound = notifSettings.sound,
+            vibrate = notifSettings.vibrate
+        )
+
+        startActivity(intent)
     }
 
     private fun sendDetectionNotification(detection: Detection) {
@@ -3172,5 +3315,240 @@ class ScanningService : Service() {
     
     private fun hasLocationPermissions(): Boolean {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
+
+    // ==================== Detector Health Management ====================
+
+    /**
+     * Start the periodic health check job that monitors detector health
+     * and attempts to restart stalled detectors.
+     */
+    private fun startHealthCheckJob() {
+        healthCheckJob?.cancel()
+        healthCheckJob = serviceScope.launch {
+            while (isActive && isScanning.value) {
+                delay(HEALTH_CHECK_INTERVAL_MS)
+                performHealthCheck()
+            }
+        }
+        Log.d(TAG, "Health check job started")
+    }
+
+    /**
+     * Stop the health check job.
+     */
+    private fun stopHealthCheckJob() {
+        healthCheckJob?.cancel()
+        healthCheckJob = null
+        Log.d(TAG, "Health check job stopped")
+    }
+
+    /**
+     * Perform a health check on all detectors and attempt to restart any that are stalled.
+     */
+    private fun performHealthCheck() {
+        val now = System.currentTimeMillis()
+        val currentHealth = detectorHealth.value.toMutableMap()
+
+        for ((detectorName, status) in currentHealth) {
+            if (!status.isRunning) continue
+
+            // Check if detector has gone stale (no successful scan in threshold time)
+            val lastSuccess = status.lastSuccessfulScan
+            if (lastSuccess != null && (now - lastSuccess) > DETECTOR_STALE_THRESHOLD_MS) {
+                Log.w(TAG, "Detector $detectorName appears stalled (no scan in ${(now - lastSuccess) / 1000}s)")
+
+                // Mark as unhealthy
+                currentHealth[detectorName] = status.copy(
+                    isHealthy = false,
+                    consecutiveFailures = status.consecutiveFailures + 1
+                )
+
+                // Attempt restart if we haven't exceeded max attempts
+                if (status.restartCount < MAX_RESTART_ATTEMPTS) {
+                    attemptDetectorRestart(detectorName)
+                } else {
+                    Log.e(TAG, "Detector $detectorName exceeded max restart attempts (${MAX_RESTART_ATTEMPTS})")
+                    logError(detectorName, -1, "Detector failed after ${MAX_RESTART_ATTEMPTS} restart attempts", recoverable = false)
+                }
+            }
+        }
+
+        detectorHealth.value = currentHealth
+        broadcastDetectorHealth()
+    }
+
+    /**
+     * Handle an error from a detector.
+     */
+    private fun handleDetectorError(detectorName: String, error: String, recoverable: Boolean) {
+        Log.e(TAG, "Detector error [$detectorName]: $error (recoverable=$recoverable)")
+
+        updateDetectorHealth(detectorName) { current ->
+            val newFailures = current.consecutiveFailures + 1
+            current.copy(
+                consecutiveFailures = newFailures,
+                lastError = error,
+                lastErrorTime = System.currentTimeMillis(),
+                isHealthy = newFailures < MAX_CONSECUTIVE_FAILURES
+            )
+        }
+
+        // Log to error log
+        logError(detectorName, -1, error, recoverable)
+
+        // Attempt restart if recoverable and not exceeded max failures
+        val currentStatus = detectorHealth.value[detectorName]
+        if (recoverable && currentStatus != null &&
+            currentStatus.consecutiveFailures < MAX_CONSECUTIVE_FAILURES &&
+            currentStatus.restartCount < MAX_RESTART_ATTEMPTS) {
+            // Use exponential backoff for restart delay
+            val delayMs = (1000L * (1 shl currentStatus.consecutiveFailures.coerceAtMost(4))).coerceAtMost(30_000L)
+            serviceScope.launch {
+                delay(delayMs)
+                attemptDetectorRestart(detectorName)
+            }
+        }
+
+        broadcastDetectorHealth()
+    }
+
+    /**
+     * Handle a successful scan from a detector.
+     */
+    private fun handleDetectorSuccess(detectorName: String) {
+        updateDetectorHealth(detectorName) { current ->
+            current.copy(
+                lastSuccessfulScan = System.currentTimeMillis(),
+                consecutiveFailures = 0,
+                isHealthy = true
+            )
+        }
+    }
+
+    /**
+     * Update detector health status with a transformation function.
+     */
+    private fun updateDetectorHealth(detectorName: String, transform: (DetectorHealthStatus) -> DetectorHealthStatus) {
+        val current = detectorHealth.value.toMutableMap()
+        val existing = current[detectorName] ?: DetectorHealthStatus(name = detectorName)
+        current[detectorName] = transform(existing)
+        detectorHealth.value = current
+    }
+
+    /**
+     * Initialize detector health tracking for all detectors.
+     */
+    private fun initializeDetectorHealth() {
+        val initialHealth = mapOf(
+            DetectorHealthStatus.DETECTOR_BLE to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_BLE),
+            DetectorHealthStatus.DETECTOR_WIFI to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_WIFI),
+            DetectorHealthStatus.DETECTOR_ULTRASONIC to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_ULTRASONIC),
+            DetectorHealthStatus.DETECTOR_ROGUE_WIFI to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_ROGUE_WIFI),
+            DetectorHealthStatus.DETECTOR_RF_SIGNAL to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_RF_SIGNAL),
+            DetectorHealthStatus.DETECTOR_CELLULAR to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_CELLULAR),
+            DetectorHealthStatus.DETECTOR_GNSS to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_GNSS),
+            DetectorHealthStatus.DETECTOR_SATELLITE to DetectorHealthStatus(name = DetectorHealthStatus.DETECTOR_SATELLITE)
+        )
+        detectorHealth.value = initialHealth
+    }
+
+    /**
+     * Attempt to restart a specific detector.
+     */
+    private fun attemptDetectorRestart(detectorName: String) {
+        Log.i(TAG, "Attempting to restart detector: $detectorName")
+
+        // Increment restart count
+        updateDetectorHealth(detectorName) { current ->
+            current.copy(restartCount = current.restartCount + 1)
+        }
+
+        when (detectorName) {
+            DetectorHealthStatus.DETECTOR_ULTRASONIC -> {
+                try {
+                    ultrasonicDetector?.stopMonitoring()
+                    ultrasonicDetector?.startMonitoring()
+                    Log.i(TAG, "Ultrasonic detector restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart ultrasonic detector", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_ROGUE_WIFI -> {
+                try {
+                    rogueWifiMonitor?.stopMonitoring()
+                    rogueWifiMonitor?.startMonitoring()
+                    Log.i(TAG, "Rogue WiFi monitor restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart rogue WiFi monitor", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_RF_SIGNAL -> {
+                try {
+                    rfSignalAnalyzer?.stopMonitoring()
+                    rfSignalAnalyzer?.startMonitoring()
+                    Log.i(TAG, "RF signal analyzer restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart RF signal analyzer", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_CELLULAR -> {
+                try {
+                    cellularMonitor?.stopMonitoring()
+                    cellularMonitor?.startMonitoring()
+                    Log.i(TAG, "Cellular monitor restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart cellular monitor", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_GNSS -> {
+                try {
+                    gnssSatelliteMonitor?.stopMonitoring()
+                    gnssSatelliteMonitor?.startMonitoring()
+                    Log.i(TAG, "GNSS monitor restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart GNSS monitor", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_SATELLITE -> {
+                try {
+                    satelliteMonitor?.stopMonitoring()
+                    satelliteMonitor?.startMonitoring()
+                    Log.i(TAG, "Satellite monitor restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart satellite monitor", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_BLE -> {
+                try {
+                    stopBleScanning()
+                    startBleScanning()
+                    Log.i(TAG, "BLE scanner restarted")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart BLE scanner", e)
+                }
+            }
+            DetectorHealthStatus.DETECTOR_WIFI -> {
+                // WiFi scanning is triggered by system, just log
+                Log.i(TAG, "WiFi scanner restart requested (system-triggered)")
+            }
+        }
+
+        broadcastDetectorHealth()
+    }
+
+    /**
+     * Broadcast detector health status to all IPC clients.
+     */
+    private fun broadcastDetectorHealth() {
+        if (ipcClients.isEmpty()) return
+        val healthJson = ScanningServiceIpc.gson.toJson(detectorHealth.value)
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_DETECTOR_HEALTH).apply {
+                data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_DETECTOR_HEALTH_JSON, healthJson)
+                }
+            }
+        }
     }
 }

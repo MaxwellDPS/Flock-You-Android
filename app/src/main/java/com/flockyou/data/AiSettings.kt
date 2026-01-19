@@ -30,6 +30,7 @@ data class AiSettings(
     val enableContextualAnalysis: Boolean = true, // Use location/time patterns
     val enableBatchAnalysis: Boolean = false, // Batch analysis for density mapping
     val trackAnalysisFeedback: Boolean = true, // Learn from user feedback
+    val enableFalsePositiveFiltering: Boolean = true, // Auto-filter likely false positives
     val maxTokens: Int = 256,
     val temperatureTenths: Int = 7, // 0.7 stored as int to avoid float precision issues
     val lastModelUpdate: Long = 0
@@ -209,7 +210,12 @@ data class AiAnalysisResult(
     val wasOnDevice: Boolean = true, // Always true - no cloud fallback
     val wasCancelled: Boolean = false, // True if analysis was cancelled by user
     // Structured output fields for programmatic use
-    val structuredData: StructuredAnalysis? = null
+    val structuredData: StructuredAnalysis? = null,
+    // False positive analysis results
+    val isFalsePositive: Boolean = false,
+    val falsePositiveConfidence: Float = 0f,
+    val falsePositiveBanner: String? = null, // User-friendly explanation if FP
+    val falsePositiveReasons: List<String> = emptyList()
 )
 
 /**
@@ -340,6 +346,7 @@ class AiSettingsRepository @Inject constructor(
         val CONTEXTUAL_ANALYSIS = booleanPreferencesKey("ai_contextual_analysis")
         val BATCH_ANALYSIS = booleanPreferencesKey("ai_batch_analysis")
         val TRACK_FEEDBACK = booleanPreferencesKey("ai_track_feedback")
+        val FALSE_POSITIVE_FILTERING = booleanPreferencesKey("ai_false_positive_filtering")
         val MAX_TOKENS = intPreferencesKey("ai_max_tokens")
         val TEMPERATURE_TENTHS = intPreferencesKey("ai_temperature_tenths")
         val LAST_MODEL_UPDATE = longPreferencesKey("ai_last_model_update")
@@ -360,6 +367,7 @@ class AiSettingsRepository @Inject constructor(
             enableContextualAnalysis = prefs[Keys.CONTEXTUAL_ANALYSIS] ?: true,
             enableBatchAnalysis = prefs[Keys.BATCH_ANALYSIS] ?: false,
             trackAnalysisFeedback = prefs[Keys.TRACK_FEEDBACK] ?: true,
+            enableFalsePositiveFiltering = prefs[Keys.FALSE_POSITIVE_FILTERING] ?: true,
             maxTokens = prefs[Keys.MAX_TOKENS] ?: 256,
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
             lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0
@@ -418,6 +426,10 @@ class AiSettingsRepository @Inject constructor(
 
     suspend fun setTrackFeedback(enabled: Boolean) {
         context.aiSettingsDataStore.edit { it[Keys.TRACK_FEEDBACK] = enabled }
+    }
+
+    suspend fun setFalsePositiveFiltering(enabled: Boolean) {
+        context.aiSettingsDataStore.edit { it[Keys.FALSE_POSITIVE_FILTERING] = enabled }
     }
 
     suspend fun setMaxTokens(tokens: Int) {

@@ -23,7 +23,10 @@ import java.util.UUID
  * Note: Android has limited RF access. This uses WiFi/BLE scan data as a proxy
  * for RF environment analysis. True spectrum analysis requires SDR hardware.
  */
-class RfSignalAnalyzer(private val context: Context) {
+class RfSignalAnalyzer(
+    private val context: Context,
+    private val errorCallback: ScanningService.DetectorCallback? = null
+) {
 
     companion object {
         private const val TAG = "RfSignalAnalyzer"
@@ -349,6 +352,8 @@ class RfSignalAnalyzer(private val context: Context) {
             title = "RF Analysis Started",
             description = "Monitoring for jammers, drones, and RF anomalies"
         )
+
+        errorCallback?.onDetectorStarted(ScanningService.DetectorHealthStatus.DETECTOR_RF_SIGNAL)
     }
 
     fun stopMonitoring() {
@@ -360,6 +365,7 @@ class RfSignalAnalyzer(private val context: Context) {
             description = "RF surveillance detection paused"
         )
 
+        errorCallback?.onDetectorStopped(ScanningService.DetectorHealthStatus.DETECTOR_RF_SIGNAL)
         Log.d(TAG, "Stopped RF signal analysis")
     }
 
@@ -374,6 +380,23 @@ class RfSignalAnalyzer(private val context: Context) {
     fun analyzeWifiScan(results: List<ScanResult>) {
         if (!isMonitoring) return
 
+        try {
+            analyzeWifiScanInternal(results)
+            errorCallback?.onScanSuccess(ScanningService.DetectorHealthStatus.DETECTOR_RF_SIGNAL)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error analyzing RF environment", e)
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_RF_SIGNAL,
+                "Analysis error: ${e.message}",
+                recoverable = true
+            )
+        }
+    }
+
+    /**
+     * Internal WiFi scan analysis
+     */
+    private fun analyzeWifiScanInternal(results: List<ScanResult>) {
         val now = System.currentTimeMillis()
 
         // Build snapshot

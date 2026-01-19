@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- CMAS/WEA-style Emergency Alert theme - full screen, above keyguard -->
+    <!-- Note: Show-when-locked behavior must be set programmatically via Activity.setShowWhenLocked() etc. -->
+    <style name="Theme.FlockYou.EmergencyAlert" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">#B71C1C</item>
+        <item name="android:navigationBarColor">#B71C1C</item>
+        <item name="android:keepScreenOn">true</item>
+    </style>
+</resources>

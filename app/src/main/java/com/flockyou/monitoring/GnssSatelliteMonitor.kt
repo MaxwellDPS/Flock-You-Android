@@ -41,7 +41,10 @@ import kotlin.math.abs
  * - Constellation anomalies (unexpected satellite configurations)
  * - Multipath interference
  */
-class GnssSatelliteMonitor(private val context: Context) {
+class GnssSatelliteMonitor(
+    private val context: Context,
+    private val errorCallback: com.flockyou.service.ScanningService.DetectorCallback? = null
+) {
 
     companion object {
         private const val TAG = "GnssSatelliteMonitor"
@@ -312,8 +315,18 @@ class GnssSatelliteMonitor(private val context: Context) {
         Log.i(TAG, "Starting GNSS Satellite Monitor")
         isMonitoring = true
 
-        registerGnssStatusCallback()
-        registerGnssMeasurementsCallback()
+        try {
+            registerGnssStatusCallback()
+            registerGnssMeasurementsCallback()
+            errorCallback?.onDetectorStarted(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_GNSS)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting GNSS monitoring", e)
+            errorCallback?.onError(
+                com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_GNSS,
+                "Failed to register GNSS callbacks: ${e.message}",
+                recoverable = true
+            )
+        }
 
         addTimelineEvent(
             type = GnssEventType.MONITORING_STARTED,
@@ -328,7 +341,11 @@ class GnssSatelliteMonitor(private val context: Context) {
         Log.i(TAG, "Stopping GNSS Satellite Monitor")
         isMonitoring = false
 
-        unregisterCallbacks()
+        try {
+            unregisterCallbacks()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering GNSS callbacks", e)
+        }
 
         // Cancel and recreate scope for potential restart
         coroutineScope.cancel()
@@ -339,6 +356,8 @@ class GnssSatelliteMonitor(private val context: Context) {
             title = "GNSS Monitoring Stopped",
             description = "Satellite data collection ended"
         )
+
+        errorCallback?.onDetectorStopped(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_GNSS)
     }
 
     fun updateLocation(latitude: Double, longitude: Double) {
@@ -511,6 +530,9 @@ class GnssSatelliteMonitor(private val context: Context) {
 
         // Run anomaly detection
         runAnomalyDetection(satelliteList, envStatus)
+
+        // Report successful scan
+        errorCallback?.onScanSuccess(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_GNSS)
     }
 
     @RequiresApi(Build.VERSION_CODES.N)

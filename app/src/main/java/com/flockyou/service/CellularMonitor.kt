@@ -32,7 +32,10 @@ import java.util.UUID
  * 6. Signal strength anomalies (unusual spikes)
  * 7. LAC/TAC changes without cell change
  */
-class CellularMonitor(private val context: Context) {
+class CellularMonitor(
+    private val context: Context,
+    private val errorCallback: ScanningService.DetectorCallback? = null
+) {
     
     companion object {
         private const val TAG = "CellularMonitor"
@@ -343,48 +346,77 @@ class CellularMonitor(private val context: Context) {
     
     fun startMonitoring() {
         if (isMonitoring) return
-        
+
         if (!hasPermissions()) {
             Log.w(TAG, "Missing required permissions for cellular monitoring")
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR,
+                "Missing required cellular permissions",
+                recoverable = false
+            )
             return
         }
-        
+
         isMonitoring = true
         Log.d(TAG, "Starting cellular monitoring")
-        
+
         // Add timeline event
         addTimelineEvent(
             type = CellularEventType.MONITORING_STARTED,
             title = "Cellular Monitoring Started",
             description = "Now monitoring for IMSI catcher indicators"
         )
-        
-        registerCellListener()
-        
+
+        try {
+            registerCellListener()
+            errorCallback?.onDetectorStarted(ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register cell listener", e)
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR,
+                "Failed to register cell listener: ${e.message}",
+                recoverable = true
+            )
+        }
+
         // Take initial snapshot
-        takeCellSnapshot()?.let { snapshot ->
-            cellHistory.add(snapshot)
-            lastKnownCell = snapshot
-            updateCellStatus(snapshot)
-            
-            // Mark initial cell as potentially trusted
-            snapshot.cellId?.let { cellId ->
-                getOrCreateTrustedCellInfo(cellId.toString()).apply {
-                    seenCount++
-                    lastSeen = System.currentTimeMillis()
-                    snapshot.latitude?.let { lat ->
-                        snapshot.longitude?.let { lon ->
-                            locations.add(lat to lon)
+        try {
+            takeCellSnapshot()?.let { snapshot ->
+                cellHistory.add(snapshot)
+                lastKnownCell = snapshot
+                updateCellStatus(snapshot)
+
+                // Mark initial cell as potentially trusted
+                snapshot.cellId?.let { cellId ->
+                    getOrCreateTrustedCellInfo(cellId.toString()).apply {
+                        seenCount++
+                        lastSeen = System.currentTimeMillis()
+                        snapshot.latitude?.let { lat ->
+                            snapshot.longitude?.let { lon ->
+                                locations.add(lat to lon)
+                            }
                         }
                     }
                 }
+                errorCallback?.onScanSuccess(ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error taking initial cell snapshot", e)
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR,
+                "Error taking cell snapshot: ${e.message}",
+                recoverable = true
+            )
         }
     }
-    
+
     fun stopMonitoring() {
         isMonitoring = false
-        unregisterCellListener()
+        try {
+            unregisterCellListener()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering cell listener", e)
+        }
 
         addTimelineEvent(
             type = CellularEventType.MONITORING_STOPPED,
@@ -392,6 +424,7 @@ class CellularMonitor(private val context: Context) {
             description = "IMSI catcher detection paused"
         )
 
+        errorCallback?.onDetectorStopped(ScanningService.DetectorHealthStatus.DETECTOR_CELLULAR)
         Log.d(TAG, "Stopped cellular monitoring")
     }
 

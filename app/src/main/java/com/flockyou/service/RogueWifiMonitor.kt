@@ -27,7 +27,10 @@ import java.util.UUID
  * 7. MAC Randomization Detection - Networks that track MAC changes
  * 8. Surveillance Van Detection - Mobile hotspots with surveillance patterns
  */
-class RogueWifiMonitor(private val context: Context) {
+class RogueWifiMonitor(
+    private val context: Context,
+    private val errorCallback: ScanningService.DetectorCallback? = null
+) {
 
     companion object {
         private const val TAG = "RogueWifiMonitor"
@@ -336,12 +339,26 @@ class RogueWifiMonitor(private val context: Context) {
             description = "Monitoring for evil twins, hidden cameras, and surveillance"
         )
 
-        registerReceivers()
+        try {
+            registerReceivers()
+            errorCallback?.onDetectorStarted(ScanningService.DetectorHealthStatus.DETECTOR_ROGUE_WIFI)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting rogue WiFi monitoring", e)
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_ROGUE_WIFI,
+                "Failed to register receivers: ${e.message}",
+                recoverable = true
+            )
+        }
     }
 
     fun stopMonitoring() {
         isMonitoring = false
-        unregisterReceivers()
+        try {
+            unregisterReceivers()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering receivers", e)
+        }
 
         addTimelineEvent(
             type = WifiEventType.MONITORING_STOPPED,
@@ -349,6 +366,7 @@ class RogueWifiMonitor(private val context: Context) {
             description = "WiFi surveillance detection paused"
         )
 
+        errorCallback?.onDetectorStopped(ScanningService.DetectorHealthStatus.DETECTOR_ROGUE_WIFI)
         Log.d(TAG, "Stopped rogue WiFi monitoring")
     }
 
@@ -363,6 +381,23 @@ class RogueWifiMonitor(private val context: Context) {
     fun processScanResults(results: List<ScanResult>) {
         if (!isMonitoring) return
 
+        try {
+            processScanResultsInternal(results)
+            errorCallback?.onScanSuccess(ScanningService.DetectorHealthStatus.DETECTOR_ROGUE_WIFI)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing WiFi scan results", e)
+            errorCallback?.onError(
+                ScanningService.DetectorHealthStatus.DETECTOR_ROGUE_WIFI,
+                "Scan processing error: ${e.message}",
+                recoverable = true
+            )
+        }
+    }
+
+    /**
+     * Internal processing of WiFi scan results
+     */
+    private fun processScanResultsInternal(results: List<ScanResult>) {
         val now = System.currentTimeMillis()
         val currentBssids = mutableSetOf<String>()
         var openCount = 0

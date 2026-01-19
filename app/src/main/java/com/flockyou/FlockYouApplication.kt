@@ -1,12 +1,16 @@
 package com.flockyou
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.data.AiSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.repository.OuiRepository
+import com.flockyou.util.NotificationChannelIds
 import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +48,9 @@ class FlockYouApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
 
+        // Create all notification channels at app startup
+        createNotificationChannels()
+
         // Initialize OUI database updates
         applicationScope.launch {
             initializeOuiUpdates()
@@ -52,6 +59,78 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // Initialize AI model if enabled
         applicationScope.launch {
             initializeAiModel()
+        }
+    }
+
+    private fun createNotificationChannels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            // Scanning service channel (low priority, always-on)
+            val scanningChannel = NotificationChannel(
+                NotificationChannelIds.SCANNING,
+                "Scanning Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Background surveillance device detection service"
+                setShowBadge(false)
+            }
+
+            // Detection alerts channel (high priority, bypasses DND)
+            val detectionAlertsChannel = NotificationChannel(
+                NotificationChannelIds.DETECTION_ALERTS,
+                "Detection Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerts when surveillance devices are detected"
+                enableVibration(true)
+                setShowBadge(true)
+                setBypassDnd(true)
+            }
+
+            // Dead man's switch warning channel (high priority, bypasses DND)
+            val deadManSwitchChannel = NotificationChannel(
+                NotificationChannelIds.DEAD_MAN_SWITCH,
+                "Dead Man's Switch Warning",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Warning before automatic data wipe"
+                enableVibration(true)
+                setShowBadge(true)
+                setBypassDnd(true)
+            }
+
+            // Critical alerts channel (max priority, bypasses DND)
+            val criticalAlertsChannel = NotificationChannel(
+                NotificationChannelIds.CRITICAL_ALERTS,
+                "Critical Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Critical security alerts requiring immediate attention"
+                enableVibration(true)
+                setShowBadge(true)
+                setBypassDnd(true)
+            }
+
+            // Updates channel (default priority)
+            val updatesChannel = NotificationChannel(
+                NotificationChannelIds.UPDATES,
+                "App Updates",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Notifications about app updates and new features"
+                setShowBadge(false)
+            }
+
+            notificationManager.createNotificationChannels(
+                listOf(
+                    scanningChannel,
+                    detectionAlertsChannel,
+                    deadManSwitchChannel,
+                    criticalAlertsChannel,
+                    updatesChannel
+                )
+            )
         }
     }
 

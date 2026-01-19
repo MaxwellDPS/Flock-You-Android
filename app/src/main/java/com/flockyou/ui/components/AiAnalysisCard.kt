@@ -195,6 +195,16 @@ private fun AnalyzingContent() {
 private fun AnalysisResultContent(result: AiAnalysisResult) {
     Column {
         if (result.success && result.analysis != null) {
+            // False positive banner (if applicable)
+            if (result.isFalsePositive && result.falsePositiveBanner != null) {
+                FalsePositiveBanner(
+                    bannerMessage = result.falsePositiveBanner,
+                    confidence = result.falsePositiveConfidence,
+                    reasons = result.falsePositiveReasons
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // Analysis text
             Text(
                 text = result.analysis,
@@ -265,6 +275,113 @@ private fun AnalysisResultContent(result: AiAnalysisResult) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Banner component showing false positive detection explanation.
+ * Displayed when AI analysis determines a detection is likely a false positive.
+ */
+@Composable
+fun FalsePositiveBanner(
+    bannerMessage: String,
+    confidence: Float,
+    reasons: List<String>,
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    val confidenceText = when {
+        confidence >= 0.8f -> "High confidence"
+        confidence >= 0.6f -> "Likely"
+        else -> "Possibly"
+    }
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+        shape = MaterialTheme.shapes.small
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VerifiedUser,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "$confidenceText False Positive",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+                if (reasons.isNotEmpty()) {
+                    IconButton(
+                        onClick = { isExpanded = !isExpanded },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isExpanded) "Collapse" else "Expand",
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = bannerMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.9f)
+            )
+
+            // Expandable reasons section
+            AnimatedVisibility(
+                visible = isExpanded && reasons.isNotEmpty(),
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Analysis factors:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    reasons.forEach { reason ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

@@ -6,9 +6,6 @@ import android.os.Build
 import android.util.Log
 import com.flockyou.data.AiAnalysisResult
 import com.flockyou.data.model.Detection
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.GenerateContentResponse
-import com.google.ai.client.generativeai.type.generationConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -22,15 +19,18 @@ import javax.inject.Singleton
 /**
  * Client for Google's Gemini Nano on-device model.
  *
- * Gemini Nano runs entirely on-device via Android's AICore service on Pixel 8+ devices.
- * No data is sent to the cloud - all inference happens locally using the device's NPU.
+ * IMPORTANT: True on-device Gemini Nano requires the ML Kit GenAI API
+ * (com.google.mlkit:genai-common), which is currently in restricted alpha.
  *
- * Requirements:
+ * This client checks for AICore availability but cannot perform actual on-device
+ * inference until ML Kit GenAI becomes generally available. Users should use
+ * the MediaPipe LLM models (Gemma) for on-device inference instead.
+ *
+ * Requirements for future Gemini Nano support:
  * - Pixel 8, Pixel 8 Pro, Pixel 8a, Pixel 9 series, or compatible device
  * - Android 14+ (API 34+)
  * - AICore app installed and up-to-date (via Google Play Services)
- *
- * The model is managed by Google Play Services and doesn't require manual download.
+ * - ML Kit GenAI SDK (not yet publicly available)
  */
 @Singleton
 class GeminiNanoClient @Inject constructor(
@@ -38,10 +38,6 @@ class GeminiNanoClient @Inject constructor(
 ) {
     companion object {
         private const val TAG = "GeminiNanoClient"
-
-        // On-device model identifier - this triggers local inference via AICore
-        // Note: As of 2024, this requires opting into the Android AICore beta
-        private const val GEMINI_NANO_MODEL = "gemini-nano"
 
         // AICore package names to check for availability
         private val AICORE_PACKAGES = listOf(
@@ -51,15 +47,14 @@ class GeminiNanoClient @Inject constructor(
 
         // Initialization timeout
         private const val INIT_TIMEOUT_MS = 15000L
-
-        // For production, you would use the actual AICore integration
-        // This is a simplified version that demonstrates the API pattern
     }
 
-    private var generativeModel: GenerativeModel? = null
     private var isInitialized = false
     private var initializationError: String? = null
     private val initMutex = Mutex()
+
+    // Flag to track if AICore is available (even though we can't use it yet)
+    private var aiCoreDetected = false
 
     /**
      * Check if the device supports Gemini Nano
@@ -129,13 +124,13 @@ class GeminiNanoClient @Inject constructor(
     /**
      * Initialize the Gemini Nano model for on-device inference.
      *
-     * Note: The actual Gemini Nano on-device API requires:
-     * 1. Enrollment in the Android AICore beta program
-     * 2. A valid API key for authentication (even for on-device)
-     * 3. The AICore app to be installed and updated
+     * NOTE: True on-device Gemini Nano inference requires the ML Kit GenAI API,
+     * which is currently in restricted alpha (as of Jan 2026). This method will
+     * detect AICore availability but cannot actually perform on-device inference
+     * until the ML Kit GenAI SDK becomes publicly available.
      *
-     * For Pixel 8+ devices with AICore, this will initialize the on-device model.
-     * The API key is used for authentication but inference happens locally.
+     * For now, users should use the MediaPipe LLM models (Gemma) for on-device inference.
+     * This method returns false with an appropriate error message.
      */
     suspend fun initialize(): Boolean = initMutex.withLock {
         // Double-check after acquiring lock
@@ -148,48 +143,36 @@ class GeminiNanoClient @Inject constructor(
             withTimeout(INIT_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
                     if (!isDeviceSupported()) {
-                        initializationError = "Device does not support Gemini Nano (requires Pixel 8+)"
+                        initializationError = "Device does not support Gemini Nano (requires Pixel 8+ with Android 14+)"
                         Log.w(TAG, initializationError!!)
                         return@withContext false
                     }
 
-                    if (!isAiCoreAvailable()) {
+                    // Check if AICore is available on this device
+                    aiCoreDetected = isAiCoreAvailable()
+                    if (!aiCoreDetected) {
                         initializationError = "AICore service not available. Please update Google Play Services."
                         Log.w(TAG, initializationError!!)
                         return@withContext false
                     }
 
-                    // Try to initialize the GenerativeModel for on-device inference
-                    // Note: This requires an API key even for on-device inference
-                    // The key is for authentication, but inference happens locally via AICore
-                    try {
-                        val config = generationConfig {
-                            temperature = 0.7f
-                            topK = 40
-                            topP = 0.9f
-                            maxOutputTokens = 512
-                        }
+                    // AICore is detected, but we can't use it without ML Kit GenAI SDK
+                    // The com.google.ai.client.generativeai:generativeai library is for CLOUD API only,
+                    // not for on-device inference via AICore.
+                    //
+                    // True on-device inference requires:
+                    // - implementation("com.google.mlkit:genai-common:1.0.0-alpha1")
+                    // - Using Generation.getClient() API
+                    //
+                    // Until ML Kit GenAI is publicly available, we cannot do actual Gemini Nano inference.
+                    initializationError = "Gemini Nano requires ML Kit GenAI SDK which is not yet publicly available. " +
+                        "AICore is detected on this device. Please use a MediaPipe model (Gemma) instead."
+                    Log.w(TAG, initializationError!!)
+                    Log.i(TAG, "AICore detected on device - Gemini Nano will be available when ML Kit GenAI SDK is released")
 
-                        // Initialize with the gemini-nano model identifier
-                        // On Pixel 8+ with AICore, this triggers local inference
-                        generativeModel = GenerativeModel(
-                            modelName = GEMINI_NANO_MODEL,
-                            // Note: For production, store API key securely (e.g., BuildConfig or secure storage)
-                            // The API key is required for auth but inference is on-device
-                            apiKey = getGeminiApiKey(),
-                            generationConfig = config
-                        )
-
-                        Log.i(TAG, "Gemini Nano GenerativeModel initialized")
-                    } catch (e: Exception) {
-                        // If GenerativeModel fails, we can still use the template-based fallback
-                        Log.w(TAG, "Could not initialize GenerativeModel, will use template fallback: ${e.message}")
-                        generativeModel = null
-                    }
-
-                    Log.i(TAG, "Gemini Nano client initialized (AICore mode)")
-                    isInitialized = true
-                    true
+                    // Return false - we cannot do actual inference
+                    isInitialized = false
+                    false
                 }
             }
         } catch (e: TimeoutCancellationException) {
@@ -206,119 +189,26 @@ class GeminiNanoClient @Inject constructor(
     }
 
     /**
-     * Get the Gemini API key for authentication.
-     * Note: Even for on-device inference via AICore, authentication may be required.
-     *
-     * For Gemini Nano on Pixel devices via AICore, the model runs entirely on-device
-     * but requires initial authentication. The API key should be stored in:
-     * - local.properties as GEMINI_API_KEY (not committed to version control)
-     * - Or set via environment variable during build
-     *
-     * If no key is available, the client falls back to template-based analysis.
-     */
-    private fun getGeminiApiKey(): String {
-        // Check for API key in BuildConfig (set via local.properties or CI/CD)
-        // IMPORTANT: Never hardcode API keys in source code
-        return try {
-            val buildConfigClass = Class.forName("com.flockyou.BuildConfig")
-            // Look for GEMINI_API_KEY field that should be set in build.gradle from local.properties
-            val field = buildConfigClass.getDeclaredField("GEMINI_API_KEY")
-            val key = field.get(null) as? String
-            if (key.isNullOrBlank() || key == "null" || key == "\"\"") {
-                Log.d(TAG, "No Gemini API key configured, will use template-based analysis")
-                ""
-            } else {
-                Log.d(TAG, "Gemini API key found in BuildConfig")
-                key
-            }
-        } catch (e: NoSuchFieldException) {
-            Log.d(TAG, "GEMINI_API_KEY not defined in BuildConfig, will use template-based analysis")
-            ""
-        } catch (e: Exception) {
-            Log.d(TAG, "Error reading Gemini API key: ${e.message}, will use template-based analysis")
-            ""
-        }
-    }
-
-    /**
      * Generate analysis for a detection using Gemini Nano.
-     * All processing happens on-device via the NPU.
+     *
+     * NOTE: This method currently cannot perform actual LLM inference because
+     * the ML Kit GenAI SDK is not yet publicly available. It will always return
+     * an error result indicating that users should use MediaPipe models instead.
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
-        if (!isInitialized) {
-            return@withContext AiAnalysisResult(
-                success = false,
-                error = initializationError ?: "Gemini Nano not initialized",
-                processingTimeMs = System.currentTimeMillis() - startTime
-            )
-        }
-
-        try {
-            // Build the prompt for surveillance device analysis
-            val prompt = buildAnalysisPrompt(detection)
-
-            // Try to use the actual GenerativeModel if available
-            val model = generativeModel
-            val analysisText = if (model != null) {
-                try {
-                    val response = model.generateContent(prompt)
-                    response.text ?: generateGeminiNanoResponse(detection)
-                } catch (e: Exception) {
-                    Log.w(TAG, "GenerativeModel inference failed, using fallback: ${e.message}")
-                    generateGeminiNanoResponse(detection)
-                }
-            } else {
-                // Fallback to rule-based structured response
-                // Note: True Gemini Nano requires ML Kit GenAI integration
-                generateGeminiNanoResponse(detection)
-            }
-
-            AiAnalysisResult(
-                success = true,
-                analysis = analysisText,
-                confidence = if (model != null) 0.9f else 0.85f,
-                processingTimeMs = System.currentTimeMillis() - startTime,
-                modelUsed = if (model != null) "gemini-nano" else "gemini-nano-template",
-                wasOnDevice = true
-            )
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during Gemini Nano inference", e)
-            AiAnalysisResult(
-                success = false,
-                error = "Inference failed: ${e.message}",
-                processingTimeMs = System.currentTimeMillis() - startTime,
-                modelUsed = "gemini-nano"
-            )
-        }
-    }
-
-    /**
-     * Build a prompt for surveillance device analysis
-     */
-    private fun buildAnalysisPrompt(detection: Detection): String {
-        return """
-            Analyze this surveillance device detection and provide a privacy-focused assessment.
-
-            Device Information:
-            - Type: ${detection.deviceType.displayName}
-            - Protocol: ${detection.protocol.displayName}
-            - Signal Strength: ${detection.signalStrength.displayName} (${detection.rssi} dBm)
-            - Threat Level: ${detection.threatLevel.displayName}
-            ${detection.manufacturer?.let { "- Manufacturer: $it" } ?: ""}
-            ${detection.ssid?.let { "- Network Name: $it" } ?: ""}
-            ${detection.deviceName?.let { "- Device Name: $it" } ?: ""}
-
-            Please provide:
-            1. A brief explanation of what this device does and its surveillance capabilities
-            2. What data it can collect about you
-            3. The privacy implications
-            4. Recommended actions to protect your privacy
-
-            Keep the response concise and actionable.
-        """.trimIndent()
+        // Gemini Nano via ML Kit GenAI is not yet available
+        // Return an error result directing users to use MediaPipe models
+        return@withContext AiAnalysisResult(
+            success = false,
+            error = initializationError ?: "Gemini Nano is not available. " +
+                "The ML Kit GenAI SDK required for on-device Gemini Nano inference is not yet publicly released. " +
+                "Please download and use a MediaPipe model (Gemma 3 1B or Gemma 2B) for on-device AI analysis.",
+            processingTimeMs = System.currentTimeMillis() - startTime,
+            modelUsed = "gemini-nano",
+            wasOnDevice = true
+        )
     }
 
     /**
@@ -465,8 +355,8 @@ class GeminiNanoClient @Inject constructor(
      * Clean up resources
      */
     fun cleanup() {
-        generativeModel = null
         isInitialized = false
+        aiCoreDetected = false
     }
 
     /**
@@ -474,17 +364,27 @@ class GeminiNanoClient @Inject constructor(
      */
     fun getStatus(): GeminiNanoStatus {
         return when {
-            isInitialized -> GeminiNanoStatus.Ready
+            // Gemini Nano via ML Kit GenAI is not available yet
+            // Even if AICore is detected, we can't use it without the SDK
+            aiCoreDetected -> GeminiNanoStatus.AiCoreDetectedButSdkUnavailable
             initializationError != null -> GeminiNanoStatus.Error(initializationError!!)
             !isDeviceSupported() -> GeminiNanoStatus.NotSupported
             else -> GeminiNanoStatus.NotInitialized
         }
     }
+
+    /**
+     * Check if AICore has been detected on this device.
+     * Note: Even with AICore, we can't use Gemini Nano until ML Kit GenAI is released.
+     */
+    fun isAiCoreDetectedOnDevice(): Boolean = aiCoreDetected
 }
 
 sealed class GeminiNanoStatus {
     object NotSupported : GeminiNanoStatus()
     object NotInitialized : GeminiNanoStatus()
+    // AICore is detected but ML Kit GenAI SDK is not available
+    object AiCoreDetectedButSdkUnavailable : GeminiNanoStatus()
     object Ready : GeminiNanoStatus()
     data class Error(val message: String) : GeminiNanoStatus()
 }

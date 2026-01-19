@@ -137,7 +137,8 @@ fun AiSettingsScreen(
                         settings = settings,
                         onContextualAnalysisChange = { viewModel.setContextualAnalysis(it) },
                         onBatchAnalysisChange = { viewModel.setBatchAnalysis(it) },
-                        onTrackFeedbackChange = { viewModel.setTrackFeedback(it) }
+                        onTrackFeedbackChange = { viewModel.setTrackFeedback(it) },
+                        onFalsePositiveFilteringChange = { viewModel.setFalsePositiveFiltering(it) }
                     )
                 }
 
@@ -1046,10 +1047,21 @@ private fun AdvancedFeaturesCard(
     settings: AiSettings,
     onContextualAnalysisChange: (Boolean) -> Unit,
     onBatchAnalysisChange: (Boolean) -> Unit,
-    onTrackFeedbackChange: (Boolean) -> Unit
+    onTrackFeedbackChange: (Boolean) -> Unit,
+    onFalsePositiveFilteringChange: (Boolean) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
+            CapabilityToggle(
+                icon = Icons.Default.VerifiedUser,
+                title = "False Positive Filtering",
+                description = "Auto-detect and flag likely false positives with AI explanation",
+                checked = settings.enableFalsePositiveFiltering,
+                onCheckedChange = onFalsePositiveFilteringChange
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
             CapabilityToggle(
                 icon = Icons.Default.Timeline,
                 title = "Contextual Analysis",
@@ -1058,7 +1070,7 @@ private fun AdvancedFeaturesCard(
                 onCheckedChange = onContextualAnalysisChange
             )
 
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.Map,
@@ -1068,7 +1080,7 @@ private fun AdvancedFeaturesCard(
                 onCheckedChange = onBatchAnalysisChange
             )
 
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.ThumbUp,
