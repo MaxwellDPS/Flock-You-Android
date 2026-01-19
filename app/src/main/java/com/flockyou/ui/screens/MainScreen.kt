@@ -484,7 +484,9 @@ fun MainScreen(
                             satelliteState = uiState.satelliteState,
                             satelliteAnomalies = uiState.satelliteAnomalies,
                             isScanning = uiState.isScanning,
-                            onToggleScan = { viewModel.toggleScanning() }
+                            onToggleScan = { viewModel.toggleScanning() },
+                            onClearCellularHistory = { viewModel.clearCellularHistory() },
+                            onClearSatelliteHistory = { viewModel.clearSatelliteHistory() }
                         )
                     }
                 }
@@ -1617,7 +1619,9 @@ private fun CellularTabContent(
     satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?,
     satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>,
     isScanning: Boolean,
-    onToggleScan: () -> Unit
+    onToggleScan: () -> Unit,
+    onClearCellularHistory: () -> Unit,
+    onClearSatelliteHistory: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     
@@ -1830,7 +1834,7 @@ private fun CellularTabContent(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    TextButton(onClick = { viewModel.clearCellularHistory() }) {
+                    TextButton(onClick = onClearCellularHistory) {
                         Text("Clear")
                     }
                 }
@@ -1935,7 +1939,7 @@ private fun CellularTabContent(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.error
                     )
-                    TextButton(onClick = { viewModel.clearSatelliteHistory() }) {
+                    TextButton(onClick = onClearSatelliteHistory) {
                         Text("Clear")
                     }
                 }

@@ -215,6 +215,7 @@ class NukeWorker @AssistedInject constructor(
         // A user could disable a specific trigger after scheduling the work
         val triggerStillEnabled = when (triggerSource) {
             NukeTriggerSource.USB_CONNECTION -> settings.usbTriggerEnabled
+            NukeTriggerSource.ADB_DETECTED -> settings.usbTriggerOnAdbConnection
             NukeTriggerSource.SIM_REMOVAL -> settings.simRemovalTriggerEnabled
             NukeTriggerSource.NETWORK_ISOLATION -> settings.networkIsolationTriggerEnabled
             NukeTriggerSource.GEOFENCE -> settings.geofenceTriggerEnabled
@@ -222,7 +223,7 @@ class NukeWorker @AssistedInject constructor(
             NukeTriggerSource.FAILED_AUTH -> settings.failedAuthTriggerEnabled
             NukeTriggerSource.RAPID_REBOOT -> settings.rapidRebootTriggerEnabled
             NukeTriggerSource.MANUAL -> true // Manual trigger is always allowed if nuke is enabled
-            NukeTriggerSource.DURESS_CODE -> settings.duressCodeEnabled
+            NukeTriggerSource.DURESS_PIN -> settings.duressPinEnabled
         }
 
         if (!triggerStillEnabled) {

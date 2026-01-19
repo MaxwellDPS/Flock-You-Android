@@ -1,9 +1,13 @@
 package com.flockyou.scanner.flipper
 
 import com.flockyou.data.model.Detection
-import com.flockyou.data.model.DetectionType
+import com.flockyou.data.model.DetectionMethod
+import com.flockyou.data.model.DetectionProtocol
+import com.flockyou.data.model.DeviceType
+import com.flockyou.data.model.SignalStrength
 import com.flockyou.data.model.SurveillancePattern
 import com.flockyou.data.model.ThreatLevel
+import com.flockyou.data.model.rssiToSignalStrength
 import com.flockyou.detection.framework.*
 import java.util.UUID
 
@@ -55,21 +59,20 @@ class FlipperDetectionAdapter {
 
         return Detection(
             id = detectionId,
-            deviceId = network.bssid,
+            timestamp = timestamp,
+            protocol = DetectionProtocol.WIFI,
+            detectionMethod = if (network.hidden) DetectionMethod.BEACON_FRAME else DetectionMethod.SSID_PATTERN,
+            deviceType = DeviceType.ROGUE_AP,
             deviceName = network.ssid.ifEmpty { "[Hidden Network]" },
-            deviceType = DetectionType.WIFI,
-            threatLevel = threatLevel,
-            signalStrength = network.rssi,
+            macAddress = network.bssid,
+            ssid = network.ssid.ifEmpty { null },
+            rssi = network.rssi,
+            signalStrength = rssiToSignalStrength(network.rssi),
             latitude = latitude,
             longitude = longitude,
-            firstSeen = timestamp,
-            lastSeen = timestamp,
-            metadata = mapOf(
-                "channel" to network.channel.toString(),
-                "security" to network.security.name,
-                "hidden" to network.hidden.toString(),
-                "source" to "flipper"
-            )
+            threatLevel = threatLevel,
+            rawData = "channel:${network.channel},security:${network.security.name},hidden:${network.hidden},source:flipper",
+            lastSeenTimestamp = timestamp
         )
     }
 
@@ -140,16 +143,19 @@ class FlipperDetectionAdapter {
 
         return Detection(
             id = detectionId,
-            deviceId = "subghz_${detection.frequency}_${detection.protocolId}",
+            timestamp = timestamp,
+            protocol = DetectionProtocol.RF,
+            detectionMethod = DetectionMethod.RF_SPECTRUM_ANOMALY,
+            deviceType = if (primaryMatch?.category == TrackerCategory.GPS_TRACKER) DeviceType.TRACKING_DEVICE else DeviceType.RF_ANOMALY,
             deviceName = deviceName,
-            deviceType = DetectionType.RF,
-            threatLevel = threatLevel,
-            signalStrength = detection.rssi,
+            macAddress = "subghz_${detection.frequency}_${detection.protocolId}",
+            rssi = detection.rssi,
+            signalStrength = rssiToSignalStrength(detection.rssi),
             latitude = latitude,
             longitude = longitude,
-            firstSeen = timestamp,
-            lastSeen = timestamp,
-            metadata = metadata
+            threatLevel = threatLevel,
+            rawData = metadata.entries.joinToString(",") { "${it.key}:${it.value}" },
+            lastSeenTimestamp = timestamp
         )
     }
 
@@ -296,16 +302,25 @@ class FlipperDetectionAdapter {
 
         return Detection(
             id = detectionId,
-            deviceId = device.macAddress,
+            timestamp = timestamp,
+            protocol = DetectionProtocol.BLUETOOTH_LE,
+            detectionMethod = DetectionMethod.BLE_DEVICE_NAME,
+            deviceType = when {
+                unwantedResult.hasSeparationAlert -> DeviceType.AIRTAG
+                trackingAnalysis.matchedSignatures.isNotEmpty() -> DeviceType.GENERIC_BLE_TRACKER
+                beaconType == BeaconProtocolType.IBEACON -> DeviceType.BLUETOOTH_BEACON
+                else -> DeviceType.UNKNOWN_SURVEILLANCE
+            },
             deviceName = deviceName,
-            deviceType = DetectionType.BLUETOOTH,
-            threatLevel = threatLevel,
-            signalStrength = device.rssi,
+            macAddress = device.macAddress,
+            rssi = device.rssi,
+            signalStrength = rssiToSignalStrength(device.rssi),
             latitude = latitude,
             longitude = longitude,
-            firstSeen = timestamp,
-            lastSeen = timestamp,
-            metadata = metadata
+            threatLevel = threatLevel,
+            serviceUuids = device.serviceUuids.joinToString(",").takeIf { it.isNotEmpty() },
+            rawData = metadata.entries.joinToString(",") { "${it.key}:${it.value}" },
+            lastSeenTimestamp = timestamp
         )
     }
 
@@ -363,7 +378,7 @@ class FlipperDetectionAdapter {
             return ThreatLevel.LOW
         }
 
-        return ThreatLevel.SAFE
+        return ThreatLevel.INFO
     }
 
     fun irDetectionToDetection(
@@ -374,23 +389,19 @@ class FlipperDetectionAdapter {
     ): Detection {
         return Detection(
             id = UUID.randomUUID().toString(),
-            deviceId = "ir_${detection.address}_${detection.command}",
+            timestamp = timestamp,
+            protocol = DetectionProtocol.RF,
+            detectionMethod = DetectionMethod.RF_HIDDEN_TRANSMITTER,
+            deviceType = DeviceType.HIDDEN_TRANSMITTER,
             deviceName = "${detection.protocolName} IR Signal",
-            deviceType = DetectionType.IR,
-            threatLevel = ThreatLevel.LOW,
-            signalStrength = detection.signalStrength,
+            macAddress = "ir_${detection.address}_${detection.command}",
+            rssi = detection.signalStrength,
+            signalStrength = rssiToSignalStrength(detection.signalStrength),
             latitude = latitude,
             longitude = longitude,
-            firstSeen = timestamp,
-            lastSeen = timestamp,
-            metadata = mapOf(
-                "protocol_id" to detection.protocolId.toString(),
-                "protocol_name" to detection.protocolName,
-                "address" to detection.address.toString(),
-                "command" to detection.command.toString(),
-                "is_repeat" to detection.isRepeat.toString(),
-                "source" to "flipper"
-            )
+            threatLevel = ThreatLevel.LOW,
+            rawData = "protocol_id:${detection.protocolId},protocol_name:${detection.protocolName},address:${detection.address},command:${detection.command},is_repeat:${detection.isRepeat},source:flipper",
+            lastSeenTimestamp = timestamp
         )
     }
 
@@ -402,22 +413,19 @@ class FlipperDetectionAdapter {
     ): Detection {
         return Detection(
             id = UUID.randomUUID().toString(),
-            deviceId = "nfc_${detection.uidString}",
+            timestamp = timestamp,
+            protocol = DetectionProtocol.RF,
+            detectionMethod = DetectionMethod.RF_HIDDEN_TRANSMITTER,
+            deviceType = DeviceType.GENERIC_BLE_TRACKER,
             deviceName = "${detection.typeName} NFC Tag",
-            deviceType = DetectionType.NFC,
-            threatLevel = ThreatLevel.LOW,
-            signalStrength = null,
+            macAddress = "nfc_${detection.uidString}",
+            rssi = 0,
+            signalStrength = SignalStrength.UNKNOWN,
             latitude = latitude,
             longitude = longitude,
-            firstSeen = timestamp,
-            lastSeen = timestamp,
-            metadata = mapOf(
-                "uid" to detection.uidString,
-                "nfc_type" to detection.nfcType.name,
-                "sak" to detection.sak.toString(),
-                "type_name" to detection.typeName,
-                "source" to "flipper"
-            )
+            threatLevel = ThreatLevel.LOW,
+            rawData = "uid:${detection.uidString},nfc_type:${detection.nfcType.name},sak:${detection.sak},type_name:${detection.typeName},source:flipper",
+            lastSeenTimestamp = timestamp
         )
     }
 
@@ -431,28 +439,31 @@ class FlipperDetectionAdapter {
             WipsSeverity.HIGH -> ThreatLevel.HIGH
             WipsSeverity.MEDIUM -> ThreatLevel.MEDIUM
             WipsSeverity.LOW -> ThreatLevel.LOW
-            WipsSeverity.INFO -> ThreatLevel.SAFE
+            WipsSeverity.INFO -> ThreatLevel.INFO
         }
 
         return Detection(
             id = UUID.randomUUID().toString(),
-            deviceId = "wips_${event.type.name}_${event.bssid}",
+            timestamp = event.timestamp,
+            protocol = DetectionProtocol.WIFI,
+            detectionMethod = when (event.type) {
+                FlipperWipsEventType.EVIL_TWIN_DETECTED -> DetectionMethod.WIFI_EVIL_TWIN
+                FlipperWipsEventType.DEAUTH_DETECTED -> DetectionMethod.WIFI_DEAUTH_ATTACK
+                FlipperWipsEventType.KARMA_DETECTED -> DetectionMethod.WIFI_KARMA_ATTACK
+                FlipperWipsEventType.ROGUE_AP -> DetectionMethod.WIFI_ROGUE_AP
+                else -> DetectionMethod.WIFI_SIGNAL_ANOMALY
+            },
+            deviceType = DeviceType.ROGUE_AP,
             deviceName = "WIPS Alert: ${event.type.name}",
-            deviceType = DetectionType.WIPS,
-            threatLevel = threatLevel,
-            signalStrength = null,
+            macAddress = event.bssid,
+            ssid = event.ssid.takeIf { it.isNotEmpty() },
+            rssi = 0,
+            signalStrength = SignalStrength.UNKNOWN,
             latitude = latitude,
             longitude = longitude,
-            firstSeen = event.timestamp,
-            lastSeen = event.timestamp,
-            metadata = mapOf(
-                "alert_type" to event.type.name,
-                "ssid" to event.ssid,
-                "bssid" to event.bssid,
-                "description" to event.description,
-                "severity" to event.severity.name,
-                "source" to "flipper_wips"
-            )
+            threatLevel = threatLevel,
+            rawData = "alert_type:${event.type.name},ssid:${event.ssid},bssid:${event.bssid},description:${event.description},severity:${event.severity.name},source:flipper_wips",
+            lastSeenTimestamp = event.timestamp
         )
     }
 
@@ -474,7 +485,7 @@ class FlipperDetectionAdapter {
             return ThreatLevel.MEDIUM
         }
 
-        return ThreatLevel.SAFE
+        return ThreatLevel.INFO
     }
 
     private fun isTrackerFrequency(frequency: Long): Boolean {

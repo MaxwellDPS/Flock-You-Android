@@ -297,7 +297,8 @@ fun NearbyDevicesScreen(
                             cellularStatus = cellularStatus,
                             seenCellTowers = seenCellTowers,
                             cellularAnomalies = cellularAnomalies,
-                            isScanning = isScanning
+                            isScanning = isScanning,
+                            onClearCellularHistory = { viewModel.clearCellularHistory() }
                         )
                     }
                     3 -> {
@@ -324,7 +325,8 @@ fun NearbyDevicesScreen(
                             satelliteState = satelliteState,
                             satelliteStatus = satelliteStatus,
                             satelliteAnomalies = satelliteAnomalies,
-                            isScanning = isScanning
+                            isScanning = isScanning,
+                            onClearSatelliteHistory = { viewModel.clearSatelliteHistory() }
                         )
                     }
                 }
@@ -783,7 +785,8 @@ private fun CellularStatusContent(
     cellularStatus: ScanningService.SubsystemStatus,
     seenCellTowers: List<CellularMonitor.SeenCellTower>,
     cellularAnomalies: List<CellularMonitor.CellularAnomaly>,
-    isScanning: Boolean
+    isScanning: Boolean,
+    onClearCellularHistory: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     
@@ -1065,7 +1068,7 @@ private fun CellularStatusContent(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        TextButton(onClick = { viewModel.clearCellularHistory() }) {
+                        TextButton(onClick = onClearCellularHistory) {
                             Text("Clear", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -1566,7 +1569,8 @@ private fun SatelliteStatusContent(
     satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?,
     satelliteStatus: ScanningService.SubsystemStatus,
     satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>,
-    isScanning: Boolean
+    isScanning: Boolean,
+    onClearSatelliteHistory: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     
@@ -1730,7 +1734,7 @@ private fun SatelliteStatusContent(
                             color = MaterialTheme.colorScheme.error
                         )
                     }
-                    TextButton(onClick = { viewModel.clearSatelliteHistory() }) {
+                    TextButton(onClick = onClearSatelliteHistory) {
                         Text("Clear")
                     }
                 }

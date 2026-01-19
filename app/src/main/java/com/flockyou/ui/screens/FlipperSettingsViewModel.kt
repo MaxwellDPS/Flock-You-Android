@@ -145,7 +145,7 @@ class FlipperSettingsViewModel @Inject constructor(
      * Installs the Flock Bridge FAP to the connected Flipper Zero.
      */
     suspend fun installFapToFlipper(context: Context) {
-        if (_connectionState.value !is FlipperConnectionState.Connected) {
+        if (connectionState.value !is ConnectionState.Connected) {
             Toast.makeText(context, "Flipper not connected", Toast.LENGTH_SHORT).show()
             return
         }

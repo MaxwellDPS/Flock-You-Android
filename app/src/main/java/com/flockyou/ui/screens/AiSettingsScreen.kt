@@ -1275,6 +1275,7 @@ private fun CapabilityToggle(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LlmEngineSelectionCard(
     currentEngine: String,
