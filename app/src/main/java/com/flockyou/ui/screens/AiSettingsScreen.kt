@@ -1,5 +1,8 @@
 package com.flockyou.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -35,9 +38,24 @@ fun AiSettingsScreen(
     val availableModels by viewModel.availableModels.collectAsState()
     val deviceCapabilities by viewModel.deviceCapabilities.collectAsState()
     val selectedModelForDownload by viewModel.selectedModelForDownload.collectAsState()
+    val downloadError by viewModel.downloadError.collectAsState()
 
     // Model selection dialog
     var showModelSelector by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var modelForImport by remember { mutableStateOf<AiModel?>(null) }
+
+    // File picker for model import
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { selectedUri ->
+            modelForImport?.let { model ->
+                viewModel.importModel(selectedUri, model)
+                modelForImport = null
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -81,10 +99,13 @@ fun AiSettingsScreen(
                     downloadProgress = downloadProgress,
                     availableModels = availableModels,
                     deviceCapabilities = deviceCapabilities,
+                    downloadError = downloadError,
                     onSelectModel = { showModelSelector = true },
                     onDownload = { viewModel.downloadModel(AiModel.fromId(settings.selectedModel)) },
                     onDelete = { viewModel.deleteModel() },
-                    onInitialize = { viewModel.initializeModel() }
+                    onInitialize = { viewModel.initializeModel() },
+                    onImport = { showImportDialog = true },
+                    onClearError = { viewModel.clearDownloadError() }
                 )
             }
 
@@ -201,6 +222,12 @@ fun AiSettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Note: Gemma models require accepting the license at huggingface.co. If download fails, use 'Import Model' instead.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
                         }
                     },
                     confirmButton = {
@@ -217,6 +244,88 @@ fun AiSettingsScreen(
             }
         }
     }
+
+    // Import Model Dialog
+    if (showImportDialog) {
+        ImportModelDialog(
+            availableModels = availableModels.filter {
+                it != AiModel.RULE_BASED && it != AiModel.GEMINI_NANO
+            },
+            onSelectModel = { model ->
+                modelForImport = model
+                showImportDialog = false
+                filePickerLauncher.launch("*/*")
+            },
+            onDismiss = { showImportDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun ImportModelDialog(
+    availableModels: List<AiModel>,
+    onSelectModel: (AiModel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Import Model")
+                Text(
+                    text = "Select which model you're importing",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Download a .task file from huggingface.co/litert-community, then select it here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                availableModels.forEach { model ->
+                    OutlinedCard(
+                        onClick = { onSelectModel(model) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = model.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${model.sizeMb} MB • ${model.quantization}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.FileOpen,
+                                contentDescription = "Select file",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
@@ -317,10 +426,13 @@ private fun ModelSelectionCard(
     downloadProgress: Int,
     availableModels: List<AiModel>,
     deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    downloadError: String?,
     onSelectModel: () -> Unit,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
-    onInitialize: () -> Unit
+    onInitialize: () -> Unit,
+    onImport: () -> Unit,
+    onClearError: () -> Unit
 ) {
     val currentModel = AiModel.fromId(settings.selectedModel)
 
@@ -453,6 +565,49 @@ private fun ModelSelectionCard(
                 }
             }
 
+            // Download error message
+            AnimatedVisibility(visible = downloadError != null) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = downloadError ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = onClearError,
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Dismiss",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Action buttons
             if (settings.enabled) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -475,6 +630,9 @@ private fun ModelSelectionCard(
                                 Icon(Icons.Default.Download, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Download LLM")
+                            }
+                            OutlinedButton(onClick = onImport) {
+                                Icon(Icons.Default.FileOpen, contentDescription = null)
                             }
                         }
                         modelStatus is AiModelStatus.Ready && settings.modelSizeMb > 0 -> {
@@ -503,6 +661,9 @@ private fun ModelSelectionCard(
                                 Icon(Icons.Default.Download, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Download")
+                            }
+                            OutlinedButton(onClick = onImport) {
+                                Icon(Icons.Default.FileOpen, contentDescription = "Import model")
                             }
                         }
                     }
@@ -589,25 +750,25 @@ private fun ModelSelectorDialog(
                     }
                 }
 
-                // Downloadable GGUF Models section
+                // Downloadable Models section (MediaPipe format)
                 if (downloadableModels.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(8.dp))
                         EngineCategoryHeader(
                             title = "Downloadable Models",
-                            subtitle = "GGUF format • Runs on any device",
+                            subtitle = "MediaPipe format • Runs on any device",
                             icon = Icons.Default.Download
                         )
                     }
 
-                    // Small models (< 500MB)
-                    val smallModels = downloadableModels.filter { it.sizeMb < 500 }
-                    val largeModels = downloadableModels.filter { it.sizeMb >= 500 }
+                    // Small models (< 800MB)
+                    val smallModels = downloadableModels.filter { it.sizeMb < 800 }
+                    val largeModels = downloadableModels.filter { it.sizeMb >= 800 }
 
                     if (smallModels.isNotEmpty()) {
                         item {
                             Text(
-                                text = "Lightweight (< 500 MB)",
+                                text = "Lightweight (< 600 MB)",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(start = 4.dp, top = 4.dp)
@@ -617,8 +778,8 @@ private fun ModelSelectorDialog(
                             EngineOptionCard(
                                 model = model,
                                 isSelected = model.id == currentModelId,
-                                isRecommended = model == AiModel.SMOLLM_360M,
-                                recommendedReason = if (model == AiModel.SMOLLM_360M) "Best balance" else null,
+                                isRecommended = model == AiModel.GEMMA3_1B,
+                                recommendedReason = if (model == AiModel.GEMMA3_1B) "Recommended" else null,
                                 showDownloadIcon = true,
                                 onSelect = { onDownloadModel(model) }
                             )
@@ -640,8 +801,8 @@ private fun ModelSelectorDialog(
                             EngineOptionCard(
                                 model = model,
                                 isSelected = model.id == currentModelId,
-                                isRecommended = model == AiModel.GEMMA2_2B && hasEnoughRam,
-                                recommendedReason = if (model == AiModel.GEMMA2_2B && hasEnoughRam) "Best quality" else null,
+                                isRecommended = model == AiModel.GEMMA_2B_GPU && hasEnoughRam,
+                                recommendedReason = if (model == AiModel.GEMMA_2B_GPU && hasEnoughRam) "Best quality" else null,
                                 isAvailable = hasEnoughRam,
                                 unavailableReason = if (!hasEnoughRam) "Needs ${(model.sizeMb * 1.5).toInt()} MB RAM" else null,
                                 showDownloadIcon = true,

@@ -36,8 +36,20 @@ data class AiSettings(
 )
 
 /**
+ * Model format types for on-device LLM inference.
+ */
+enum class ModelFormat {
+    NONE,     // No model file needed (rule-based)
+    AICORE,   // Google AICore (Gemini Nano)
+    TASK      // MediaPipe .task format (Gemma models)
+}
+
+/**
  * Available on-device LLM models for analysis.
  * All models run entirely on-device - no cloud connectivity required.
+ *
+ * Note: MediaPipe LLM Inference requires models in .task or .bin format,
+ * NOT raw GGUF files. The models listed here use MediaPipe-compatible formats.
  */
 enum class AiModel(
     val id: String,
@@ -49,7 +61,8 @@ enum class AiModel(
     val requiresPixel8: Boolean = false,
     val requiresNpu: Boolean = false,
     val downloadUrl: String? = null, // null means bundled or special handling
-    val quantization: String = "N/A"
+    val quantization: String = "N/A",
+    val modelFormat: ModelFormat = ModelFormat.TASK // MediaPipe format
 ) {
     RULE_BASED(
         id = "rule-based",
@@ -57,7 +70,8 @@ enum class AiModel(
         description = "Built-in analysis using curated threat intelligence. Works on all devices, no download required.",
         sizeMb = 0,
         capabilities = listOf("Device identification", "Threat assessment", "Recommendations"),
-        quantization = "N/A"
+        quantization = "N/A",
+        modelFormat = ModelFormat.NONE
     ),
     GEMINI_NANO(
         id = "gemini-nano",
@@ -67,63 +81,45 @@ enum class AiModel(
         capabilities = listOf("Text generation", "Summarization", "Classification", "NPU acceleration"),
         requiresPixel8 = true,
         requiresNpu = true,
-        quantization = "INT4"
+        quantization = "INT4",
+        modelFormat = ModelFormat.AICORE
     ),
-    SMOLLM_135M(
-        id = "smollm-135m",
-        displayName = "SmolLM 135M",
-        description = "Ultra-lightweight model, fast inference. Good for basic analysis on any device.",
-        sizeMb = 95,
-        capabilities = listOf("Basic text generation", "Classification"),
-        downloadUrl = "https://huggingface.co/QuantFactory/SmolLM-135M-Instruct-GGUF/resolve/main/SmolLM-135M-Instruct.Q4_K_M.gguf",
-        quantization = "Q4_K_M"
-    ),
-    SMOLLM_360M(
-        id = "smollm-360m",
-        displayName = "SmolLM 360M",
-        description = "Compact model with improved reasoning. Good balance of speed and capability.",
-        sizeMb = 271,
-        capabilities = listOf("Text generation", "Reasoning", "Classification"),
-        downloadUrl = "https://huggingface.co/QuantFactory/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct.Q4_K_M.gguf",
-        quantization = "Q4_K_M"
-    ),
-    QWEN2_0_5B(
-        id = "qwen2-0.5b",
-        displayName = "Qwen2 0.5B",
-        description = "Alibaba's efficient small model. Strong multilingual support.",
-        sizeMb = 350,
-        capabilities = listOf("Text generation", "Multilingual", "Classification"),
-        downloadUrl = "https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0_5b-instruct-q4_k_m.gguf",
-        quantization = "Q4_K_M"
-    ),
-    PHI3_MINI(
-        id = "phi3-mini",
-        displayName = "Phi-3 Mini 3.8B",
-        description = "Microsoft's powerful small model. Best reasoning capability but requires more RAM (~3GB).",
-        sizeMb = 2200,
-        capabilities = listOf("Advanced reasoning", "Code understanding", "Detailed analysis"),
-        minAndroidVersion = 28,
-        downloadUrl = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
-        quantization = "Q4_0"
-    ),
-    GEMMA2_2B(
-        id = "gemma2-2b",
-        displayName = "Gemma 2 2B",
-        description = "Google's open model. Excellent quality, moderate size (~1.7GB download).",
-        sizeMb = 1710,
+    // MediaPipe-compatible Gemma 3 models (latest, recommended)
+    GEMMA3_1B(
+        id = "gemma3-1b",
+        displayName = "Gemma 3 1B",
+        description = "Latest Gemma 3 1B model. Excellent quality, ~530MB. Requires HuggingFace login.",
+        sizeMb = 530,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
-        minAndroidVersion = 28,
-        downloadUrl = "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
-        quantization = "Q4_K_M"
+        minAndroidVersion = 26,
+        // HuggingFace LiteRT Community - requires accepting Gemma license
+        downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+        quantization = "INT4",
+        modelFormat = ModelFormat.TASK
     ),
-    TINYLLAMA_1B(
-        id = "tinyllama-1b",
-        displayName = "TinyLlama 1.1B",
-        description = "Efficient Llama-architecture model. Good capability with moderate resource use.",
-        sizeMb = 700,
-        capabilities = listOf("Text generation", "Reasoning", "Analysis"),
-        downloadUrl = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-        quantization = "Q4_K_M"
+    // MediaPipe-compatible Gemma 2 models
+    GEMMA_2B_CPU(
+        id = "gemma-2b-cpu",
+        displayName = "Gemma 2B (CPU)",
+        description = "Google's Gemma 2B optimized for CPU. ~1.3GB download. Requires HuggingFace login.",
+        sizeMb = 1350,
+        capabilities = listOf("Text generation", "Reasoning", "Summarization"),
+        minAndroidVersion = 26,
+        // HuggingFace LiteRT Community URL
+        downloadUrl = "https://huggingface.co/litert-community/Gemma-2B-IT/resolve/main/gemma-2b-it-cpu-int4.task",
+        quantization = "INT4",
+        modelFormat = ModelFormat.TASK
+    ),
+    GEMMA_2B_GPU(
+        id = "gemma-2b-gpu",
+        displayName = "Gemma 2B (GPU)",
+        description = "Google's Gemma 2B with GPU acceleration. Faster inference on supported devices.",
+        sizeMb = 1350,
+        capabilities = listOf("Text generation", "Reasoning", "Summarization", "GPU acceleration"),
+        minAndroidVersion = 28,
+        downloadUrl = "https://huggingface.co/litert-community/Gemma-2B-IT/resolve/main/gemma-2b-it-gpu-int4.task",
+        quantization = "INT4",
+        modelFormat = ModelFormat.TASK
     );
 
     companion object {
@@ -152,6 +148,34 @@ enum class AiModel(
                     model.sizeMb > 0 && model.sizeMb * 1.5 > availableRamMb -> false // Need ~1.5x model size for inference
                     else -> true
                 }
+            }
+        }
+
+        /**
+         * Get the file extension for the model format
+         */
+        fun getFileExtension(model: AiModel): String {
+            return when (model.modelFormat) {
+                ModelFormat.TASK -> ".task"
+                ModelFormat.AICORE -> "" // No file, managed by AICore
+                ModelFormat.NONE -> "" // No file needed
+            }
+        }
+
+        /**
+         * Get instructions for how to obtain the model
+         */
+        fun getDownloadInstructions(model: AiModel): String {
+            return when (model.modelFormat) {
+                ModelFormat.TASK -> """
+                    To use this model:
+                    1. Visit https://www.kaggle.com/models/google/gemma
+                    2. Accept the license agreement
+                    3. Download the model in MediaPipe format
+                    4. Place the .task file in the app's models folder
+                """.trimIndent()
+                ModelFormat.AICORE -> "This model is managed by Google Play Services. Ensure AICore is up to date."
+                ModelFormat.NONE -> "No download required."
             }
         }
     }

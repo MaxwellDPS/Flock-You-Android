@@ -341,4 +341,56 @@ class AiSettingsViewModel @Inject constructor(
     fun cancelAnalysis() {
         detectionAnalyzer.cancelAnalysis()
     }
+
+    /**
+     * Import a model file from a Uri (e.g., from file picker).
+     */
+    fun importModel(uri: android.net.Uri, model: AiModel) {
+        viewModelScope.launch {
+            if (_isDownloading.value) {
+                Toast.makeText(
+                    application,
+                    "Import already in progress",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
+            _isDownloading.value = true
+            _downloadProgress.value = 0
+            _downloadError.value = null
+
+            try {
+                val success = detectionAnalyzer.importModel(uri, model.id) { progress ->
+                    _downloadProgress.value = progress
+                }
+
+                if (success) {
+                    Toast.makeText(
+                        application,
+                        "${model.displayName} imported successfully",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    val errorMsg = "Failed to import ${model.displayName}"
+                    _downloadError.value = errorMsg
+                    Toast.makeText(
+                        application,
+                        errorMsg,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                _isDownloading.value = false
+                _selectedModelForDownload.value = null
+            }
+        }
+    }
+
+    /**
+     * Get the models directory path for manual file placement instructions.
+     */
+    fun getModelsDirectoryPath(): String {
+        return detectionAnalyzer.getModelsDirectory().absolutePath
+    }
 }

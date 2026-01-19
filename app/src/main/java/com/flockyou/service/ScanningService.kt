@@ -1274,9 +1274,13 @@ class ScanningService : Service() {
         ServiceRestartReceiver.scheduleHeartbeat(this)
         ServiceRestartReceiver.scheduleJobSchedulerBackup(this)
 
+        // Record heartbeat immediately so watchdog knows we're alive
+        ServiceRestartReceiver.recordHeartbeat(this)
+
         // Start continuous scanning with burst pattern (25s on, 5s cooldown)
         scanJob = serviceScope.launch {
             var scanCycleCount = 0
+            var consecutiveBleErrors = 0
 
             while (isActive) {
                 val scanConfig = currentSettings.value // Re-read in case settings changed
@@ -1293,39 +1297,78 @@ class ScanningService : Service() {
                     // Scan for 25 seconds in low-latency mode, then 5s cooldown
                     // This prevents Android thermal throttling while maximizing detection
                     if (scanConfig.enableBle) {
-                        startBleScan(scanConfig.aggressiveBleMode)
-                        delay(scanConfig.bleScanDuration)
-                        stopBleScan()
+                        try {
+                            startBleScan(scanConfig.aggressiveBleMode)
+                            delay(scanConfig.bleScanDuration)
+                            stopBleScan()
+                            consecutiveBleErrors = 0 // Reset on success
 
-                        // Thermal cooldown period - prevents Android from force-stopping scans
-                        Log.d(TAG, "BLE cooldown: ${scanConfig.bleCooldown}ms")
-                        delay(scanConfig.bleCooldown)
+                            // Thermal cooldown period - prevents Android from force-stopping scans
+                            Log.d(TAG, "BLE cooldown: ${scanConfig.bleCooldown}ms")
+                            delay(scanConfig.bleCooldown)
+                        } catch (e: Exception) {
+                            consecutiveBleErrors++
+                            Log.e(TAG, "BLE scan error (consecutive: $consecutiveBleErrors)", e)
+                            logError("BLE", -1, "Scan error: ${e.message}", recoverable = true)
+
+                            // If too many consecutive errors, disable BLE temporarily
+                            if (consecutiveBleErrors >= 3) {
+                                Log.w(TAG, "Too many BLE errors, pausing BLE for this cycle")
+                                bleStatus.value = SubsystemStatus.Error(-1, "Paused due to errors")
+                                delay(scanConfig.bleCooldown * 2) // Extended cooldown
+                            }
+                        }
                     }
 
                     // === WiFi SCAN ===
                     // Trigger WiFi scan (results come via broadcast receiver)
                     if (scanConfig.enableWifi) {
-                        startWifiScan()
+                        try {
+                            startWifiScan()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "WiFi scan error", e)
+                            logError("WiFi", -1, "Scan error: ${e.message}", recoverable = true)
+                        }
                     }
 
                     // Update location
-                    updateLocation()
+                    try {
+                        updateLocation()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Location update error", e)
+                    }
 
                     // Mark old detections as inactive
-                    val inactiveThreshold = System.currentTimeMillis() - scanConfig.inactiveTimeout
-                    repository.markOldInactive(inactiveThreshold)
+                    try {
+                        val inactiveThreshold = System.currentTimeMillis() - scanConfig.inactiveTimeout
+                        repository.markOldInactive(inactiveThreshold)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error marking old detections inactive", e)
+                    }
 
                     // Clean up old seen devices
                     if (scanConfig.trackSeenDevices) {
-                        cleanupSeenDevices(scanConfig.seenDeviceTimeout)
+                        try {
+                            cleanupSeenDevices(scanConfig.seenDeviceTimeout)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error cleaning up seen devices", e)
+                        }
                     }
 
                     // Update notification with status
-                    val statusText = buildStatusText()
-                    updateNotification(statusText)
+                    try {
+                        val statusText = buildStatusText()
+                        updateNotification(statusText)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating notification", e)
+                    }
 
                     // Broadcast all data to IPC clients every scan cycle
-                    broadcastAllDataToClients()
+                    try {
+                        broadcastAllDataToClients()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error broadcasting to IPC clients", e)
+                    }
 
                     scanCycleCount++
 
@@ -1338,6 +1381,8 @@ class ScanningService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Scanning error", e)
                     logError("Scanner", -1, "Scan cycle error: ${e.message}", recoverable = true)
+                    // Don't let any error kill the loop - just continue to next cycle
+                    delay(1000) // Brief pause before retrying
                 }
             }
         }
@@ -2117,7 +2162,10 @@ class ScanningService : Service() {
             return
         }
 
-        if (isBleScanningActive) return
+        // Always stop first to ensure clean state and prevent "scan already started" errors
+        if (isBleScanningActive) {
+            stopBleScan()
+        }
 
         // Build aggressive scan settings for maximum detection capability
         val scanSettings = ScanSettings.Builder()
@@ -2184,7 +2232,16 @@ class ScanningService : Service() {
                 SCAN_FAILED_SCANNING_TOO_FREQUENTLY -> "Scanning too frequently"
                 else -> "Unknown error"
             }
-            Log.e(TAG, "BLE scan failed with error: $errorCode ($errorMessage)")
+            Log.e(TAG, "[BLE] Error $errorCode: $errorMessage")
+
+            // Handle SCAN_FAILED_ALREADY_STARTED specially - the scan IS running
+            if (errorCode == SCAN_FAILED_ALREADY_STARTED) {
+                // Scan is already active, mark it as such and don't log as error
+                isBleScanningActive = true
+                bleStatus.value = SubsystemStatus.Active
+                return
+            }
+
             bleStatus.value = SubsystemStatus.Error(errorCode, errorMessage)
             logError("BLE", errorCode, errorMessage, recoverable = errorCode != SCAN_FAILED_FEATURE_UNSUPPORTED)
             isBleScanningActive = false

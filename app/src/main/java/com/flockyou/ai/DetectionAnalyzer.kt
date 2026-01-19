@@ -56,7 +56,7 @@ class DetectionAnalyzer @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val detectionRepository: DetectionRepository,
     private val geminiNanoClient: GeminiNanoClient,
-    private val ggufLlmClient: GgufLlmClient
+    private val mediaPipeLlmClient: MediaPipeLlmClient
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -200,7 +200,7 @@ class DetectionAnalyzer @Inject constructor(
                     true
                 }
                 AiModel.GEMINI_NANO -> tryInitializeGeminiNano(settings)
-                else -> tryInitializeGgufModel(settings)
+                else -> tryInitializeMediaPipeModel(settings)
             }
 
             if (initialized) {
@@ -248,26 +248,28 @@ class DetectionAnalyzer @Inject constructor(
         return false
     }
 
-    private suspend fun tryInitializeGgufModel(settings: AiSettings): Boolean {
+    private suspend fun tryInitializeMediaPipeModel(settings: AiSettings): Boolean {
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
-        val modelFile = File(modelDir, "${currentModel.id}.gguf")
+        // MediaPipe uses .task format
+        val modelFile = File(modelDir, "${currentModel.id}.task")
 
         if (!modelFile.exists() || modelFile.length() < 1000) {
             Log.d(TAG, "Model file not found: ${modelFile.absolutePath}")
+            Log.d(TAG, "To use this model, download it from Kaggle and place ${currentModel.id}.task in ${modelDir.absolutePath}")
             return false
         }
 
-        Log.d(TAG, "Initializing GGUF model: ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024} MB)")
+        Log.d(TAG, "Initializing MediaPipe model: ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024} MB)")
 
-        // Initialize the GGUF LLM client with the model
+        // Initialize the MediaPipe LLM client with the model
         val config = InferenceConfig.fromSettings(settings)
-        val success = ggufLlmClient.initialize(modelFile, config)
+        val success = mediaPipeLlmClient.initialize(modelFile, config)
 
         if (success) {
             isModelLoaded = true
-            Log.i(TAG, "GGUF model initialized successfully: ${currentModel.displayName}")
+            Log.i(TAG, "MediaPipe model initialized successfully: ${currentModel.displayName}")
         } else {
-            Log.w(TAG, "Failed to initialize GGUF model: ${ggufLlmClient.getStatus()}")
+            Log.w(TAG, "Failed to initialize MediaPipe model: ${mediaPipeLlmClient.getStatus()}")
         }
 
         return success
@@ -468,11 +470,12 @@ class DetectionAnalyzer @Inject constructor(
             Log.w(TAG, "Gemini Nano analysis failed, using rule-based fallback")
         }
 
-        // Use GGUF LLM if loaded and ready
-        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded && ggufLlmClient.isReady()) {
-            Log.d(TAG, "Using GGUF model for inference: ${currentModel.displayName}")
-            val llmResult = ggufLlmClient.analyzeDetection(detection, currentModel)
+        // Use MediaPipe LLM if loaded and ready
+        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded && mediaPipeLlmClient.isReady()) {
+            Log.d(TAG, "Using MediaPipe LLM for inference: ${currentModel.displayName}")
+            val llmResult = mediaPipeLlmClient.analyzeDetection(detection, currentModel)
             if (llmResult.success) {
+                Log.i(TAG, "MediaPipe LLM analysis succeeded!")
                 // Enhance with contextual insights if available
                 return if (contextualInsights != null) {
                     llmResult.copy(
@@ -492,7 +495,10 @@ class DetectionAnalyzer @Inject constructor(
                 }
             }
             // Fall through to rule-based if LLM fails
-            Log.w(TAG, "GGUF LLM analysis failed, using rule-based fallback: ${llmResult.error}")
+            Log.w(TAG, "MediaPipe LLM analysis failed, using rule-based fallback: ${llmResult.error}")
+        } else {
+            // Log why we're not using the LLM
+            Log.d(TAG, "Not using MediaPipe LLM: currentModel=${currentModel.id}, isModelLoaded=$isModelLoaded, isReady=${mediaPipeLlmClient.isReady()}")
         }
 
         // Use comprehensive rule-based analysis as fallback
@@ -982,9 +988,16 @@ class DetectionAnalyzer @Inject constructor(
                 surveillanceType = "Signal Analysis"
             )
             DeviceType.RF_ANOMALY -> DeviceInfo(
-                description = "Unusual RF activity pattern detected. May warrant further investigation.",
+                description = "Unusual RF activity pattern detected indicating potential covert surveillance infrastructure. " +
+                    "Analysis shows anomalous hidden WiFi network characteristics including signal patterns, " +
+                    "manufacturer clustering, temporal behavior, and channel distribution that deviate from " +
+                    "typical residential or commercial environments. Hidden networks with stronger signals than " +
+                    "visible ones, low signal variance (same hardware), known surveillance vendor OUIs, or " +
+                    "simultaneous appearance patterns are strong indicators of coordinated surveillance deployment.",
                 category = "RF Anomaly",
-                surveillanceType = "Signal Analysis"
+                surveillanceType = "Signal Analysis",
+                typicalOperator = "Law enforcement, private investigators, corporate security, government agencies",
+                legalFramework = "Varies by jurisdiction; covert surveillance generally requires warrants"
             )
 
             // Fleet/Commercial Vehicles
@@ -1119,6 +1132,15 @@ class DetectionAnalyzer @Inject constructor(
                 "Return visit frequency",
                 "Device identifiers"
             )
+            DeviceType.RF_ANOMALY -> listOf(
+                "Presence detection via WiFi probe requests",
+                "Device MAC addresses and identifiers",
+                "Signal strength for proximity estimation",
+                "Movement patterns through coverage area",
+                "Behavioral profiling via connection patterns",
+                "Potential audio/video if hidden cameras present",
+                "Network traffic metadata if rogue AP involved"
+            )
             else -> listOf(
                 "Device-specific data collection varies",
                 "May include location and identifiers",
@@ -1223,6 +1245,13 @@ class DetectionAnalyzer @Inject constructor(
                 recommendations.add("Your GPS location may be inaccurate")
                 recommendations.add("Use alternative navigation methods")
                 recommendations.add("Be cautious of location-dependent apps")
+            }
+            DeviceType.RF_ANOMALY -> {
+                recommendations.add("Note this location - high hidden network density detected")
+                recommendations.add("Disable WiFi auto-connect to prevent rogue AP attacks")
+                recommendations.add("Consider using VPN if connecting to any network here")
+                recommendations.add("Check detection details for surveillance vendor indicators")
+                recommendations.add("If persistent across visits, this may be coordinated surveillance")
             }
             else -> {}
         }
@@ -1512,14 +1541,22 @@ class DetectionAnalyzer @Inject constructor(
                 return@withContext available
             }
 
-            val downloadUrl = model.downloadUrl ?: return@withContext false
+            val downloadUrl = model.downloadUrl
+            if (downloadUrl == null) {
+                // Model requires manual download (e.g., from Kaggle)
+                Log.w(TAG, "Model ${model.id} requires manual download. ${AiModel.getDownloadInstructions(model)}")
+                _modelStatus.value = AiModelStatus.Error("Model requires manual download from Kaggle. See instructions in app.")
+                return@withContext false
+            }
 
             _modelStatus.value = AiModelStatus.Downloading(0)
             onProgress(0)
 
             val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
-            val modelFile = File(modelDir, "${model.id}.gguf")
-            val tempFile = File(modelDir, "${model.id}.gguf.tmp")
+            // Use the appropriate file extension based on model format
+            val fileExtension = AiModel.getFileExtension(model)
+            val modelFile = File(modelDir, "${model.id}$fileExtension")
+            val tempFile = File(modelDir, "${model.id}$fileExtension.tmp")
 
             // Retry logic with exponential backoff
             var lastException: Exception? = null
@@ -1578,7 +1615,11 @@ class DetectionAnalyzer @Inject constructor(
                     tempFile.delete()
                     return downloadWithResume(downloadUrl, tempFile, finalFile, expectedSize, onProgress)
                 }
-                throw IOException("Download failed: ${response.code}")
+                // Handle authentication errors from HuggingFace
+                if (response.code == 401 || response.code == 403) {
+                    throw IOException("Authentication required. Please accept the Gemma license at huggingface.co/google/gemma and try again, or use 'Import Model' to load a manually downloaded .task file.")
+                }
+                throw IOException("Download failed: HTTP ${response.code}")
             }
 
             val body = response.body ?: throw IOException("Empty response")
@@ -1619,6 +1660,81 @@ class DetectionAnalyzer @Inject constructor(
                 throw IOException("Failed to rename temp file to final file")
             }
         }
+    }
+
+    /**
+     * Import a model file from a Uri (e.g., from file picker).
+     * Copies the file to the app's internal storage and sets it as the selected model.
+     */
+    suspend fun importModel(
+        uri: android.net.Uri,
+        modelId: String,
+        onProgress: (Int) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val model = AiModel.fromId(modelId)
+            if (model == AiModel.RULE_BASED || model == AiModel.GEMINI_NANO) {
+                Log.w(TAG, "Cannot import ${model.id} - not a file-based model")
+                return@withContext false
+            }
+
+            _modelStatus.value = AiModelStatus.Downloading(0)
+            onProgress(0)
+
+            val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
+            val fileExtension = AiModel.getFileExtension(model)
+            val modelFile = File(modelDir, "${model.id}$fileExtension")
+
+            // Copy from Uri to internal storage
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val fileSize = input.available().toLong().coerceAtLeast(1L)
+                FileOutputStream(modelFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    var totalRead = 0L
+
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        totalRead += bytesRead
+                        val progress = ((totalRead * 100) / fileSize).toInt().coerceIn(0, 99)
+                        _modelStatus.value = AiModelStatus.Downloading(progress)
+                        onProgress(progress)
+                    }
+                }
+            } ?: run {
+                _modelStatus.value = AiModelStatus.Error("Could not open file")
+                return@withContext false
+            }
+
+            // Verify the file was copied successfully
+            if (!modelFile.exists() || modelFile.length() < 1000) {
+                _modelStatus.value = AiModelStatus.Error("File copy failed or file too small")
+                return@withContext false
+            }
+
+            Log.i(TAG, "Model imported: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
+
+            // Update settings and initialize
+            aiSettingsRepository.setModelDownloaded(true, modelFile.length() / (1024 * 1024))
+            aiSettingsRepository.setSelectedModel(modelId)
+            currentModel = model
+            _modelStatus.value = AiModelStatus.Ready
+            onProgress(100)
+
+            // Try to initialize the model
+            initializeModel()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error importing model", e)
+            _modelStatus.value = AiModelStatus.Error("Import failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Get the path to the models directory for manual placement.
+     */
+    fun getModelsDirectory(): File {
+        return context.getDir("ai_models", Context.MODE_PRIVATE)
     }
 
     /**
@@ -1669,15 +1785,17 @@ class DetectionAnalyzer @Inject constructor(
             return initializeModel()
         }
 
-        // Check if GGUF model file exists
+        // Check if model file exists (using appropriate extension for format)
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
-        val modelFile = File(modelDir, "${model.id}.gguf")
+        val fileExtension = AiModel.getFileExtension(model)
+        val modelFile = File(modelDir, "${model.id}$fileExtension")
 
         return if (modelFile.exists() && modelFile.length() > 1000) {
             currentModel = model
             aiSettingsRepository.setSelectedModel(modelId)
             initializeModel()
         } else {
+            Log.d(TAG, "Model file not found: ${modelFile.absolutePath}")
             false // Need to download first
         }
     }

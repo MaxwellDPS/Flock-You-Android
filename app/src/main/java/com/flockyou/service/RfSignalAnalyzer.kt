@@ -129,6 +129,11 @@ class RfSignalAnalyzer(private val context: Context) {
     // Drone tracking
     private val detectedDrones = mutableMapOf<String, DroneInfo>()
 
+    // Hidden network tracking for temporal analysis
+    private val hiddenBssidHistory = mutableMapOf<String, MutableList<Long>>() // BSSID -> timestamps seen
+    private var lastHiddenBssidSet = setOf<String>() // BSSIDs from previous scan
+    private var hiddenNetworkFirstAppearance = mutableMapOf<String, Long>() // BSSID -> first seen timestamp
+
     // State flows
     private val _anomalies = MutableStateFlow<List<RfAnomaly>>(emptyList())
     val anomalies: StateFlow<List<RfAnomaly>> = _anomalies.asStateFlow()
@@ -160,7 +165,46 @@ class RfSignalAnalyzer(private val context: Context) {
         val openNetworkCount: Int,
         val hiddenNetworkCount: Int,
         val droneNetworkCount: Int,
-        val surveillanceCameraCount: Int
+        val surveillanceCameraCount: Int,
+        // Enhanced hidden network analysis fields
+        val hiddenNetworkAnalysis: HiddenNetworkAnalysis? = null
+    )
+
+    /**
+     * Detailed analysis of hidden WiFi networks for anomaly enrichment.
+     */
+    data class HiddenNetworkAnalysis(
+        // Signal characteristics
+        val hiddenAvgSignalStrength: Int,           // Average RSSI of hidden networks
+        val visibleAvgSignalStrength: Int,          // Average RSSI of visible networks
+        val hiddenSignalStrongerThanVisible: Boolean, // Hidden networks have stronger signals (suspicious)
+        val hiddenSignalVariance: Float,            // Low variance = same hardware
+        val signalClusterCount: Int,                // Number of signal strength clusters
+
+        // Band distribution
+        val hiddenBand24Count: Int,                 // Hidden networks on 2.4GHz
+        val hiddenBand5Count: Int,                  // Hidden networks on 5GHz
+        val hiddenBand6Count: Int,                  // Hidden networks on 6GHz
+        val predominantBand: String,                // Most common band for hidden networks
+
+        // Channel analysis
+        val hiddenChannelDistribution: Map<Int, Int>, // Channels used by hidden networks
+        val channelConcentration: Boolean,          // Hidden networks clustered on few channels
+
+        // OUI/Manufacturer analysis
+        val hiddenOuiDistribution: Map<String, Int>, // OUI prefix -> count
+        val sharedOuiCount: Int,                    // Count of hidden networks sharing same OUI
+        val knownSurveillanceOuiCount: Int,         // Hidden networks with surveillance vendor OUIs
+        val uniqueOuiCount: Int,                    // Number of unique OUI prefixes
+
+        // Temporal analysis (requires history)
+        val persistentHiddenBssids: Int,            // BSSIDs seen in multiple scans
+        val newHiddenBssidsThisScan: Int,           // BSSIDs not seen before
+        val simultaneousAppearance: Boolean,        // Many hidden networks appeared at once
+
+        // Correlation with other indicators
+        val hiddenNearSurveillanceCameras: Int,     // Hidden networks with similar signal to cameras
+        val openAndHiddenFromSameOui: Int           // Same vendor has both open and hidden networks
     )
 
     data class DroneInfo(
@@ -387,6 +431,12 @@ class RfSignalAnalyzer(private val context: Context) {
         var droneCount = 0
         var cameraCount = 0
 
+        // Enhanced tracking for hidden network analysis
+        val hiddenNetworks = mutableListOf<HiddenNetworkData>()
+        val visibleNetworks = mutableListOf<VisibleNetworkData>()
+        val openNetworkOuis = mutableSetOf<String>()
+        val cameraSignals = mutableListOf<Int>()
+
         for (result in results) {
             val freq = result.frequency
             val channel = frequencyToChannel(freq)
@@ -399,18 +449,40 @@ class RfSignalAnalyzer(private val context: Context) {
             }
 
             val capabilities = result.capabilities ?: ""
-            if (!capabilities.contains("WPA") && !capabilities.contains("WEP") &&
-                !capabilities.contains("RSN")) {
+            val isOpen = !capabilities.contains("WPA") && !capabilities.contains("WEP") &&
+                !capabilities.contains("RSN")
+            if (isOpen) {
                 openCount++
             }
 
             @Suppress("DEPRECATION")
             val ssid = result.SSID ?: ""
-            if (ssid.isEmpty()) hiddenCount++
-
-            // Check if drone
             val bssid = result.BSSID?.uppercase() ?: ""
             val oui = bssid.take(8)
+
+            if (ssid.isEmpty()) {
+                hiddenCount++
+                hiddenNetworks.add(HiddenNetworkData(
+                    bssid = bssid,
+                    oui = oui,
+                    rssi = result.level,
+                    frequency = freq,
+                    channel = channel
+                ))
+            } else {
+                visibleNetworks.add(VisibleNetworkData(
+                    bssid = bssid,
+                    oui = oui,
+                    rssi = result.level
+                ))
+            }
+
+            // Track open network OUIs for correlation
+            if (isOpen && oui.isNotEmpty()) {
+                openNetworkOuis.add(oui)
+            }
+
+            // Check if drone
             if (oui in DRONE_OUIS || DRONE_SSID_PATTERNS.any { it.matches(ssid) }) {
                 droneCount++
             }
@@ -418,8 +490,20 @@ class RfSignalAnalyzer(private val context: Context) {
             // Check if surveillance camera
             if (oui in SURVEILLANCE_AREA_OUIS) {
                 cameraCount++
+                cameraSignals.add(result.level)
             }
         }
+
+        // Build enhanced hidden network analysis if we have hidden networks
+        val hiddenAnalysis = if (hiddenNetworks.isNotEmpty()) {
+            buildHiddenNetworkAnalysis(
+                hiddenNetworks = hiddenNetworks,
+                visibleNetworks = visibleNetworks,
+                openNetworkOuis = openNetworkOuis,
+                cameraSignals = cameraSignals,
+                timestamp = timestamp
+            )
+        } else null
 
         return RfSnapshot(
             timestamp = timestamp,
@@ -434,8 +518,168 @@ class RfSignalAnalyzer(private val context: Context) {
             openNetworkCount = openCount,
             hiddenNetworkCount = hiddenCount,
             droneNetworkCount = droneCount,
-            surveillanceCameraCount = cameraCount
+            surveillanceCameraCount = cameraCount,
+            hiddenNetworkAnalysis = hiddenAnalysis
         )
+    }
+
+    // Helper data classes for analysis
+    private data class HiddenNetworkData(
+        val bssid: String,
+        val oui: String,
+        val rssi: Int,
+        val frequency: Int,
+        val channel: Int
+    )
+
+    private data class VisibleNetworkData(
+        val bssid: String,
+        val oui: String,
+        val rssi: Int
+    )
+
+    /**
+     * Build comprehensive hidden network analysis from scan data.
+     */
+    private fun buildHiddenNetworkAnalysis(
+        hiddenNetworks: List<HiddenNetworkData>,
+        visibleNetworks: List<VisibleNetworkData>,
+        openNetworkOuis: Set<String>,
+        cameraSignals: List<Int>,
+        timestamp: Long
+    ): HiddenNetworkAnalysis {
+        // Signal characteristics
+        val hiddenSignals = hiddenNetworks.map { it.rssi }
+        val visibleSignals = visibleNetworks.map { it.rssi }
+        val hiddenAvg = if (hiddenSignals.isNotEmpty()) hiddenSignals.average().toInt() else -100
+        val visibleAvg = if (visibleSignals.isNotEmpty()) visibleSignals.average().toInt() else -100
+
+        // Calculate signal variance for hidden networks (low variance = same hardware)
+        val hiddenVariance = if (hiddenSignals.size > 1) {
+            val mean = hiddenSignals.average()
+            hiddenSignals.map { (it - mean) * (it - mean) }.average().toFloat()
+        } else 0f
+
+        // Count signal clusters (group signals within 5dBm)
+        val signalClusters = countSignalClusters(hiddenSignals, threshold = 5)
+
+        // Band distribution for hidden networks
+        var hiddenBand24 = 0
+        var hiddenBand5 = 0
+        var hiddenBand6 = 0
+        for (network in hiddenNetworks) {
+            when {
+                network.frequency in 2400..2500 -> hiddenBand24++
+                network.frequency in 5000..5900 -> hiddenBand5++
+                network.frequency in 5925..7125 -> hiddenBand6++
+            }
+        }
+        val predominantBand = when {
+            hiddenBand24 >= hiddenBand5 && hiddenBand24 >= hiddenBand6 -> "2.4GHz"
+            hiddenBand5 >= hiddenBand24 && hiddenBand5 >= hiddenBand6 -> "5GHz"
+            else -> "6GHz"
+        }
+
+        // Channel distribution for hidden networks
+        val hiddenChannelDist = hiddenNetworks.groupingBy { it.channel }.eachCount()
+        val maxChannelCount = hiddenChannelDist.values.maxOrNull() ?: 0
+        val channelConcentration = hiddenChannelDist.size <= 3 && maxChannelCount >= hiddenNetworks.size / 2
+
+        // OUI analysis
+        val ouiDistribution = hiddenNetworks.filter { it.oui.isNotEmpty() }
+            .groupingBy { it.oui }.eachCount()
+        val uniqueOuiCount = ouiDistribution.size
+        val sharedOuiCount = ouiDistribution.values.filter { it > 1 }.sum()
+        val knownSurveillanceOuiCount = hiddenNetworks.count { it.oui in SURVEILLANCE_AREA_OUIS }
+
+        // Temporal analysis - track hidden BSSIDs across scans
+        val currentHiddenBssids = hiddenNetworks.map { it.bssid }.toSet()
+
+        // Update history
+        for (bssid in currentHiddenBssids) {
+            val history = hiddenBssidHistory.getOrPut(bssid) { mutableListOf() }
+            history.add(timestamp)
+            // Keep only last 10 sightings
+            while (history.size > 10) history.removeAt(0)
+
+            // Track first appearance
+            if (bssid !in hiddenNetworkFirstAppearance) {
+                hiddenNetworkFirstAppearance[bssid] = timestamp
+            }
+        }
+
+        // Count persistent BSSIDs (seen in multiple scans)
+        val persistentBssids = currentHiddenBssids.count { bssid ->
+            (hiddenBssidHistory[bssid]?.size ?: 0) > 1
+        }
+
+        // Count new BSSIDs this scan
+        val newBssids = currentHiddenBssids.count { it !in lastHiddenBssidSet }
+
+        // Check for simultaneous appearance (many new hidden networks at once)
+        val simultaneousAppearance = newBssids >= 5 && lastHiddenBssidSet.isNotEmpty()
+
+        // Update tracking for next scan
+        lastHiddenBssidSet = currentHiddenBssids
+
+        // Clean up old entries (not seen in 5 minutes)
+        val cutoffTime = timestamp - 300_000L
+        hiddenBssidHistory.entries.removeIf { (_, timestamps) ->
+            timestamps.all { it < cutoffTime }
+        }
+        hiddenNetworkFirstAppearance.entries.removeIf { (bssid, _) ->
+            bssid !in hiddenBssidHistory
+        }
+
+        // Correlation with cameras - count hidden networks with similar signal to cameras
+        val avgCameraSignal = if (cameraSignals.isNotEmpty()) cameraSignals.average() else -100.0
+        val hiddenNearCameras = if (cameraSignals.isNotEmpty()) {
+            hiddenNetworks.count { kotlin.math.abs(it.rssi - avgCameraSignal) < 10 }
+        } else 0
+
+        // Count OUIs that have both open and hidden networks
+        val hiddenOuis = hiddenNetworks.map { it.oui }.toSet()
+        val openAndHiddenSameOui = hiddenOuis.count { it in openNetworkOuis && it.isNotEmpty() }
+
+        return HiddenNetworkAnalysis(
+            hiddenAvgSignalStrength = hiddenAvg,
+            visibleAvgSignalStrength = visibleAvg,
+            hiddenSignalStrongerThanVisible = hiddenAvg > visibleAvg + 5, // 5dBm threshold
+            hiddenSignalVariance = hiddenVariance,
+            signalClusterCount = signalClusters,
+            hiddenBand24Count = hiddenBand24,
+            hiddenBand5Count = hiddenBand5,
+            hiddenBand6Count = hiddenBand6,
+            predominantBand = predominantBand,
+            hiddenChannelDistribution = hiddenChannelDist,
+            channelConcentration = channelConcentration,
+            hiddenOuiDistribution = ouiDistribution,
+            sharedOuiCount = sharedOuiCount,
+            knownSurveillanceOuiCount = knownSurveillanceOuiCount,
+            uniqueOuiCount = uniqueOuiCount,
+            persistentHiddenBssids = persistentBssids,
+            newHiddenBssidsThisScan = newBssids,
+            simultaneousAppearance = simultaneousAppearance,
+            hiddenNearSurveillanceCameras = hiddenNearCameras,
+            openAndHiddenFromSameOui = openAndHiddenSameOui
+        )
+    }
+
+    /**
+     * Count signal strength clusters (signals within threshold dBm of each other).
+     */
+    private fun countSignalClusters(signals: List<Int>, threshold: Int): Int {
+        if (signals.isEmpty()) return 0
+        val sorted = signals.sorted()
+        var clusters = 1
+        var clusterStart = sorted[0]
+        for (signal in sorted) {
+            if (signal - clusterStart > threshold) {
+                clusters++
+                clusterStart = signal
+            }
+        }
+        return clusters
     }
 
     private fun checkForJammer(snapshot: RfSnapshot) {
@@ -610,21 +854,246 @@ class RfSignalAnalyzer(private val context: Context) {
 
             // Stricter threshold: 40% hidden AND at least 15 hidden networks
             if (hiddenRatio > HIDDEN_NETWORK_SUSPICIOUS_RATIO && snapshot.hiddenNetworkCount >= 15) {
+                val analysis = snapshot.hiddenNetworkAnalysis
+
+                // Calculate confidence based on multiple indicators
+                val confidence = calculateHiddenNetworkConfidence(analysis, hiddenRatio)
+
+                // Build enriched technical details
+                val technicalDetails = buildHiddenNetworkTechnicalDetails(
+                    snapshot, hiddenRatio, analysis
+                )
+
+                // Build comprehensive contributing factors
+                val contributingFactors = buildHiddenNetworkContributingFactors(
+                    snapshot, hiddenRatio, analysis
+                )
+
                 reportAnomaly(
                     type = RfAnomalyType.UNUSUAL_ACTIVITY,
-                    description = "Unusually high number of hidden WiFi networks",
-                    technicalDetails = "${snapshot.hiddenNetworkCount} of ${snapshot.wifiNetworkCount} " +
-                        "networks are hidden (${(hiddenRatio * 100).toInt()}%). " +
-                        "High hidden network density can indicate covert surveillance.",
-                    confidence = AnomalyConfidence.LOW,
-                    contributingFactors = listOf(
-                        "${snapshot.wifiNetworkCount} total networks",
-                        "${snapshot.hiddenNetworkCount} hidden networks",
-                        "${(hiddenRatio * 100).toInt()}% hidden ratio"
-                    )
+                    description = buildHiddenNetworkDescription(analysis),
+                    technicalDetails = technicalDetails,
+                    confidence = confidence,
+                    contributingFactors = contributingFactors
                 )
             }
         }
+    }
+
+    /**
+     * Calculate confidence level based on multiple hidden network indicators.
+     */
+    private fun calculateHiddenNetworkConfidence(
+        analysis: HiddenNetworkAnalysis?,
+        hiddenRatio: Float
+    ): AnomalyConfidence {
+        if (analysis == null) return AnomalyConfidence.LOW
+
+        var suspicionScore = 0
+
+        // High hidden ratio is suspicious
+        if (hiddenRatio > 0.5f) suspicionScore += 2
+        else if (hiddenRatio > 0.4f) suspicionScore += 1
+
+        // Hidden networks stronger than visible = very suspicious
+        if (analysis.hiddenSignalStrongerThanVisible) suspicionScore += 2
+
+        // Low signal variance = same hardware = coordinated deployment
+        if (analysis.hiddenSignalVariance < 50f && analysis.signalClusterCount <= 2) suspicionScore += 2
+
+        // Multiple hidden networks share same OUI = coordinated
+        if (analysis.sharedOuiCount >= 5) suspicionScore += 2
+        else if (analysis.sharedOuiCount >= 3) suspicionScore += 1
+
+        // Known surveillance vendor OUIs
+        if (analysis.knownSurveillanceOuiCount > 0) suspicionScore += 2
+
+        // Channel concentration suggests coordinated deployment
+        if (analysis.channelConcentration) suspicionScore += 1
+
+        // Many new hidden networks appeared simultaneously
+        if (analysis.simultaneousAppearance) suspicionScore += 2
+
+        // Hidden networks near surveillance cameras
+        if (analysis.hiddenNearSurveillanceCameras >= 5) suspicionScore += 1
+
+        // Persistent hidden networks (seen across multiple scans)
+        if (analysis.persistentHiddenBssids >= 10) suspicionScore += 1
+
+        return when {
+            suspicionScore >= 8 -> AnomalyConfidence.HIGH
+            suspicionScore >= 5 -> AnomalyConfidence.MEDIUM
+            else -> AnomalyConfidence.LOW
+        }
+    }
+
+    /**
+     * Build a descriptive summary based on analysis findings.
+     */
+    private fun buildHiddenNetworkDescription(analysis: HiddenNetworkAnalysis?): String {
+        if (analysis == null) return "Unusually high number of hidden WiFi networks"
+
+        val indicators = mutableListOf<String>()
+
+        if (analysis.hiddenSignalStrongerThanVisible) {
+            indicators.add("stronger signals than visible networks")
+        }
+        if (analysis.sharedOuiCount >= 3) {
+            indicators.add("shared hardware vendors")
+        }
+        if (analysis.knownSurveillanceOuiCount > 0) {
+            indicators.add("known surveillance equipment")
+        }
+        if (analysis.simultaneousAppearance) {
+            indicators.add("appeared simultaneously")
+        }
+        if (analysis.channelConcentration) {
+            indicators.add("concentrated on few channels")
+        }
+
+        return if (indicators.isNotEmpty()) {
+            "Hidden WiFi network anomaly: ${indicators.joinToString(", ")}"
+        } else {
+            "Unusually high number of hidden WiFi networks"
+        }
+    }
+
+    /**
+     * Build detailed technical information for the detection.
+     */
+    private fun buildHiddenNetworkTechnicalDetails(
+        snapshot: RfSnapshot,
+        hiddenRatio: Float,
+        analysis: HiddenNetworkAnalysis?
+    ): String {
+        val sb = StringBuilder()
+
+        sb.append("${snapshot.hiddenNetworkCount} of ${snapshot.wifiNetworkCount} ")
+        sb.append("networks are hidden (${(hiddenRatio * 100).toInt()}%). ")
+
+        if (analysis != null) {
+            // Signal analysis
+            sb.append("\n\nSIGNAL ANALYSIS: ")
+            sb.append("Hidden networks avg ${analysis.hiddenAvgSignalStrength}dBm ")
+            sb.append("vs visible ${analysis.visibleAvgSignalStrength}dBm. ")
+            if (analysis.hiddenSignalStrongerThanVisible) {
+                sb.append("⚠️ Hidden networks have STRONGER signals (unusual). ")
+            }
+            if (analysis.hiddenSignalVariance < 100f) {
+                sb.append("Signal variance: ${String.format("%.1f", analysis.hiddenSignalVariance)} ")
+                sb.append("(${if (analysis.hiddenSignalVariance < 50f) "LOW - suggests same hardware" else "moderate"}). ")
+            }
+            sb.append("${analysis.signalClusterCount} signal strength clusters detected.")
+
+            // Band distribution
+            sb.append("\n\nBAND DISTRIBUTION: ")
+            sb.append("2.4GHz: ${analysis.hiddenBand24Count}, ")
+            sb.append("5GHz: ${analysis.hiddenBand5Count}, ")
+            sb.append("6GHz: ${analysis.hiddenBand6Count}. ")
+            sb.append("Predominantly ${analysis.predominantBand}.")
+
+            // Channel analysis
+            if (analysis.channelConcentration) {
+                sb.append("\n\n⚠️ CHANNEL CONCENTRATION: ")
+                sb.append("Hidden networks clustered on ${analysis.hiddenChannelDistribution.size} channels. ")
+                sb.append("This suggests coordinated deployment.")
+            }
+
+            // OUI/Manufacturer analysis
+            sb.append("\n\nMANUFACTURER ANALYSIS: ")
+            sb.append("${analysis.uniqueOuiCount} unique vendors identified. ")
+            if (analysis.sharedOuiCount > 0) {
+                sb.append("${analysis.sharedOuiCount} hidden networks share same vendor OUI. ")
+            }
+            if (analysis.knownSurveillanceOuiCount > 0) {
+                sb.append("⚠️ ${analysis.knownSurveillanceOuiCount} networks from KNOWN surveillance equipment vendors. ")
+            }
+
+            // Temporal patterns
+            sb.append("\n\nTEMPORAL PATTERNS: ")
+            sb.append("${analysis.persistentHiddenBssids} persistent (seen multiple scans), ")
+            sb.append("${analysis.newHiddenBssidsThisScan} new this scan. ")
+            if (analysis.simultaneousAppearance) {
+                sb.append("⚠️ Many hidden networks appeared SIMULTANEOUSLY - suggests coordinated activation.")
+            }
+
+            // Correlations
+            if (analysis.hiddenNearSurveillanceCameras > 0 || analysis.openAndHiddenFromSameOui > 0) {
+                sb.append("\n\nCORRELATIONS: ")
+                if (analysis.hiddenNearSurveillanceCameras > 0) {
+                    sb.append("${analysis.hiddenNearSurveillanceCameras} hidden networks at similar signal strength to cameras. ")
+                }
+                if (analysis.openAndHiddenFromSameOui > 0) {
+                    sb.append("${analysis.openAndHiddenFromSameOui} vendors have both open AND hidden networks (dual-mode equipment).")
+                }
+            }
+        } else {
+            sb.append("High hidden network density can indicate covert surveillance.")
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Build comprehensive list of contributing factors for the detection.
+     */
+    private fun buildHiddenNetworkContributingFactors(
+        snapshot: RfSnapshot,
+        hiddenRatio: Float,
+        analysis: HiddenNetworkAnalysis?
+    ): List<String> {
+        val factors = mutableListOf<String>()
+
+        // Basic counts
+        factors.add("${snapshot.wifiNetworkCount} total networks detected")
+        factors.add("${snapshot.hiddenNetworkCount} hidden networks (${(hiddenRatio * 100).toInt()}%)")
+
+        if (analysis != null) {
+            // Signal characteristics
+            factors.add("Hidden avg signal: ${analysis.hiddenAvgSignalStrength}dBm")
+            if (analysis.hiddenSignalStrongerThanVisible) {
+                factors.add("⚠️ Hidden signals STRONGER than visible networks")
+            }
+            if (analysis.hiddenSignalVariance < 50f) {
+                factors.add("⚠️ Low signal variance (${String.format("%.1f", analysis.hiddenSignalVariance)}) - same hardware likely")
+            }
+            factors.add("${analysis.signalClusterCount} signal strength clusters")
+
+            // Band info
+            factors.add("Band distribution: ${analysis.hiddenBand24Count} on 2.4GHz, ${analysis.hiddenBand5Count} on 5GHz")
+
+            // Channel concentration
+            if (analysis.channelConcentration) {
+                factors.add("⚠️ Channel concentration detected (${analysis.hiddenChannelDistribution.size} channels)")
+            }
+
+            // OUI analysis
+            factors.add("${analysis.uniqueOuiCount} unique hardware vendors")
+            if (analysis.sharedOuiCount >= 3) {
+                factors.add("⚠️ ${analysis.sharedOuiCount} networks share same vendor")
+            }
+            if (analysis.knownSurveillanceOuiCount > 0) {
+                factors.add("⚠️ ${analysis.knownSurveillanceOuiCount} from known surveillance vendors")
+            }
+
+            // Temporal
+            if (analysis.persistentHiddenBssids > 5) {
+                factors.add("${analysis.persistentHiddenBssids} persistent hidden networks")
+            }
+            if (analysis.simultaneousAppearance) {
+                factors.add("⚠️ ${analysis.newHiddenBssidsThisScan} networks appeared simultaneously")
+            }
+
+            // Correlations
+            if (analysis.hiddenNearSurveillanceCameras >= 3) {
+                factors.add("${analysis.hiddenNearSurveillanceCameras} co-located with cameras")
+            }
+            if (analysis.openAndHiddenFromSameOui > 0) {
+                factors.add("${analysis.openAndHiddenFromSameOui} dual-mode vendors detected")
+            }
+        }
+
+        return factors
     }
 
     private fun checkForSpectrumAnomalies(snapshot: RfSnapshot) {
@@ -824,6 +1293,9 @@ class RfSignalAnalyzer(private val context: Context) {
         detectedDrones.clear()
         eventHistory.clear()
         pendingDroneSightings.clear()
+        hiddenBssidHistory.clear()
+        lastHiddenBssidSet = emptySet()
+        hiddenNetworkFirstAppearance.clear()
         _rfEvents.value = emptyList()
         _detectedDrones.value = emptyList()
         baselineNetworkCount = null

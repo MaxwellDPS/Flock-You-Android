@@ -5,6 +5,7 @@ import android.util.Log
 import com.flockyou.data.AiAnalysisResult
 import com.flockyou.data.AiModel
 import com.flockyou.data.InferenceConfig
+import com.flockyou.data.ModelFormat
 import com.flockyou.data.model.Detection
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -17,21 +18,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Client for running GGUF model inference using MediaPipe LLM Inference.
+ * Client for running on-device LLM inference using MediaPipe LLM Inference API.
  * All processing happens entirely on-device with no cloud connectivity.
  *
- * Supports models like SmolLM, Gemma, TinyLlama, Phi-3, Qwen2, etc.
+ * Supports models in MediaPipe .task format (e.g., Gemma models from Kaggle).
+ * Note: Raw GGUF files are NOT supported - models must be converted to .task format.
  */
 @Singleton
-class GgufLlmClient @Inject constructor(
+class MediaPipeLlmClient @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     companion object {
-        private const val TAG = "GgufLlmClient"
+        private const val TAG = "MediaPipeLlmClient"
         private const val MAX_TOKENS = 512
-        private const val TEMPERATURE = 0.7f
-        private const val TOP_K = 40
-        private const val TOP_P = 0.9f
     }
 
     private var llmInference: LlmInference? = null
@@ -42,10 +41,11 @@ class GgufLlmClient @Inject constructor(
 
     /**
      * Initialize the LLM with a specific model file.
+     * The model file must be in MediaPipe .task format.
      */
     suspend fun initialize(modelFile: File, config: InferenceConfig = InferenceConfig(
         maxTokens = MAX_TOKENS,
-        temperature = TEMPERATURE,
+        temperature = 0.7f,
         useGpuAcceleration = true,
         useNpuAcceleration = false
     )): Boolean = initMutex.withLock {
@@ -66,14 +66,20 @@ class GgufLlmClient @Inject constructor(
                     return@withContext false
                 }
 
-                Log.d(TAG, "Initializing LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
+                // Verify file has .task extension
+                if (!modelFile.name.endsWith(".task")) {
+                    initializationError = "Invalid model format. Expected .task file, got: ${modelFile.name}. " +
+                        "MediaPipe requires models in .task format. Download from Kaggle or convert using MediaPipe tools."
+                    Log.e(TAG, initializationError!!)
+                    return@withContext false
+                }
+
+                Log.d(TAG, "Initializing MediaPipe LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
 
                 // Build LLM inference options
                 val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
                     .setModelPath(modelFile.absolutePath)
                     .setMaxTokens(config.maxTokens)
-                    .setTopK(TOP_K)
-                    .setRandomSeed(42)
 
                 val options = optionsBuilder.build()
 
@@ -82,11 +88,11 @@ class GgufLlmClient @Inject constructor(
                 currentModelPath = modelFile.absolutePath
                 isInitialized = true
 
-                Log.i(TAG, "LLM initialized successfully: ${modelFile.name}")
+                Log.i(TAG, "MediaPipe LLM initialized successfully: ${modelFile.name}")
                 true
 
             } catch (e: Exception) {
-                initializationError = "Failed to initialize LLM: ${e.message}"
+                initializationError = "Failed to initialize MediaPipe LLM: ${e.message}"
                 Log.e(TAG, initializationError!!, e)
                 isInitialized = false
                 false
@@ -100,7 +106,7 @@ class GgufLlmClient @Inject constructor(
     suspend fun generateResponse(prompt: String): String? = withContext(Dispatchers.IO) {
         val inference = llmInference
         if (inference == null || !isInitialized) {
-            Log.w(TAG, "LLM not initialized")
+            Log.w(TAG, "MediaPipe LLM not initialized")
             return@withContext null
         }
 
@@ -129,7 +135,7 @@ class GgufLlmClient @Inject constructor(
         if (!isInitialized) {
             return@withContext AiAnalysisResult(
                 success = false,
-                error = initializationError ?: "LLM not initialized",
+                error = initializationError ?: "MediaPipe LLM not initialized",
                 processingTimeMs = System.currentTimeMillis() - startTime,
                 modelUsed = model.id
             )
@@ -137,9 +143,11 @@ class GgufLlmClient @Inject constructor(
 
         try {
             val prompt = buildAnalysisPrompt(detection)
+            Log.d(TAG, "Analyzing detection with prompt length: ${prompt.length}")
             val response = generateResponse(prompt)
 
             if (response != null) {
+                Log.d(TAG, "LLM generated response: ${response.take(100)}...")
                 AiAnalysisResult(
                     success = true,
                     analysis = formatResponse(response, detection),
@@ -149,9 +157,10 @@ class GgufLlmClient @Inject constructor(
                     wasOnDevice = true
                 )
             } else {
+                Log.w(TAG, "LLM returned null response")
                 AiAnalysisResult(
                     success = false,
-                    error = "Failed to generate analysis",
+                    error = "Failed to generate analysis - model returned empty response",
                     processingTimeMs = System.currentTimeMillis() - startTime,
                     modelUsed = model.id
                 )
@@ -169,12 +178,11 @@ class GgufLlmClient @Inject constructor(
 
     /**
      * Build the analysis prompt for a detection.
+     * Uses a format suitable for Gemma instruction-tuned models.
      */
     private fun buildAnalysisPrompt(detection: Detection): String {
-        return """<|system|>
-You are a privacy and surveillance expert assistant. Analyze surveillance devices detected nearby and provide concise, actionable privacy advice. Be direct and helpful.
-<|end|>
-<|user|>
+        // Use Gemma's instruction format
+        return """<start_of_turn>user
 I detected a surveillance device nearby. Please analyze it and tell me:
 1. What this device does and its surveillance capabilities
 2. What data it can collect about me
@@ -189,8 +197,8 @@ Device Details:
 ${detection.manufacturer?.let { "- Manufacturer: $it" } ?: ""}
 ${detection.deviceName?.let { "- Device Name: $it" } ?: ""}
 ${detection.ssid?.let { "- Network: $it" } ?: ""}
-<|end|>
-<|assistant|>
+<end_of_turn>
+<start_of_turn>model
 """
     }
 
@@ -198,10 +206,12 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
      * Format and clean up the LLM response.
      */
     private fun formatResponse(response: String, detection: Detection): String {
-        // Clean up the response
+        // Clean up the response - remove any model control tokens
         var cleaned = response
-            .replace("<|end|>", "")
-            .replace("<|assistant|>", "")
+            .replace("<end_of_turn>", "")
+            .replace("<start_of_turn>model", "")
+            .replace("<start_of_turn>user", "")
+            .replace("<eos>", "")
             .trim()
 
         // Add a header if the response doesn't have one
@@ -220,11 +230,11 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
     /**
      * Get the current initialization status.
      */
-    fun getStatus(): GgufLlmStatus {
+    fun getStatus(): MediaPipeLlmStatus {
         return when {
-            isInitialized -> GgufLlmStatus.Ready(currentModelPath ?: "unknown")
-            initializationError != null -> GgufLlmStatus.Error(initializationError!!)
-            else -> GgufLlmStatus.NotInitialized
+            isInitialized -> MediaPipeLlmStatus.Ready(currentModelPath ?: "unknown")
+            initializationError != null -> MediaPipeLlmStatus.Error(initializationError!!)
+            else -> MediaPipeLlmStatus.NotInitialized
         }
     }
 
@@ -235,7 +245,7 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
         try {
             llmInference?.close()
         } catch (e: Exception) {
-            Log.w(TAG, "Error closing LLM: ${e.message}")
+            Log.w(TAG, "Error closing MediaPipe LLM: ${e.message}")
         }
         llmInference = null
         currentModelPath = null
@@ -243,8 +253,8 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
     }
 }
 
-sealed class GgufLlmStatus {
-    object NotInitialized : GgufLlmStatus()
-    data class Ready(val modelPath: String) : GgufLlmStatus()
-    data class Error(val message: String) : GgufLlmStatus()
+sealed class MediaPipeLlmStatus {
+    object NotInitialized : MediaPipeLlmStatus()
+    data class Ready(val modelPath: String) : MediaPipeLlmStatus()
+    data class Error(val message: String) : MediaPipeLlmStatus()
 }
