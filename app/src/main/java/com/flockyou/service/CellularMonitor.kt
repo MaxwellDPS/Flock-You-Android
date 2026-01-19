@@ -941,24 +941,30 @@ class CellularMonitor(private val context: Context) {
             is CellInfoLte -> {
                 cellId = registeredCell.cellIdentity.ci.toLong()
                 tac = registeredCell.cellIdentity.tac
-                mcc = registeredCell.cellIdentity.mccString
-                mnc = registeredCell.cellIdentity.mncString
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = registeredCell.cellIdentity.mccString
+                    mnc = registeredCell.cellIdentity.mncString
+                }
                 signalDbm = registeredCell.cellSignalStrength.dbm
                 networkType = TelephonyManager.NETWORK_TYPE_LTE
             }
             is CellInfoGsm -> {
                 cellId = registeredCell.cellIdentity.cid.toLong()
                 lac = registeredCell.cellIdentity.lac
-                mcc = registeredCell.cellIdentity.mccString
-                mnc = registeredCell.cellIdentity.mncString
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = registeredCell.cellIdentity.mccString
+                    mnc = registeredCell.cellIdentity.mncString
+                }
                 signalDbm = registeredCell.cellSignalStrength.dbm
                 networkType = TelephonyManager.NETWORK_TYPE_GSM
             }
             is CellInfoWcdma -> {
                 cellId = registeredCell.cellIdentity.cid.toLong()
                 lac = registeredCell.cellIdentity.lac
-                mcc = registeredCell.cellIdentity.mccString
-                mnc = registeredCell.cellIdentity.mncString
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    mcc = registeredCell.cellIdentity.mccString
+                    mnc = registeredCell.cellIdentity.mncString
+                }
                 signalDbm = registeredCell.cellSignalStrength.dbm
                 networkType = TelephonyManager.NETWORK_TYPE_UMTS
             }
