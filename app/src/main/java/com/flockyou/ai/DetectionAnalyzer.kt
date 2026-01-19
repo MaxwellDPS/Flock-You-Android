@@ -55,7 +55,8 @@ class DetectionAnalyzer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val aiSettingsRepository: AiSettingsRepository,
     private val detectionRepository: DetectionRepository,
-    private val geminiNanoClient: GeminiNanoClient
+    private val geminiNanoClient: GeminiNanoClient,
+    private val ggufLlmClient: GgufLlmClient
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -247,7 +248,6 @@ class DetectionAnalyzer @Inject constructor(
         return false
     }
 
-    @Suppress("UNUSED_PARAMETER")
     private suspend fun tryInitializeGgufModel(settings: AiSettings): Boolean {
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
         val modelFile = File(modelDir, "${currentModel.id}.gguf")
@@ -257,11 +257,20 @@ class DetectionAnalyzer @Inject constructor(
             return false
         }
 
-        // In production, this would initialize llama.cpp with the model
-        // For now, mark as loaded if file exists
-        isModelLoaded = true
-        Log.d(TAG, "GGUF model loaded: ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024} MB)")
-        return true
+        Log.d(TAG, "Initializing GGUF model: ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024} MB)")
+
+        // Initialize the GGUF LLM client with the model
+        val config = InferenceConfig.fromSettings(settings)
+        val success = ggufLlmClient.initialize(modelFile, config)
+
+        if (success) {
+            isModelLoaded = true
+            Log.i(TAG, "GGUF model initialized successfully: ${currentModel.displayName}")
+        } else {
+            Log.w(TAG, "Failed to initialize GGUF model: ${ggufLlmClient.getStatus()}")
+        }
+
+        return success
     }
 
     /**
@@ -459,14 +468,34 @@ class DetectionAnalyzer @Inject constructor(
             Log.w(TAG, "Gemini Nano analysis failed, using rule-based fallback")
         }
 
-        // For GGUF models: currently using enhanced rule-based analysis
-        // TODO: Integrate llama.cpp or MediaPipe LLM for actual GGUF inference
-        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded) {
-            Log.d(TAG, "GGUF model ${currentModel.displayName} loaded but inference not yet implemented, using enhanced rule-based")
-            // Could integrate llama.android or MediaPipe LLM here for actual inference
+        // Use GGUF LLM if loaded and ready
+        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded && ggufLlmClient.isReady()) {
+            Log.d(TAG, "Using GGUF model for inference: ${currentModel.displayName}")
+            val llmResult = ggufLlmClient.analyzeDetection(detection, currentModel)
+            if (llmResult.success) {
+                // Enhance with contextual insights if available
+                return if (contextualInsights != null) {
+                    llmResult.copy(
+                        analysis = buildString {
+                            append(llmResult.analysis ?: "")
+                            appendLine()
+                            appendLine("### Contextual Analysis")
+                            contextualInsights.locationPattern?.let { appendLine("- Location: $it") }
+                            contextualInsights.timePattern?.let { appendLine("- Time Pattern: $it") }
+                            contextualInsights.clusterInfo?.let { appendLine("- Cluster: $it") }
+                            contextualInsights.historicalContext?.let { appendLine("- History: $it") }
+                        },
+                        structuredData = buildStructuredData(detection, contextualInsights)
+                    )
+                } else {
+                    llmResult.copy(structuredData = buildStructuredData(detection, null))
+                }
+            }
+            // Fall through to rule-based if LLM fails
+            Log.w(TAG, "GGUF LLM analysis failed, using rule-based fallback: ${llmResult.error}")
         }
 
-        // Use comprehensive rule-based analysis
+        // Use comprehensive rule-based analysis as fallback
         return generateRuleBasedAnalysis(detection, contextualInsights)
     }
 

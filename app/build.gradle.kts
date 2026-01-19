@@ -193,6 +193,9 @@ dependencies {
     implementation("com.google.ai.edge.litert:litert-gpu:1.0.1")
     implementation("com.google.ai.edge.litert:litert-support:1.0.1")
 
+    // MediaPipe LLM Inference for GGUF models on-device
+    implementation("com.google.mediapipe:tasks-genai:0.10.22")
+
     // Google AI Client SDK for Gemini Nano on Pixel 8+ (via AICore)
     // This provides access to the on-device Gemini Nano model managed by Google Play Services
     implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
