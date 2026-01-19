@@ -59,6 +59,12 @@ class AiSettingsViewModel @Inject constructor(
     private val _selectedModelForDownload = MutableStateFlow<AiModel?>(null)
     val selectedModelForDownload: StateFlow<AiModel?> = _selectedModelForDownload.asStateFlow()
 
+    private val _isDownloading = MutableStateFlow(false)
+    val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
+
+    private val _downloadError = MutableStateFlow<String?>(null)
+    val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
+
     init {
         loadDeviceCapabilities()
     }
@@ -107,12 +113,20 @@ class AiSettingsViewModel @Inject constructor(
     fun setUseGpuAcceleration(enabled: Boolean) {
         viewModelScope.launch {
             aiSettingsRepository.setUseGpuAcceleration(enabled)
+            // Reinitialize model to apply new acceleration settings
+            if (aiSettings.value.enabled) {
+                detectionAnalyzer.initializeModel()
+            }
         }
     }
 
     fun setUseNpuAcceleration(enabled: Boolean) {
         viewModelScope.launch {
             aiSettingsRepository.setUseNpuAcceleration(enabled)
+            // Reinitialize model to apply new acceleration settings
+            if (aiSettings.value.enabled) {
+                detectionAnalyzer.initializeModel()
+            }
         }
     }
 
@@ -144,7 +158,18 @@ class AiSettingsViewModel @Inject constructor(
 
     fun downloadModel(model: AiModel = _selectedModelForDownload.value ?: AiModel.RULE_BASED) {
         viewModelScope.launch {
+            // Guard against concurrent downloads
+            if (_isDownloading.value) {
+                Toast.makeText(
+                    application,
+                    "Download already in progress",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
             _downloadProgress.value = 0
+            _downloadError.value = null
 
             if (model == AiModel.RULE_BASED) {
                 // No download needed for rule-based
@@ -155,29 +180,41 @@ class AiSettingsViewModel @Inject constructor(
                     "Using rule-based analysis",
                     Toast.LENGTH_SHORT
                 ).show()
+                _selectedModelForDownload.value = null
                 return@launch
             }
 
-            val success = detectionAnalyzer.downloadModel(model.id) { progress ->
-                _downloadProgress.value = progress
-            }
+            _isDownloading.value = true
+            try {
+                val success = detectionAnalyzer.downloadModel(model.id) { progress ->
+                    _downloadProgress.value = progress
+                }
 
-            if (success) {
-                Toast.makeText(
-                    application,
-                    "${model.displayName} ready",
-                    Toast.LENGTH_SHORT
-                ).show()
-                detectionAnalyzer.initializeModel()
-            } else {
-                Toast.makeText(
-                    application,
-                    "Failed to download ${model.displayName}",
-                    Toast.LENGTH_SHORT
-                ).show()
+                if (success) {
+                    Toast.makeText(
+                        application,
+                        "${model.displayName} ready",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    detectionAnalyzer.initializeModel()
+                } else {
+                    val errorMsg = "Failed to download ${model.displayName}"
+                    _downloadError.value = errorMsg
+                    Toast.makeText(
+                        application,
+                        errorMsg,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                _isDownloading.value = false
+                _selectedModelForDownload.value = null
             }
-            _selectedModelForDownload.value = null
         }
+    }
+
+    fun clearDownloadError() {
+        _downloadError.value = null
     }
 
     fun selectModel(model: AiModel) {
@@ -251,41 +288,57 @@ class AiSettingsViewModel @Inject constructor(
 
             val result = detectionAnalyzer.analyzeDetection(testDetection)
 
-            if (result.success) {
-                _testResult.value = result.analysis
-                val modelInfo = if (result.modelUsed == "rule-based") "rule-based" else result.modelUsed
-                Toast.makeText(
-                    application,
-                    "Analysis completed in ${result.processingTimeMs}ms ($modelInfo)",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                _testResult.value = null
-                Toast.makeText(
-                    application,
-                    result.error ?: "Analysis failed",
-                    Toast.LENGTH_SHORT
-                ).show()
+            when {
+                result.success -> {
+                    _testResult.value = result.analysis
+                    val modelInfo = if (result.modelUsed == "rule-based") "rule-based" else result.modelUsed
+                    Toast.makeText(
+                        application,
+                        "Analysis completed in ${result.processingTimeMs}ms ($modelInfo)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                result.wasCancelled -> {
+                    _testResult.value = null
+                    // No toast for cancellation - user initiated it
+                }
+                else -> {
+                    _testResult.value = null
+                    Toast.makeText(
+                        application,
+                        result.error ?: "Analysis failed",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         }
     }
 
     fun submitFeedback(detectionId: String, feedbackType: FeedbackType, wasHelpful: Boolean) {
-        val feedback = AnalysisFeedback(
-            detectionId = detectionId,
-            analysisTimestamp = System.currentTimeMillis(),
-            wasHelpful = wasHelpful,
-            feedbackType = feedbackType
-        )
-        detectionAnalyzer.recordFeedback(feedback)
-        Toast.makeText(
-            application,
-            "Feedback recorded - thank you!",
-            Toast.LENGTH_SHORT
-        ).show()
+        viewModelScope.launch {
+            val feedback = AnalysisFeedback(
+                detectionId = detectionId,
+                analysisTimestamp = System.currentTimeMillis(),
+                wasHelpful = wasHelpful,
+                feedbackType = feedbackType
+            )
+            detectionAnalyzer.recordFeedback(feedback)
+            Toast.makeText(
+                application,
+                "Feedback recorded - thank you!",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     fun clearTestResult() {
         _testResult.value = null
+    }
+
+    /**
+     * Cancel any ongoing AI analysis.
+     */
+    fun cancelAnalysis() {
+        detectionAnalyzer.cancelAnalysis()
     }
 }

@@ -16,13 +16,25 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.util.ArrayDeque
+import java.util.Collections
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 import kotlin.math.*
 
 /**
@@ -49,8 +61,11 @@ class DetectionAnalyzer @Inject constructor(
         private const val TAG = "DetectionAnalyzer"
         private const val CACHE_EXPIRY_MS = 30 * 60 * 1000L // 30 minutes
         private const val MAX_CACHE_SIZE = 100
+        private const val MAX_FEEDBACK_HISTORY_SIZE = 500
         private const val CLUSTER_RADIUS_METERS = 100.0
         private const val DOWNLOAD_TIMEOUT_SECONDS = 300L
+        private const val MAX_DOWNLOAD_RETRIES = 3
+        private const val INITIAL_RETRY_DELAY_MS = 1000L
     }
 
     private val _modelStatus = MutableStateFlow<AiModelStatus>(AiModelStatus.NotDownloaded)
@@ -59,17 +74,52 @@ class DetectionAnalyzer @Inject constructor(
     private val _isAnalyzing = MutableStateFlow(false)
     val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
 
-    // Analysis cache
+    // Thread-safe analysis cache
     private data class CacheEntry(val result: AiAnalysisResult, val timestamp: Long)
-    private val analysisCache = mutableMapOf<String, CacheEntry>()
+    private val analysisCache = Collections.synchronizedMap(mutableMapOf<String, CacheEntry>())
+    private val cacheMutex = Mutex()
 
-    // Feedback storage for learning
-    private val feedbackHistory = mutableListOf<AnalysisFeedback>()
+    // Efficient feedback storage with O(1) removal from front
+    private val feedbackHistory = ArrayDeque<AnalysisFeedback>(MAX_FEEDBACK_HISTORY_SIZE)
+    private val feedbackMutex = Mutex()
 
-    // Model state
-    private var currentModel: AiModel = AiModel.RULE_BASED
-    private var isModelLoaded = false
-    private var geminiNanoInitialized = false
+    // Reusable HTTP client with connection pooling for model downloads
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .connectionPool(ConnectionPool(maxIdleConnections = 2, keepAliveDuration = 5, TimeUnit.MINUTES))
+            .build()
+    }
+
+    // Thread-safe model state using atomic references
+    private val currentModelRef = AtomicReference(AiModel.RULE_BASED)
+    private val isModelLoadedRef = AtomicBoolean(false)
+    private val geminiNanoInitializedRef = AtomicBoolean(false)
+    private val modelStateMutex = Mutex()
+
+    // Current model accessor (for backward compatibility)
+    private var currentModel: AiModel
+        get() = currentModelRef.get()
+        set(value) = currentModelRef.set(value)
+
+    private var isModelLoaded: Boolean
+        get() = isModelLoadedRef.get()
+        set(value) = isModelLoadedRef.set(value)
+
+    private var geminiNanoInitialized: Boolean
+        get() = geminiNanoInitializedRef.get()
+        set(value) = geminiNanoInitializedRef.set(value)
+
+    private var currentInferenceConfig: InferenceConfig = InferenceConfig(
+        maxTokens = 256,
+        temperature = 0.7f,
+        useGpuAcceleration = true,
+        useNpuAcceleration = true
+    )
+
+    // Current analysis job for cancellation support
+    private var currentAnalysisJob: Job? = null
 
     // Device capabilities
     private val deviceInfo: DeviceCapabilities by lazy { detectDeviceCapabilities() }
@@ -102,17 +152,24 @@ class DetectionAnalyzer @Inject constructor(
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memInfo)
-        val availableRamMb = memInfo.availMem / (1024 * 1024)
+        // Use totalMem instead of availMem for model compatibility - availMem fluctuates,
+        // but we want to show models the device CAN run, not just what fits right now
+        val totalRamMb = memInfo.totalMem / (1024 * 1024)
 
-        val supportedModels = AiModel.getAvailableModels(isPixel8OrNewer, hasNpu, availableRamMb)
+        val supportedModels = AiModel.getAvailableModels(isPixel8OrNewer, hasNpu, totalRamMb)
 
-        return DeviceCapabilities(isPixel8OrNewer, hasNpu, hasAiCore, availableRamMb, supportedModels)
+        return DeviceCapabilities(isPixel8OrNewer, hasNpu, hasAiCore, totalRamMb, supportedModels)
     }
 
     /**
      * Get device capabilities for UI
      */
     fun getDeviceCapabilities(): DeviceCapabilities = deviceInfo
+
+    /**
+     * Get current inference configuration for model calls
+     */
+    fun getInferenceConfig(): InferenceConfig = currentInferenceConfig
 
     /**
      * Initialize the selected AI model for inference.
@@ -128,6 +185,13 @@ class DetectionAnalyzer @Inject constructor(
 
             _modelStatus.value = AiModelStatus.Initializing
             currentModel = AiModel.fromId(settings.selectedModel)
+
+            // Load inference configuration from settings
+            currentInferenceConfig = InferenceConfig.fromSettings(settings)
+            Log.d(TAG, "Inference config: maxTokens=${currentInferenceConfig.maxTokens}, " +
+                "temp=${currentInferenceConfig.temperature}, " +
+                "gpu=${currentInferenceConfig.useGpuAcceleration}, " +
+                "npu=${currentInferenceConfig.useNpuAcceleration}")
 
             val initialized = when (currentModel) {
                 AiModel.RULE_BASED -> {
@@ -200,9 +264,13 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Analyze a single detection with full context.
+     * Supports cancellation - call cancelAnalysis() to abort.
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
+
+        // Store reference to current job for cancellation support
+        currentAnalysisJob = coroutineContext[Job]
 
         try {
             val settings = aiSettingsRepository.settings.first()
@@ -213,10 +281,11 @@ class DetectionAnalyzer @Inject constructor(
                 )
             }
 
-            _isAnalyzing.value = true
+            // Check for cancellation before expensive operations
+            coroutineContext.ensureActive()
 
-            // Check cache
-            val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}"
+            // Check cache first before setting analyzing state (include contextual flag to avoid serving stale results)
+            val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}"
             val cached = analysisCache[cacheKey]
             if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_EXPIRY_MS) {
                 return@withContext cached.result.copy(
@@ -224,15 +293,26 @@ class DetectionAnalyzer @Inject constructor(
                 )
             }
 
+            _isAnalyzing.value = true
+
+            // Check for cancellation before gathering context
+            coroutineContext.ensureActive()
+
             // Get contextual data if enabled
             val contextualInsights = if (settings.enableContextualAnalysis) {
                 gatherContextualInsights(detection)
             } else null
 
+            // Check for cancellation before generating analysis
+            coroutineContext.ensureActive()
+
             // Generate analysis
             val result = generateAnalysis(detection, contextualInsights, settings)
             val processingTime = System.currentTimeMillis() - startTime
             val finalResult = result.copy(processingTimeMs = processingTime)
+
+            // Check for cancellation before caching
+            coroutineContext.ensureActive()
 
             // Cache result
             if (finalResult.success) {
@@ -241,6 +321,14 @@ class DetectionAnalyzer @Inject constructor(
             }
 
             finalResult
+        } catch (e: CancellationException) {
+            Log.d(TAG, "Analysis cancelled for detection: ${detection.id}")
+            AiAnalysisResult(
+                success = false,
+                error = "Analysis cancelled",
+                processingTimeMs = System.currentTimeMillis() - startTime,
+                wasCancelled = true
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error analyzing detection", e)
             AiAnalysisResult(
@@ -250,20 +338,33 @@ class DetectionAnalyzer @Inject constructor(
             )
         } finally {
             _isAnalyzing.value = false
+            currentAnalysisJob = null
         }
+    }
+
+    /**
+     * Cancel any ongoing analysis operation.
+     * Safe to call even if no analysis is in progress.
+     */
+    fun cancelAnalysis() {
+        currentAnalysisJob?.cancel()
+        currentAnalysisJob = null
+        _isAnalyzing.value = false
+        Log.d(TAG, "Analysis cancellation requested")
     }
 
     private suspend fun gatherContextualInsights(detection: Detection): ContextualInsights {
         val allDetections = detectionRepository.getAllDetectionsSnapshot()
 
         // Find detections at same location
-        val nearbyDetections = if (detection.latitude != null && detection.longitude != null) {
+        val detectionLat = detection.latitude
+        val detectionLon = detection.longitude
+        val nearbyDetections = if (detectionLat != null && detectionLon != null) {
             allDetections.filter { other ->
-                other.latitude != null && other.longitude != null &&
-                calculateDistance(
-                    detection.latitude, detection.longitude,
-                    other.latitude!!, other.longitude!!
-                ) < CLUSTER_RADIUS_METERS
+                val otherLat = other.latitude
+                val otherLon = other.longitude
+                otherLat != null && otherLon != null &&
+                calculateDistance(detectionLat, detectionLon, otherLat, otherLon) < CLUSTER_RADIUS_METERS
             }
         } else emptyList()
 
@@ -476,7 +577,7 @@ class DetectionAnalyzer @Inject constructor(
             analysis = analysis,
             recommendations = recommendations,
             confidence = 0.95f,
-            modelUsed = currentModel.id,
+            modelUsed = "rule-based", // Always rule-based for this function, regardless of currentModel
             wasOnDevice = true,
             structuredData = structuredData
         )
@@ -1332,15 +1433,22 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Record user feedback for analysis improvement.
+     * Uses ArrayDeque for O(1) removal from front during pruning.
      */
-    fun recordFeedback(feedback: AnalysisFeedback) {
-        feedbackHistory.add(feedback)
+    suspend fun recordFeedback(feedback: AnalysisFeedback) {
+        feedbackMutex.withLock {
+            feedbackHistory.addLast(feedback)
+            // Efficient O(1) pruning with ArrayDeque
+            while (feedbackHistory.size > MAX_FEEDBACK_HISTORY_SIZE) {
+                feedbackHistory.removeFirst()
+            }
+        }
         // In production, this could update local preference weights
         Log.d(TAG, "Recorded feedback: ${feedback.feedbackType} for ${feedback.detectionId}")
     }
 
     /**
-     * Download selected model.
+     * Download selected model with retry logic and resumable download support.
      */
     suspend fun downloadModel(
         modelId: String = currentModel.id,
@@ -1372,61 +1480,105 @@ class DetectionAnalyzer @Inject constructor(
 
             val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
             val modelFile = File(modelDir, "${model.id}.gguf")
+            val tempFile = File(modelDir, "${model.id}.gguf.tmp")
 
-            // Download with progress
-            val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .build()
-
-            val request = Request.Builder()
-                .url(downloadUrl)
-                .addHeader("User-Agent", "FlockYou/1.0")
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw Exception("Download failed: ${response.code}")
-                }
-
-                val body = response.body ?: throw Exception("Empty response")
-                val contentLength = body.contentLength()
-
-                FileOutputStream(modelFile).use { output ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(8192)
-                        var bytesRead: Long = 0
-                        var read: Int
-
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            bytesRead += read
-
-                            val progress = if (contentLength > 0) {
-                                ((bytesRead * 100) / contentLength).toInt()
-                            } else {
-                                ((bytesRead / (model.sizeMb * 1024 * 1024.0)) * 100).toInt().coerceAtMost(99)
-                            }
-
-                            _modelStatus.value = AiModelStatus.Downloading(progress)
-                            onProgress(progress)
-                        }
+            // Retry logic with exponential backoff
+            var lastException: Exception? = null
+            repeat(MAX_DOWNLOAD_RETRIES) { attempt ->
+                try {
+                    val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, onProgress)
+                    if (success) return@withContext true
+                } catch (e: IOException) {
+                    lastException = e
+                    Log.w(TAG, "Download attempt ${attempt + 1} failed: ${e.message}")
+                    if (attempt < MAX_DOWNLOAD_RETRIES - 1) {
+                        val delayMs = INITIAL_RETRY_DELAY_MS * (1 shl attempt) // Exponential backoff
+                        Log.d(TAG, "Retrying in ${delayMs}ms...")
+                        kotlinx.coroutines.delay(delayMs)
                     }
                 }
             }
 
-            aiSettingsRepository.setModelDownloaded(true, modelFile.length() / (1024 * 1024))
-            aiSettingsRepository.setSelectedModel(model.id)
-            currentModel = model
-            _modelStatus.value = AiModelStatus.Ready
-            onProgress(100)
-
-            Log.i(TAG, "Model downloaded: ${model.displayName} (${modelFile.length() / 1024 / 1024} MB)")
-            true
+            throw lastException ?: Exception("Download failed after $MAX_DOWNLOAD_RETRIES attempts")
         } catch (e: Exception) {
-            Log.e(TAG, "Download failed", e)
+            Log.e(TAG, "Model download failed", e)
             _modelStatus.value = AiModelStatus.Error(e.message ?: "Download failed")
             false
+        }
+    }
+
+    /**
+     * Download with resume support for interrupted downloads.
+     */
+    private fun downloadWithResume(
+        downloadUrl: String,
+        tempFile: File,
+        finalFile: File,
+        expectedSize: Long,
+        onProgress: (Int) -> Unit
+    ): Boolean {
+        // Check for existing partial download
+        val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
+        val requestBuilder = Request.Builder()
+            .url(downloadUrl)
+            .addHeader("User-Agent", "FlockYou/1.0")
+
+        // Add Range header for resume if we have partial data
+        if (existingBytes > 0 && existingBytes < expectedSize) {
+            requestBuilder.addHeader("Range", "bytes=$existingBytes-")
+            Log.d(TAG, "Resuming download from byte $existingBytes")
+        }
+
+        val request = requestBuilder.build()
+
+        httpClient.newCall(request).execute().use { response ->
+            // Handle resume response (206) or fresh download (200)
+            if (!response.isSuccessful && response.code != 206) {
+                // If resume fails with 416 (Range Not Satisfiable), start fresh
+                if (response.code == 416) {
+                    tempFile.delete()
+                    return downloadWithResume(downloadUrl, tempFile, finalFile, expectedSize, onProgress)
+                }
+                throw IOException("Download failed: ${response.code}")
+            }
+
+            val body = response.body ?: throw IOException("Empty response")
+            val contentLength = body.contentLength()
+            val totalSize = if (response.code == 206) existingBytes + contentLength else contentLength
+
+            // Use append mode for resume, otherwise create fresh
+            val appendMode = response.code == 206
+            FileOutputStream(tempFile, appendMode).use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(8192)
+                    var downloadedBytes = existingBytes
+                    var read: Int
+
+                    while (input.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+
+                        val progress = if (totalSize > 0) {
+                            ((downloadedBytes * 100) / totalSize).toInt().coerceIn(0, 99)
+                        } else {
+                            ((downloadedBytes / (expectedSize.toDouble())) * 100).toInt().coerceIn(0, 99)
+                        }
+
+                        _modelStatus.value = AiModelStatus.Downloading(progress)
+                        onProgress(progress)
+                    }
+                }
+            }
+
+            // Rename temp file to final file atomically
+            if (tempFile.renameTo(finalFile)) {
+                _modelStatus.value = AiModelStatus.Ready
+                onProgress(100)
+                Log.i(TAG, "Model downloaded: ${finalFile.name} (${finalFile.length() / 1024 / 1024} MB)")
+                return true
+            } else {
+                throw IOException("Failed to rename temp file to final file")
+            }
         }
     }
 
@@ -1467,7 +1619,18 @@ class DetectionAnalyzer @Inject constructor(
             return true
         }
 
-        // Check if model file exists
+        // Gemini Nano is managed by Google Play Services, no file check needed
+        if (model == AiModel.GEMINI_NANO) {
+            if (!deviceInfo.isPixel8OrNewer || !deviceInfo.hasNpu) {
+                Log.w(TAG, "Device does not support Gemini Nano")
+                return false
+            }
+            currentModel = model
+            aiSettingsRepository.setSelectedModel(modelId)
+            return initializeModel()
+        }
+
+        // Check if GGUF model file exists
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
         val modelFile = File(modelDir, "${model.id}.gguf")
 

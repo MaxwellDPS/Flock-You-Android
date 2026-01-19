@@ -1,6 +1,7 @@
 package com.flockyou.ai
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import com.flockyou.data.AiAnalysisResult
@@ -10,7 +11,11 @@ import com.google.ai.client.generativeai.type.GenerateContentResponse
 import com.google.ai.client.generativeai.type.generationConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,6 +43,15 @@ class GeminiNanoClient @Inject constructor(
         // Note: As of 2024, this requires opting into the Android AICore beta
         private const val GEMINI_NANO_MODEL = "gemini-nano"
 
+        // AICore package names to check for availability
+        private val AICORE_PACKAGES = listOf(
+            "com.google.android.aicore",
+            "com.google.android.gms"  // AICore can also be bundled in GMS
+        )
+
+        // Initialization timeout
+        private const val INIT_TIMEOUT_MS = 15000L
+
         // For production, you would use the actual AICore integration
         // This is a simplified version that demonstrates the API pattern
     }
@@ -45,6 +59,7 @@ class GeminiNanoClient @Inject constructor(
     private var generativeModel: GenerativeModel? = null
     private var isInitialized = false
     private var initializationError: String? = null
+    private val initMutex = Mutex()
 
     /**
      * Check if the device supports Gemini Nano
@@ -64,17 +79,51 @@ class GeminiNanoClient @Inject constructor(
     }
 
     /**
-     * Check if AICore service is available on the device
+     * Check if AICore service is available on the device.
+     * AICore can be delivered via the standalone aicore package or bundled in GMS.
      */
     suspend fun isAiCoreAvailable(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Check if the AICore package is installed
-            context.packageManager.getPackageInfo("com.google.android.aicore", 0)
-            true
-        } catch (e: Exception) {
-            Log.d(TAG, "AICore not available: ${e.message}")
-            false
+        // Method 1: Check for AICore packages
+        val hasAiCorePackage = AICORE_PACKAGES.any { packageName ->
+            try {
+                context.packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
+                true
+            } catch (e: PackageManager.NameNotFoundException) {
+                false
+            }
         }
+
+        if (hasAiCorePackage) {
+            Log.d(TAG, "AICore package found")
+            return@withContext true
+        }
+
+        // Method 2: Check for AICore service via intent resolution
+        try {
+            val aiCoreIntent = android.content.Intent("com.google.android.aicore.ACTION_INFERENCE")
+            val resolveInfo = context.packageManager.queryIntentServices(aiCoreIntent, 0)
+            if (resolveInfo.isNotEmpty()) {
+                Log.d(TAG, "AICore service found via intent resolution")
+                return@withContext true
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "AICore intent resolution failed: ${e.message}")
+        }
+
+        // Method 3: Check for ML Kit on-device features (fallback indicator)
+        try {
+            val mlKitIntent = android.content.Intent("com.google.mlkit.common.internal.MlKitInternal")
+            val mlResolve = context.packageManager.queryIntentServices(mlKitIntent, 0)
+            if (mlResolve.isNotEmpty()) {
+                Log.d(TAG, "ML Kit found, AICore may be available")
+                // ML Kit presence doesn't guarantee AICore, but indicates GMS AI capabilities
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        Log.d(TAG, "AICore not available on this device")
+        false
     }
 
     /**
@@ -88,36 +137,49 @@ class GeminiNanoClient @Inject constructor(
      * For privacy, we use a placeholder that demonstrates the API pattern.
      * In production, you would initialize with proper AICore integration.
      */
-    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
-        if (isInitialized) return@withContext true
+    suspend fun initialize(): Boolean = initMutex.withLock {
+        // Double-check after acquiring lock
+        if (isInitialized) return@withLock true
+
+        // Reset error state on new initialization attempt
+        initializationError = null
 
         try {
-            if (!isDeviceSupported()) {
-                initializationError = "Device does not support Gemini Nano (requires Pixel 8+)"
-                Log.w(TAG, initializationError!!)
-                return@withContext false
+            withTimeout(INIT_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    if (!isDeviceSupported()) {
+                        initializationError = "Device does not support Gemini Nano (requires Pixel 8+)"
+                        Log.w(TAG, initializationError!!)
+                        return@withContext false
+                    }
+
+                    if (!isAiCoreAvailable()) {
+                        initializationError = "AICore service not available. Please update Google Play Services."
+                        Log.w(TAG, initializationError!!)
+                        return@withContext false
+                    }
+
+                    // Initialize the generative model for on-device inference
+                    // Note: In production, you need to handle AICore-specific initialization
+                    // The API key here is for authentication with Google's services,
+                    // but inference still happens on-device via AICore
+
+                    // For now, we'll mark as initialized but use rule-based fallback
+                    // until proper AICore integration is available
+                    Log.i(TAG, "Gemini Nano client initialized (AICore mode)")
+                    isInitialized = true
+                    true
+                }
             }
-
-            if (!isAiCoreAvailable()) {
-                initializationError = "AICore service not available. Please update Google Play Services."
-                Log.w(TAG, initializationError!!)
-                return@withContext false
-            }
-
-            // Initialize the generative model for on-device inference
-            // Note: In production, you need to handle AICore-specific initialization
-            // The API key here is for authentication with Google's services,
-            // but inference still happens on-device via AICore
-
-            // For now, we'll mark as initialized but use rule-based fallback
-            // until proper AICore integration is available
-            Log.i(TAG, "Gemini Nano client initialized (AICore mode)")
-            isInitialized = true
-            true
-
+        } catch (e: TimeoutCancellationException) {
+            initializationError = "Initialization timed out after ${INIT_TIMEOUT_MS / 1000} seconds"
+            Log.e(TAG, initializationError!!)
+            isInitialized = false
+            false
         } catch (e: Exception) {
             initializationError = "Failed to initialize Gemini Nano: ${e.message}"
             Log.e(TAG, initializationError!!, e)
+            isInitialized = false
             false
         }
     }

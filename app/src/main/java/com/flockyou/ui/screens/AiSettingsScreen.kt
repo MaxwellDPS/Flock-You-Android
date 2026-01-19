@@ -147,6 +147,7 @@ fun AiSettingsScreen(
                         modelStatus = modelStatus,
                         testResult = testResult,
                         onTest = { viewModel.testAnalysis() },
+                        onCancel = { viewModel.cancelAnalysis() },
                         onClearResult = { viewModel.clearTestResult() }
                     )
                 }
@@ -183,34 +184,37 @@ fun AiSettingsScreen(
         )
     }
 
-    // Download confirmation dialog
-    selectedModelForDownload?.let { model ->
-        if (model != AiModel.RULE_BASED && modelStatus !is AiModelStatus.Downloading) {
-            AlertDialog(
-                onDismissRequest = { viewModel.clearSelectedModel() },
-                title = { Text("Download ${model.displayName}?") },
-                text = {
-                    Column {
-                        Text("This will download approximately ${model.sizeMb} MB.")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            model.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+    // Download confirmation dialog - only show when not already downloading
+    val isDownloading by viewModel.isDownloading.collectAsState()
+    if (!isDownloading) {
+        selectedModelForDownload?.let { model ->
+            if (model != AiModel.RULE_BASED) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.clearSelectedModel() },
+                    title = { Text("Download ${model.displayName}?") },
+                    text = {
+                        Column {
+                            Text("This will download approximately ${model.sizeMb} MB.")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                model.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = { viewModel.downloadModel(model) }) {
+                            Text("Download")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.clearSelectedModel() }) {
+                            Text("Cancel")
+                        }
                     }
-                },
-                confirmButton = {
-                    Button(onClick = { viewModel.downloadModel(model) }) {
-                        Text("Download")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { viewModel.clearSelectedModel() }) {
-                        Text("Cancel")
-                    }
-                }
-            )
+                )
+            }
         }
     }
 }
@@ -380,7 +384,7 @@ private fun ModelSelectionCard(
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
-                        progress = downloadProgress / 100f,
+                        progress = { downloadProgress / 100f },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -1067,6 +1071,7 @@ private fun TestAnalysisCard(
     modelStatus: AiModelStatus,
     testResult: String?,
     onTest: () -> Unit,
+    onCancel: () -> Unit,
     onClearResult: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1084,20 +1089,25 @@ private fun TestAnalysisCard(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            Button(
-                onClick = onTest,
-                enabled = !isAnalyzing && modelStatus is AiModelStatus.Ready,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (isAnalyzing) {
+            if (isAnalyzing) {
+                // Show cancel button when analyzing
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Analyzing...")
-                } else {
+                    Text("Cancel Analysis")
+                }
+            } else {
+                Button(
+                    onClick = onTest,
+                    enabled = modelStatus is AiModelStatus.Ready,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Run Test Analysis")

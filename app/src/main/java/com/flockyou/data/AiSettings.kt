@@ -127,7 +127,15 @@ enum class AiModel(
     );
 
     companion object {
-        fun fromId(id: String): AiModel = entries.find { it.id == id } ?: RULE_BASED
+        private const val TAG = "AiModel"
+
+        fun fromId(id: String): AiModel {
+            val model = entries.find { it.id == id }
+            if (model == null) {
+                android.util.Log.w(TAG, "Unknown model ID '$id', falling back to RULE_BASED")
+            }
+            return model ?: RULE_BASED
+        }
 
         /**
          * Get models suitable for the current device
@@ -163,6 +171,7 @@ data class AiAnalysisResult(
     val error: String? = null,
     val modelUsed: String = "rule-based",
     val wasOnDevice: Boolean = true, // Always true - no cloud fallback
+    val wasCancelled: Boolean = false, // True if analysis was cancelled by user
     // Structured output fields for programmatic use
     val structuredData: StructuredAnalysis? = null
 )
@@ -188,6 +197,25 @@ data class MitigationAction(
 )
 
 enum class ActionPriority { IMMEDIATE, HIGH, MEDIUM, LOW }
+
+/**
+ * Configuration for model inference, derived from AiSettings.
+ */
+data class InferenceConfig(
+    val maxTokens: Int,
+    val temperature: Float,
+    val useGpuAcceleration: Boolean,
+    val useNpuAcceleration: Boolean
+) {
+    companion object {
+        fun fromSettings(settings: AiSettings): InferenceConfig = InferenceConfig(
+            maxTokens = settings.maxTokens,
+            temperature = settings.temperatureTenths / 10f,
+            useGpuAcceleration = settings.useGpuAcceleration,
+            useNpuAcceleration = settings.useNpuAcceleration
+        )
+    }
+}
 
 data class ContextualInsights(
     val isKnownLocation: Boolean = false,
