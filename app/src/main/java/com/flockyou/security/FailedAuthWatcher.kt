@@ -47,8 +47,11 @@ class FailedAuthWatcher @Inject constructor(
     /**
      * Encrypted SharedPreferences for storing security-sensitive failed auth state.
      * Uses hardware-backed encryption when available.
+     *
+     * SECURITY: No fallback to unencrypted storage - if encryption fails, the feature
+     * is disabled rather than storing sensitive auth failure data in plaintext.
      */
-    private val encryptedPrefs: SharedPreferences by lazy {
+    private val encryptedPrefs: SharedPreferences? by lazy {
         try {
             val masterKey = MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -62,9 +65,10 @@ class FailedAuthWatcher @Inject constructor(
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create encrypted prefs, falling back to regular prefs", e)
-            // Fallback - this shouldn't happen but better than crashing
-            context.getSharedPreferences(PREFS_NAME + "_fallback", Context.MODE_PRIVATE)
+            // SECURITY: Do not fall back to unencrypted storage for auth failure tracking
+            // This data could reveal PIN entry patterns to an attacker
+            Log.e(TAG, "Failed to create encrypted prefs - failed auth tracking disabled", e)
+            null
         }
     }
 
@@ -96,6 +100,10 @@ class FailedAuthWatcher @Inject constructor(
      */
     private suspend fun recordFailedAttemptInternal(): Boolean {
         val prefs = encryptedPrefs
+        if (prefs == null) {
+            Log.w(TAG, "Encrypted prefs unavailable - failed auth tracking disabled")
+            return false
+        }
 
         // Check if nuke was already triggered (shouldn't happen but safety check)
         if (prefs.getBoolean(KEY_NUKE_TRIGGERED, false)) {
@@ -160,7 +168,7 @@ class FailedAuthWatcher @Inject constructor(
      * This resets the failed attempt counter.
      */
     fun recordSuccessfulAuth() {
-        val prefs = encryptedPrefs
+        val prefs = encryptedPrefs ?: return
 
         // Only reset if nuke hasn't been triggered
         if (!prefs.getBoolean(KEY_NUKE_TRIGGERED, false)) {
@@ -174,25 +182,28 @@ class FailedAuthWatcher @Inject constructor(
 
     /**
      * Get the current failed attempt count.
+     * Returns 0 if encrypted prefs are unavailable.
      */
     fun getFailedAttemptCount(): Int {
-        val prefs = encryptedPrefs
+        val prefs = encryptedPrefs ?: return 0
         return prefs.getInt(KEY_FAILED_COUNT, 0)
     }
 
     /**
      * Get the time of the first failure in the current window.
+     * Returns 0 if encrypted prefs are unavailable.
      */
     fun getFirstFailureTime(): Long {
-        val prefs = encryptedPrefs
+        val prefs = encryptedPrefs ?: return 0
         return prefs.getLong(KEY_FIRST_FAILURE_TIME, 0)
     }
 
     /**
      * Check if a nuke has already been triggered.
+     * Returns false if encrypted prefs are unavailable.
      */
     fun isNukeTriggered(): Boolean {
-        val prefs = encryptedPrefs
+        val prefs = encryptedPrefs ?: return false
         return prefs.getBoolean(KEY_NUKE_TRIGGERED, false)
     }
 
@@ -200,7 +211,7 @@ class FailedAuthWatcher @Inject constructor(
      * Reset all state (use with caution - for testing or admin override).
      */
     fun reset() {
-        val prefs = encryptedPrefs
+        val prefs = encryptedPrefs ?: return
         prefs.edit().clear().apply()
         Log.i(TAG, "Failed auth watcher state reset")
     }

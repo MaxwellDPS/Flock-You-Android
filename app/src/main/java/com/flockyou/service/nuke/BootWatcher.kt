@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.flockyou.BuildConfig
 import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.security.NukeManager
 import com.flockyou.security.NukeTriggerSource
@@ -94,6 +95,13 @@ class BootWatcher : BroadcastReceiver() {
     }
 
     private suspend fun handleBootEvent(context: Context) {
+        // Skip rapid reboot detection in debug builds to prevent false positives during development
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "Rapid reboot trigger disabled in debug builds")
+            recordBootTime(context)
+            return
+        }
+
         val settings = nukeSettingsRepository.settings.first()
 
         // Check if rapid reboot trigger is enabled
@@ -106,19 +114,26 @@ class BootWatcher : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val currentBootTime = System.currentTimeMillis()
 
-        // Get previous boot times
+        // Get previous boot times with defensive parsing
         val bootTimesStr = prefs.getString(KEY_BOOT_TIMES, "") ?: ""
-        val bootTimes = bootTimesStr.split(",")
-            .filter { it.isNotBlank() }
-            .mapNotNull { it.toLongOrNull() }
-            .toMutableList()
+        val bootTimes = try {
+            bootTimesStr.split(",")
+                .filter { it.isNotBlank() }
+                .mapNotNull { str ->
+                    str.trim().toLongOrNull()?.takeIf { it > 0 && it <= currentBootTime + 86400000 }
+                }
+                .toMutableList()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error parsing boot times, resetting: ${e.message}")
+            mutableListOf()
+        }
 
         // Calculate time window
         val windowMs = settings.rapidRebootWindowMinutes * 60 * 1000L
         val windowStart = currentBootTime - windowMs
 
-        // Filter boot times within the window
-        val recentBootTimes = bootTimes.filter { it > windowStart }
+        // Filter boot times within the window (with additional sanity check)
+        val recentBootTimes = bootTimes.filter { it > windowStart && it <= currentBootTime }
 
         Log.d(TAG, "Boot analysis - Current: $currentBootTime, Window: ${settings.rapidRebootWindowMinutes}min, " +
                 "Recent boots: ${recentBootTimes.size}, Threshold: ${settings.rapidRebootCount}")

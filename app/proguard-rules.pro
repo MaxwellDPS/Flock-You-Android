@@ -53,3 +53,22 @@
 # Pattern data classes for JSON serialization
 -keep class com.flockyou.data.model.SurveillancePattern { *; }
 -keep class com.flockyou.data.patterns.PatternUpdateService$PatternExport { *; }
+
+# IPC data classes - keep all fields for Gson serialization across processes
+-keep class com.flockyou.service.ScanningService$SeenDevice { *; }
+-keep class com.flockyou.service.ScanningService$LearnedSignature { *; }
+-keep class com.flockyou.service.ScanningService$ScanStatistics { *; }
+-keep class com.flockyou.service.ScanningService$ScanConfig { *; }
+-keep class com.flockyou.service.ScanningService$ScanError { *; }
+-keep class com.flockyou.service.CellularMonitor$* { *; }
+-keep class com.flockyou.service.RogueWifiMonitor$* { *; }
+-keep class com.flockyou.service.RfSignalAnalyzer$* { *; }
+-keep class com.flockyou.service.UltrasonicDetector$* { *; }
+-keep class com.flockyou.monitoring.SatelliteMonitor$* { *; }
+-keep class com.flockyou.monitoring.GnssSatelliteMonitor$* { *; }
+
+# Enum classes - ensure valueOf works correctly
+-keepclassmembers enum com.flockyou.data.model.** {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}

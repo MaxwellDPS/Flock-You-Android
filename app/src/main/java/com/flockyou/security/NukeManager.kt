@@ -1,13 +1,16 @@
 package com.flockyou.security
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.work.WorkManager
 import com.flockyou.data.NukeSettings
 import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.data.repository.FlockYouDatabase
+import com.flockyou.service.ScanningService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -67,6 +70,15 @@ class NukeManager @Inject constructor(
         private const val DATABASE_NAME_WAL = "flockyou_database_encrypted-wal"
         private const val DATABASE_NAME_SHM = "flockyou_database_encrypted-shm"
         private const val DATABASE_NAME_JOURNAL = "flockyou_database_encrypted-journal"
+
+        // Delay to allow scanning service to gracefully shutdown before wiping
+        // Increased from 500ms to 2000ms to ensure the scanning service (running in
+        // a separate :scanning process) has time to receive the broadcast, close
+        // its database connections, and terminate properly.
+        private const val NUKE_BROADCAST_DELAY_MS = 2000L
+
+        // Additional delay after database close to ensure file handles are released
+        private const val FILE_HANDLE_RELEASE_DELAY_MS = 200L
     }
 
     private val secureRandom = SecureRandom()
@@ -92,6 +104,14 @@ class NukeManager @Inject constructor(
         var errorMessage: String? = null
 
         try {
+            // CRITICAL: Signal scanning service to shutdown BEFORE wiping
+            // This prevents the scanning service (in :scanning process) from crashing
+            // when it tries to access the database after we delete it
+            broadcastNukeInitiated()
+
+            // Give the scanning service time to gracefully shutdown
+            delay(NUKE_BROADCAST_DELAY_MS)
+
             // Cancel any pending work
             cancelAllPendingWork()
 
@@ -128,6 +148,23 @@ class NukeManager @Inject constructor(
     }
 
     /**
+     * Broadcast nuke initiated signal to all processes.
+     * This allows the scanning service (in :scanning process) to gracefully shutdown
+     * and close its database connections before we wipe the database files.
+     */
+    private fun broadcastNukeInitiated() {
+        try {
+            val intent = Intent(ScanningService.ACTION_NUKE_INITIATED).apply {
+                setPackage(context.packageName)
+            }
+            context.sendBroadcast(intent)
+            Log.d(TAG, "Broadcast nuke initiated signal sent")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to broadcast nuke signal", e)
+        }
+    }
+
+    /**
      * Cancel all pending WorkManager jobs.
      */
     private fun cancelAllPendingWork() {
@@ -142,13 +179,14 @@ class NukeManager @Inject constructor(
     /**
      * Wipe the SQLCipher encrypted database.
      * Includes verification that database is properly closed before deletion.
+     * Thread-safe with proper singleton instance clearing to prevent stale references.
      */
     private suspend fun wipeDatabase(secureWipe: Boolean, passes: Int): Boolean = withContext(Dispatchers.IO) {
         try {
             // First, try to close the database properly with verification
             var closedSuccessfully = false
-            val maxRetries = 3
-            val retryDelayMs = 100L
+            val maxRetries = 5
+            val retryDelayMs = 200L
 
             for (attempt in 1..maxRetries) {
                 try {
@@ -168,8 +206,11 @@ class NukeManager @Inject constructor(
                 Log.w(TAG, "Could not verify database closure after $maxRetries attempts - proceeding with wipe anyway")
             }
 
-            // Give the system a moment to release file handles
-            kotlinx.coroutines.delay(50)
+            // Clear the singleton instance so it can be recreated if app continues running
+            FlockYouDatabase.clearInstance()
+
+            // Give the system time to release file handles
+            kotlinx.coroutines.delay(FILE_HANDLE_RELEASE_DELAY_MS)
 
             // List of all database-related files
             val databaseFiles = listOf(

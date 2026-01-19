@@ -116,26 +116,10 @@ fun MainScreen(
                     onClick = { viewModel.selectTab(0) }
                 )
                 NavigationBarItem(
-                    icon = { 
-                        BadgedBox(
-                            badge = {
-                                if (uiState.highThreatCount > 0) {
-                                    Badge { Text(uiState.highThreatCount.toString()) }
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.Warning, contentDescription = "Threats")
-                        }
-                    },
-                    label = { Text("Threats") },
-                    selected = uiState.selectedTab == 1,
-                    onClick = { viewModel.selectTab(1) }
-                )
-                NavigationBarItem(
                     icon = { Icon(Icons.Default.History, contentDescription = "History") },
                     label = { Text("History") },
-                    selected = uiState.selectedTab == 2,
-                    onClick = { viewModel.selectTab(2) }
+                    selected = uiState.selectedTab == 1,
+                    onClick = { viewModel.selectTab(1) }
                 )
                 NavigationBarItem(
                     icon = {
@@ -150,15 +134,15 @@ fun MainScreen(
                         }
                     },
                     label = { Text("Cellular") },
-                    selected = uiState.selectedTab == 3,
-                    onClick = { viewModel.selectTab(3) }
+                    selected = uiState.selectedTab == 2,
+                    onClick = { viewModel.selectTab(2) }
                 )
             }
         }
     ) { paddingValues ->
         // Show different content based on selected tab
         when (uiState.selectedTab) {
-            3 -> {
+            2 -> {
                 // Cellular tab content
                 CellularTabContent(
                     modifier = Modifier.padding(paddingValues),
@@ -173,15 +157,9 @@ fun MainScreen(
                 )
             }
             else -> {
-                // Home, Threats, History tabs
+                // Home and History tabs
                 // Calculate filtered detections outside LazyColumn
                 val filteredDetections = viewModel.getFilteredDetections()
-                val detections = when (uiState.selectedTab) {
-                    1 -> filteredDetections.filter { 
-                        it.threatLevel == ThreatLevel.CRITICAL || it.threatLevel == ThreatLevel.HIGH 
-                    }
-                    else -> filteredDetections
-                }
         
                 LazyColumn(
                     modifier = Modifier
@@ -303,8 +281,7 @@ fun MainScreen(
                     item(key = "section_header") {
                         Text(
                             text = when (uiState.selectedTab) {
-                                1 -> "HIGH PRIORITY THREATS"
-                                2 -> "DETECTION HISTORY"
+                                1 -> "DETECTION HISTORY"
                                 else -> "RECENT DETECTIONS"
                             },
                             style = MaterialTheme.typography.titleSmall,
@@ -334,14 +311,14 @@ fun MainScreen(
                                 }
                             }
                         }
-                        detections.isEmpty() -> {
+                        filteredDetections.isEmpty() -> {
                             item(key = "empty_state") {
                                 EmptyState(isScanning = uiState.isScanning)
                             }
                         }
                         else -> {
                             items(
-                                items = detections,
+                                items = filteredDetections,
                                 key = { it.id }
                             ) { detection ->
                                 DetectionCard(

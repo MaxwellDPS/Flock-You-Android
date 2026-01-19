@@ -128,6 +128,9 @@
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
+    <!-- Android Auto is optional - app works without it -->
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
+
     <!-- Package visibility for Orbot detection (required Android 11+) -->
     <queries>
         <package android:name="org.torproject.android" />
@@ -308,6 +311,25 @@
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- ================================================================== -->
+        <!-- ANDROID AUTO SUPPORT (OPTIONAL)                                    -->
+        <!-- ================================================================== -->
+
+        <!-- Android Auto Car App Service -->
+        <service
+            android:name=".auto.FlockYouCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.IOT" />
+            </intent-filter>
+        </service>
+
+        <!-- Android Auto app description metadata -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
     </application>
 

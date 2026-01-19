@@ -15,6 +15,8 @@ import com.flockyou.R
 import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.security.NukeManager
 import com.flockyou.security.NukeTriggerSource
+import com.flockyou.util.NotificationChannelIds
+import com.flockyou.util.NotificationIds
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +43,9 @@ class DeadManSwitchWorker @AssistedInject constructor(
         const val TAG = "DeadManSwitchWorker"
         const val WORK_NAME = "dead_man_switch_check"
 
-        private const val NOTIFICATION_CHANNEL_ID = "dead_man_switch_warning"
-        private const val NOTIFICATION_ID = 9999
+        // Use centralized notification IDs to prevent conflicts
+        private val NOTIFICATION_CHANNEL_ID = NotificationChannelIds.DEAD_MAN_SWITCH
+        private val NOTIFICATION_ID = NotificationIds.DEAD_MAN_SWITCH_WARNING
 
         // Shared preferences keys for tracking authentication time
         private const val PREFS_NAME = "dead_man_switch_prefs"

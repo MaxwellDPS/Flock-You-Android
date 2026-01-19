@@ -186,9 +186,9 @@ class NukeWorker @AssistedInject constructor(
         suspend fun isNukePending(context: Context, workName: String): Boolean {
             val workInfo = WorkManager.getInstance(context)
                 .getWorkInfosForUniqueWork(workName)
-                .get()
+                .await()
 
-            return workInfo.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+            return workInfo.any { info -> info.state == WorkInfo.State.ENQUEUED || info.state == WorkInfo.State.RUNNING }
         }
     }
 

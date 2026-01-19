@@ -711,7 +711,7 @@ private fun UnifiedPatternCard(
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    HorizontalDivider()
+                    Divider()
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
@@ -1224,7 +1224,7 @@ private fun HeuristicRuleCard(
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider()
+                    Divider()
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(

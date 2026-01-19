@@ -48,7 +48,14 @@ class ScanningService : Service() {
         private const val TAG = "ScanningService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "flockyou_scanning"
-        
+
+        // Broadcast actions for cross-process communication
+        const val ACTION_NUKE_INITIATED = "com.flockyou.NUKE_INITIATED"
+        const val ACTION_DATABASE_SHUTDOWN = "com.flockyou.DATABASE_SHUTDOWN"
+
+        // Flag to track if database is available (set to false during nuke)
+        val isDatabaseAvailable = MutableStateFlow(true)
+
         // Default values (can be overridden by settings)
         // Aggressive burst scan pattern: 25s on, 5s cooldown to prevent thermal throttling
         private const val DEFAULT_WIFI_SCAN_INTERVAL = 30000L  // 30 seconds between WiFi scans
@@ -56,15 +63,22 @@ class ScanningService : Service() {
         private const val DEFAULT_BLE_COOLDOWN = 5000L         // 5 seconds cooldown to prevent thermal throttle
         private const val DEFAULT_INACTIVE_TIMEOUT = 60000L
         private const val DEFAULT_SEEN_DEVICE_TIMEOUT = 300000L
-        
+
         // Current configured values
         val currentSettings = MutableStateFlow(ScanConfig())
-        
+
+        // IMPORTANT: Process Isolation Note
+        // This service runs in a separate process (":scanning" as declared in AndroidManifest.xml).
+        // These static MutableStateFlows are process-local - they will have different instances
+        // in the main app process vs the :scanning process. State synchronization between
+        // processes is handled via the Messenger-based IPC mechanism (ipcMessenger, broadcastToClients).
+        // Direct access to these flows from the UI will return stale/default values.
+        // UI components should use the IPC bridge (ScanningServiceIpc) to get real-time state.
         val isScanning = MutableStateFlow(false)
         val lastDetection = MutableStateFlow<Detection?>(null)
         val detectionCount = MutableStateFlow(0)
-        
-        // Status tracking
+
+        // Status tracking (see process isolation note above)
         val scanStatus = MutableStateFlow<ScanStatus>(ScanStatus.Idle)
         val bleStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
         val wifiStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
@@ -429,6 +443,9 @@ class ScanningService : Service() {
     // Screen lock receiver for auto-purge feature (Priority 5)
     private var screenLockReceiver: ScreenLockReceiver? = null
 
+    // Nuke receiver for graceful shutdown during data wipe
+    private var nukeReceiver: BroadcastReceiver? = null
+
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val gson = Gson()
     
@@ -450,7 +467,20 @@ class ScanningService : Service() {
     
     // Scan job
     private var scanJob: Job? = null
-    
+
+    // Settings collector jobs (for proper lifecycle management)
+    private var broadcastSettingsJob: Job? = null
+    private var privacySettingsJob: Job? = null
+    private var scanSettingsJob: Job? = null
+
+    // Location update jobs (for proper lifecycle management)
+    private var cellularLocationJob: Job? = null
+    private var rogueWifiLocationJob: Job? = null
+    private var rfLocationJob: Job? = null
+    private var ultrasonicLocationJob: Job? = null
+    private var gnssLocationJob: Job? = null
+    private var suspiciousNetworksJob: Job? = null
+
     // Cellular monitor
     private var cellularMonitor: CellularMonitor? = null
 
@@ -1024,7 +1054,9 @@ class ScanningService : Service() {
         rfSignalAnalyzer = null
         ultrasonicDetector?.destroy()
         ultrasonicDetector = null
-        
+        gnssSatelliteMonitor?.stopMonitoring()
+        gnssSatelliteMonitor = null
+
         // Cancel watchdog if service is intentionally stopped
         // Only schedule restart if service should still be running
         if (BootReceiver.isServiceEnabled(this)) {
@@ -1102,14 +1134,15 @@ class ScanningService : Service() {
         Log.d(TAG, "Starting scanning")
 
         // Collect broadcast settings
-        serviceScope.launch {
+        broadcastSettingsJob = serviceScope.launch {
             broadcastSettingsRepository.settings.collect { settings ->
                 currentBroadcastSettings = settings
             }
         }
 
         // Collect privacy settings for ephemeral mode, location-optional storage, and ultrasonic opt-in
-        serviceScope.launch {
+        privacySettingsJob = serviceScope.launch {
+            var isFirstEmission = true
             privacySettingsRepository.settings.collect { settings ->
                 val previousSettings = currentPrivacySettings
                 currentPrivacySettings = settings
@@ -1121,8 +1154,16 @@ class ScanningService : Service() {
                 }
 
                 // Handle ultrasonic detection opt-in/opt-out changes
-                if (settings.ultrasonicDetectionEnabled != previousSettings.ultrasonicDetectionEnabled) {
-                    if (settings.ultrasonicDetectionEnabled && settings.ultrasonicConsentAcknowledged) {
+                // On first emission, start if enabled (handles service restart with ultrasonic already enabled)
+                // On subsequent emissions, only react to actual changes
+                val shouldStart = settings.ultrasonicDetectionEnabled && settings.ultrasonicConsentAcknowledged
+                val settingChanged = settings.ultrasonicDetectionEnabled != previousSettings.ultrasonicDetectionEnabled
+
+                if (isFirstEmission && shouldStart) {
+                    Log.i(TAG, "Ultrasonic detection enabled on startup - starting monitoring")
+                    startUltrasonicDetection()
+                } else if (!isFirstEmission && settingChanged) {
+                    if (shouldStart) {
                         Log.i(TAG, "Ultrasonic detection enabled by user - starting monitoring")
                         startUltrasonicDetection()
                     } else {
@@ -1130,11 +1171,13 @@ class ScanningService : Service() {
                         stopUltrasonicDetection()
                     }
                 }
+
+                isFirstEmission = false
             }
         }
 
         // Collect scan settings and update detector timings
-        serviceScope.launch {
+        scanSettingsJob = serviceScope.launch {
             scanSettingsRepository.settings.collect { settings ->
                 Log.d(TAG, "Scan settings updated - applying to detectors")
 
@@ -1173,6 +1216,9 @@ class ScanningService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register screen lock receiver", e)
         }
+
+        // Register nuke receiver for graceful database shutdown
+        registerNukeReceiver()
 
         val config = currentSettings.value
         
@@ -1216,14 +1262,10 @@ class ScanningService : Service() {
         // Start RF signal analysis
         startRfSignalAnalysis()
 
-        // Start ultrasonic detection ONLY if user has opted in
-        // This is an opt-in feature requiring explicit user consent
-        if (currentPrivacySettings.ultrasonicDetectionEnabled && currentPrivacySettings.ultrasonicConsentAcknowledged) {
-            Log.i(TAG, "Ultrasonic detection enabled - user has consented")
-            startUltrasonicDetection()
-        } else {
-            Log.d(TAG, "Ultrasonic detection disabled - user has not opted in (requires consent in Privacy settings)")
-        }
+        // Note: Ultrasonic detection is started by the privacy settings collector above
+        // when it receives the first emission (handles the race condition between settings
+        // loading and this point in the code). This ensures ultrasonic starts even if
+        // settings are already enabled when the service restarts.
 
         // Start GNSS satellite monitoring (uses location permission already granted)
         startGnssMonitoring()
@@ -1354,6 +1396,14 @@ class ScanningService : Service() {
         // Notify IPC clients that scanning has stopped
         broadcastScanningStopped()
 
+        // Cancel settings collector jobs
+        broadcastSettingsJob?.cancel()
+        broadcastSettingsJob = null
+        privacySettingsJob?.cancel()
+        privacySettingsJob = null
+        scanSettingsJob?.cancel()
+        scanSettingsJob = null
+
         scanJob?.cancel()
         stopBleScan()
         unregisterWifiReceiver()
@@ -1369,6 +1419,9 @@ class ScanningService : Service() {
             ScreenLockReceiver.unregister(this, it)
             screenLockReceiver = null
         }
+
+        // Unregister nuke receiver
+        unregisterNukeReceiver()
 
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
@@ -1461,7 +1514,7 @@ class ScanningService : Service() {
         }
         
         // Also update cellular location when we get GPS updates
-        serviceScope.launch {
+        cellularLocationJob = serviceScope.launch {
             while (isScanning.value) {
                 currentLocation?.let { loc ->
                     cellularMonitor?.updateLocation(loc.latitude, loc.longitude)
@@ -1470,8 +1523,10 @@ class ScanningService : Service() {
             }
         }
     }
-    
+
     private fun stopCellularMonitoring() {
+        cellularLocationJob?.cancel()
+        cellularLocationJob = null
         cellularAnomalyJob?.cancel()
         cellularAnomalyJob = null
         cellularStatusJob?.cancel()
@@ -1629,7 +1684,7 @@ class ScanningService : Service() {
         }
 
         // Collect suspicious networks
-        serviceScope.launch {
+        suspiciousNetworksJob = serviceScope.launch {
             rogueWifiMonitor?.suspiciousNetworks?.collect { networks ->
                 Companion.suspiciousNetworks.value = networks
             }
@@ -1684,7 +1739,7 @@ class ScanningService : Service() {
         }
 
         // Update monitor location when GPS updates
-        serviceScope.launch {
+        rogueWifiLocationJob = serviceScope.launch {
             while (isScanning.value) {
                 currentLocation?.let { loc ->
                     rogueWifiMonitor?.updateLocation(loc.latitude, loc.longitude)
@@ -1695,6 +1750,10 @@ class ScanningService : Service() {
     }
 
     private fun stopRogueWifiMonitoring() {
+        rogueWifiLocationJob?.cancel()
+        rogueWifiLocationJob = null
+        suspiciousNetworksJob?.cancel()
+        suspiciousNetworksJob = null
         rogueWifiStatusJob?.cancel()
         rogueWifiStatusJob = null
         rogueWifiAnomalyJob?.cancel()
@@ -1797,7 +1856,7 @@ class ScanningService : Service() {
         }
 
         // Update analyzer location
-        serviceScope.launch {
+        rfLocationJob = serviceScope.launch {
             while (isScanning.value) {
                 currentLocation?.let { loc ->
                     rfSignalAnalyzer?.updateLocation(loc.latitude, loc.longitude)
@@ -1808,6 +1867,8 @@ class ScanningService : Service() {
     }
 
     private fun stopRfSignalAnalysis() {
+        rfLocationJob?.cancel()
+        rfLocationJob = null
         rfStatusJob?.cancel()
         rfStatusJob = null
         rfAnomalyJob?.cancel()
@@ -1901,7 +1962,7 @@ class ScanningService : Service() {
         }
 
         // Update detector location
-        serviceScope.launch {
+        ultrasonicLocationJob = serviceScope.launch {
             while (isScanning.value) {
                 currentLocation?.let { loc ->
                     ultrasonicDetector?.updateLocation(loc.latitude, loc.longitude)
@@ -1912,6 +1973,8 @@ class ScanningService : Service() {
     }
 
     private fun stopUltrasonicDetection() {
+        ultrasonicLocationJob?.cancel()
+        ultrasonicLocationJob = null
         ultrasonicStatusJob?.cancel()
         ultrasonicStatusJob = null
         ultrasonicAnomalyJob?.cancel()
@@ -2010,7 +2073,7 @@ class ScanningService : Service() {
         }
 
         // Update monitor location
-        serviceScope.launch {
+        gnssLocationJob = serviceScope.launch {
             while (isScanning.value) {
                 currentLocation?.let { loc ->
                     gnssSatelliteMonitor?.updateLocation(loc.latitude, loc.longitude)
@@ -2021,6 +2084,8 @@ class ScanningService : Service() {
     }
 
     private fun stopGnssMonitoring() {
+        gnssLocationJob?.cancel()
+        gnssLocationJob = null
         gnssStatusJob?.cancel()
         gnssStatusJob = null
         gnssAnomalyJob?.cancel()
@@ -2469,7 +2534,104 @@ class ScanningService : Service() {
         }
         wifiScanReceiver = null
     }
-    
+
+    // ==================== Nuke Receiver ====================
+
+    /**
+     * Register a receiver to handle nuke broadcasts from the main process.
+     * This allows graceful shutdown of database connections before the nuke wipes files.
+     */
+    private fun registerNukeReceiver() {
+        if (nukeReceiver != null) return
+
+        nukeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    ACTION_NUKE_INITIATED -> {
+                        Log.w(TAG, "NUKE BROADCAST RECEIVED - initiating graceful shutdown")
+                        handleNukeInitiated()
+                    }
+                    ACTION_DATABASE_SHUTDOWN -> {
+                        Log.w(TAG, "DATABASE SHUTDOWN BROADCAST RECEIVED - closing database")
+                        handleDatabaseShutdown()
+                    }
+                }
+            }
+        }
+
+        val filter = IntentFilter().apply {
+            addAction(ACTION_NUKE_INITIATED)
+            addAction(ACTION_DATABASE_SHUTDOWN)
+        }
+
+        registerReceiver(nukeReceiver, filter, RECEIVER_NOT_EXPORTED)
+        Log.d(TAG, "Nuke receiver registered")
+    }
+
+    /**
+     * Unregister the nuke receiver.
+     */
+    private fun unregisterNukeReceiver() {
+        nukeReceiver?.let {
+            try {
+                unregisterReceiver(it)
+                Log.d(TAG, "Nuke receiver unregistered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unregistering nuke receiver", e)
+            }
+        }
+        nukeReceiver = null
+    }
+
+    /**
+     * Handle nuke initiated broadcast - stop all scanning and close database.
+     */
+    private fun handleNukeInitiated() {
+        // Mark database as unavailable to prevent further writes
+        isDatabaseAvailable.value = false
+
+        // Stop all scanning operations immediately
+        serviceScope.launch {
+            try {
+                Log.w(TAG, "Stopping scanning due to nuke")
+                stopScanning()
+
+                // Close the database connection in this process
+                closeDatabaseConnection()
+
+                // Disable auto-restart so service doesn't come back after nuke
+                BootReceiver.setServiceEnabled(this@ScanningService, false)
+                ServiceRestartReceiver.cancelWatchdog(this@ScanningService)
+
+                Log.w(TAG, "Graceful shutdown complete - stopping service")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during nuke shutdown", e)
+            }
+        }
+    }
+
+    /**
+     * Handle database shutdown broadcast - close database without stopping service.
+     */
+    private fun handleDatabaseShutdown() {
+        isDatabaseAvailable.value = false
+        closeDatabaseConnection()
+    }
+
+    /**
+     * Close the database connection in this process.
+     */
+    private fun closeDatabaseConnection() {
+        try {
+            com.flockyou.data.repository.FlockYouDatabase.getDatabase(applicationContext).close()
+            Log.d(TAG, "Database connection closed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing database connection", e)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private suspend fun processWifiScanResults() {
         if (!hasLocationPermissions()) return
@@ -2614,6 +2776,12 @@ class ScanningService : Service() {
     }
 
     private suspend fun handleDetection(detection: Detection) {
+        // Check if database is available (might be unavailable during nuke)
+        if (!isDatabaseAvailable.value) {
+            Log.w(TAG, "Database unavailable - skipping detection save")
+            return
+        }
+
         try {
             // Apply privacy settings (strip location if disabled)
             val privacyAwareDetection = applyPrivacySettings(detection)
@@ -2644,10 +2812,55 @@ class ScanningService : Service() {
 
             // Emit refresh event to ensure UI updates even if Room Flow doesn't trigger
             _detectionRefreshEvent.tryEmit(Unit)
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // Database error - likely corrupted or wiped
+            Log.e(TAG, "SQLite error handling detection: ${e.message}", e)
+            handleDatabaseError(e)
+        } catch (e: net.zetetic.database.sqlcipher.SQLiteException) {
+            // SQLCipher-specific error - database corrupted or key mismatch
+            Log.e(TAG, "SQLCipher error handling detection: ${e.message}", e)
+            handleDatabaseError(e)
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling detection: ${e.message}", e)
-            logError("Detection", 1001, "Failed to save detection: ${e.message}")
+            // Check for wrapped database errors
+            if (isDatabaseError(e)) {
+                Log.e(TAG, "Database error handling detection: ${e.message}", e)
+                handleDatabaseError(e)
+            } else {
+                Log.e(TAG, "Error handling detection: ${e.message}", e)
+                logError("Detection", 1001, "Failed to save detection: ${e.message}")
+            }
         }
+    }
+
+    /**
+     * Check if an exception is a database-related error.
+     */
+    private fun isDatabaseError(e: Exception): Boolean {
+        val message = e.message?.lowercase() ?: ""
+        return message.contains("database") ||
+                message.contains("sqlite") ||
+                message.contains("sqlcipher") ||
+                message.contains("file is not a database") ||
+                message.contains("out of memory") ||
+                e.cause is android.database.sqlite.SQLiteException
+    }
+
+    /**
+     * Handle database errors gracefully.
+     * This typically happens when the database is wiped during a nuke operation.
+     */
+    private fun handleDatabaseError(e: Exception) {
+        // Mark database as unavailable
+        isDatabaseAvailable.value = false
+
+        // Log the error
+        logError("Database", 26, "Database error: ${e.message}", recoverable = false)
+
+        // Switch to ephemeral mode to continue operation without persistent storage
+        Log.w(TAG, "Switching to ephemeral storage due to database error")
+
+        // Update scan status to indicate degraded operation
+        scanStatus.value = ScanStatus.Error("Database unavailable - using memory storage", recoverable = true)
     }
     
     private fun alertUser(detection: Detection) {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android Auto app description.
+  This app is categorized as an IOT (Internet of Things) app since it provides
+  real-time surveillance device detection alerts - a safety/security feature
+  useful while driving.
+-->
+<automotiveApp>
+    <uses name="template"/>
+</automotiveApp>

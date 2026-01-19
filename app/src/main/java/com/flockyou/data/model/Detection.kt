@@ -108,7 +108,33 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     GNSS_SIGNAL_LOSS("GNSS Signal Loss", "Sudden loss of satellite signals"),
     GNSS_CLOCK_ANOMALY("GNSS Clock Anomaly", "Satellite timing discontinuity detected"),
     GNSS_MULTIPATH("GNSS Multipath", "Severe signal reflection interference"),
-    GNSS_CONSTELLATION_ANOMALY("Constellation Anomaly", "Unexpected satellite constellation behavior")
+    GNSS_CONSTELLATION_ANOMALY("Constellation Anomaly", "Unexpected satellite constellation behavior"),
+    // Smart home/IoT detection methods
+    IOT_DOORBELL("Smart Doorbell", "Smart doorbell device detected via WiFi/BLE"),
+    IOT_CAMERA("Smart Camera", "Smart home camera detected via WiFi/BLE"),
+    IOT_SECURITY_SYSTEM("Security System", "Home security system detected"),
+    AMAZON_SIDEWALK_BRIDGE("Sidewalk Bridge", "Amazon Sidewalk mesh network bridge detected"),
+    // Tracker detection methods
+    AIRTAG_DETECTED("AirTag Detected", "Apple AirTag tracker detected via BLE"),
+    TILE_DETECTED("Tile Detected", "Tile tracker detected via BLE"),
+    SMARTTAG_DETECTED("SmartTag Detected", "Samsung SmartTag tracker detected via BLE"),
+    UNKNOWN_TRACKER("Unknown Tracker", "Unknown BLE tracker following pattern"),
+    TRACKER_FOLLOWING("Tracker Following", "Tracker device detected at multiple locations"),
+    // Retail/commercial detection methods
+    RETAIL_BEACON_DETECTED("Retail Beacon", "Retail tracking beacon detected"),
+    CROWD_SENSOR("Crowd Sensor", "Crowd analytics or people counting sensor"),
+    FACIAL_REC_SYSTEM("Facial Recognition", "Facial recognition camera system detected"),
+    // Traffic enforcement detection methods
+    TRAFFIC_CAMERA("Traffic Camera", "Traffic enforcement camera detected"),
+    TOLL_SYSTEM("Toll System", "Electronic toll collection system detected"),
+    // Network attack detection methods
+    PINEAPPLE_DETECTED("WiFi Pineapple", "Hak5 WiFi Pineapple pen testing device detected"),
+    MITM_DETECTED("MITM Attack", "Potential man-in-the-middle attack detected"),
+    PACKET_CAPTURE("Packet Capture", "Network packet capture device detected"),
+    // Law enforcement detection methods
+    ACOUSTIC_SENSOR("Acoustic Sensor", "ShotSpotter or similar acoustic gunshot sensor"),
+    FORENSIC_DEVICE("Forensic Device", "Mobile forensics device detected"),
+    SURVEILLANCE_SYSTEM("Surveillance System", "General surveillance system detected")
 }
 
 enum class DeviceType(val displayName: String, val emoji: String) {
@@ -144,6 +170,47 @@ enum class DeviceType(val displayName: String, val emoji: String) {
     // GNSS device types
     GNSS_SPOOFER("GNSS Spoofer", "🎯"),
     GNSS_JAMMER("GNSS Jammer", "📵"),
+    // Smart home/IoT surveillance devices
+    RING_DOORBELL("Ring Doorbell", "🔔"),
+    NEST_CAMERA("Nest/Google Camera", "📷"),
+    AMAZON_SIDEWALK("Amazon Sidewalk Device", "📶"),
+    WYZE_CAMERA("Wyze Camera", "👁️"),
+    ARLO_CAMERA("Arlo Camera", "🎦"),
+    EUFY_CAMERA("Eufy Camera", "🏠"),
+    BLINK_CAMERA("Blink Camera", "💡"),
+    SIMPLISAFE_DEVICE("SimpliSafe Device", "🛡️"),
+    ADT_DEVICE("ADT Security Device", "🔐"),
+    VIVINT_DEVICE("Vivint Smart Home", "🏡"),
+    // Retail/commercial tracking
+    BLUETOOTH_BEACON("Bluetooth Beacon", "📍"),
+    RETAIL_TRACKER("Retail Tracker", "🛒"),
+    CROWD_ANALYTICS("Crowd Analytics Sensor", "👥"),
+    FACIAL_RECOGNITION("Facial Recognition System", "🤖"),
+    // AirTag/tracker devices
+    AIRTAG("Apple AirTag", "🍎"),
+    TILE_TRACKER("Tile Tracker", "🔲"),
+    SAMSUNG_SMARTTAG("Samsung SmartTag", "📱"),
+    GENERIC_BLE_TRACKER("BLE Tracker", "📡"),
+    // Traffic enforcement
+    SPEED_CAMERA("Speed Camera", "⚡"),
+    RED_LIGHT_CAMERA("Red Light Camera", "🚦"),
+    TOLL_READER("Toll/E-ZPass Reader", "💳"),
+    TRAFFIC_SENSOR("Traffic Sensor", "🚗"),
+    // Law enforcement specific
+    SHOTSPOTTER("ShotSpotter Sensor", "🎯"),
+    CLEARVIEW_AI("Clearview AI System", "👤"),
+    PALANTIR_DEVICE("Palantir Device", "🔮"),
+    GRAYKEY_DEVICE("GrayKey Forensics", "🔓"),
+    // Network surveillance
+    WIFI_PINEAPPLE("WiFi Pineapple", "🍍"),
+    PACKET_SNIFFER("Packet Sniffer", "🕵️"),
+    MAN_IN_MIDDLE("MITM Device", "🔀"),
+    // Misc surveillance
+    LICENSE_PLATE_READER("License Plate Reader", "🚘"),
+    CCTV_CAMERA("CCTV Camera", "📹"),
+    PTZ_CAMERA("PTZ Camera", "🎥"),
+    THERMAL_CAMERA("Thermal Camera", "🌡️"),
+    NIGHT_VISION("Night Vision Device", "🌙"),
     UNKNOWN_SURVEILLANCE("Unknown Surveillance", "❓")
 }
 

@@ -209,6 +209,22 @@ When a device is detected, you'll see:
 - **Detection Patterns**: View all 75+ built-in detection patterns
 - **Material 3 dark tactical theme** with threat level color coding
 
+### Android Auto Support (Optional)
+The app includes optional Android Auto integration for hands-free threat awareness while driving:
+
+| Feature | Description |
+|---------|-------------|
+| **Threat Status** | At-a-glance view of current threat level and active detection count |
+| **Recent Detections** | Scrollable list of the 5 most recent detections |
+| **Color-coded Alerts** | Threat levels displayed with matching colors (red/orange/yellow) |
+| **Glanceable Display** | Optimized for quick reads while driving |
+
+**Requirements:**
+- Android Auto compatible vehicle or head unit
+- Android 8.0+ (API 26+)
+
+**Note:** The Android Auto interface is read-only and designed for minimal distraction. All settings and detailed analysis should be done in the main app.
+
 ## 📸 Detection Examples
 
 **Flock Safety ALPR Camera:**

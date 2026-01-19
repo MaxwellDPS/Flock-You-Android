@@ -25,38 +25,45 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Type converters for Room database
+ * Type converters for Room database.
+ * Uses defensive enum parsing to handle invalid values gracefully
+ * instead of crashing with IllegalArgumentException.
  */
 class Converters {
     @TypeConverter
     fun fromDetectionProtocol(value: DetectionProtocol): String = value.name
-    
+
     @TypeConverter
-    fun toDetectionProtocol(value: String): DetectionProtocol = DetectionProtocol.valueOf(value)
-    
+    fun toDetectionProtocol(value: String): DetectionProtocol =
+        try { DetectionProtocol.valueOf(value) } catch (e: IllegalArgumentException) { DetectionProtocol.BLUETOOTH_LE }
+
     @TypeConverter
     fun fromDetectionMethod(value: DetectionMethod): String = value.name
-    
+
     @TypeConverter
-    fun toDetectionMethod(value: String): DetectionMethod = DetectionMethod.valueOf(value)
-    
+    fun toDetectionMethod(value: String): DetectionMethod =
+        try { DetectionMethod.valueOf(value) } catch (e: IllegalArgumentException) { DetectionMethod.BLE_DEVICE_NAME }
+
     @TypeConverter
     fun fromDeviceType(value: DeviceType): String = value.name
-    
+
     @TypeConverter
-    fun toDeviceType(value: String): DeviceType = DeviceType.valueOf(value)
-    
+    fun toDeviceType(value: String): DeviceType =
+        try { DeviceType.valueOf(value) } catch (e: IllegalArgumentException) { DeviceType.UNKNOWN }
+
     @TypeConverter
     fun fromSignalStrength(value: SignalStrength): String = value.name
-    
+
     @TypeConverter
-    fun toSignalStrength(value: String): SignalStrength = SignalStrength.valueOf(value)
-    
+    fun toSignalStrength(value: String): SignalStrength =
+        try { SignalStrength.valueOf(value) } catch (e: IllegalArgumentException) { SignalStrength.MEDIUM }
+
     @TypeConverter
     fun fromThreatLevel(value: ThreatLevel): String = value.name
-    
+
     @TypeConverter
-    fun toThreatLevel(value: String): ThreatLevel = ThreatLevel.valueOf(value)
+    fun toThreatLevel(value: String): ThreatLevel =
+        try { ThreatLevel.valueOf(value) } catch (e: IllegalArgumentException) { ThreatLevel.LOW }
 }
 
 /**
@@ -530,6 +537,18 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /**
+         * Clear the singleton instance after database is closed/wiped.
+         * This allows the database to be re-created if the app continues running after a nuke.
+         * Must be called after close() and before any file deletion.
+         */
+        fun clearInstance() {
+            synchronized(this) {
+                INSTANCE = null
+                Log.d(TAG, "Database instance cleared - will be recreated on next access")
             }
         }
     }

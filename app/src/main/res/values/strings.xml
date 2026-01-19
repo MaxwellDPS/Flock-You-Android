@@ -316,4 +316,12 @@
     <string name="content_desc_back_button">Go back</string>
     <string name="content_desc_expand">Expand details</string>
     <string name="content_desc_collapse">Collapse details</string>
+
+    <!-- App Title -->
+    <string name="app_title_flock">FLOCK</string>
+    <string name="app_title_you">YOU</string>
+
+    <!-- Quick Settings -->
+    <string name="quick_wipe_label">Quick Wipe</string>
+    <string name="quick_wipe_description">Instantly wipe app data</string>
 </resources>
