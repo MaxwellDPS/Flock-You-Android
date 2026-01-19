@@ -201,10 +201,15 @@ object SatelliteDetectionHeuristics {
             val release: String
         )
         
+        // Note: n253, n254, n255 share the same L-band frequencies but differ in:
+        // - n253: Standard MSS L-band
+        // - n254: MSS L-band with different duplexing
+        // - n255: MSS L-band with different channel arrangements
+        // For detection purposes, we treat them as equivalent L-band.
         val BANDS = listOf(
-            BandDefinition("n253", 1626..1660, 1525..1559, "MSS L-band", "Rel-17"),
-            BandDefinition("n254", 1626..1660, 1525..1559, "MSS L-band", "Rel-17"),
-            BandDefinition("n255", 1626..1660, 1525..1559, "MSS L-band", "Rel-17"),
+            BandDefinition("n253", 1626..1660, 1525..1559, "MSS L-band (Standard)", "Rel-17"),
+            BandDefinition("n254", 1626..1660, 1525..1559, "MSS L-band (Alt Duplex)", "Rel-17"),
+            BandDefinition("n255", 1626..1660, 1525..1559, "MSS L-band (Alt Channel)", "Rel-17"),
             BandDefinition("n256", 1980..2010, 2170..2200, "MSS S-band", "Rel-17"),
             // Higher bands for VSAT/ESIM (Rel-18+)
             BandDefinition("n510", 27500..29500, 17700..20200, "Ka-band", "Rel-18"),
@@ -219,11 +224,32 @@ object SatelliteDetectionHeuristics {
             }
         }
         
-        // Get band name for frequency
+        // Get band name for frequency (returns first match for overlapping bands)
+        // For L-band frequencies, returns the primary band (n253)
         fun getBandForFrequency(freqMHz: Int): String? {
-            return BANDS.find { band ->
+            // Check S-band first (unique frequency range)
+            if (freqMHz in 1980..2010 || freqMHz in 2170..2200) {
+                return "n256"
+            }
+            // Check Ka-band ranges
+            if (freqMHz in 27500..30000 || freqMHz in 17700..21200) {
+                return if (freqMHz in 27500..29500 || freqMHz in 17700..20200) "n510" else "n511"
+            }
+            if (freqMHz in 42500..43500) {
+                return "n512"
+            }
+            // L-band (return primary band n253 for overlapping frequencies)
+            if (freqMHz in 1525..1559 || freqMHz in 1626..1660) {
+                return "n253"
+            }
+            return null
+        }
+
+        // Get all matching bands for frequency (useful when bands overlap)
+        fun getAllBandsForFrequency(freqMHz: Int): List<String> {
+            return BANDS.filter { band ->
                 freqMHz in band.uplinkMHz || freqMHz in band.downlinkMHz
-            }?.bandNumber
+            }.map { it.bandNumber }
         }
     }
     
@@ -378,16 +404,66 @@ object SatelliteDetectionHeuristics {
         
         /**
          * Heuristic 6: Frequency Band Validation
-         * 
-         * Verify claimed satellite is using correct NTN bands
+         *
+         * Verify claimed satellite is using correct NTN bands for the specific provider
          */
-        @Suppress("UNUSED_PARAMETER")
         fun validateFrequencyForProvider(
             provider: String,
             frequencyMHz: Int
         ): Boolean {
-            // All legitimate D2D satellite should be in NTN bands
-            return NTNBands.isNTNFrequency(frequencyMHz)
+            // First check if it's a valid NTN frequency at all
+            if (!NTNBands.isNTNFrequency(frequencyMHz)) {
+                return false
+            }
+
+            // Provider-specific validation
+            val providerUpper = provider.uppercase()
+            return when {
+                // T-Mobile Starlink uses L-band and S-band
+                providerUpper.contains("STARLINK") || providerUpper.contains("T-MOBILE") -> {
+                    // L-band: 1525-1559 MHz (DL), 1626-1660 MHz (UL)
+                    // S-band: 1980-2010 MHz (DL), 2170-2200 MHz (UL)
+                    (frequencyMHz in 1525..1660) || (frequencyMHz in 1980..2200)
+                }
+                // Skylo NTN uses L-band primarily
+                providerUpper.contains("SKYLO") -> {
+                    frequencyMHz in 1525..1660
+                }
+                // Globalstar uses L-band and S-band
+                providerUpper.contains("GLOBALSTAR") -> {
+                    (frequencyMHz in 1610..1618) || (frequencyMHz in 2483..2500)
+                }
+                // Iridium uses L-band
+                providerUpper.contains("IRIDIUM") -> {
+                    frequencyMHz in 1616..1626
+                }
+                // Generic/unknown providers - accept any valid NTN band
+                else -> true
+            }
+        }
+
+        /**
+         * Heuristic 7: Provider Frequency Band Info
+         *
+         * Get expected frequency bands for a provider
+         */
+        fun getExpectedBandsForProvider(provider: String): List<String> {
+            val providerUpper = provider.uppercase()
+            return when {
+                providerUpper.contains("STARLINK") || providerUpper.contains("T-MOBILE") -> {
+                    listOf("L-band (1525-1660 MHz)", "S-band (1980-2200 MHz)")
+                }
+                providerUpper.contains("SKYLO") -> {
+                    listOf("L-band (1525-1660 MHz)")
+                }
+                providerUpper.contains("GLOBALSTAR") -> {
+                    listOf("L-band (1610-1618 MHz)", "S-band (2483-2500 MHz)")
+                }
+                providerUpper.contains("IRIDIUM") -> {
+                    listOf("L-band (1616-1626 MHz)")
+                }
+                else -> listOf("Unknown - any NTN band")
+            }
         }
     }
     

@@ -36,7 +36,11 @@ fun MainScreen(
     viewModel: MainViewModel = hiltViewModel(),
     onNavigateToMap: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
-    onNavigateToNearby: () -> Unit = {}
+    onNavigateToNearby: () -> Unit = {},
+    onNavigateToRfDetection: () -> Unit = {},
+    onNavigateToUltrasonicDetection: () -> Unit = {},
+    onNavigateToSatelliteDetection: () -> Unit = {},
+    onNavigateToWifiSecurity: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -60,6 +64,12 @@ fun MainScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewModel.requestRefresh() }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh"
+                        )
+                    }
                     IconButton(onClick = { showFilterSheet = true }) {
                         Badge(
                             containerColor = if (uiState.filterThreatLevel != null || uiState.filterDeviceType != null)
@@ -208,7 +218,32 @@ fun MainScreen(
                             )
                         }
                     }
-                    
+
+                    // Detection Modules section - only on Home tab
+                    if (uiState.selectedTab == 0) {
+                        item(key = "detection_modules_header") {
+                            Text(
+                                text = "DETECTION MODULES",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+
+                        item(key = "detection_modules_grid") {
+                            DetectionModulesGrid(
+                                onNavigateToRfDetection = onNavigateToRfDetection,
+                                onNavigateToUltrasonicDetection = onNavigateToUltrasonicDetection,
+                                onNavigateToSatelliteDetection = onNavigateToSatelliteDetection,
+                                onNavigateToWifiSecurity = onNavigateToWifiSecurity,
+                                wifiAnomalyCount = uiState.wifiAnomalies.size,
+                                rfAnomalyCount = uiState.rfAnomalies.size,
+                                ultrasonicBeaconCount = uiState.activeBeacons.size,
+                                satelliteAnomalyCount = uiState.satelliteAnomalies.size
+                            )
+                        }
+                    }
+
                     // Last detection alert
                     uiState.lastDetection?.let { detection ->
                         item(key = "last_detection_${detection.id}") {
@@ -1866,6 +1901,137 @@ private fun SatelliteAnomalyHistoryCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * Detection modules grid with quick access to specialized detection screens
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetectionModulesGrid(
+    onNavigateToRfDetection: () -> Unit,
+    onNavigateToUltrasonicDetection: () -> Unit,
+    onNavigateToSatelliteDetection: () -> Unit,
+    onNavigateToWifiSecurity: () -> Unit,
+    wifiAnomalyCount: Int,
+    rfAnomalyCount: Int,
+    ultrasonicBeaconCount: Int,
+    satelliteAnomalyCount: Int
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // First row: WiFi Security & RF Analysis
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DetectionModuleCard(
+                modifier = Modifier.weight(1f),
+                title = "WiFi Security",
+                description = "Evil twin & rogue AP detection",
+                icon = Icons.Default.Wifi,
+                badgeCount = wifiAnomalyCount,
+                iconTint = Color(0xFF2196F3),
+                onClick = onNavigateToWifiSecurity
+            )
+            DetectionModuleCard(
+                modifier = Modifier.weight(1f),
+                title = "RF Analysis",
+                description = "Jammers, drones & spectrum",
+                icon = Icons.Default.Radio,
+                badgeCount = rfAnomalyCount,
+                iconTint = Color(0xFF9C27B0),
+                onClick = onNavigateToRfDetection
+            )
+        }
+
+        // Second row: Ultrasonic & Satellite
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DetectionModuleCard(
+                modifier = Modifier.weight(1f),
+                title = "Ultrasonic",
+                description = "Audio tracking beacons",
+                icon = Icons.Default.GraphicEq,
+                badgeCount = ultrasonicBeaconCount,
+                iconTint = Color(0xFFFF9800),
+                onClick = onNavigateToUltrasonicDetection
+            )
+            DetectionModuleCard(
+                modifier = Modifier.weight(1f),
+                title = "Satellite",
+                description = "NTN & Direct-to-Cell",
+                icon = Icons.Default.SatelliteAlt,
+                badgeCount = satelliteAnomalyCount,
+                iconTint = Color(0xFF4CAF50),
+                onClick = onNavigateToSatelliteDetection
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetectionModuleCard(
+    modifier: Modifier = Modifier,
+    title: String,
+    description: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    badgeCount: Int,
+    iconTint: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier,
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = iconTint.copy(alpha = 0.1f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(28.dp)
+                )
+                if (badgeCount > 0) {
+                    Badge(
+                        containerColor = if (badgeCount > 0) MaterialTheme.colorScheme.error else iconTint
+                    ) {
+                        Text(badgeCount.toString())
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = description,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }

@@ -55,6 +55,10 @@ import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.EphemeralDetectionRepository
 import com.flockyou.security.DuressAuthenticator
 import com.flockyou.ui.screens.NukeSettingsScreen
+import com.flockyou.ui.screens.RfDetectionScreen
+import com.flockyou.ui.screens.UltrasonicDetectionScreen
+import com.flockyou.ui.screens.SatelliteDetectionScreen
+import com.flockyou.ui.screens.WifiSecurityScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -272,7 +276,11 @@ fun AppNavigation(
             MainScreen(
                 onNavigateToMap = { navController.navigate("map") },
                 onNavigateToSettings = { navController.navigate("settings") },
-                onNavigateToNearby = { navController.navigate("nearby") }
+                onNavigateToNearby = { navController.navigate("nearby") },
+                onNavigateToRfDetection = { navController.navigate("rf_detection") },
+                onNavigateToUltrasonicDetection = { navController.navigate("ultrasonic_detection") },
+                onNavigateToSatelliteDetection = { navController.navigate("satellite_detection") },
+                onNavigateToWifiSecurity = { navController.navigate("wifi_security") }
             )
         }
         composable("map") {
@@ -340,6 +348,26 @@ fun AppNavigation(
                 nukeSettingsRepository = nukeSettingsRepository,
                 appLockManager = appLockManager,
                 duressAuthenticator = duressAuthenticator,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("rf_detection") {
+            RfDetectionScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("ultrasonic_detection") {
+            UltrasonicDetectionScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("satellite_detection") {
+            SatelliteDetectionScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("wifi_security") {
+            WifiSecurityScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

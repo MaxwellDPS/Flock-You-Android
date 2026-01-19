@@ -54,18 +54,20 @@ class OuiDownloader @Inject constructor(
 
             val response = httpClient.newCall(request).execute()
 
-            if (!response.isSuccessful) {
-                return@withContext OuiDownloadResult.Error(
-                    "HTTP ${response.code}: ${response.message}"
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext OuiDownloadResult.Error(
+                        "HTTP ${resp.code}: ${resp.message}"
+                    )
+                }
+
+                val body = resp.body ?: return@withContext OuiDownloadResult.Error(
+                    "Empty response body"
                 )
-            }
 
-            val body = response.body ?: return@withContext OuiDownloadResult.Error(
-                "Empty response body"
-            )
-
-            body.byteStream().use { inputStream ->
-                parseOuiCsv(inputStream)
+                body.byteStream().use { inputStream ->
+                    parseOuiCsv(inputStream)
+                }
             }
         } catch (e: IOException) {
             Log.e(TAG, "Network error downloading OUI data", e)

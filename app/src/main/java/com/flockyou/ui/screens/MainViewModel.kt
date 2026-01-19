@@ -483,6 +483,17 @@ class MainViewModel @Inject constructor(
     }
 
     /**
+     * Request refresh of all service data via IPC.
+     * This triggers the service to send all current state to the UI.
+     */
+    fun requestRefresh() {
+        serviceConnection.requestState()
+        viewModelScope.launch {
+            refreshDetections()
+        }
+    }
+
+    /**
      * Manually refresh detections from database.
      * Called when detection refresh events are received to ensure UI stays in sync
      * even if Room's Flow emissions don't trigger properly with SQLCipher.

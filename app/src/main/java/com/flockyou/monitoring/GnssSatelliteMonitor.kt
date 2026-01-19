@@ -67,7 +67,7 @@ class GnssSatelliteMonitor(private val context: Context) {
         context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     }
 
-    private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // Current satellite status
@@ -261,7 +261,10 @@ class GnssSatelliteMonitor(private val context: Context) {
         isMonitoring = false
 
         unregisterCallbacks()
+
+        // Cancel and recreate scope for potential restart
         coroutineScope.cancel()
+        coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
         addTimelineEvent(
             type = GnssEventType.MONITORING_STOPPED,
@@ -305,8 +308,12 @@ class GnssSatelliteMonitor(private val context: Context) {
         try {
             locationManager.registerGnssStatusCallback(gnssStatusCallback!!, mainHandler)
             Log.i(TAG, "GNSS status callback registered")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Permission denied for GNSS status callback", e)
+            gnssStatusCallback = null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register GNSS status callback", e)
+            gnssStatusCallback = null
         }
     }
 
@@ -344,8 +351,12 @@ class GnssSatelliteMonitor(private val context: Context) {
                 mainHandler
             )
             Log.i(TAG, "GNSS measurements callback registered: $registered")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Permission denied for GNSS measurements callback", e)
+            gnssMeasurementsCallback = null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register GNSS measurements callback", e)
+            gnssMeasurementsCallback = null
         }
     }
 
@@ -538,16 +549,25 @@ class GnssSatelliteMonitor(private val context: Context) {
 
         // Check for sudden drop in signal strength
         val recentAvg = cn0History.takeLast(3).average()
-        val previousAvg = cn0History.dropLast(3).takeLast(5).average()
+        val previousList = cn0History.dropLast(3).takeLast(5)
+
+        // Guard against empty collection
+        if (previousList.isEmpty()) return false
+        val previousAvg = previousList.average()
 
         if (previousAvg - recentAvg > JAMMING_CN0_DROP_THRESHOLD) {
             return true
         }
 
         // Check for sudden loss of satellites
-        if (satelliteCountHistory.size >= 3) {
+        if (satelliteCountHistory.size >= 8) {
             val recentCount = satelliteCountHistory.takeLast(3).average()
-            val previousCount = satelliteCountHistory.dropLast(3).takeLast(5).average()
+            val previousCountList = satelliteCountHistory.dropLast(3).takeLast(5)
+
+            // Guard against empty collection
+            if (previousCountList.isEmpty()) return false
+            val previousCount = previousCountList.average()
+
             if (previousCount > 6 && recentCount < 2) {
                 return true
             }
@@ -590,7 +610,7 @@ class GnssSatelliteMonitor(private val context: Context) {
             reportAnomaly(
                 type = GnssAnomalyType.JAMMING_DETECTED,
                 description = "GNSS jamming detected - sudden signal degradation",
-                technicalDetails = "Avg C/N0 dropped from ${cn0History.dropLast(3).takeLast(5).average().toInt()} to ${cn0History.takeLast(3).average().toInt()} dB-Hz",
+                technicalDetails = "Avg C/N0 dropped from ${cn0History.dropLast(3).takeLast(5).takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0} to ${cn0History.takeLast(3).takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0} dB-Hz",
                 confidence = AnomalyConfidence.HIGH,
                 contributingFactors = listOf(
                     "Rapid signal strength decrease",
@@ -602,7 +622,7 @@ class GnssSatelliteMonitor(private val context: Context) {
         // Constellation dropout
         val currentConstellations = status.constellationCounts.keys
         if (currentConstellations.size == 1 && satellites.size >= 6) {
-            val missing = ConstellationType.values()
+            val missing = ConstellationType.entries
                 .filter { it != ConstellationType.UNKNOWN && it !in currentConstellations }
             reportAnomaly(
                 type = GnssAnomalyType.CONSTELLATION_DROPOUT,
