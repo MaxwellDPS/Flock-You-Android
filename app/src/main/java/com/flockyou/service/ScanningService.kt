@@ -484,6 +484,9 @@ class ScanningService : Service() {
     @Inject
     lateinit var detectionSettingsRepository: com.flockyou.data.DetectionSettingsRepository
 
+    @Inject
+    lateinit var threadingMonitor: com.flockyou.monitoring.ScannerThreadingMonitor
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
@@ -600,6 +603,7 @@ class ScanningService : Service() {
                         msg.replyTo?.let { client ->
                             if (!ipcClients.contains(client)) {
                                 ipcClients.add(client)
+                                threadingMonitor.updateIpcClientCount(ipcClients.size)
                                 Log.d(TAG, "IPC client registered (total: ${ipcClients.size})")
                             }
                         }
@@ -607,6 +611,7 @@ class ScanningService : Service() {
                     ScanningServiceIpc.MSG_UNREGISTER_CLIENT -> {
                         msg.replyTo?.let { client ->
                             ipcClients.remove(client)
+                            threadingMonitor.updateIpcClientCount(ipcClients.size)
                             Log.d(TAG, "IPC client unregistered (total: ${ipcClients.size})")
                         }
                     }
@@ -653,6 +658,11 @@ class ScanningService : Service() {
                     }
                     ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
                         clearLearnedSignatures()
+                    }
+                    ScanningServiceIpc.MSG_REQUEST_THREADING_DATA -> {
+                        msg.replyTo?.let { client ->
+                            sendThreadingDataToClient(client)
+                        }
                     }
                     else -> super.handleMessage(msg)
                 }
@@ -802,8 +812,51 @@ class ScanningService : Service() {
                 putString(ScanningServiceIpc.KEY_SCAN_STATS_JSON, ScanningServiceIpc.gson.toJson(scanStats.value))
             }
             client.send(statsMsg)
+
+            // Send threading data
+            sendThreadingDataToClient(client)
         } catch (e: RemoteException) {
             Log.e(TAG, "Failed to send all data to client", e)
+        }
+    }
+
+    /**
+     * Send threading monitor data to a specific client.
+     */
+    private fun sendThreadingDataToClient(client: Messenger) {
+        try {
+            val systemState = threadingMonitor.systemState.value
+            val scannerStates = threadingMonitor.scannerStates.value
+            val alerts = threadingMonitor.threadingAlerts.value
+
+            val msg = Message.obtain(null, ScanningServiceIpc.MSG_THREADING_DATA)
+            msg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_THREADING_SYSTEM_STATE_JSON, ScanningServiceIpc.gson.toJson(systemState))
+                putString(ScanningServiceIpc.KEY_THREADING_SCANNER_STATES_JSON, ScanningServiceIpc.gson.toJson(scannerStates))
+                putString(ScanningServiceIpc.KEY_THREADING_ALERTS_JSON, ScanningServiceIpc.gson.toJson(alerts))
+            }
+            client.send(msg)
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Failed to send threading data to client", e)
+        }
+    }
+
+    /**
+     * Broadcast threading monitor data to all registered IPC clients.
+     */
+    private fun broadcastThreadingData() {
+        if (ipcClients.isEmpty()) return
+        val systemStateJson = ScanningServiceIpc.gson.toJson(threadingMonitor.systemState.value)
+        val scannerStatesJson = ScanningServiceIpc.gson.toJson(threadingMonitor.scannerStates.value)
+        val alertsJson = ScanningServiceIpc.gson.toJson(threadingMonitor.threadingAlerts.value)
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_THREADING_DATA).apply {
+                data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_THREADING_SYSTEM_STATE_JSON, systemStateJson)
+                    putString(ScanningServiceIpc.KEY_THREADING_SCANNER_STATES_JSON, scannerStatesJson)
+                    putString(ScanningServiceIpc.KEY_THREADING_ALERTS_JSON, alertsJson)
+                }
+            }
         }
     }
 
@@ -1434,6 +1487,10 @@ class ScanningService : Service() {
         initializeDetectorHealth()
         startHealthCheckJob()
 
+        // Start threading monitor for scanner performance tracking
+        threadingMonitor.startMonitoring()
+        threadingMonitor.updateIpcClientCount(ipcClients.size)
+
         // Start heartbeat monitoring - sends periodic heartbeats to watchdog
         ServiceRestartReceiver.scheduleHeartbeat(this)
         ServiceRestartReceiver.scheduleJobSchedulerBackup(this)
@@ -1669,6 +1726,9 @@ class ScanningService : Service() {
 
         // Stop health check job
         stopHealthCheckJob()
+
+        // Stop threading monitor
+        threadingMonitor.stopMonitoring()
 
         // Unregister screen lock receiver
         screenLockReceiver?.let {
@@ -2548,7 +2608,8 @@ class ScanningService : Service() {
                     matchedPatterns = gson.toJson(listOf(
                         "Advertising spike: ${advertisingRate.toInt()} packets/sec",
                         "Possible siren/gun draw activation"
-                    ))
+                    )),
+                    rawData = formatRawBleData(result.scanRecord, manufacturerData)
                 )
 
                 handleDetection(detection)
@@ -2566,7 +2627,7 @@ class ScanningService : Service() {
         if (DetectionPatterns.isRavenDevice(serviceUuids)) {
             val matchedServices = DetectionPatterns.matchRavenServices(serviceUuids)
             val firmwareVersion = DetectionPatterns.estimateRavenFirmwareVersion(serviceUuids)
-            
+
             val detection = Detection(
                 protocol = DetectionProtocol.BLUETOOTH_LE,
                 detectionMethod = DetectionMethod.RAVEN_SERVICE_UUID,
@@ -2583,7 +2644,8 @@ class ScanningService : Service() {
                 manufacturer = "SoundThinking/ShotSpotter",
                 firmwareVersion = firmwareVersion,
                 serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                matchedPatterns = gson.toJson(matchedServices.map { it.description })
+                matchedPatterns = gson.toJson(matchedServices.map { it.description }),
+                rawData = formatRawBleData(result.scanRecord, manufacturerData)
             )
             
             handleDetection(detection)
@@ -2610,7 +2672,8 @@ class ScanningService : Service() {
                     manufacturer = pattern.manufacturer,
                     firmwareVersion = null,
                     serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                    matchedPatterns = gson.toJson(listOf(pattern.description))
+                    matchedPatterns = gson.toJson(listOf(pattern.description)),
+                    rawData = formatRawBleData(result.scanRecord, manufacturerData)
                 )
                 
                 handleDetection(detection)
@@ -2637,7 +2700,8 @@ class ScanningService : Service() {
                 manufacturer = macPrefix.manufacturer,
                 firmwareVersion = null,
                 serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
+                matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" })),
+                rawData = formatRawBleData(result.scanRecord, manufacturerData)
             )
             
             handleDetection(detection)
@@ -2691,7 +2755,8 @@ class ScanningService : Service() {
                     matchedPatterns = gson.toJson(listOf(
                         "Matches learned signature: ${signature.id}",
                         signature.notes ?: "User-confirmed suspicious device"
-                    ))
+                    )),
+                    rawData = formatRawBleDataFromMap(manufacturerData)
                 )
 
                 handleDetection(detection)
@@ -3715,6 +3780,51 @@ class ScanningService : Service() {
                     putString(ScanningServiceIpc.KEY_DETECTOR_HEALTH_JSON, healthJson)
                 }
             }
+        }
+    }
+
+    /**
+     * Format raw BLE data from ScanRecord for display in advanced mode.
+     * Combines manufacturer data and service data into a single hex string.
+     */
+    private fun formatRawBleData(
+        scanRecord: android.bluetooth.le.ScanRecord?,
+        manufacturerData: Map<Int, String>
+    ): String? {
+        if (scanRecord == null && manufacturerData.isEmpty()) return null
+
+        val hexParts = mutableListOf<String>()
+
+        // Add manufacturer data (format: MFR_ID:DATA)
+        manufacturerData.forEach { (id, data) ->
+            hexParts.add("%04X".format(id) + data)
+        }
+
+        // Add service data if available
+        scanRecord?.serviceData?.forEach { (uuid, data) ->
+            val uuidShort = uuid.uuid.toString().substring(4, 8).uppercase()
+            val dataHex = data.joinToString("") { "%02X".format(it) }
+            hexParts.add("SD:$uuidShort:$dataHex")
+        }
+
+        // If no parsed data, include raw bytes
+        if (hexParts.isEmpty()) {
+            scanRecord?.bytes?.let { bytes ->
+                return bytes.joinToString("") { "%02X".format(it) }
+            }
+        }
+
+        return if (hexParts.isNotEmpty()) hexParts.joinToString("|") else null
+    }
+
+    /**
+     * Format raw BLE data from pre-extracted manufacturer data map.
+     */
+    private fun formatRawBleDataFromMap(manufacturerData: Map<Int, String>): String? {
+        if (manufacturerData.isEmpty()) return null
+
+        return manufacturerData.entries.joinToString("|") { (id, data) ->
+            "%04X".format(id) + data
         }
     }
 }

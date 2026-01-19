@@ -1830,7 +1830,7 @@ private fun CellularTabContent(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    TextButton(onClick = { ScanningService.clearCellularHistory() }) {
+                    TextButton(onClick = { viewModel.clearCellularHistory() }) {
                         Text("Clear")
                     }
                 }
@@ -1935,7 +1935,7 @@ private fun CellularTabContent(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.error
                     )
-                    TextButton(onClick = { ScanningService.clearSatelliteHistory() }) {
+                    TextButton(onClick = { viewModel.clearSatelliteHistory() }) {
                         Text("Clear")
                     }
                 }

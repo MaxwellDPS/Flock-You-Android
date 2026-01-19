@@ -11,7 +11,9 @@ import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +24,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -65,6 +68,7 @@ class GeminiNanoClient @Inject constructor(
     private var isInitialized = false
     private var initializationError: String? = null
     private val initMutex = Mutex()
+    private val statusMutex = Mutex()
 
     // Model status tracking
     private val _modelStatus = MutableStateFlow<GeminiNanoStatus>(GeminiNanoStatus.NotInitialized)
@@ -73,6 +77,13 @@ class GeminiNanoClient @Inject constructor(
     // Download progress tracking
     private val _downloadProgress = MutableStateFlow(0)
     val downloadProgress: StateFlow<Int> = _downloadProgress.asStateFlow()
+
+    // Download cancellation support
+    private var downloadJob: Job? = null
+    private val isDownloadCancelled = AtomicBoolean(false)
+
+    // Estimated model size for progress calculation (updated dynamically if possible)
+    private var estimatedModelSizeBytes: Long = 500L * 1024 * 1024 // Default 500MB
 
     /**
      * Check if the device supports Gemini Nano
@@ -151,6 +162,8 @@ class GeminiNanoClient @Inject constructor(
      * Returns true if the model is ready to use after this call.
      */
     suspend fun downloadModel(onProgress: (Int) -> Unit = {}): Boolean = withContext(Dispatchers.IO) {
+        isDownloadCancelled.set(false)
+
         try {
             val client = Generation.getClient()
             val status = client.checkStatus()
@@ -158,26 +171,25 @@ class GeminiNanoClient @Inject constructor(
             when (status) {
                 FeatureStatus.AVAILABLE -> {
                     Log.i(TAG, "Gemini Nano model is already available")
-                    _downloadProgress.value = 100
-                    onProgress(100)
+                    updateProgress(100, onProgress)
+                    updateStatus(GeminiNanoStatus.Ready)
                     return@withContext true
                 }
                 FeatureStatus.DOWNLOADING -> {
                     Log.i(TAG, "Gemini Nano model is currently downloading")
-                    _modelStatus.value = GeminiNanoStatus.Downloading(0)
-                    // Collect download status from the download flow
-                    return@withContext collectDownloadStatus(client, onProgress)
+                    updateStatus(GeminiNanoStatus.Downloading(0))
+                    // Wait for the existing download to complete by polling status
+                    return@withContext waitForExistingDownload(client, onProgress)
                 }
                 FeatureStatus.DOWNLOADABLE -> {
                     Log.i(TAG, "Starting Gemini Nano model download")
-                    _modelStatus.value = GeminiNanoStatus.Downloading(0)
-                    _downloadProgress.value = 0
-                    onProgress(0)
+                    updateStatus(GeminiNanoStatus.Downloading(0))
+                    updateProgress(0, onProgress)
                     return@withContext startDownload(client, onProgress)
                 }
                 FeatureStatus.UNAVAILABLE -> {
                     Log.w(TAG, "Gemini Nano model is unavailable on this device")
-                    _modelStatus.value = GeminiNanoStatus.NotSupported
+                    updateStatus(GeminiNanoStatus.NotSupported)
                     return@withContext false
                 }
                 else -> {
@@ -185,94 +197,199 @@ class GeminiNanoClient @Inject constructor(
                     return@withContext false
                 }
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Download was cancelled")
+            updateStatus(GeminiNanoStatus.NotInitialized)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to download model: ${e.message}", e)
-            _modelStatus.value = GeminiNanoStatus.Error(e.message ?: "Download failed")
+            updateStatus(GeminiNanoStatus.Error(e.message ?: "Download failed"))
             false
         }
+    }
+
+    /**
+     * Cancel an ongoing download.
+     */
+    fun cancelDownload() {
+        isDownloadCancelled.set(true)
+        downloadJob?.cancel()
+        downloadJob = null
+        Log.i(TAG, "Download cancellation requested")
+    }
+
+    /**
+     * Check if download is currently in progress.
+     */
+    fun isDownloading(): Boolean = _modelStatus.value is GeminiNanoStatus.Downloading
+
+    /**
+     * Thread-safe status update.
+     */
+    private suspend fun updateStatus(status: GeminiNanoStatus) = statusMutex.withLock {
+        _modelStatus.value = status
+    }
+
+    /**
+     * Thread-safe progress update.
+     */
+    private fun updateProgress(progress: Int, onProgress: (Int) -> Unit) {
+        _downloadProgress.value = progress
+        onProgress(progress)
+    }
+
+    /**
+     * Calculate download progress with dynamic model size estimation.
+     */
+    private fun calculateProgress(downloadedBytes: Long): Int {
+        // If we've downloaded more than our estimate, update the estimate
+        if (downloadedBytes > estimatedModelSizeBytes * 0.9) {
+            estimatedModelSizeBytes = (downloadedBytes * 1.1).toLong()
+        }
+        return ((downloadedBytes * 100) / estimatedModelSizeBytes).toInt().coerceIn(0, 99)
+    }
+
+    /**
+     * Wait for an existing download to complete by polling status.
+     * This avoids calling download() again which could cause issues.
+     */
+    private suspend fun waitForExistingDownload(client: GenerativeModel, onProgress: (Int) -> Unit): Boolean {
+        var lastProgress = 0
+        val pollIntervalMs = 1000L
+        val maxPollAttempts = (DOWNLOAD_TIMEOUT_MS / pollIntervalMs).toInt()
+
+        repeat(maxPollAttempts) { attempt ->
+            if (isDownloadCancelled.get()) {
+                Log.i(TAG, "Download wait cancelled")
+                return false
+            }
+
+            val status = client.checkStatus()
+            when (status) {
+                FeatureStatus.AVAILABLE -> {
+                    Log.i(TAG, "Model download completed")
+                    updateProgress(100, onProgress)
+                    updateStatus(GeminiNanoStatus.Ready)
+                    return true
+                }
+                FeatureStatus.DOWNLOADING -> {
+                    // Increment progress slowly to show activity
+                    lastProgress = (lastProgress + 1).coerceAtMost(95)
+                    updateProgress(lastProgress, onProgress)
+                    updateStatus(GeminiNanoStatus.Downloading(lastProgress))
+                }
+                FeatureStatus.UNAVAILABLE -> {
+                    Log.w(TAG, "Model became unavailable during download")
+                    updateStatus(GeminiNanoStatus.Error("Download failed - model unavailable"))
+                    return false
+                }
+                else -> {
+                    Log.w(TAG, "Unexpected status during download wait: $status")
+                }
+            }
+
+            kotlinx.coroutines.delay(pollIntervalMs)
+        }
+
+        Log.e(TAG, "Download wait timed out")
+        updateStatus(GeminiNanoStatus.Error("Download timed out"))
+        return false
     }
 
     private suspend fun startDownload(client: GenerativeModel, onProgress: (Int) -> Unit): Boolean {
+        var downloadSucceeded = false
+
         return try {
-            // Use the download() method which returns a Flow<DownloadStatus>
-            client.download()
-                .catch { e ->
-                    Log.e(TAG, "Download failed: ${e.message}", e)
-                    _modelStatus.value = GeminiNanoStatus.Error(e.message ?: "Download failed")
+            withTimeout(DOWNLOAD_TIMEOUT_MS) {
+                // Wrap entire Flow collection in try-catch to handle collection errors
+                // that .catch{} operator doesn't capture
+                try {
+                    client.download()
+                        .catch { e ->
+                            Log.e(TAG, "Download flow error: ${e.message}", e)
+                            updateStatus(GeminiNanoStatus.Error(e.message ?: "Download failed"))
+                            throw e  // Re-throw to exit collection
+                        }
+                        .collect { status ->
+                            // Check for cancellation
+                            if (isDownloadCancelled.get()) {
+                                Log.i(TAG, "Download cancelled during collection")
+                                throw CancellationException("Download cancelled by user")
+                            }
+
+                            when (status) {
+                                is DownloadStatus.DownloadStarted -> {
+                                    Log.d(TAG, "Download started")
+                                    updateStatus(GeminiNanoStatus.Downloading(0))
+                                    updateProgress(0, onProgress)
+                                }
+                                is DownloadStatus.DownloadProgress -> {
+                                    val bytes = status.totalBytesDownloaded
+                                    val progress = calculateProgress(bytes)
+                                    updateStatus(GeminiNanoStatus.Downloading(progress))
+                                    updateProgress(progress, onProgress)
+                                    Log.d(TAG, "Download progress: ${bytes / 1024 / 1024}MB ($progress%)")
+                                }
+                                DownloadStatus.DownloadCompleted -> {
+                                    Log.i(TAG, "Model download completed")
+                                    updateProgress(100, onProgress)
+                                    updateStatus(GeminiNanoStatus.Ready)
+                                    downloadSucceeded = true
+                                }
+                                is DownloadStatus.DownloadFailed -> {
+                                    Log.e(TAG, "Download failed: ${status.e.message}")
+                                    updateStatus(GeminiNanoStatus.Error(status.e.message ?: "Download failed"))
+                                }
+                            }
+                        }
+                } catch (e: CancellationException) {
+                    throw e  // Propagate cancellation
+                } catch (e: Exception) {
+                    Log.e(TAG, "Download collection error: ${e.message}", e)
+                    updateStatus(GeminiNanoStatus.Error(e.message ?: "Download failed"))
+                    return@withTimeout false
                 }
-                .collect { status ->
-                    when (status) {
-                        is DownloadStatus.DownloadStarted -> {
-                            Log.d(TAG, "Download started")
-                            _modelStatus.value = GeminiNanoStatus.Downloading(0)
-                            onProgress(0)
-                        }
-                        is DownloadStatus.DownloadProgress -> {
-                            // Calculate rough percentage from bytes
-                            val bytes = status.totalBytesDownloaded
-                            // Assume ~500MB for Gemini Nano
-                            val progress = ((bytes * 100) / (500 * 1024 * 1024)).toInt().coerceIn(0, 99)
-                            _downloadProgress.value = progress
-                            _modelStatus.value = GeminiNanoStatus.Downloading(progress)
-                            onProgress(progress)
-                            Log.d(TAG, "Download progress: ${bytes / 1024 / 1024}MB")
-                        }
-                        DownloadStatus.DownloadCompleted -> {
-                            Log.i(TAG, "Model download completed")
-                            _downloadProgress.value = 100
-                            onProgress(100)
-                        }
-                        is DownloadStatus.DownloadFailed -> {
-                            Log.e(TAG, "Download failed: ${status.e.message}")
-                            _modelStatus.value = GeminiNanoStatus.Error(status.e.message ?: "Download failed")
-                        }
+            }
+
+            // Verify final status
+            if (downloadSucceeded) {
+                val finalStatus = client.checkStatus()
+                if (finalStatus == FeatureStatus.AVAILABLE) {
+                    true // Successfully downloaded
+                } else {
+                    Log.w(TAG, "Download reported complete but status is $finalStatus")
+                    // Check final status as fallback
+                    val fallbackStatus = client.checkStatus()
+                    if (fallbackStatus == FeatureStatus.AVAILABLE) {
+                        updateProgress(100, onProgress)
+                        updateStatus(GeminiNanoStatus.Ready)
+                        true
+                    } else {
+                        false
                     }
                 }
-
-            // Check final status
-            val finalStatus = client.checkStatus()
-            finalStatus == FeatureStatus.AVAILABLE
+            } else {
+                // Check final status as fallback
+                val finalStatus = client.checkStatus()
+                if (finalStatus == FeatureStatus.AVAILABLE) {
+                    updateProgress(100, onProgress)
+                    updateStatus(GeminiNanoStatus.Ready)
+                    true
+                } else {
+                    false
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000} seconds")
+            updateStatus(GeminiNanoStatus.Error("Download timed out"))
+            false
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Download was cancelled")
+            updateStatus(GeminiNanoStatus.NotInitialized)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to download model: ${e.message}", e)
-            _modelStatus.value = GeminiNanoStatus.Error(e.message ?: "Download failed")
-            false
-        }
-    }
-
-    private suspend fun collectDownloadStatus(client: GenerativeModel, onProgress: (Int) -> Unit): Boolean {
-        return try {
-            // Collect status from download flow
-            client.download()
-                .catch { e ->
-                    Log.e(TAG, "Error collecting download status: ${e.message}", e)
-                }
-                .collect { status ->
-                    when (status) {
-                        is DownloadStatus.DownloadStarted -> {
-                            _modelStatus.value = GeminiNanoStatus.Downloading(0)
-                            onProgress(0)
-                        }
-                        is DownloadStatus.DownloadProgress -> {
-                            val bytes = status.totalBytesDownloaded
-                            val progress = ((bytes * 100) / (500 * 1024 * 1024)).toInt().coerceIn(0, 99)
-                            _downloadProgress.value = progress
-                            _modelStatus.value = GeminiNanoStatus.Downloading(progress)
-                            onProgress(progress)
-                        }
-                        DownloadStatus.DownloadCompleted -> {
-                            _downloadProgress.value = 100
-                            onProgress(100)
-                        }
-                        is DownloadStatus.DownloadFailed -> {
-                            _modelStatus.value = GeminiNanoStatus.Error(status.e.message ?: "Download failed")
-                        }
-                    }
-                }
-
-            val finalStatus = client.checkStatus()
-            finalStatus == FeatureStatus.AVAILABLE
-        } catch (e: Exception) {
-            Log.e(TAG, "Error waiting for download: ${e.message}", e)
+            updateStatus(GeminiNanoStatus.Error(e.message ?: "Download failed"))
             false
         }
     }
@@ -289,15 +406,15 @@ class GeminiNanoClient @Inject constructor(
 
         // Reset error state on new initialization attempt
         initializationError = null
-        _modelStatus.value = GeminiNanoStatus.Initializing
+        updateStatus(GeminiNanoStatus.Initializing)
 
         try {
-            withTimeout(INIT_TIMEOUT_MS) {
+            val result = withTimeout(INIT_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
                     if (!isDeviceSupported()) {
                         initializationError = "Device does not support Gemini Nano (requires Pixel 8+ with Android 14+)"
                         Log.w(TAG, initializationError!!)
-                        _modelStatus.value = GeminiNanoStatus.NotSupported
+                        updateStatus(GeminiNanoStatus.NotSupported)
                         return@withContext false
                     }
 
@@ -318,59 +435,53 @@ class GeminiNanoClient @Inject constructor(
 
                             generativeModel = client
                             isInitialized = true
-                            _modelStatus.value = GeminiNanoStatus.Ready
+                            updateStatus(GeminiNanoStatus.Ready)
                             Log.i(TAG, "Gemini Nano initialized successfully via ML Kit GenAI")
                             return@withContext true
                         }
                         FeatureStatus.DOWNLOADABLE -> {
-                            // Auto-trigger download in background
-                            Log.i(TAG, "Gemini Nano model downloadable - starting background download")
-                            _modelStatus.value = GeminiNanoStatus.NeedsDownload
-                            // Start download but don't wait for it
-                            try {
-                                client.download().collect { downloadStatus ->
-                                    Log.d(TAG, "Download status: $downloadStatus")
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Background download failed: ${e.message}")
-                            }
-                            initializationError = "Gemini Nano model is downloading - will be available soon"
+                            // Don't auto-trigger download during init - let the UI handle it
+                            Log.i(TAG, "Gemini Nano model needs to be downloaded")
+                            updateStatus(GeminiNanoStatus.NeedsDownload)
+                            initializationError = "Gemini Nano model needs to be downloaded first"
                             return@withContext false
                         }
                         FeatureStatus.DOWNLOADING -> {
                             initializationError = "Gemini Nano model is currently downloading"
                             Log.i(TAG, initializationError!!)
-                            _modelStatus.value = GeminiNanoStatus.Downloading(0)
+                            updateStatus(GeminiNanoStatus.Downloading(0))
                             return@withContext false
                         }
                         FeatureStatus.UNAVAILABLE -> {
                             initializationError = "Gemini Nano is not available on this device. " +
                                 "This may be due to unsupported hardware, unlocked bootloader, or missing AICore."
                             Log.w(TAG, initializationError!!)
-                            _modelStatus.value = GeminiNanoStatus.NotSupported
+                            updateStatus(GeminiNanoStatus.NotSupported)
                             return@withContext false
                         }
                         else -> {
                             initializationError = "Unknown model status: $status"
                             Log.w(TAG, initializationError!!)
-                            _modelStatus.value = GeminiNanoStatus.Error(initializationError!!)
+                            updateStatus(GeminiNanoStatus.Error(initializationError!!))
                             return@withContext false
                         }
                     }
                 }
             }
+            // Return the result from the withTimeout block
+            return@withLock result
         } catch (e: TimeoutCancellationException) {
             initializationError = "Initialization timed out after ${INIT_TIMEOUT_MS / 1000} seconds"
             Log.e(TAG, initializationError!!)
-            _modelStatus.value = GeminiNanoStatus.Error(initializationError!!)
+            updateStatus(GeminiNanoStatus.Error(initializationError!!))
             isInitialized = false
-            false
+            return@withLock false
         } catch (e: Exception) {
             initializationError = "Failed to initialize Gemini Nano: ${e.message}"
             Log.e(TAG, initializationError!!, e)
-            _modelStatus.value = GeminiNanoStatus.Error(initializationError!!)
+            updateStatus(GeminiNanoStatus.Error(initializationError!!))
             isInitialized = false
-            false
+            return@withLock false
         }
     }
 
@@ -450,37 +561,92 @@ class GeminiNanoClient @Inject constructor(
     /**
      * Parse ML Kit GenAI error codes and return user-friendly messages.
      * Based on the ML Kit GenAI documentation error codes.
+     *
+     * Uses regex patterns to avoid false positives from matching arbitrary numbers.
      */
     private fun parseMLKitError(e: Exception): String {
         val message = e.message ?: return "Unknown inference error"
 
+        // Regex patterns for error codes - match "code: 601" or "ErrorCode: 601" or "error 601" patterns
+        val errorCodePattern = Regex("""(?:error|code|Error|Code)[:\s]+(\d+)""", RegexOption.IGNORE_CASE)
+        val errorCodeMatch = errorCodePattern.find(message)
+        val errorCode = errorCodeMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+
         return when {
             // ErrorCode 601 - CONNECTION_ERROR: AICore binding failed
-            message.contains("601") || message.contains("CONNECTION_ERROR") ->
+            errorCode == 601 || message.contains("CONNECTION_ERROR", ignoreCase = true) ->
                 "Connection to AICore failed. Try updating or reinstalling Google Play Services, then reinstall the app."
 
             // ErrorCode 606 - PREPARATION_ERROR: Config not downloaded
-            message.contains("606") || message.contains("PREPARATION_ERROR") ->
+            errorCode == 606 || message.contains("PREPARATION_ERROR", ignoreCase = true) ->
                 "Model configuration not ready. Please wait for the model to sync (may take minutes to hours with internet connection)."
 
-            // ErrorCode 0 - DOWNLOAD_ERROR: Network unavailable
-            message.contains("DOWNLOAD_ERROR") ->
+            // ErrorCode 0 with DOWNLOAD context - Network unavailable
+            message.contains("DOWNLOAD_ERROR", ignoreCase = true) ->
                 "Network unavailable for model download. Please check your internet connection and try again."
 
             // BACKGROUND_USE_BLOCKED: App not in foreground
-            message.contains("BACKGROUND_USE_BLOCKED") ->
+            message.contains("BACKGROUND_USE_BLOCKED", ignoreCase = true) ->
                 "Gemini Nano can only run when the app is in the foreground. Please open the app and try again."
 
-            // BUSY: Per-app inference quota exceeded
-            message.contains("BUSY") ->
+            // BUSY: Per-app inference quota exceeded (match exact word to avoid false positives)
+            Regex("""\bBUSY\b""", RegexOption.IGNORE_CASE).containsMatchIn(message) ->
                 "Inference quota exceeded. Please wait a moment before trying again (exponential backoff recommended)."
 
             // PER_APP_BATTERY_USE_QUOTA_EXCEEDED: Long-duration battery quota
-            message.contains("BATTERY_USE_QUOTA") ->
+            message.contains("BATTERY_USE_QUOTA", ignoreCase = true) ||
+            message.contains("QUOTA_EXCEEDED", ignoreCase = true) ->
                 "Battery usage quota exceeded. Please try again later (daily limits apply)."
+
+            // Model not ready
+            message.contains("not ready", ignoreCase = true) ||
+            message.contains("not initialized", ignoreCase = true) ->
+                "Model not ready. Please wait for initialization to complete."
+
+            // Out of memory
+            message.contains("OutOfMemory", ignoreCase = true) ||
+            message.contains("OOM", ignoreCase = true) ->
+                "Device ran out of memory. Try closing other apps and retry."
 
             // Generic fallback
             else -> "Inference failed: $message"
+        }
+    }
+
+    /**
+     * Generate a text response for a custom prompt.
+     * This method is useful for pattern analysis, summarization, and other text generation tasks.
+     *
+     * @param prompt The prompt to send to the model
+     * @return The generated text response, or null if generation failed
+     */
+    suspend fun generateResponse(prompt: String): String? = withContext(Dispatchers.IO) {
+        val model = generativeModel
+        if (!isInitialized || model == null) {
+            Log.w(TAG, "Cannot generate response: Gemini Nano not initialized")
+            return@withContext null
+        }
+
+        try {
+            withTimeout(INFERENCE_TIMEOUT_MS) {
+                Log.d(TAG, "Generating response with Gemini Nano (prompt length: ${prompt.length})")
+                val response = model.generateContent(prompt)
+                val text = response.candidates.firstOrNull()?.text
+
+                if (text.isNullOrBlank()) {
+                    Log.w(TAG, "Gemini Nano returned empty response")
+                    return@withTimeout null
+                }
+
+                Log.i(TAG, "Gemini Nano generated response (${text.length} chars)")
+                text
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Response generation timed out")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error generating response: ${e.message}", e)
+            null
         }
     }
 

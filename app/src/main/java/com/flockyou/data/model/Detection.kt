@@ -40,6 +40,7 @@ data class Detection(
     val firmwareVersion: String? = null,
     val serviceUuids: String? = null, // JSON array of service UUIDs
     val matchedPatterns: String? = null, // JSON array of matched patterns
+    val rawData: String? = null, // Raw advertisement/frame data as hex string for advanced mode display
     val isActive: Boolean = true,
     val seenCount: Int = 1, // Number of times this device has been seen
     val lastSeenTimestamp: Long = System.currentTimeMillis() // When device was last seen

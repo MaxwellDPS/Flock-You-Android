@@ -61,6 +61,7 @@ import com.flockyou.ui.screens.SatelliteDetectionScreen
 import com.flockyou.ui.screens.WifiSecurityScreen
 import com.flockyou.ui.screens.AiSettingsScreen
 import com.flockyou.ui.screens.ServiceHealthStatusScreen
+import com.flockyou.ui.screens.FlipperSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -301,7 +302,8 @@ fun AppNavigation(
                 onNavigateToNuke = { navController.navigate("nuke_settings") },
                 onNavigateToAllDetections = { navController.navigate("all_detections") },
                 onNavigateToAiSettings = { navController.navigate("ai_settings") },
-                onNavigateToServiceHealth = { navController.navigate("service_health") }
+                onNavigateToServiceHealth = { navController.navigate("service_health") },
+                onNavigateToFlipperSettings = { navController.navigate("flipper_settings") }
             )
         }
         composable("nearby") {
@@ -383,6 +385,11 @@ fun AppNavigation(
         }
         composable("service_health") {
             ServiceHealthStatusScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("flipper_settings") {
+            FlipperSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

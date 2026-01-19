@@ -4,12 +4,25 @@ import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DetectionType
 import com.flockyou.data.model.SurveillancePattern
 import com.flockyou.data.model.ThreatLevel
+import com.flockyou.detection.framework.*
 import java.util.UUID
 
 /**
  * Converts Flipper Zero scan results to Detection objects for storage and display.
+ *
+ * Enhanced with the unified detection framework for:
+ * - Expanded tracker manufacturer database
+ * - iBeacon and Eddystone beacon parsing
+ * - Rotating MAC address detection
+ * - Unwanted tracking protocol detection (FD6F)
+ * - Cross-domain threat correlation
  */
 class FlipperDetectionAdapter {
+
+    // Framework components
+    private val bleAddressTracker = BleAddressTracker()
+    private val unwantedTrackingDetector = UnwantedTrackingDetector()
+    private val crossDomainCorrelator = CrossDomainCorrelator()
 
     fun wifiNetworkToDetection(
         network: FlipperWifiNetwork,
@@ -20,8 +33,28 @@ class FlipperDetectionAdapter {
     ): Detection? {
         val threatLevel = assessWifiThreat(network, patterns)
 
+        val detectionId = UUID.randomUUID().toString()
+
+        // Register with cross-domain correlator
+        val indicators = mutableListOf<String>()
+        if (network.hidden) indicators.add("Hidden network")
+        if (network.security == WifiSecurityType.OPEN) indicators.add("Open network (no encryption)")
+        if (network.security == WifiSecurityType.WEP) indicators.add("Weak WEP encryption")
+
+        crossDomainCorrelator.registerWifiDetection(
+            id = detectionId,
+            ssid = network.ssid,
+            bssid = network.bssid,
+            channel = network.channel,
+            rssi = network.rssi,
+            latitude = latitude,
+            longitude = longitude,
+            threatLevel = threatLevel,
+            indicators = indicators
+        )
+
         return Detection(
-            id = UUID.randomUUID().toString(),
+            id = detectionId,
             deviceId = network.bssid,
             deviceName = network.ssid.ifEmpty { "[Hidden Network]" },
             deviceType = DetectionType.WIFI,
@@ -46,13 +79,69 @@ class FlipperDetectionAdapter {
         latitude: Double?,
         longitude: Double?
     ): Detection {
-        val threatLevel = assessSubGhzThreat(detection)
+        val threatLevel = assessEnhancedSubGhzThreat(detection)
         val freqDesc = SubGhzFrequencies.formatFrequency(detection.frequency)
 
+        // Look up matching RF tracker signatures
+        val matchedSignatures = TrackerDatabase.findRfByFrequency(detection.frequency)
+        val primaryMatch = matchedSignatures.firstOrNull()
+
+        // Build enhanced metadata
+        val metadata = mutableMapOf(
+            "frequency" to detection.frequency.toString(),
+            "modulation" to detection.modulation.name,
+            "duration_ms" to detection.durationMs.toString(),
+            "protocol_id" to detection.protocolId.toString(),
+            "protocol_name" to detection.protocolName,
+            "source" to "flipper"
+        )
+
+        // Add tracker signature info if matched
+        primaryMatch?.let { sig ->
+            metadata["tracker_category"] = sig.category.displayName
+            metadata["matched_signature"] = sig.name
+            metadata["signature_threat"] = sig.threatLevel.name
+        }
+
+        // Determine device name
+        val deviceName = when {
+            primaryMatch != null -> "${primaryMatch.name} @ $freqDesc"
+            detection.protocolName.isNotEmpty() && detection.protocolName != "Unknown" ->
+                "${detection.protocolName} @ $freqDesc"
+            else -> "RF Signal @ $freqDesc"
+        }
+
+        // Register with cross-domain correlator
+        val detectionId = UUID.randomUUID().toString()
+        val indicators = mutableListOf<String>()
+
+        if (primaryMatch != null) {
+            indicators.add("Matches ${primaryMatch.name} signature")
+            if (primaryMatch.category == TrackerCategory.GPS_TRACKER) {
+                indicators.add("GPS tracker frequency band")
+            }
+        }
+
+        if (isTrackerFrequency(detection.frequency)) {
+            indicators.add("Known tracker frequency range")
+        }
+
+        crossDomainCorrelator.registerRfDetection(
+            id = detectionId,
+            frequency = detection.frequency,
+            modulation = detection.modulation.name,
+            protocolName = detection.protocolName.takeIf { it.isNotEmpty() },
+            rssi = detection.rssi,
+            latitude = latitude,
+            longitude = longitude,
+            threatLevel = threatLevel,
+            indicators = indicators
+        )
+
         return Detection(
-            id = UUID.randomUUID().toString(),
+            id = detectionId,
             deviceId = "subghz_${detection.frequency}_${detection.protocolId}",
-            deviceName = "${detection.protocolName} @ $freqDesc",
+            deviceName = deviceName,
             deviceType = DetectionType.RF,
             threatLevel = threatLevel,
             signalStrength = detection.rssi,
@@ -60,15 +149,42 @@ class FlipperDetectionAdapter {
             longitude = longitude,
             firstSeen = timestamp,
             lastSeen = timestamp,
-            metadata = mapOf(
-                "frequency" to detection.frequency.toString(),
-                "modulation" to detection.modulation.name,
-                "duration_ms" to detection.durationMs.toString(),
-                "protocol_id" to detection.protocolId.toString(),
-                "protocol_name" to detection.protocolName,
-                "source" to "flipper"
-            )
+            metadata = metadata
         )
+    }
+
+    /**
+     * Enhanced Sub-GHz threat assessment using tracker database
+     */
+    private fun assessEnhancedSubGhzThreat(detection: FlipperSubGhzDetection): ThreatLevel {
+        // Check against tracker database
+        val matchedSignatures = TrackerDatabase.findRfByFrequency(detection.frequency)
+
+        // High threat if matches known GPS tracker signature with strong signal
+        if (matchedSignatures.any { it.category == TrackerCategory.GPS_TRACKER } && detection.rssi > -60) {
+            return ThreatLevel.HIGH
+        }
+
+        // Medium if matches any tracker signature
+        if (matchedSignatures.isNotEmpty()) {
+            return ThreatLevel.MEDIUM
+        }
+
+        // Check for unknown protocol on tracker frequencies
+        if (detection.protocolId == 0) {
+            // Strong unknown signal at known tracker frequencies
+            if (detection.rssi > -50 && isTrackerFrequency(detection.frequency)) {
+                return ThreatLevel.HIGH
+            }
+            return ThreatLevel.MEDIUM
+        }
+
+        // Known rolling code protocols (car remotes) - informational
+        if (detection.protocolId == SubGhzProtocols.KEELOQ) {
+            return ThreatLevel.LOW
+        }
+
+        return ThreatLevel.LOW
     }
 
     fun bleDeviceToDetection(
@@ -77,12 +193,111 @@ class FlipperDetectionAdapter {
         latitude: Double?,
         longitude: Double?
     ): Detection? {
-        val threatLevel = assessBleThreat(device)
+        // Process through enhanced detection framework
+        val trackingAnalysis = bleAddressTracker.processAdvertisement(
+            macAddress = device.macAddress,
+            deviceName = device.name.takeIf { it.isNotEmpty() },
+            manufacturerId = device.manufacturerId.takeIf { it != 0 },
+            manufacturerData = device.manufacturerData.takeIf { it.isNotEmpty() },
+            serviceUuids = device.serviceUuids,
+            rssi = device.rssi,
+            latitude = latitude,
+            longitude = longitude
+        )
+
+        // Process for unwanted tracking (AirTag stalking detection)
+        val unwantedResult = unwantedTrackingDetector.processAdvertisement(
+            macAddress = device.macAddress,
+            deviceName = device.name.takeIf { it.isNotEmpty() },
+            manufacturerId = device.manufacturerId.takeIf { it != 0 },
+            manufacturerData = device.manufacturerData.takeIf { it.isNotEmpty() },
+            serviceUuids = device.serviceUuids,
+            rssi = device.rssi,
+            latitude = latitude,
+            longitude = longitude
+        )
+
+        // Parse beacon protocols
+        val beaconType = BeaconParser.detectBeaconType(
+            manufacturerId = device.manufacturerId.takeIf { it != 0 },
+            manufacturerData = device.manufacturerData.takeIf { it.isNotEmpty() },
+            serviceUuids = device.serviceUuids,
+            serviceData = emptyMap()  // Flipper doesn't provide service data yet
+        )
+
+        // Parse iBeacon if applicable
+        val iBeaconData = if (beaconType == BeaconProtocolType.IBEACON && device.manufacturerData.isNotEmpty()) {
+            BeaconParser.parseIBeacon(device.manufacturerId, device.manufacturerData, device.rssi)
+        } else null
+
+        // Assess threat using enhanced analysis
+        val threatLevel = assessEnhancedBleThreat(device, trackingAnalysis, unwantedResult, beaconType)
+
+        // Build enhanced metadata
+        val metadata = mutableMapOf(
+            "address_type" to device.addressType.name,
+            "connectable" to device.isConnectable.toString(),
+            "manufacturer_id" to device.manufacturerId.toString(),
+            "service_uuids" to device.serviceUuids.joinToString(","),
+            "source" to "flipper",
+            "beacon_protocol" to beaconType.displayName
+        )
+
+        // Add tracking analysis metadata
+        if (trackingAnalysis.isRotatingAddress) {
+            metadata["rotating_address"] = "true"
+            metadata["unique_macs"] = trackingAnalysis.uniqueAddressCount.toString()
+        }
+        if (trackingAnalysis.isFollowing) {
+            metadata["following"] = "true"
+            metadata["locations_followed"] = trackingAnalysis.uniqueLocationsCount.toString()
+        }
+        if (unwantedResult.hasSeparationAlert) {
+            metadata["separation_alert"] = "true"
+            metadata["tracker_type"] = unwantedResult.trackerType.displayName
+        }
+
+        // Add iBeacon data if present
+        iBeaconData?.let {
+            metadata["ibeacon_uuid"] = it.uuid
+            metadata["ibeacon_major"] = it.major.toString()
+            metadata["ibeacon_minor"] = it.minor.toString()
+            metadata["ibeacon_proximity"] = it.getProximity().displayName
+        }
+
+        // Add matched signatures
+        if (trackingAnalysis.matchedSignatures.isNotEmpty()) {
+            metadata["matched_signatures"] = trackingAnalysis.matchedSignatures.joinToString(",") { it.name }
+        }
+
+        // Get manufacturer name from database
+        val manufacturerInfo = TrackerDatabase.getManufacturerInfo(device.manufacturerId)
+        val deviceName = when {
+            device.name.isNotEmpty() -> device.name
+            manufacturerInfo != null -> "${manufacturerInfo.name} Device"
+            trackingAnalysis.matchedSignatures.isNotEmpty() -> trackingAnalysis.matchedSignatures.first().name
+            else -> "[Unknown BLE Device]"
+        }
+
+        // Register with cross-domain correlator
+        val detectionId = UUID.randomUUID().toString()
+        crossDomainCorrelator.registerBleDetection(
+            id = detectionId,
+            macAddress = device.macAddress,
+            deviceName = deviceName,
+            manufacturerId = device.manufacturerId.takeIf { it != 0 },
+            serviceUuids = device.serviceUuids,
+            rssi = device.rssi,
+            latitude = latitude,
+            longitude = longitude,
+            threatLevel = threatLevel,
+            indicators = trackingAnalysis.threatIndicators + unwantedResult.indicators
+        )
 
         return Detection(
-            id = UUID.randomUUID().toString(),
+            id = detectionId,
             deviceId = device.macAddress,
-            deviceName = device.name.ifEmpty { "[Unknown BLE Device]" },
+            deviceName = deviceName,
             deviceType = DetectionType.BLUETOOTH,
             threatLevel = threatLevel,
             signalStrength = device.rssi,
@@ -90,14 +305,65 @@ class FlipperDetectionAdapter {
             longitude = longitude,
             firstSeen = timestamp,
             lastSeen = timestamp,
-            metadata = mapOf(
-                "address_type" to device.addressType.name,
-                "connectable" to device.isConnectable.toString(),
-                "manufacturer_id" to device.manufacturerId.toString(),
-                "service_uuids" to device.serviceUuids.joinToString(","),
-                "source" to "flipper"
-            )
+            metadata = metadata
         )
+    }
+
+    /**
+     * Enhanced BLE threat assessment using the detection framework
+     */
+    private fun assessEnhancedBleThreat(
+        device: FlipperBleDevice,
+        trackingAnalysis: BleTrackingAnalysis,
+        unwantedResult: UnwantedTrackingResult,
+        beaconType: BeaconProtocolType
+    ): ThreatLevel {
+        // Critical: Unwanted tracking alert (separated AirTag)
+        if (unwantedResult.hasSeparationAlert) {
+            return ThreatLevel.CRITICAL
+        }
+
+        // High: Device is following across multiple locations
+        if (trackingAnalysis.isFollowing && trackingAnalysis.uniqueLocationsCount >= 3) {
+            return ThreatLevel.HIGH
+        }
+
+        // High: Known tracker with strong signal
+        if (trackingAnalysis.matchedSignatures.any { it.threatLevel == ThreatLevel.HIGH } &&
+            device.rssi > -60) {
+            return ThreatLevel.HIGH
+        }
+
+        // High: Rotating address with following pattern
+        if (trackingAnalysis.isRotatingAddress && trackingAnalysis.followingScore > 0.5f) {
+            return ThreatLevel.HIGH
+        }
+
+        // Medium: Known tracker manufacturer
+        if (TrackerDatabase.isKnownTrackerManufacturer(device.manufacturerId)) {
+            return ThreatLevel.MEDIUM
+        }
+
+        // Medium: Retail/advertising beacon
+        if (beaconType in listOf(
+                BeaconProtocolType.IBEACON,
+                BeaconProtocolType.EDDYSTONE_UID,
+                BeaconProtocolType.EDDYSTONE_URL
+            )) {
+            return ThreatLevel.MEDIUM
+        }
+
+        // Low: Rotating address (privacy feature but suspicious)
+        if (trackingAnalysis.isRotatingAddress) {
+            return ThreatLevel.LOW
+        }
+
+        // Low: Unknown device with strong signal
+        if (device.name.isEmpty() && device.rssi > -50) {
+            return ThreatLevel.LOW
+        }
+
+        return ThreatLevel.SAFE
     }
 
     fun irDetectionToDetection(
@@ -211,54 +477,60 @@ class FlipperDetectionAdapter {
         return ThreatLevel.SAFE
     }
 
-    private fun assessSubGhzThreat(detection: FlipperSubGhzDetection): ThreatLevel {
-        // Unknown protocols at certain frequencies may be suspicious
-        if (detection.protocolId == 0) {
-            // Strong unknown signal at known tracker frequencies
-            if (detection.rssi > -50 && isTrackerFrequency(detection.frequency)) {
-                return ThreatLevel.HIGH
-            }
-            return ThreatLevel.MEDIUM
-        }
-
-        // Known rolling code protocols (car remotes) - informational
-        if (detection.protocolId == SubGhzProtocols.KEELOQ) {
-            return ThreatLevel.LOW
-        }
-
-        return ThreatLevel.LOW
-    }
-
-    private fun assessBleThreat(device: FlipperBleDevice): ThreatLevel {
-        // Apple/Google Find My type trackers
-        if (isKnownTrackerManufacturer(device.manufacturerId)) {
-            return ThreatLevel.HIGH
-        }
-
-        // Unknown device with strong signal following you
-        if (device.name.isEmpty() && device.rssi > -50) {
-            return ThreatLevel.MEDIUM
-        }
-
-        return ThreatLevel.SAFE
-    }
-
     private fun isTrackerFrequency(frequency: Long): Boolean {
-        val trackerFrequencies = listOf(
-            433_920_000L, // Common tracker frequency
-            868_350_000L, // EU ISM
-            915_000_000L  // US ISM
-        )
-        return trackerFrequencies.any { kotlin.math.abs(frequency - it) < 1_000_000 }
+        // Use expanded tracker database
+        val allTrackerRanges = TrackerDatabase.getAllRfTrackerFrequencies()
+        return allTrackerRanges.any { range -> range.contains(frequency) }
     }
 
-    private fun isKnownTrackerManufacturer(manufacturerId: Int): Boolean {
-        val trackerManufacturers = setOf(
-            0x004C, // Apple
-            0x00E0, // Google
-            0x0075  // Samsung
-        )
-        return manufacturerId in trackerManufacturers
+    // ============================================================================
+    // Framework Accessors
+    // ============================================================================
+
+    /**
+     * Get suspicious BLE devices detected by address tracking
+     */
+    fun getSuspiciousBleDevices() = bleAddressTracker.suspiciousDevices
+
+    /**
+     * Get devices that appear to be following the user
+     */
+    fun getFollowingDevices() = bleAddressTracker.followingDevices
+
+    /**
+     * Get unwanted tracking alerts (AirTag stalking etc.)
+     */
+    fun getUnwantedTrackingAlerts() = unwantedTrackingDetector.alerts
+
+    /**
+     * Get currently active tracking threats
+     */
+    fun getActiveTrackingThreats() = unwantedTrackingDetector.activeThreats
+
+    /**
+     * Get cross-domain correlated threats
+     */
+    fun getCorrelatedThreats() = crossDomainCorrelator.threats
+
+    /**
+     * Get correlation statistics
+     */
+    fun getCorrelationStats() = crossDomainCorrelator.getStats()
+
+    /**
+     * Clear all detection framework state
+     */
+    fun clearFrameworkState() {
+        bleAddressTracker.clear()
+        unwantedTrackingDetector.clear()
+        crossDomainCorrelator.clear()
+    }
+
+    /**
+     * Clear only unwanted tracking alerts
+     */
+    fun clearUnwantedTrackingAlerts() {
+        unwantedTrackingDetector.clearAlerts()
     }
 }
 

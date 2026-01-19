@@ -70,8 +70,22 @@ class AiSettingsViewModel @Inject constructor(
     private val _downloadError = MutableStateFlow<String?>(null)
     val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
 
+    // Track downloaded models
+    private val _downloadedModels = MutableStateFlow<Set<String>>(emptySet())
+    val downloadedModels: StateFlow<Set<String>> = _downloadedModels.asStateFlow()
+
+    // Active engine info
+    val activeEngine: StateFlow<String> = detectionAnalyzer.activeEngineName
+
     init {
         loadDeviceCapabilities()
+        loadDownloadedModels()
+    }
+
+    private fun loadDownloadedModels() {
+        viewModelScope.launch {
+            _downloadedModels.value = detectionAnalyzer.getDownloadedModelIds()
+        }
     }
 
     private fun loadDeviceCapabilities() {
@@ -246,6 +260,29 @@ class AiSettingsViewModel @Inject constructor(
 
     fun clearDownloadError() {
         _downloadError.value = null
+    }
+
+    /**
+     * Cancel an ongoing model download.
+     */
+    fun cancelDownload() {
+        viewModelScope.launch {
+            detectionAnalyzer.cancelDownload()
+            _isDownloading.value = false
+            _downloadProgress.value = 0
+            Toast.makeText(
+                application,
+                "Download cancelled",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    /**
+     * Get storage info for a downloaded model.
+     */
+    fun getModelStorageInfo(modelId: String): String? {
+        return detectionAnalyzer.getModelStorageInfo(modelId)
     }
 
     fun selectModel(model: AiModel) {

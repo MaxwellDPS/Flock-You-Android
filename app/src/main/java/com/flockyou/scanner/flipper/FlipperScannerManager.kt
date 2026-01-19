@@ -168,6 +168,116 @@ class FlipperScannerManager @Inject constructor(
     }
 
     /**
+     * Connect using preferred method from settings
+     */
+    fun connect() {
+        initialize()
+        scope.launch {
+            val settings = settingsRepository.settings.first()
+            when (settings.preferredConnection) {
+                FlipperConnectionPreference.USB_PREFERRED,
+                FlipperConnectionPreference.USB_ONLY -> {
+                    if (!connectUsb()) {
+                        if (settings.preferredConnection == FlipperConnectionPreference.USB_PREFERRED) {
+                            settings.savedBluetoothAddress?.let { connectBluetooth(it) }
+                        }
+                    }
+                }
+                FlipperConnectionPreference.BLUETOOTH_PREFERRED,
+                FlipperConnectionPreference.BLUETOOTH_ONLY -> {
+                    settings.savedBluetoothAddress?.let { address ->
+                        connectBluetooth(address)
+                    } ?: run {
+                        if (settings.preferredConnection == FlipperConnectionPreference.BLUETOOTH_PREFERRED) {
+                            connectUsb()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Start the manager (auto-connect if settings allow)
+     */
+    fun start() {
+        initialize()
+        scope.launch {
+            val settings = settingsRepository.settings.first()
+            if (settings.autoConnectUsb || settings.autoConnectBluetooth) {
+                connect()
+            }
+        }
+    }
+
+    /**
+     * Stop the manager
+     */
+    fun stop() {
+        stopScanning()
+        disconnect()
+    }
+
+    /**
+     * Upload a file to the connected Flipper Zero
+     * Returns true if successful
+     */
+    suspend fun uploadFile(
+        localFile: java.io.File,
+        remotePath: String,
+        onProgress: (Float) -> Unit = {}
+    ): Boolean {
+        if (!isConnected()) return false
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val client = flipperClient ?: return@withContext false
+                val data = localFile.readBytes()
+                val totalSize = data.size
+
+                // Send storage write command
+                // The Flipper storage protocol requires:
+                // 1. Start write with path
+                // 2. Send chunks
+                // 3. End write
+
+                val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
+                val startCommand = FlipperProtocol.buildStorageWriteStartCommand(remotePath, totalSize.toLong())
+                client.sendRawCommand(startCommand)
+
+                // Send data in chunks
+                val chunkSize = 512
+                var offset = 0
+                while (offset < totalSize) {
+                    val remaining = totalSize - offset
+                    val currentChunkSize = minOf(chunkSize, remaining)
+                    val chunk = data.copyOfRange(offset, offset + currentChunkSize)
+
+                    val chunkCommand = FlipperProtocol.buildStorageWriteDataCommand(chunk)
+                    client.sendRawCommand(chunkCommand)
+
+                    offset += currentChunkSize
+                    onProgress(offset.toFloat() / totalSize)
+
+                    // Small delay to not overwhelm the connection
+                    delay(10)
+                }
+
+                // Send end command
+                val endCommand = FlipperProtocol.buildStorageWriteEndCommand()
+                client.sendRawCommand(endCommand)
+
+                onProgress(1f)
+                Log.i(TAG, "File uploaded successfully: $remotePath")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to upload file", e)
+                false
+            }
+        }
+    }
+
+    /**
      * Check if connected
      */
     fun isConnected(): Boolean = flipperClient?.isConnected() ?: false

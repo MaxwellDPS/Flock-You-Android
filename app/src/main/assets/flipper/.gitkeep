@@ -1,0 +1,2 @@
+# This directory holds the flock_bridge.fap file
+# Run: ./gradlew bundleFlipperFap to populate this directory

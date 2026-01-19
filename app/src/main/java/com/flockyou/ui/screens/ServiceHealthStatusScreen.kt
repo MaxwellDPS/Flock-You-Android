@@ -52,7 +52,7 @@ fun ServiceHealthStatusScreen(
     }
 
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Overview", "Live Activity", "Detectors", "Errors")
+    val tabs = listOf("Overview", "Live Activity", "Detectors", "Threading", "Errors")
 
     Scaffold(
         topBar = {
@@ -127,7 +127,8 @@ fun ServiceHealthStatusScreen(
                                 0 -> Icon(Icons.Default.Dashboard, contentDescription = null)
                                 1 -> Icon(Icons.Default.Radar, contentDescription = null)
                                 2 -> Icon(Icons.Default.Sensors, contentDescription = null)
-                                3 -> Icon(Icons.Default.Warning, contentDescription = null)
+                                3 -> Icon(Icons.Default.Memory, contentDescription = null)
+                                4 -> Icon(Icons.Default.Warning, contentDescription = null)
                             }
                         }
                     )
@@ -149,7 +150,8 @@ fun ServiceHealthStatusScreen(
                     isBound = isBound
                 )
                 2 -> DetectorHealthContent(detectorHealth = detectorHealth)
-                3 -> ErrorsContent(
+                3 -> ThreadingMonitorContent(uiState = uiState)
+                4 -> ErrorsContent(
                     detectorHealth = detectorHealth,
                     recentErrors = uiState.recentErrors
                 )
@@ -1433,6 +1435,458 @@ private fun RawDataCard(
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Threading Monitor Content - Shows scanner threading metrics and performance data.
+ */
+@Composable
+private fun ThreadingMonitorContent(uiState: MainUiState) {
+    val systemState = uiState.threadingSystemState
+    val scannerStates = uiState.threadingScannerStates
+    val alerts = uiState.threadingAlerts
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // System Overview Card
+        item {
+            Text(
+                text = "System Overview",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        item {
+            ThreadingSystemCard(systemState = systemState)
+        }
+
+        // Health Score Card
+        item {
+            HealthScoreCard(healthScore = systemState?.healthScore ?: 100f)
+        }
+
+        // Threading Alerts
+        if (alerts.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Threading Alerts",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(alerts) { alert ->
+                ThreadingAlertCard(alert = alert)
+            }
+        }
+
+        // Scanner States
+        item {
+            Text(
+                text = "Scanner Performance",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        val sortedScanners = scannerStates.entries.sortedBy { it.key }
+        items(sortedScanners) { (scannerId, state) ->
+            ScannerThreadCard(scannerId = scannerId, state = state)
+        }
+
+        // Empty state
+        if (systemState == null) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            Icons.Default.Memory,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No Threading Data",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Start scanning to see threading metrics",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThreadingSystemCard(systemState: com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            // Thread counts row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(
+                    icon = Icons.Default.Memory,
+                    value = systemState?.processThreadCount?.toString() ?: "--",
+                    label = "Threads",
+                    color = MaterialTheme.colorScheme.primary
+                )
+                StatItem(
+                    icon = Icons.Default.Pending,
+                    value = systemState?.totalActiveJobs?.toString() ?: "--",
+                    label = "Jobs",
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                StatItem(
+                    icon = Icons.Default.Speed,
+                    value = String.format("%.0f", systemState?.totalExecutionsPerMinute ?: 0.0),
+                    label = "/min",
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                StatItem(
+                    icon = Icons.Default.CheckCircle,
+                    value = String.format("%.0f%%", (systemState?.averageSuccessRate ?: 1.0) * 100),
+                    label = "Success",
+                    color = Color(0xFF4CAF50)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Memory and IPC row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(
+                    icon = Icons.Default.Storage,
+                    value = "${systemState?.heapUsedMb ?: 0}MB",
+                    label = "Heap",
+                    color = MaterialTheme.colorScheme.primary
+                )
+                StatItem(
+                    icon = Icons.Default.Link,
+                    value = systemState?.ipcConnectedClients?.toString() ?: "0",
+                    label = "IPC",
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                StatItem(
+                    icon = Icons.Default.Send,
+                    value = String.format("%.0f", systemState?.ipcMessagesSentPerMinute ?: 0.0),
+                    label = "Sent/m",
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                StatItem(
+                    icon = Icons.Default.Timer,
+                    value = String.format("%.0fms", systemState?.ipcAverageLatencyMs ?: 0.0),
+                    label = "Latency",
+                    color = if ((systemState?.ipcAverageLatencyMs ?: 0.0) > 100) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HealthScoreCard(healthScore: Float) {
+    val scoreColor = when {
+        healthScore >= 80 -> Color(0xFF4CAF50)
+        healthScore >= 60 -> Color(0xFFFFC107)
+        else -> MaterialTheme.colorScheme.error
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = scoreColor.copy(alpha = 0.15f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = when {
+                        healthScore >= 80 -> Icons.Default.CheckCircle
+                        healthScore >= 60 -> Icons.Default.Warning
+                        else -> Icons.Default.Error
+                    },
+                    contentDescription = null,
+                    tint = scoreColor,
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Health Score",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = when {
+                            healthScore >= 80 -> "System operating normally"
+                            healthScore >= 60 -> "Some performance degradation"
+                            else -> "Performance issues detected"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Text(
+                text = "${healthScore.toInt()}%",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = scoreColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThreadingAlertCard(alert: com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val alertColor = when (alert.severity) {
+        com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.ERROR -> MaterialTheme.colorScheme.error
+        com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.WARNING -> Color(0xFFFFC107)
+        com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.INFO -> MaterialTheme.colorScheme.primary
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = alertColor.copy(alpha = 0.15f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = when (alert.severity) {
+                    com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.ERROR -> Icons.Default.Error
+                    com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.WARNING -> Icons.Default.Warning
+                    com.flockyou.monitoring.ScannerThreadingMonitor.AlertSeverity.INFO -> Icons.Default.Info
+                },
+                contentDescription = null,
+                tint = alertColor,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = alert.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = dateFormat.format(Date(alert.timestamp)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = alert.message,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerThreadCard(
+    scannerId: String,
+    state: com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val displayName = scannerId.replace("_", " ")
+        .split(" ")
+        .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                state.isStalled -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                state.successRate < 0.8 && state.totalExecutions > 10 -> Color(0xFFFFC107).copy(alpha = 0.15f)
+                else -> MaterialTheme.colorScheme.surface
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    state.isStalled -> MaterialTheme.colorScheme.error
+                                    state.activeJobCount > 0 -> Color(0xFF4CAF50)
+                                    else -> MaterialTheme.colorScheme.outline
+                                }
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = when {
+                        state.isStalled -> MaterialTheme.colorScheme.errorContainer
+                        state.successRate < 0.8 -> Color(0xFFFFC107).copy(alpha = 0.3f)
+                        else -> Color(0xFF4CAF50).copy(alpha = 0.2f)
+                    }
+                ) {
+                    Text(
+                        text = when {
+                            state.isStalled -> "Stalled"
+                            state.activeJobCount > 0 -> "Active"
+                            else -> "Idle"
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = when {
+                            state.isStalled -> MaterialTheme.colorScheme.error
+                            state.activeJobCount > 0 -> Color(0xFF4CAF50)
+                            else -> MaterialTheme.colorScheme.outline
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Metrics row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Executions",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${state.totalExecutions} (${String.format("%.1f", state.executionsPerMinute)}/m)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Success",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${String.format("%.0f", state.successRate * 100)}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (state.successRate < 0.8) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Avg Time",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${state.avgExecutionTimeMs.toLong()}ms",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Last execution time
+            if (state.lastExecutionTime > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Last: ${dateFormat.format(Date(state.lastExecutionTime))}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
+            // Last error
+            state.lastErrorMessage?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                ) {
+                    Text(
+                        text = error,
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

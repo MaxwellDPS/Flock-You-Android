@@ -49,6 +49,14 @@ class FalsePositiveAnalyzer @Inject constructor(
     }
 
     /**
+     * Clear the lazy init callback to prevent memory leaks.
+     * Call this when the parent component is destroyed.
+     */
+    fun clearLazyInitCallback() {
+        lazyInitCallback = null
+    }
+
+    /**
      * Analyze a detection for false positive likelihood.
      * Returns FalsePositiveResult with reasoning.
      *

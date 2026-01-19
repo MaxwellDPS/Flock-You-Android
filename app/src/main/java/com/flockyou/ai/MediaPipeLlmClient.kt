@@ -116,11 +116,13 @@ class MediaPipeLlmClient @Inject constructor(
         if (wasInProgress) {
             // App crashed during inference
             val crashCount = prefs.getInt(KEY_CRASH_COUNT, 0) + 1
+            // Use commit() for synchronous write to ensure crash count persists
+            // before potential subsequent crash
             prefs.edit()
                 .putBoolean(KEY_INFERENCE_IN_PROGRESS, false)
                 .putBoolean(KEY_INFERENCE_CRASHED, true)
                 .putInt(KEY_CRASH_COUNT, crashCount)
-                .apply()
+                .commit()
             Log.e(TAG, "Detected crash during previous inference! Crash count: $crashCount")
             return true
         }
@@ -379,16 +381,33 @@ class MediaPipeLlmClient @Inject constructor(
      * The detokenizer crash (token ID -1) often occurs with unusual characters.
      */
     private fun sanitizePrompt(prompt: String): String {
-        return prompt
+        var cleaned = prompt
             // Remove control characters except newlines and tabs
             .replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), "")
             // Remove any stray model control tokens that might confuse the tokenizer
             .replace("<eos>", "")
             .replace("<bos>", "")
             .replace("<pad>", "")
-            // Limit prompt length
-            .take(MAX_PROMPT_LENGTH)
             .trim()
+
+        // Smart truncation - preserve complete sentences when possible
+        if (cleaned.length > MAX_PROMPT_LENGTH) {
+            // Leave room for potential continuation
+            val truncated = cleaned.take(MAX_PROMPT_LENGTH - 20)
+            val lastPeriod = truncated.lastIndexOf('.')
+            val lastNewline = truncated.lastIndexOf('\n')
+            val cutPoint = maxOf(lastPeriod, lastNewline)
+
+            cleaned = if (cutPoint > truncated.length / 2) {
+                // Cut at sentence/line boundary if it's past halfway
+                truncated.substring(0, cutPoint + 1)
+            } else {
+                // Otherwise just truncate with ellipsis indicator
+                truncated + "..."
+            }
+        }
+
+        return cleaned
     }
 
     /**
@@ -453,12 +472,17 @@ class MediaPipeLlmClient @Inject constructor(
                 }
                 .build()
 
-            llmInference = LlmInference.createFromOptions(context, options)
-            isInitialized = true
+            val newInference = LlmInference.createFromOptions(context, options)
+            // Only update state after successful creation to avoid race conditions
+            llmInference = newInference
             consecutiveErrors = 0
+            isInitialized = true  // Set last, after all resources are ready
 
             Log.i(TAG, "Session recreated successfully with $backend backend")
         } catch (e: Exception) {
+            // Ensure we're in a clean failed state
+            isInitialized = false
+            llmInference = null
             Log.e(TAG, "Failed to recreate session: ${e.message}", e)
             initializationError = "Session recreation failed: ${e.message}"
         }
@@ -605,23 +629,19 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
     /**
      * Synchronous cleanup for non-suspend contexts (e.g., onDestroy).
      * Marks as not initialized immediately to reject new inference requests,
-     * then waits for any ongoing inference to complete before closing resources.
+     * then closes resources directly without blocking.
      *
-     * Thread-safe: Uses mutex to prevent race conditions with ongoing inference.
+     * Note: We don't wait for ongoing inference because:
+     * 1. runBlocking can cause ANR if inference takes >5 seconds
+     * 2. Marking isInitialized = false prevents new requests
+     * 3. The LlmInference.close() method is thread-safe
      */
     fun cleanupSync() {
-        // Mark as not initialized first to reject new requests
+        // Mark as not initialized immediately to reject new requests
         isInitialized = false
 
-        // Try to acquire the inference mutex to ensure no inference is running
-        // Use tryLock with timeout to avoid blocking forever
-        val acquired = kotlinx.coroutines.runBlocking {
-            kotlinx.coroutines.withTimeoutOrNull(5000L) {
-                inferenceMutex.lock()
-                true
-            } ?: false
-        }
-
+        // Close resources directly without blocking for mutex
+        // The mutex protects inference, but cleanup just needs to release resources
         try {
             llmInference?.close()
         } catch (e: Exception) {
@@ -630,12 +650,11 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
         llmInference = null
         currentModelPath = null
         currentBackend = null
+        currentConfig = null
+        consecutiveErrors = 0
+        needsSessionRecreation = false
 
-        if (acquired) {
-            inferenceMutex.unlock()
-        } else {
-            Log.w(TAG, "Could not acquire inference mutex during cleanup - inference may still be running")
-        }
+        Log.d(TAG, "MediaPipe LLM cleanup completed (sync)")
     }
 }
 

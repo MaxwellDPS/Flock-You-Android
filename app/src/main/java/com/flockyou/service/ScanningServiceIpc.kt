@@ -41,6 +41,7 @@ object ScanningServiceIpc {
     const val MSG_CLEAR_SATELLITE_HISTORY = 9
     const val MSG_CLEAR_ERRORS = 10
     const val MSG_CLEAR_LEARNED_SIGNATURES = 11
+    const val MSG_REQUEST_THREADING_DATA = 12
 
     // Message types from service to client
     const val MSG_STATE_UPDATE = 100
@@ -62,6 +63,7 @@ object ScanningServiceIpc {
     const val MSG_ERROR_LOG = 116
     const val MSG_DETECTION_REFRESH = 117
     const val MSG_SCAN_STATS = 118
+    const val MSG_THREADING_DATA = 119
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -102,6 +104,9 @@ object ScanningServiceIpc {
     const val KEY_DETECTOR_HEALTH_JSON = "detector_health_json"
     const val KEY_ERROR_LOG_JSON = "error_log_json"
     const val KEY_SCAN_STATS_JSON = "scan_stats_json"
+    const val KEY_THREADING_SYSTEM_STATE_JSON = "threading_system_state_json"
+    const val KEY_THREADING_SCANNER_STATES_JSON = "threading_scanner_states_json"
+    const val KEY_THREADING_ALERTS_JSON = "threading_alerts_json"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -239,6 +244,14 @@ object ScanningServiceIpc {
                         val json = msg.data?.getString(KEY_SCAN_STATS_JSON)
                         connection.updateScanStats(json)
                     }
+                    MSG_THREADING_DATA -> {
+                        val bundle = msg.data
+                        connection.updateThreadingData(
+                            systemStateJson = bundle?.getString(KEY_THREADING_SYSTEM_STATE_JSON),
+                            scannerStatesJson = bundle?.getString(KEY_THREADING_SCANNER_STATES_JSON),
+                            alertsJson = bundle?.getString(KEY_THREADING_ALERTS_JSON)
+                        )
+                    }
                     else -> super.handleMessage(msg)
                 }
             } catch (e: Exception) {
@@ -252,9 +265,17 @@ object ScanningServiceIpc {
 /**
  * Manages the connection to the ScanningService from the main process.
  * Handles binding, messaging, and state synchronization across processes.
+ *
+ * Features robust error handling:
+ * - Automatic reconnection on disconnect
+ * - Message retry with exponential backoff
+ * - Connection state monitoring
  */
 class ScanningServiceConnection(private val context: Context) {
     private val tag = "ScanServiceConnection"
+
+    // Coroutine scope for retry operations
+    private val connectionScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Messenger for sending messages to the service
     private var serviceMessenger: Messenger? = null
@@ -265,9 +286,20 @@ class ScanningServiceConnection(private val context: Context) {
     // Messenger for receiving messages from the service
     private val clientMessenger = Messenger(ScanningServiceIpc.IncomingHandler(this, ipcHandlerThread.looper))
 
+    // Reconnection configuration
+    private var reconnectionJob: Job? = null
+    private var reconnectAttempt = 0
+    private val maxReconnectAttempts = 5
+    private val baseReconnectDelayMs = 1000L
+    private val maxReconnectDelayMs = 30000L
+
     // Connection state
     private val _isBound = MutableStateFlow(false)
     val isBound: StateFlow<Boolean> = _isBound.asStateFlow()
+
+    // Connection error tracking
+    private val _lastConnectionError = MutableStateFlow<String?>(null)
+    val lastConnectionError: StateFlow<String?> = _lastConnectionError.asStateFlow()
 
     // Mirrored state from the service process
     private val _isScanning = MutableStateFlow(false)
@@ -390,11 +422,23 @@ class ScanningServiceConnection(private val context: Context) {
     private val _detectionRefreshEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
     val detectionRefreshEvent: SharedFlow<Unit> = _detectionRefreshEvent.asSharedFlow()
 
+    // Threading monitor data (mirrored from service process)
+    private val _threadingSystemState = MutableStateFlow<com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState?>(null)
+    val threadingSystemState: StateFlow<com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState?> = _threadingSystemState.asStateFlow()
+
+    private val _threadingScannerStates = MutableStateFlow<Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState>>(emptyMap())
+    val threadingScannerStates: StateFlow<Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState>> = _threadingScannerStates.asStateFlow()
+
+    private val _threadingAlerts = MutableStateFlow<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>>(emptyList())
+    val threadingAlerts: StateFlow<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>> = _threadingAlerts.asStateFlow()
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(tag, "onServiceConnected called, service=$service")
             serviceMessenger = Messenger(service)
             _isBound.value = true
+            _lastConnectionError.value = null
+            reconnectAttempt = 0 // Reset reconnection counter on successful connection
             Log.d(tag, "Service connected, isBound=${_isBound.value}")
 
             // Register this client with the service
@@ -411,14 +455,52 @@ class ScanningServiceConnection(private val context: Context) {
                 Log.d(tag, "Initial state request sent")
             } catch (e: RemoteException) {
                 Log.e(tag, "Failed to register client", e)
+                _lastConnectionError.value = "Failed to register: ${e.message}"
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(tag, "Service disconnected")
+            Log.d(tag, "Service disconnected unexpectedly")
             serviceMessenger = null
             _isBound.value = false
+            _lastConnectionError.value = "Service disconnected"
+
+            // Attempt to reconnect automatically
+            scheduleReconnect()
         }
+    }
+
+    /**
+     * Schedule a reconnection attempt with exponential backoff.
+     */
+    private fun scheduleReconnect() {
+        if (reconnectAttempt >= maxReconnectAttempts) {
+            Log.e(tag, "Max reconnection attempts ($maxReconnectAttempts) reached, giving up")
+            _lastConnectionError.value = "Connection lost after $maxReconnectAttempts attempts"
+            return
+        }
+
+        reconnectionJob?.cancel()
+        reconnectionJob = connectionScope.launch {
+            val delay = calculateBackoffDelay(reconnectAttempt)
+            Log.d(tag, "Scheduling reconnection attempt ${reconnectAttempt + 1} in ${delay}ms")
+            kotlinx.coroutines.delay(delay)
+
+            if (!_isBound.value) {
+                reconnectAttempt++
+                Log.d(tag, "Attempting reconnection (attempt $reconnectAttempt)")
+                bindInternal()
+            }
+        }
+    }
+
+    /**
+     * Calculate exponential backoff delay with jitter.
+     */
+    private fun calculateBackoffDelay(attempt: Int): Long {
+        val exponentialDelay = baseReconnectDelayMs * (1L shl attempt.coerceAtMost(5))
+        val jitter = (Math.random() * 0.3 * exponentialDelay).toLong()
+        return (exponentialDelay + jitter).coerceAtMost(maxReconnectDelayMs)
     }
 
     /**
@@ -426,17 +508,43 @@ class ScanningServiceConnection(private val context: Context) {
      */
     fun bind() {
         Log.d(tag, "bind() called, isBound=${_isBound.value}")
-        if (_isBound.value) return
+        reconnectAttempt = 0 // Reset on manual bind
+        bindInternal()
+    }
 
-        val intent = Intent(context, ScanningService::class.java)
-        val result = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-        Log.d(tag, "bindService result: $result")
+    /**
+     * Internal bind implementation used by both bind() and reconnection.
+     */
+    private fun bindInternal() {
+        if (_isBound.value) {
+            Log.d(tag, "Already bound, skipping")
+            return
+        }
+
+        try {
+            val intent = Intent(context, ScanningService::class.java)
+            val result = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            Log.d(tag, "bindService result: $result")
+
+            if (!result) {
+                _lastConnectionError.value = "Failed to initiate service bind"
+                scheduleReconnect()
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Exception during bind", e)
+            _lastConnectionError.value = "Bind failed: ${e.message}"
+            scheduleReconnect()
+        }
     }
 
     /**
      * Unbind from the scanning service.
      */
     fun unbind() {
+        // Cancel any pending reconnection
+        reconnectionJob?.cancel()
+        reconnectionJob = null
+
         if (!_isBound.value) return
 
         // Unregister this client
@@ -448,11 +556,40 @@ class ScanningServiceConnection(private val context: Context) {
             Log.e(tag, "Failed to unregister client", e)
         }
 
-        context.unbindService(connection)
+        try {
+            context.unbindService(connection)
+        } catch (e: Exception) {
+            Log.e(tag, "Exception during unbind", e)
+        }
         _isBound.value = false
+        serviceMessenger = null
 
         // Clean up the handler thread
         ipcHandlerThread.quitSafely()
+
+        // Cancel all coroutines
+        connectionScope.cancel()
+    }
+
+    /**
+     * Force reconnection - call this to manually retry connection.
+     */
+    fun forceReconnect() {
+        Log.d(tag, "Force reconnect requested")
+        reconnectAttempt = 0
+        reconnectionJob?.cancel()
+
+        if (_isBound.value) {
+            try {
+                context.unbindService(connection)
+            } catch (e: Exception) {
+                Log.e(tag, "Exception during force unbind", e)
+            }
+            _isBound.value = false
+            serviceMessenger = null
+        }
+
+        bindInternal()
     }
 
     /**
@@ -582,6 +719,20 @@ class ScanningServiceConnection(private val context: Context) {
             serviceMessenger?.send(msg)
         } catch (e: RemoteException) {
             Log.e(tag, "Failed to send clear learned signatures command", e)
+        }
+    }
+
+    /**
+     * Request threading monitor data from the service.
+     */
+    fun requestThreadingData() {
+        if (!_isBound.value) return
+        try {
+            val msg = Message.obtain(null, ScanningServiceIpc.MSG_REQUEST_THREADING_DATA)
+            msg.replyTo = clientMessenger
+            serviceMessenger?.send(msg)
+        } catch (e: RemoteException) {
+            Log.e(tag, "Failed to request threading data", e)
         }
     }
 
@@ -848,6 +999,31 @@ class ScanningServiceConnection(private val context: Context) {
             _scanStats.value = stats
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse scan stats JSON", e)
+        }
+    }
+
+    internal fun updateThreadingData(
+        systemStateJson: String?,
+        scannerStatesJson: String?,
+        alertsJson: String?
+    ) {
+        try {
+            systemStateJson?.let {
+                _threadingSystemState.value = ScanningServiceIpc.gson.fromJson(
+                    it,
+                    com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState::class.java
+                )
+            }
+            scannerStatesJson?.let {
+                val type = object : TypeToken<Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState>>() {}.type
+                _threadingScannerStates.value = ScanningServiceIpc.gson.fromJson(it, type)
+            }
+            alertsJson?.let {
+                val type = object : TypeToken<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>>() {}.type
+                _threadingAlerts.value = ScanningServiceIpc.gson.fromJson(it, type)
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse threading data JSON", e)
         }
     }
 }

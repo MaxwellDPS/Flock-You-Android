@@ -9,6 +9,8 @@ import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.flockyou.data.model.*
+import com.flockyou.detection.framework.TrackerDatabase
+import com.flockyou.detection.framework.UltrasonicTrackingPurpose
 import com.flockyou.security.SecureAudioBuffer
 import com.flockyou.security.SecureMemory
 import kotlinx.coroutines.*
@@ -64,20 +66,21 @@ class UltrasonicDetector(
         private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
         private const val DEFAULT_SCAN_INTERVAL_MS = 30_000L // Scan every 30 seconds
 
-        // Known beacon frequencies (Hz) - commonly used by tracking companies
-        private val KNOWN_BEACON_FREQUENCIES = listOf(
-            18000, // SilverPush primary
-            18500, // Alphonso primary
-            19000, // Common advertising beacon
-            19500, // Retail beacon
-            20000, // Cross-device tracking
-            20500, // Location beacon
-            21000, // Premium ad tracking
-        )
-
         // Frequency tolerance for matching (Hz)
         private const val FREQUENCY_TOLERANCE = 100
+
+        /**
+         * Get all known beacon frequencies from the unified tracker database
+         * This provides expanded coverage of ultrasonic tracking technologies
+         */
+        fun getKnownBeaconFrequencies(): List<Int> {
+            return TrackerDatabase.getAllUltrasonicFrequencies()
+        }
     }
+
+    // Use expanded frequency database
+    private val knownBeaconFrequencies: List<Int>
+        get() = TrackerDatabase.getAllUltrasonicFrequencies()
 
     // Audio recording
     private var audioRecord: AudioRecord? = null
@@ -536,20 +539,29 @@ class UltrasonicDetector(
             val avgAmplitude = amplitudes.average()
             val peakAmplitude = amplitudes.maxOrNull() ?: avgAmplitude
 
-            // Check if this matches known beacon frequencies
-            val isKnownBeacon = KNOWN_BEACON_FREQUENCIES.any {
-                abs(freq - it) <= FREQUENCY_TOLERANCE
-            }
+            // Look up signature from unified tracker database
+            val matchedSignature = TrackerDatabase.findUltrasonicByFrequency(freq, FREQUENCY_TOLERANCE)
 
-            // Determine source type
-            val possibleSource = when {
+            // Check if this matches known beacon frequencies
+            val isKnownBeacon = matchedSignature != null
+
+            // Determine source type from signature or fallback to legacy matching
+            val possibleSource = matchedSignature?.let {
+                "${it.manufacturer} (${it.trackingPurpose.displayName})"
+            } ?: when {
                 abs(freq - 18000) <= FREQUENCY_TOLERANCE -> "SilverPush/Ad Tracking"
                 abs(freq - 18500) <= FREQUENCY_TOLERANCE -> "Alphonso/TV Tracking"
-                abs(freq - 19000) <= FREQUENCY_TOLERANCE -> "Advertising Beacon"
-                abs(freq - 19500) <= FREQUENCY_TOLERANCE -> "Retail Tracking"
-                abs(freq - 20000) <= FREQUENCY_TOLERANCE -> "Cross-Device Tracking"
+                abs(freq - 17500) <= FREQUENCY_TOLERANCE -> "Zapr/TV Attribution"
+                abs(freq - 19000) <= FREQUENCY_TOLERANCE -> "Signal360/Advertising"
+                abs(freq - 19200) <= FREQUENCY_TOLERANCE -> "Realeyes/Attention"
+                abs(freq - 19500) <= FREQUENCY_TOLERANCE -> "LISNR/Cross-Device"
+                abs(freq - 19800) <= FREQUENCY_TOLERANCE -> "TVision/Viewership"
+                abs(freq - 20000) <= FREQUENCY_TOLERANCE -> "Shopkick/Retail"
+                abs(freq - 20200) <= FREQUENCY_TOLERANCE -> "Samba TV/ACR"
                 abs(freq - 20500) <= FREQUENCY_TOLERANCE -> "Location Beacon"
-                abs(freq - 21000) <= FREQUENCY_TOLERANCE -> "Premium Ad Tracking"
+                abs(freq - 21000) <= FREQUENCY_TOLERANCE -> "Retail Beacon"
+                abs(freq - 21500) <= FREQUENCY_TOLERANCE -> "Inscape/Smart TV"
+                abs(freq - 22000) <= FREQUENCY_TOLERANCE -> "Data Plus Math/Attribution"
                 else -> "Unknown Ultrasonic Source"
             }
 
@@ -665,9 +677,9 @@ class UltrasonicDetector(
         }
 
         val threatLevel = when {
-            activeBeacons.any { KNOWN_BEACON_FREQUENCIES.any { known ->
-                abs(it.key - known) <= FREQUENCY_TOLERANCE
-            }} -> ThreatLevel.HIGH
+            activeBeacons.any { beacon ->
+                TrackerDatabase.findUltrasonicByFrequency(beacon.key, FREQUENCY_TOLERANCE) != null
+            } -> ThreatLevel.HIGH
             activeBeacons.isNotEmpty() -> ThreatLevel.MEDIUM
             detectedFrequencies.isNotEmpty() -> ThreatLevel.LOW
             else -> ThreatLevel.INFO

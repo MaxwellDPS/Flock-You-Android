@@ -1065,7 +1065,7 @@ private fun CellularStatusContent(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        TextButton(onClick = { ScanningService.clearCellularHistory() }) {
+                        TextButton(onClick = { viewModel.clearCellularHistory() }) {
                             Text("Clear", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -1730,7 +1730,7 @@ private fun SatelliteStatusContent(
                             color = MaterialTheme.colorScheme.error
                         )
                     }
-                    TextButton(onClick = { ScanningService.clearSatelliteHistory() }) {
+                    TextButton(onClick = { viewModel.clearSatelliteHistory() }) {
                         Text("Clear")
                     }
                 }

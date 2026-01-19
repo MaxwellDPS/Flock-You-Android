@@ -85,6 +85,44 @@ object FlipperProtocol {
     fun createNfcScanRequest(): ByteArray = createHeader(MSG_NFC_SCAN_REQUEST, 0)
 
     // ========================================================================
+    // Storage Commands (for FAP installation)
+    // ========================================================================
+
+    // Storage command types
+    private const val MSG_STORAGE_WRITE_START = 0x20
+    private const val MSG_STORAGE_WRITE_DATA = 0x21
+    private const val MSG_STORAGE_WRITE_END = 0x22
+
+    /**
+     * Build command to start a file write operation
+     */
+    fun buildStorageWriteStartCommand(path: String, totalSize: Long): ByteArray {
+        val pathBytes = path.toByteArray(Charsets.UTF_8)
+        val payloadSize = 4 + pathBytes.size + 1 // 4 bytes for size, path bytes, null terminator
+
+        val payload = ByteBuffer.allocate(payloadSize).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putInt(totalSize.toInt())
+        payload.put(pathBytes)
+        payload.put(0.toByte()) // null terminator
+
+        return createHeader(MSG_STORAGE_WRITE_START, payloadSize) + payload.array()
+    }
+
+    /**
+     * Build command to write a chunk of data
+     */
+    fun buildStorageWriteDataCommand(data: ByteArray): ByteArray {
+        return createHeader(MSG_STORAGE_WRITE_DATA, data.size) + data
+    }
+
+    /**
+     * Build command to end a file write operation
+     */
+    fun buildStorageWriteEndCommand(): ByteArray {
+        return createHeader(MSG_STORAGE_WRITE_END, 0)
+    }
+
+    // ========================================================================
     // Response Parsing
     // ========================================================================
 

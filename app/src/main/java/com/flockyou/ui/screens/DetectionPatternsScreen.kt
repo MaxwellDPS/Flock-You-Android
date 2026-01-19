@@ -13,10 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.DetectionPatterns
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.PatternType
+import com.flockyou.ui.components.OuiLookupViewModel
 import com.flockyou.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -165,19 +168,33 @@ fun BlePatternsList() {
 }
 
 @Composable
-fun MacPrefixesList() {
+fun MacPrefixesList(
+    ouiLookupViewModel: OuiLookupViewModel = hiltViewModel()
+) {
+    // Observe OUI lookup results for reactivity
+    val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         items(DetectionPatterns.macPrefixes) { prefix ->
+            // Trigger OUI lookup for this prefix
+            LaunchedEffect(prefix.prefix) {
+                ouiLookupViewModel.lookupManufacturer(prefix.prefix)
+            }
+
+            // Use pattern-defined manufacturer, or fallback to OUI database lookup
+            val resolvedManufacturer = prefix.manufacturer
+                ?: ouiLookupViewModel.getCachedManufacturer(prefix.prefix)
+
             PatternCard(
                 title = prefix.prefix,
                 subtitle = prefix.description,
                 type = "MAC OUI",
                 deviceType = prefix.deviceType,
                 threatScore = prefix.threatScore,
-                manufacturer = prefix.manufacturer
+                manufacturer = resolvedManufacturer
             )
         }
     }

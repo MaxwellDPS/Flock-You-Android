@@ -538,16 +538,19 @@ class DetectionAnalyzer @Inject constructor(
         }
 
         // Try to acquire the mutex, or return immediately if another analysis is running
-        if (!analysisMutex.tryLock()) {
-            Log.d(TAG, "Analysis mutex busy, returning busy response for: ${detection.id}")
-            return@withContext AiAnalysisResult(
-                success = false,
-                error = "Another analysis is in progress. Please wait.",
-                processingTimeMs = System.currentTimeMillis() - startTime
-            )
-        }
-
+        // Track lock ownership to ensure safe unlock in finally block
+        var acquiredLock = false
         try {
+            acquiredLock = analysisMutex.tryLock()
+            if (!acquiredLock) {
+                Log.d(TAG, "Analysis mutex busy, returning busy response for: ${detection.id}")
+                return@withContext AiAnalysisResult(
+                    success = false,
+                    error = "Another analysis is in progress. Please wait.",
+                    processingTimeMs = System.currentTimeMillis() - startTime
+                )
+            }
+
             // Store reference to current job for cancellation support
             currentAnalysisJob = coroutineContext[Job]
 
@@ -565,9 +568,14 @@ class DetectionAnalyzer @Inject constructor(
 
             // Check cache first before setting analyzing state (include contextual flag and model to avoid serving stale results)
             val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}_${currentModel.id}"
-            val cached = analysisCache[cacheKey]
-            if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_EXPIRY_MS) {
-                return@withContext cached.result.copy(
+            val cached = cacheMutex.withLock {
+                val entry = analysisCache[cacheKey]
+                if (entry != null && System.currentTimeMillis() - entry.timestamp < CACHE_EXPIRY_MS) {
+                    entry.result
+                } else null
+            }
+            if (cached != null) {
+                return@withContext cached.copy(
                     processingTimeMs = System.currentTimeMillis() - startTime
                 )
             }
@@ -619,8 +627,10 @@ class DetectionAnalyzer @Inject constructor(
 
             // Cache result
             if (finalResult.success) {
-                pruneCache()
-                analysisCache[cacheKey] = CacheEntry(finalResult, System.currentTimeMillis(), detection)
+                cacheMutex.withLock {
+                    pruneCache()
+                    analysisCache[cacheKey] = CacheEntry(finalResult, System.currentTimeMillis(), detection)
+                }
             }
 
             finalResult
@@ -642,8 +652,8 @@ class DetectionAnalyzer @Inject constructor(
         } finally {
             _isAnalyzing.value = false
             currentAnalysisJob = null
-            // Always release the mutex
-            if (analysisMutex.isLocked) {
+            // Only unlock if we successfully acquired the lock
+            if (acquiredLock) {
                 analysisMutex.unlock()
             }
         }
@@ -652,19 +662,16 @@ class DetectionAnalyzer @Inject constructor(
     /**
      * Cancel any ongoing analysis operation.
      * Safe to call even if no analysis is in progress.
+     * Note: The mutex will be properly released by the coroutine's finally block
+     * when the cancellation is processed.
      */
     fun cancelAnalysis() {
         currentAnalysisJob?.cancel()
         currentAnalysisJob = null
         _isAnalyzing.value = false
-        // Release mutex if held
-        if (analysisMutex.isLocked) {
-            try {
-                analysisMutex.unlock()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error unlocking analysis mutex: ${e.message}")
-            }
-        }
+        // Note: We don't manually unlock the mutex here because:
+        // 1. We can't safely check if WE own the lock (isLocked is not public API)
+        // 2. The coroutine's finally block will handle proper unlock when cancelled
         Log.d(TAG, "Analysis cancellation requested")
     }
 
@@ -1153,10 +1160,17 @@ class DetectionAnalyzer @Inject constructor(
         for (detection in locatedDetections) {
             if (detection.id in used) continue
 
+            // Get coordinates with null safety
+            val detLat = detection.latitude
+            val detLon = detection.longitude
+            if (detLat == null || detLon == null) continue
+
             val cluster = locatedDetections.filter { other ->
+                val otherLat = other.latitude
+                val otherLon = other.longitude
                 other.id !in used &&
-                calculateDistance(detection.latitude!!, detection.longitude!!,
-                    other.latitude!!, other.longitude!!) < CLUSTER_RADIUS_METERS
+                otherLat != null && otherLon != null &&
+                calculateDistance(detLat, detLon, otherLat, otherLon) < CLUSTER_RADIUS_METERS
             }
 
             if (cluster.size >= 3) {
@@ -2535,6 +2549,79 @@ class DetectionAnalyzer @Inject constructor(
     }
 
     /**
+     * Get the name of the currently active LLM engine.
+     */
+    val activeEngineName: StateFlow<String>
+        get() = MutableStateFlow(llmEngineManager.activeEngine.value.displayName).asStateFlow()
+
+    /**
+     * Cancel an ongoing model download.
+     */
+    fun cancelDownload() {
+        geminiNanoClient.cancelDownload()
+        // Note: MediaPipe downloads are handled separately via HTTP client
+        // For now, we can cancel Gemini Nano downloads
+        Log.i(TAG, "Download cancellation requested")
+    }
+
+    /**
+     * Get the set of downloaded model IDs.
+     */
+    suspend fun getDownloadedModelIds(): Set<String> = withContext(Dispatchers.IO) {
+        val downloadedModels = mutableSetOf<String>()
+
+        // Rule-based is always "downloaded"
+        downloadedModels.add(AiModel.RULE_BASED.id)
+
+        // Check Gemini Nano availability
+        if (geminiNanoClient.isReady() || geminiNanoClient.getStatus() == GeminiNanoStatus.Ready) {
+            downloadedModels.add(AiModel.GEMINI_NANO.id)
+        }
+
+        // Check for downloaded MediaPipe models
+        val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
+        AiModel.entries.filter { it.modelFormat == ModelFormat.TASK }.forEach { model ->
+            val taskFile = File(modelDir, "${model.id}.task")
+            val binFile = File(modelDir, "${model.id}.bin")
+            if ((taskFile.exists() && taskFile.length() > 10_000_000) ||
+                (binFile.exists() && binFile.length() > 10_000_000)) {
+                downloadedModels.add(model.id)
+            }
+        }
+
+        downloadedModels
+    }
+
+    /**
+     * Get storage info for a downloaded model.
+     * Returns a human-readable string like "529 MB" or null if not downloaded.
+     */
+    fun getModelStorageInfo(modelId: String): String? {
+        val model = AiModel.fromId(modelId)
+
+        when (model.modelFormat) {
+            ModelFormat.NONE -> return "Built-in"
+            ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
+                return if (geminiNanoClient.isReady()) "Managed by AICore" else null
+            }
+            ModelFormat.TASK -> {
+                val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
+                val taskFile = File(modelDir, "${model.id}.task")
+                val binFile = File(modelDir, "${model.id}.bin")
+
+                val file = when {
+                    taskFile.exists() -> taskFile
+                    binFile.exists() -> binFile
+                    else -> return null
+                }
+
+                val sizeMb = file.length() / (1024 * 1024)
+                return "$sizeMb MB"
+            }
+        }
+    }
+
+    /**
      * Delete downloaded model.
      */
     suspend fun deleteModel(): Boolean = withContext(Dispatchers.IO) {
@@ -2788,5 +2875,39 @@ What is an IMSI catcher? Reply in one sentence.
                 5000L  // Standard hardware
             }
         }
+    }
+
+    /**
+     * Clean up all resources held by the DetectionAnalyzer.
+     * Call this when the component is being destroyed to prevent memory leaks.
+     */
+    suspend fun cleanup() {
+        cancelAnalysis()
+        falsePositiveAnalyzer.clearLazyInitCallback()
+        cacheMutex.withLock {
+            analysisCache.clear()
+        }
+        feedbackMutex.withLock {
+            feedbackHistory.clear()
+        }
+        llmEngineManager.cleanup()
+        isModelLoaded = false
+        geminiNanoInitialized = false
+        Log.d(TAG, "DetectionAnalyzer cleanup completed")
+    }
+
+    /**
+     * Synchronous cleanup for non-suspend contexts (e.g., onDestroy).
+     * Marks state as cleaned up immediately.
+     */
+    fun cleanupSync() {
+        cancelAnalysis()
+        falsePositiveAnalyzer.clearLazyInitCallback()
+        analysisCache.clear()
+        feedbackHistory.clear()
+        llmEngineManager.cleanupSync()
+        isModelLoaded = false
+        geminiNanoInitialized = false
+        Log.d(TAG, "DetectionAnalyzer sync cleanup completed")
     }
 }

@@ -46,6 +46,8 @@ fun AiSettingsScreen(
     val deviceCapabilities by viewModel.deviceCapabilities.collectAsState()
     val selectedModelForDownload by viewModel.selectedModelForDownload.collectAsState()
     val downloadError by viewModel.downloadError.collectAsState()
+    val downloadedModels by viewModel.downloadedModels.collectAsState()
+    val activeEngine by viewModel.activeEngine.collectAsState()
 
     // Model selection dialog
     var showModelSelector by remember { mutableStateOf(false) }
@@ -107,12 +109,15 @@ fun AiSettingsScreen(
                     availableModels = availableModels,
                     deviceCapabilities = deviceCapabilities,
                     downloadError = downloadError,
+                    downloadedModels = downloadedModels,
+                    activeEngineName = activeEngine,
                     onSelectModel = { showModelSelector = true },
                     onDownload = { viewModel.downloadModel(AiModel.fromId(settings.selectedModel)) },
                     onDelete = { viewModel.deleteModel() },
                     onInitialize = { viewModel.initializeModel() },
                     onImport = { showImportDialog = true },
-                    onClearError = { viewModel.clearDownloadError() }
+                    onClearError = { viewModel.clearDownloadError() },
+                    onCancelDownload = { viewModel.cancelDownload() }
                 )
             }
 
@@ -222,6 +227,7 @@ fun AiSettingsScreen(
             availableModels = availableModels,
             currentModelId = settings.selectedModel,
             deviceCapabilities = deviceCapabilities,
+            downloadedModels = downloadedModels,
             onSelectModel = { model ->
                 viewModel.selectModel(model)
                 showModelSelector = false
@@ -458,12 +464,15 @@ private fun ModelSelectionCard(
     availableModels: List<AiModel>,
     deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
     downloadError: String?,
+    downloadedModels: Set<String>,
+    activeEngineName: String,
     onSelectModel: () -> Unit,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onInitialize: () -> Unit,
     onImport: () -> Unit,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    onCancelDownload: () -> Unit
 ) {
     val currentModel = AiModel.fromId(settings.selectedModel)
 
@@ -522,14 +531,70 @@ private fun ModelSelectionCard(
                 }
             }
 
-            // Download progress
+            // Download progress with cancel button
             AnimatedVisibility(visible = modelStatus is AiModelStatus.Downloading) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
-                    LinearProgressIndicator(
-                        progress = downloadProgress / 100f,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            LinearProgressIndicator(
+                                progress = downloadProgress / 100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Downloading... $downloadProgress%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        OutlinedButton(
+                            onClick = onCancelDownload,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Cancel download",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Show active engine info when ready
+            AnimatedVisibility(visible = modelStatus is AiModelStatus.Ready && settings.enabled) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Active: $activeEngineName",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
 
@@ -710,6 +775,7 @@ private fun ModelSelectorDialog(
     availableModels: List<AiModel>,
     currentModelId: String,
     deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    downloadedModels: Set<String>,
     onSelectModel: (AiModel) -> Unit,
     onDownloadModel: (AiModel) -> Unit,
     onDismiss: () -> Unit
@@ -812,13 +878,17 @@ private fun ModelSelectorDialog(
                             )
                         }
                         items(smallModels) { model ->
+                            val isDownloaded = downloadedModels.contains(model.id)
                             EngineOptionCard(
                                 model = model,
                                 isSelected = model.id == currentModelId,
                                 isRecommended = model == AiModel.GEMMA3_1B,
                                 recommendedReason = if (model == AiModel.GEMMA3_1B) "Recommended" else null,
-                                showDownloadIcon = true,
-                                onSelect = { onDownloadModel(model) }
+                                showDownloadIcon = !isDownloaded,
+                                isDownloaded = isDownloaded,
+                                onSelect = {
+                                    if (isDownloaded) onSelectModel(model) else onDownloadModel(model)
+                                }
                             )
                         }
                     }
@@ -835,15 +905,20 @@ private fun ModelSelectorDialog(
                         }
                         items(largeModels) { model ->
                             val hasEnoughRam = (deviceCapabilities?.availableRamMb ?: 0) > model.sizeMb * 1.5
+                            val isDownloaded = downloadedModels.contains(model.id)
                             EngineOptionCard(
                                 model = model,
                                 isSelected = model.id == currentModelId,
                                 isRecommended = model == AiModel.GEMMA_2B_GPU && hasEnoughRam,
                                 recommendedReason = if (model == AiModel.GEMMA_2B_GPU && hasEnoughRam) "Best quality" else null,
-                                isAvailable = hasEnoughRam,
-                                unavailableReason = if (!hasEnoughRam) "Needs ${(model.sizeMb * 1.5).toInt()} MB RAM" else null,
-                                showDownloadIcon = true,
-                                onSelect = { if (hasEnoughRam) onDownloadModel(model) }
+                                isAvailable = hasEnoughRam || isDownloaded,
+                                unavailableReason = if (!hasEnoughRam && !isDownloaded) "Needs ${(model.sizeMb * 1.5).toInt()} MB RAM" else null,
+                                showDownloadIcon = !isDownloaded,
+                                isDownloaded = isDownloaded,
+                                onSelect = {
+                                    if (isDownloaded) onSelectModel(model)
+                                    else if (hasEnoughRam) onDownloadModel(model)
+                                }
                             )
                         }
                     }
@@ -903,6 +978,7 @@ private fun EngineOptionCard(
     isAvailable: Boolean = true,
     unavailableReason: String? = null,
     showDownloadIcon: Boolean = false,
+    isDownloaded: Boolean = false,
     onSelect: () -> Unit
 ) {
     val alpha = if (isAvailable) 1f else 0.5f
@@ -1011,6 +1087,11 @@ private fun EngineOptionCard(
                         imageVector = Icons.Default.Block,
                         contentDescription = "Unavailable",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    isDownloaded -> Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Downloaded",
+                        tint = MaterialTheme.colorScheme.tertiary
                     )
                     showDownloadIcon -> Icon(
                         imageVector = Icons.Default.Download,

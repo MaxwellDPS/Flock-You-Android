@@ -133,11 +133,20 @@ class LlmEngineManager @Inject constructor(
             }
         }
 
-        // If preferred engine failed and we're not in a specific preference mode, try fallbacks
-        val finalResult = if (initResult == null && enginePreference == LlmEnginePreference.AUTO) {
-            tryFallbackChain(settings)
-        } else {
-            initResult
+        // Determine final result with fallback handling
+        val finalResult = when {
+            // If initialization succeeded, use it
+            initResult != null && initResult.success -> initResult
+
+            // AUTO mode - try the full fallback chain
+            enginePreference == LlmEnginePreference.AUTO -> tryFallbackChain(settings)
+
+            // Specific engine requested but failed - log warning and allow fallback to rule-based
+            else -> {
+                Log.w(TAG, "Requested engine ${enginePreference.displayName} failed to initialize, falling back to rule-based")
+                // Don't try fallback chain for explicit engine preference, just use rule-based
+                null
+            }
         }
 
         if (finalResult != null && finalResult.success) {
@@ -146,11 +155,6 @@ class LlmEngineManager @Inject constructor(
             isInitialized = true
             Log.i(TAG, "Engine manager initialized successfully with: ${finalResult.engine}")
             return@withLock true
-        }
-
-        // If specific engine was requested but failed, show error but fall back to rule-based
-        if (enginePreference != LlmEnginePreference.AUTO && enginePreference != LlmEnginePreference.RULE_BASED) {
-            Log.w(TAG, "Requested engine ${enginePreference.displayName} failed to initialize")
         }
 
         // Always have rule-based as final fallback
@@ -400,22 +404,76 @@ class LlmEngineManager @Inject constructor(
      * Used for custom prompts (pattern analysis, user explanations, etc.)
      */
     suspend fun generateResponse(prompt: String): String? = withContext(Dispatchers.IO) {
-        // Try Gemini Nano first
-        if (geminiNanoClient.isReady()) {
-            try {
-                // Gemini Nano doesn't have a direct generateResponse, use analyzeDetection internally
-                // For now, fall through to MediaPipe
-            } catch (e: Exception) {
-                Log.e(TAG, "Gemini Nano generation failed", e)
+        // Try with the active engine first
+        val activeEng = _activeEngine.value
+
+        when (activeEng) {
+            LlmEngine.GEMINI_NANO -> {
+                if (geminiNanoClient.isReady()) {
+                    try {
+                        val response = geminiNanoClient.generateResponse(prompt)
+                        if (response != null) {
+                            recordSuccess(LlmEngine.GEMINI_NANO)
+                            return@withContext response
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Gemini Nano generation failed", e)
+                        recordFailure(LlmEngine.GEMINI_NANO, e.message ?: "Generation failed")
+                    }
+                }
+            }
+            LlmEngine.MEDIAPIPE -> {
+                if (mediaPipeLlmClient.isReady()) {
+                    try {
+                        val response = mediaPipeLlmClient.generateResponse(prompt)
+                        if (response != null) {
+                            recordSuccess(LlmEngine.MEDIAPIPE)
+                            return@withContext response
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MediaPipe generation failed", e)
+                        recordFailure(LlmEngine.MEDIAPIPE, e.message ?: "Generation failed")
+                    }
+                }
+            }
+            LlmEngine.RULE_BASED -> {
+                // Rule-based doesn't support free-form generation
+                Log.d(TAG, "Rule-based engine doesn't support generateResponse")
             }
         }
 
-        // Try MediaPipe
-        if (mediaPipeLlmClient.isReady()) {
-            try {
-                return@withContext mediaPipeLlmClient.generateResponse(prompt)
-            } catch (e: Exception) {
-                Log.e(TAG, "MediaPipe generation failed", e)
+        // Try fallback engines
+        for (engine in getFallbackOrder(activeEng)) {
+            when (engine) {
+                LlmEngine.GEMINI_NANO -> {
+                    if (geminiNanoClient.isReady()) {
+                        try {
+                            val response = geminiNanoClient.generateResponse(prompt)
+                            if (response != null) {
+                                recordSuccess(LlmEngine.GEMINI_NANO)
+                                return@withContext response
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Gemini Nano fallback generation failed", e)
+                        }
+                    }
+                }
+                LlmEngine.MEDIAPIPE -> {
+                    if (mediaPipeLlmClient.isReady()) {
+                        try {
+                            val response = mediaPipeLlmClient.generateResponse(prompt)
+                            if (response != null) {
+                                recordSuccess(LlmEngine.MEDIAPIPE)
+                                return@withContext response
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "MediaPipe fallback generation failed", e)
+                        }
+                    }
+                }
+                LlmEngine.RULE_BASED -> {
+                    // Skip - doesn't support generation
+                }
             }
         }
 

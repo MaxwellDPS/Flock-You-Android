@@ -197,6 +197,15 @@ class FlipperClient(private val context: Context) {
         ConnectionType.NONE -> false
     }
 
+    /**
+     * Send a raw command to the Flipper (used for storage operations)
+     */
+    fun sendRawCommand(data: ByteArray): Boolean = when (_connectionType.value) {
+        ConnectionType.BLUETOOTH -> bleClient?.send(data) ?: false
+        ConnectionType.USB -> usbClient?.send(data) ?: false
+        ConnectionType.NONE -> false
+    }
+
     fun destroy() {
         disconnect()
         bleClient?.disconnect()

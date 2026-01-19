@@ -33,6 +33,7 @@ import com.flockyou.data.*
 import com.flockyou.data.model.DetectionPatterns
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.PatternType
+import com.flockyou.ui.components.OuiLookupViewModel
 import com.flockyou.ui.theme.*
 
 /**
@@ -347,6 +348,25 @@ private fun SummaryStatBox(
     }
 }
 
+/**
+ * Data class representing a unified pattern for display in AllPatternsTab.
+ */
+private data class AllPatternsTabPattern(
+    val id: String,
+    val name: String,
+    val pattern: String,
+    val type: String,
+    val category: String,
+    val scannerType: ScannerType,
+    val deviceType: DeviceType,
+    val threatScore: Int,
+    val description: String,
+    val manufacturer: String?,
+    val isCustom: Boolean,
+    val isEnabled: Boolean = true,
+    val sourceUrl: String? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AllPatternsTab(
@@ -354,31 +374,16 @@ private fun AllPatternsTab(
     customRules: List<CustomRule>,
     selectedCategory: String?,
     selectedScannerType: ScannerType?,
-    onCategorySelected: (String) -> Unit
+    onCategorySelected: (String) -> Unit,
+    ouiLookupViewModel: OuiLookupViewModel = hiltViewModel()
 ) {
-    // Combine all patterns into unified list
-    data class UnifiedPattern(
-        val id: String,
-        val name: String,
-        val pattern: String,
-        val type: String,
-        val category: String,
-        val scannerType: ScannerType,
-        val deviceType: DeviceType,
-        val threatScore: Int,
-        val description: String,
-        val manufacturer: String?,
-        val isCustom: Boolean,
-        val isEnabled: Boolean = true,
-        val sourceUrl: String? = null
-    )
 
     val allPatterns = remember(customRules, searchQuery, selectedCategory, selectedScannerType) {
-        val patterns = mutableListOf<UnifiedPattern>()
+        val patterns = mutableListOf<AllPatternsTabPattern>()
 
         // Add SSID patterns
         DetectionPatterns.ssidPatterns.forEach { p ->
-            patterns.add(UnifiedPattern(
+            patterns.add(AllPatternsTabPattern(
                 id = "ssid_${p.pattern}",
                 name = p.pattern.removePrefix("(?i)^").removeSuffix(".*").removeSuffix("[_-]?"),
                 pattern = p.pattern,
@@ -403,7 +408,7 @@ private fun AllPatternsTab(
 
         // Add BLE patterns
         DetectionPatterns.bleNamePatterns.forEach { p ->
-            patterns.add(UnifiedPattern(
+            patterns.add(AllPatternsTabPattern(
                 id = "ble_${p.pattern}",
                 name = p.pattern.removePrefix("(?i)^").removeSuffix(".*").removeSuffix("[_-]?"),
                 pattern = p.pattern,
@@ -423,7 +428,7 @@ private fun AllPatternsTab(
 
         // Add MAC prefixes
         DetectionPatterns.macPrefixes.forEach { p ->
-            patterns.add(UnifiedPattern(
+            patterns.add(AllPatternsTabPattern(
                 id = "mac_${p.prefix}",
                 name = p.prefix,
                 pattern = p.prefix,
@@ -441,7 +446,7 @@ private fun AllPatternsTab(
 
         // Add custom rules
         customRules.forEach { rule ->
-            patterns.add(UnifiedPattern(
+            patterns.add(AllPatternsTabPattern(
                 id = "custom_${rule.id}",
                 name = rule.name,
                 pattern = rule.pattern,
@@ -527,23 +532,49 @@ private fun AllPatternsTab(
             }
         } else {
             items(allPatterns, key = { it.id }) { pattern ->
-                UnifiedPatternCard(
-                    pattern = pattern.name,
-                    fullPattern = pattern.pattern,
-                    type = pattern.type,
-                    category = pattern.category,
-                    scannerType = pattern.scannerType,
-                    deviceType = pattern.deviceType,
-                    threatScore = pattern.threatScore,
-                    description = pattern.description,
-                    manufacturer = pattern.manufacturer,
-                    isCustom = pattern.isCustom,
-                    isEnabled = pattern.isEnabled,
-                    sourceUrl = pattern.sourceUrl
+                // Wrap in a composable to properly handle OUI lookups
+                UnifiedPatternCardWithOuiLookup(
+                    pattern = pattern,
+                    ouiLookupViewModel = ouiLookupViewModel
                 )
             }
         }
     }
+}
+
+@Composable
+private fun UnifiedPatternCardWithOuiLookup(
+    pattern: AllPatternsTabPattern,
+    ouiLookupViewModel: OuiLookupViewModel
+) {
+    // Observe OUI lookup results for reactivity
+    val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+
+    // For MAC type patterns, lookup manufacturer from OUI database if not already set
+    val resolvedManufacturer = if (pattern.type == "MAC" && pattern.manufacturer == null) {
+        // Trigger lookup on first composition
+        LaunchedEffect(pattern.pattern) {
+            ouiLookupViewModel.lookupManufacturer(pattern.pattern)
+        }
+        ouiLookupViewModel.getCachedManufacturer(pattern.pattern)
+    } else {
+        pattern.manufacturer
+    }
+
+    UnifiedPatternCard(
+        pattern = pattern.name,
+        fullPattern = pattern.pattern,
+        type = pattern.type,
+        category = pattern.category,
+        scannerType = pattern.scannerType,
+        deviceType = pattern.deviceType,
+        threatScore = pattern.threatScore,
+        description = pattern.description,
+        manufacturer = resolvedManufacturer,
+        isCustom = pattern.isCustom,
+        isEnabled = pattern.isEnabled,
+        sourceUrl = pattern.sourceUrl
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

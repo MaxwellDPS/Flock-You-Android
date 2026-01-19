@@ -91,6 +91,10 @@ data class MainUiState(
     val detectorHealth: Map<String, ScanningService.DetectorHealthStatus> = emptyMap(),
     // Scan statistics
     val scanStats: ScanningService.ScanStatistics = ScanningService.ScanStatistics(),
+    // Threading monitor
+    val threadingSystemState: com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState? = null,
+    val threadingScannerStates: Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState> = emptyMap(),
+    val threadingAlerts: List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert> = emptyList(),
     // UI settings
     val advancedMode: Boolean = false,
     // AI Analysis
@@ -364,6 +368,25 @@ class MainViewModel @Inject constructor(
             serviceConnection.scanStats.collect { stats ->
                 Log.d("MainViewModel", "Received scan stats update: totalBleScans=${stats.totalBleScans}, totalWifiScans=${stats.totalWifiScans}")
                 _uiState.update { it.copy(scanStats = stats) }
+            }
+        }
+
+        // Threading monitor data collection
+        viewModelScope.launch {
+            serviceConnection.threadingSystemState.collect { state ->
+                _uiState.update { it.copy(threadingSystemState = state) }
+            }
+        }
+
+        viewModelScope.launch {
+            serviceConnection.threadingScannerStates.collect { states ->
+                _uiState.update { it.copy(threadingScannerStates = states) }
+            }
+        }
+
+        viewModelScope.launch {
+            serviceConnection.threadingAlerts.collect { alerts ->
+                _uiState.update { it.copy(threadingAlerts = alerts) }
             }
         }
 
@@ -835,6 +858,20 @@ class MainViewModel @Inject constructor(
      */
     fun clearSeenDevices() {
         serviceConnection.clearSeenDevices()
+    }
+
+    /**
+     * Clear cellular history via IPC.
+     */
+    fun clearCellularHistory() {
+        serviceConnection.clearCellularHistory()
+    }
+
+    /**
+     * Clear satellite history via IPC.
+     */
+    fun clearSatelliteHistory() {
+        serviceConnection.clearSatelliteHistory()
     }
 
     // ========== AI Analysis ==========

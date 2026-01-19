@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
 import com.flockyou.service.ScanningService
 import com.flockyou.ui.theme.*
@@ -570,7 +572,8 @@ fun DetectionCard(
     modifier: Modifier = Modifier,
     advancedMode: Boolean = false,
     onAnalyzeClick: ((Detection) -> Unit)? = null,
-    isAnalyzing: Boolean = false
+    isAnalyzing: Boolean = false,
+    ouiLookupViewModel: OuiLookupViewModel = hiltViewModel()
 ) {
     val threatColor = detection.threatLevel.toColor()
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -652,8 +655,20 @@ fun DetectionCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     } else {
-                        // For WiFi/BLE: show manufacturer
-                        detection.manufacturer?.let { mfr ->
+                        // For WiFi/BLE: show manufacturer (from detection or OUI lookup)
+                        val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+
+                        // Try to get manufacturer from detection first, otherwise lookup from OUI
+                        val resolvedManufacturer = detection.manufacturer
+                            ?: detection.macAddress?.let { mac ->
+                                // Trigger lookup on first composition
+                                LaunchedEffect(mac) {
+                                    ouiLookupViewModel.lookupManufacturer(mac)
+                                }
+                                ouiLookupViewModel.getCachedManufacturer(mac)
+                            }
+
+                        resolvedManufacturer?.let { mfr ->
                             Text(
                                 text = mfr,
                                 style = MaterialTheme.typography.labelSmall,
@@ -806,6 +821,8 @@ fun DetectionCard(
 
             // Advanced mode: Show additional technical details
             if (advancedMode) {
+                var showRawData by remember { mutableStateOf(false) }
+
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -870,6 +887,123 @@ fun DetectionCard(
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
+
+                        // Raw data frame toggle and display
+                        detection.rawData?.let { rawData ->
+                            if (rawData.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Divider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+
+                                // Raw data toggle header
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showRawData = !showRawData }
+                                        .padding(vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Code,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Raw Data Frame",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "(${rawData.length / 2} bytes)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (showRawData) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (showRawData) "Collapse" else "Expand",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                // Expandable raw data content
+                                AnimatedVisibility(
+                                    visible = showRawData,
+                                    enter = expandVertically() + fadeIn(),
+                                    exit = shrinkVertically() + fadeOut()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    ) {
+                                        // Format hex data with spacing for readability
+                                        val formattedHex = rawData.chunked(2).joinToString(" ")
+                                        val formattedWithLineBreaks = formattedHex.chunked(48).joinToString("\n") // 16 bytes per line
+
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.surface
+                                        ) {
+                                            SelectionContainer {
+                                                Text(
+                                                    text = formattedWithLineBreaks,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.padding(8.dp)
+                                                )
+                                            }
+                                        }
+
+                                        // ASCII representation
+                                        val asciiRepresentation = rawData.chunked(2).mapNotNull { hex ->
+                                            try {
+                                                val byte = hex.toInt(16)
+                                                if (byte in 32..126) byte.toChar() else '.'
+                                            } catch (e: Exception) {
+                                                null
+                                            }
+                                        }.joinToString("")
+
+                                        if (asciiRepresentation.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "ASCII:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                            )
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.surface
+                                            ) {
+                                                SelectionContainer {
+                                                    Text(
+                                                        text = asciiRepresentation.chunked(32).joinToString("\n"),
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                                        modifier = Modifier.padding(8.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

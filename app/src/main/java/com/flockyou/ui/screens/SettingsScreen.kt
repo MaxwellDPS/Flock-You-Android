@@ -48,7 +48,8 @@ fun SettingsScreen(
     onNavigateToNuke: () -> Unit = {},
     onNavigateToAllDetections: () -> Unit = {},
     onNavigateToAiSettings: () -> Unit = {},
-    onNavigateToServiceHealth: () -> Unit = {}
+    onNavigateToServiceHealth: () -> Unit = {},
+    onNavigateToFlipperSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -624,6 +625,16 @@ fun SettingsScreen(
                     title = "Service Health",
                     subtitle = "View detector status, errors, and restart counts",
                     onClick = onNavigateToServiceHealth
+                )
+            }
+
+            // Flipper Zero Integration
+            item {
+                SettingsItem(
+                    icon = Icons.Default.DevicesOther,
+                    title = "Flipper Zero",
+                    subtitle = "Connect and install Flock Bridge app",
+                    onClick = onNavigateToFlipperSettings
                 )
             }
 
