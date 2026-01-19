@@ -207,20 +207,35 @@ class GeminiNanoClient @Inject constructor(
 
     /**
      * Get the Gemini API key for authentication.
-     * Note: Even for on-device inference, authentication is required.
-     * Store this securely in production (BuildConfig, secure storage, etc.)
+     * Note: Even for on-device inference via AICore, authentication may be required.
+     *
+     * For Gemini Nano on Pixel devices via AICore, the model runs entirely on-device
+     * but requires initial authentication. The API key should be stored in:
+     * - local.properties as GEMINI_API_KEY (not committed to version control)
+     * - Or set via environment variable during build
+     *
+     * If no key is available, the client falls back to template-based analysis.
      */
     private fun getGeminiApiKey(): String {
-        // Check for API key in BuildConfig or secure storage
-        // For now, return empty string which will cause GenerativeModel to fail
-        // Users can configure this in settings or via BuildConfig
+        // Check for API key in BuildConfig (set via local.properties or CI/CD)
+        // IMPORTANT: Never hardcode API keys in source code
         return try {
-            // Try to get from BuildConfig if defined
             val buildConfigClass = Class.forName("com.flockyou.BuildConfig")
-            val field = buildConfigClass.getField("GEMINI_API_KEY")
-            field.get(null) as? String ?: ""
+            // Look for GEMINI_API_KEY field that should be set in build.gradle from local.properties
+            val field = buildConfigClass.getDeclaredField("GEMINI_API_KEY")
+            val key = field.get(null) as? String
+            if (key.isNullOrBlank() || key == "null" || key == "\"\"") {
+                Log.d(TAG, "No Gemini API key configured, will use template-based analysis")
+                ""
+            } else {
+                Log.d(TAG, "Gemini API key found in BuildConfig")
+                key
+            }
+        } catch (e: NoSuchFieldException) {
+            Log.d(TAG, "GEMINI_API_KEY not defined in BuildConfig, will use template-based analysis")
+            ""
         } catch (e: Exception) {
-            Log.d(TAG, "No Gemini API key configured, will use template-based analysis")
+            Log.d(TAG, "Error reading Gemini API key: ${e.message}, will use template-based analysis")
             ""
         }
     }

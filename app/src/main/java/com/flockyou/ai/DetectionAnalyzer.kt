@@ -36,6 +36,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 import kotlin.math.*
+import com.flockyou.data.model.DetectionMethod
 
 /**
  * AI-powered detection analyzer using LOCAL ON-DEVICE LLM inference only.
@@ -75,10 +76,18 @@ class DetectionAnalyzer @Inject constructor(
     private val _isAnalyzing = MutableStateFlow(false)
     val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
 
-    // Thread-safe analysis cache
-    private data class CacheEntry(val result: AiAnalysisResult, val timestamp: Long)
+    // Thread-safe analysis cache with semantic similarity support
+    private data class CacheEntry(
+        val result: AiAnalysisResult,
+        val timestamp: Long,
+        val detection: Detection // Store detection for similarity comparison
+    )
     private val analysisCache = Collections.synchronizedMap(mutableMapOf<String, CacheEntry>())
     private val cacheMutex = Mutex()
+
+    // Semantic cache settings
+    private val semanticCacheEnabled = true
+    private val semanticSimilarityThreshold = 0.85f // 85% similarity required for cache hit
 
     // Efficient feedback storage with O(1) removal from front
     private val feedbackHistory = ArrayDeque<AnalysisFeedback>(MAX_FEEDBACK_HISTORY_SIZE)
@@ -174,51 +183,78 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Initialize the selected AI model for inference.
+     * Uses mutex to prevent race conditions during concurrent initialization attempts.
      */
-    suspend fun initializeModel(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val settings = aiSettingsRepository.settings.first()
+    suspend fun initializeModel(): Boolean = modelStateMutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                val settings = aiSettingsRepository.settings.first()
 
-            if (!settings.enabled) {
-                Log.d(TAG, "AI analysis is disabled")
-                return@withContext false
-            }
-
-            _modelStatus.value = AiModelStatus.Initializing
-            currentModel = AiModel.fromId(settings.selectedModel)
-
-            // Load inference configuration from settings
-            currentInferenceConfig = InferenceConfig.fromSettings(settings)
-            Log.d(TAG, "Inference config: maxTokens=${currentInferenceConfig.maxTokens}, " +
-                "temp=${currentInferenceConfig.temperature}, " +
-                "gpu=${currentInferenceConfig.useGpuAcceleration}, " +
-                "npu=${currentInferenceConfig.useNpuAcceleration}")
-
-            val initialized = when (currentModel) {
-                AiModel.RULE_BASED -> {
-                    isModelLoaded = true
-                    true
+                if (!settings.enabled) {
+                    Log.d(TAG, "AI analysis is disabled")
+                    return@withContext false
                 }
-                AiModel.GEMINI_NANO -> tryInitializeGeminiNano(settings)
-                else -> tryInitializeMediaPipeModel(settings)
-            }
 
-            if (initialized) {
+                _modelStatus.value = AiModelStatus.Initializing
+                // Reset model state before initialization
+                isModelLoaded = false
+                geminiNanoInitialized = false
+
+                // Read the model from settings - this is the source of truth
+                // settings.selectedModel contains the model ID that was saved after download
+                val modelFromSettings = AiModel.fromId(settings.selectedModel)
+                Log.d(TAG, "Model from settings: ${modelFromSettings.id} (${modelFromSettings.displayName})")
+                Log.d(TAG, "Current in-memory model: ${currentModel.id}")
+
+                // Always use the model from settings as the source of truth
+                currentModel = modelFromSettings
+
+                // Load inference configuration from settings
+                currentInferenceConfig = InferenceConfig.fromSettings(settings)
+                Log.d(TAG, "Initializing model: ${currentModel.displayName} (${currentModel.id})")
+                Log.d(TAG, "Inference config: maxTokens=${currentInferenceConfig.maxTokens}, " +
+                    "temp=${currentInferenceConfig.temperature}, " +
+                    "gpu=${currentInferenceConfig.useGpuAcceleration}, " +
+                    "npu=${currentInferenceConfig.useNpuAcceleration}")
+
+                val initialized = when (currentModel) {
+                    AiModel.RULE_BASED -> {
+                        Log.d(TAG, "Using rule-based analysis (no model initialization needed)")
+                        isModelLoaded = true
+                        true
+                    }
+                    AiModel.GEMINI_NANO -> {
+                        Log.d(TAG, "Attempting to initialize Gemini Nano...")
+                        tryInitializeGeminiNano(settings)
+                    }
+                    else -> {
+                        Log.d(TAG, "Attempting to initialize MediaPipe model: ${currentModel.id}")
+                        tryInitializeMediaPipeModel(settings)
+                    }
+                }
+
+                if (initialized) {
+                    _modelStatus.value = AiModelStatus.Ready
+                    Log.i(TAG, "Model initialized successfully: ${currentModel.displayName}, isModelLoaded=$isModelLoaded")
+                    return@withContext true
+                }
+
+                // Fall back to rule-based only if initialization failed
+                Log.w(TAG, "Model initialization failed for ${currentModel.displayName}, falling back to rule-based")
+                currentModel = AiModel.RULE_BASED
+                isModelLoaded = true
                 _modelStatus.value = AiModelStatus.Ready
-                Log.i(TAG, "Model initialized: ${currentModel.displayName}")
-                return@withContext true
+                Log.i(TAG, "Now using rule-based analysis as fallback")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing AI model", e)
+                // Reset model state on error to ensure consistent state
+                isModelLoaded = false
+                geminiNanoInitialized = false
+                currentModel = AiModel.RULE_BASED
+                _modelStatus.value = AiModelStatus.Error(e.message ?: "Unknown error")
+                false
             }
-
-            // Fall back to rule-based
-            currentModel = AiModel.RULE_BASED
-            isModelLoaded = true
-            _modelStatus.value = AiModelStatus.Ready
-            Log.i(TAG, "Falling back to rule-based analysis")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing AI model", e)
-            _modelStatus.value = AiModelStatus.Error(e.message ?: "Unknown error")
-            false
         }
     }
 
@@ -250,43 +286,110 @@ class DetectionAnalyzer @Inject constructor(
 
     private suspend fun tryInitializeMediaPipeModel(settings: AiSettings): Boolean {
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
-        // MediaPipe uses .task format
-        val modelFile = File(modelDir, "${currentModel.id}.task")
+        // Get the correct file extension based on model's download URL
+        val fileExtension = AiModel.getFileExtension(currentModel)
+        val modelFile = File(modelDir, "${currentModel.id}$fileExtension")
 
-        if (!modelFile.exists() || modelFile.length() < 1000) {
-            Log.d(TAG, "Model file not found: ${modelFile.absolutePath}")
-            Log.d(TAG, "To use this model, download it from Kaggle and place ${currentModel.id}.task in ${modelDir.absolutePath}")
-            return false
+        // Also check for alternate extension if primary doesn't exist
+        val alternateFile = if (fileExtension == ".task") {
+            File(modelDir, "${currentModel.id}.bin")
+        } else {
+            File(modelDir, "${currentModel.id}.task")
         }
 
-        Log.d(TAG, "Initializing MediaPipe model: ${modelFile.absolutePath} (${modelFile.length() / 1024 / 1024} MB)")
+        Log.d(TAG, "Looking for model files:")
+        Log.d(TAG, "  Primary: ${modelFile.absolutePath} (exists=${modelFile.exists()}, size=${if (modelFile.exists()) modelFile.length() else 0})")
+        Log.d(TAG, "  Alternate: ${alternateFile.absolutePath} (exists=${alternateFile.exists()}, size=${if (alternateFile.exists()) alternateFile.length() else 0})")
+
+        // Also list all files in the model directory for debugging
+        val allFiles = modelDir.listFiles()
+        Log.d(TAG, "  All files in model dir: ${allFiles?.map { "${it.name} (${it.length() / 1024 / 1024}MB)" } ?: "none"}")
+
+        val actualModelFile = when {
+            modelFile.exists() && modelFile.length() > 1000 -> modelFile
+            alternateFile.exists() && alternateFile.length() > 1000 -> alternateFile
+            else -> {
+                Log.w(TAG, "Model file not found!")
+                Log.w(TAG, "  Expected: ${modelFile.absolutePath}")
+                Log.w(TAG, "  Or: ${alternateFile.absolutePath}")
+                Log.w(TAG, "  To use this model, download it first.")
+                return false
+            }
+        }
+
+        Log.i(TAG, "Found model file: ${actualModelFile.absolutePath} (${actualModelFile.length() / 1024 / 1024} MB)")
+        Log.d(TAG, "Initializing MediaPipe LLM client...")
 
         // Initialize the MediaPipe LLM client with the model
         val config = InferenceConfig.fromSettings(settings)
-        val success = mediaPipeLlmClient.initialize(modelFile, config)
+        val success = mediaPipeLlmClient.initialize(actualModelFile, config)
 
         if (success) {
             isModelLoaded = true
-            Log.i(TAG, "MediaPipe model initialized successfully: ${currentModel.displayName}")
+            Log.i(TAG, "MediaPipe model initialized successfully!")
+            Log.i(TAG, "  Model: ${currentModel.displayName}")
+            Log.i(TAG, "  File: ${actualModelFile.name}")
+            Log.i(TAG, "  isModelLoaded: $isModelLoaded")
+            Log.i(TAG, "  mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
         } else {
-            Log.w(TAG, "Failed to initialize MediaPipe model: ${mediaPipeLlmClient.getStatus()}")
+            Log.e(TAG, "Failed to initialize MediaPipe model!")
+            Log.e(TAG, "  Status: ${mediaPipeLlmClient.getStatus()}")
         }
 
         return success
     }
 
+    // Mutex for analysis to prevent concurrent analysis operations
+    private val analysisMutex = Mutex()
+
     /**
      * Analyze a single detection with full context.
      * Supports cancellation - call cancelAnalysis() to abort.
+     * Uses mutex to prevent concurrent analysis operations which could overload the model.
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
-        // Store reference to current job for cancellation support
-        currentAnalysisJob = coroutineContext[Job]
+        // Lazy initialization: ensure model is loaded before analysis
+        // This handles cases where model was downloaded but not yet initialized
+        val settings = aiSettingsRepository.settings.first()
+        val modelFromSettings = AiModel.fromId(settings.selectedModel)
+        if (settings.enabled && modelFromSettings != AiModel.RULE_BASED && !isModelLoaded) {
+            Log.d(TAG, "Model not loaded, attempting lazy initialization for: ${modelFromSettings.displayName}")
+            val initialized = initializeModel()
+            if (!initialized) {
+                Log.w(TAG, "Lazy initialization failed, will use rule-based fallback")
+            }
+        }
+
+        // Check if already analyzing - return early with informative message
+        if (_isAnalyzing.value) {
+            Log.d(TAG, "Analysis already in progress, checking cache for: ${detection.id}")
+            // Try to serve from cache even if analysis is in progress (reuse settings from above)
+            val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}"
+            val cached = analysisCache[cacheKey]
+            if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_EXPIRY_MS) {
+                return@withContext cached.result.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime
+                )
+            }
+        }
+
+        // Try to acquire the mutex, or return immediately if another analysis is running
+        if (!analysisMutex.tryLock()) {
+            Log.d(TAG, "Analysis mutex busy, returning busy response for: ${detection.id}")
+            return@withContext AiAnalysisResult(
+                success = false,
+                error = "Another analysis is in progress. Please wait.",
+                processingTimeMs = System.currentTimeMillis() - startTime
+            )
+        }
 
         try {
-            val settings = aiSettingsRepository.settings.first()
+            // Store reference to current job for cancellation support
+            currentAnalysisJob = coroutineContext[Job]
+
+            // Settings already loaded above for lazy initialization
             if (!settings.enabled || !settings.analyzeDetections) {
                 return@withContext AiAnalysisResult(
                     success = false,
@@ -297,11 +400,19 @@ class DetectionAnalyzer @Inject constructor(
             // Check for cancellation before expensive operations
             coroutineContext.ensureActive()
 
-            // Check cache first before setting analyzing state (include contextual flag to avoid serving stale results)
-            val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}"
+            // Check cache first before setting analyzing state (include contextual flag and model to avoid serving stale results)
+            val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}_${currentModel.id}"
             val cached = analysisCache[cacheKey]
             if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_EXPIRY_MS) {
                 return@withContext cached.result.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime
+                )
+            }
+
+            // Try semantic cache lookup for similar detections (when exact cache misses)
+            val similarCached = findSimilarCachedResult(detection)
+            if (similarCached != null) {
+                return@withContext similarCached.copy(
                     processingTimeMs = System.currentTimeMillis() - startTime
                 )
             }
@@ -330,7 +441,7 @@ class DetectionAnalyzer @Inject constructor(
             // Cache result
             if (finalResult.success) {
                 pruneCache()
-                analysisCache[cacheKey] = CacheEntry(finalResult, System.currentTimeMillis())
+                analysisCache[cacheKey] = CacheEntry(finalResult, System.currentTimeMillis(), detection)
             }
 
             finalResult
@@ -352,6 +463,10 @@ class DetectionAnalyzer @Inject constructor(
         } finally {
             _isAnalyzing.value = false
             currentAnalysisJob = null
+            // Always release the mutex
+            if (analysisMutex.isLocked) {
+                analysisMutex.unlock()
+            }
         }
     }
 
@@ -363,6 +478,14 @@ class DetectionAnalyzer @Inject constructor(
         currentAnalysisJob?.cancel()
         currentAnalysisJob = null
         _isAnalyzing.value = false
+        // Release mutex if held
+        if (analysisMutex.isLocked) {
+            try {
+                analysisMutex.unlock()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unlocking analysis mutex: ${e.message}")
+            }
+        }
         Log.d(TAG, "Analysis cancellation requested")
     }
 
@@ -471,11 +594,21 @@ class DetectionAnalyzer @Inject constructor(
         }
 
         // Use MediaPipe LLM if loaded and ready
-        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded && mediaPipeLlmClient.isReady()) {
-            Log.d(TAG, "Using MediaPipe LLM for inference: ${currentModel.displayName}")
+        val canUseMediaPipe = currentModel != AiModel.RULE_BASED &&
+                              currentModel != AiModel.GEMINI_NANO &&
+                              isModelLoaded &&
+                              mediaPipeLlmClient.isReady()
+
+        Log.d(TAG, "LLM check: model=${currentModel.id}, isModelLoaded=$isModelLoaded, " +
+              "mediaPipeReady=${mediaPipeLlmClient.isReady()}, canUseMediaPipe=$canUseMediaPipe")
+
+        if (canUseMediaPipe) {
+            Log.i(TAG, "Using MediaPipe LLM for inference: ${currentModel.displayName}")
             val llmResult = mediaPipeLlmClient.analyzeDetection(detection, currentModel)
+            Log.d(TAG, "MediaPipe LLM result: success=${llmResult.success}, error=${llmResult.error}")
+
             if (llmResult.success) {
-                Log.i(TAG, "MediaPipe LLM analysis succeeded!")
+                Log.i(TAG, "MediaPipe LLM analysis succeeded! Response length: ${llmResult.analysis?.length ?: 0}")
                 // Enhance with contextual insights if available
                 return if (contextualInsights != null) {
                     llmResult.copy(
@@ -496,9 +629,13 @@ class DetectionAnalyzer @Inject constructor(
             }
             // Fall through to rule-based if LLM fails
             Log.w(TAG, "MediaPipe LLM analysis failed, using rule-based fallback: ${llmResult.error}")
-        } else {
-            // Log why we're not using the LLM
-            Log.d(TAG, "Not using MediaPipe LLM: currentModel=${currentModel.id}, isModelLoaded=$isModelLoaded, isReady=${mediaPipeLlmClient.isReady()}")
+        } else if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO) {
+            // Log detailed reasons why LLM is not being used
+            Log.w(TAG, "MediaPipe LLM not ready for use:")
+            Log.w(TAG, "  - currentModel: ${currentModel.id}")
+            Log.w(TAG, "  - isModelLoaded: $isModelLoaded")
+            Log.w(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
+            Log.w(TAG, "  - mediaPipeLlmClient status: ${mediaPipeLlmClient.getStatus()}")
         }
 
         // Use comprehensive rule-based analysis as fallback
@@ -532,6 +669,344 @@ class DetectionAnalyzer @Inject constructor(
             },
             contextualInsights = contextualInsights
         )
+    }
+
+    // ==================== ENRICHED PROMPT SELECTION ====================
+
+    /**
+     * Select the best prompt template based on detection type and available enriched data.
+     * Uses enriched prompts when detector-specific analysis data is available,
+     * falls back to chain-of-thought for complex detections or few-shot for standard cases.
+     */
+    private fun selectPromptForDetection(
+        detection: Detection,
+        contextualInsights: ContextualInsights?,
+        enrichedData: EnrichedDetectorData?
+    ): String {
+        // If we have enriched data, use detector-specific prompts
+        if (enrichedData != null) {
+            return when (enrichedData) {
+                is EnrichedDetectorData.Cellular ->
+                    PromptTemplates.buildCellularEnrichedPrompt(detection, enrichedData.analysis)
+                is EnrichedDetectorData.Gnss ->
+                    PromptTemplates.buildGnssEnrichedPrompt(detection, enrichedData.analysis)
+                is EnrichedDetectorData.Ultrasonic ->
+                    PromptTemplates.buildUltrasonicEnrichedPrompt(detection, enrichedData.analysis)
+                is EnrichedDetectorData.WifiFollowing ->
+                    PromptTemplates.buildWifiFollowingEnrichedPrompt(detection, enrichedData.analysis)
+            }
+        }
+
+        // For high-threat or complex detections, use chain-of-thought reasoning
+        if (detection.threatLevel == ThreatLevel.CRITICAL ||
+            detection.threatLevel == ThreatLevel.HIGH ||
+            contextualInsights?.clusterInfo != null) {
+            return PromptTemplates.buildChainOfThoughtPrompt(detection, enrichedData)
+        }
+
+        // For standard detections, use few-shot prompting
+        return PromptTemplates.buildFewShotPrompt(detection, enrichedData)
+    }
+
+    /**
+     * Generate user-friendly explanation for a detection at the specified level.
+     * Available levels: SIMPLE (for non-technical users), STANDARD, TECHNICAL.
+     */
+    suspend fun generateUserFriendlyExplanation(
+        detection: Detection,
+        level: PromptTemplates.ExplanationLevel = PromptTemplates.ExplanationLevel.STANDARD
+    ): UserFriendlyExplanation {
+        // Try MediaPipe LLM if ready (has prompt-based generation)
+        if (mediaPipeLlmClient.isReady()) {
+            val prompt = PromptTemplates.buildUserFriendlyPrompt(detection, null, level)
+            val llmResponse = mediaPipeLlmClient.generateResponse(prompt)
+
+            // Parse LLM response if available
+            if (llmResponse != null) {
+                return LlmOutputParser.parseUserFriendlyExplanation(llmResponse)
+            }
+        }
+
+        // Fallback to rule-based (also used for Gemini Nano since it doesn't have prompt-based API)
+        return generateRuleBasedExplanation(detection, level)
+    }
+
+    /**
+     * Generate rule-based user-friendly explanation as fallback.
+     */
+    private fun generateRuleBasedExplanation(
+        detection: Detection,
+        level: PromptTemplates.ExplanationLevel
+    ): UserFriendlyExplanation {
+        val deviceInfo = getComprehensiveDeviceInfo(detection.deviceType)
+        val recommendations = getSmartRecommendations(detection, null)
+
+        val (headline, whatIsHappening, whyItMatters) = when (level) {
+            PromptTemplates.ExplanationLevel.SIMPLE -> Triple(
+                "Device Found Nearby",
+                "A ${detection.deviceType.displayName} was detected. " +
+                    "This is a device that ${deviceInfo.simpleDescription ?: "can monitor activity"}.",
+                deviceInfo.simplePrivacyImpact ?: "This device may be recording information about you."
+            )
+            PromptTemplates.ExplanationLevel.STANDARD -> Triple(
+                "${detection.deviceType.displayName} Detected",
+                deviceInfo.description,
+                "Privacy Impact: ${detection.threatLevel.displayName}. ${deviceInfo.privacyImpact ?: ""}"
+            )
+            PromptTemplates.ExplanationLevel.TECHNICAL -> Triple(
+                "${detection.deviceType.displayName} - ${detection.detectionMethod.displayName}",
+                "${deviceInfo.description}\n\nDetection: ${detection.detectionMethod.description}",
+                "Threat Score: ${detection.threatScore}/100. ${detection.matchedPatterns ?: ""}"
+            )
+        }
+
+        val urgency = when (detection.threatLevel) {
+            ThreatLevel.CRITICAL -> UrgencyLevel.IMMEDIATE
+            ThreatLevel.HIGH -> UrgencyLevel.HIGH
+            ThreatLevel.MEDIUM -> UrgencyLevel.MEDIUM
+            else -> UrgencyLevel.LOW
+        }
+
+        return UserFriendlyExplanation(
+            headline = headline,
+            whatIsHappening = whatIsHappening,
+            whyItMatters = whyItMatters,
+            whatToDo = recommendations.take(3),
+            urgency = urgency
+        )
+    }
+
+    // ==================== CROSS-DETECTION PATTERN RECOGNITION ====================
+
+    /**
+     * Analyze patterns across multiple detections to identify coordinated surveillance,
+     * following patterns, timing correlations, and geographic clustering.
+     *
+     * @param timeWindowMs Time window to consider (default: 1 hour)
+     * @return List of identified patterns with confidence scores
+     */
+    suspend fun analyzePatterns(
+        timeWindowMs: Long = 3600000L // 1 hour default
+    ): List<PatternInsight> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val cutoffTime = now - timeWindowMs
+        val recentDetections = detectionRepository.getAllDetectionsSnapshot()
+            .filter { it.timestamp >= cutoffTime }
+            .sortedByDescending { it.timestamp }
+
+        if (recentDetections.size < 2) {
+            return@withContext emptyList()
+        }
+
+        val patterns = mutableListOf<PatternInsight>()
+
+        // Try LLM-based pattern analysis if available
+        if (mediaPipeLlmClient.isReady()) {
+            val timeDesc = when {
+                timeWindowMs <= 3600000L -> "past hour"
+                timeWindowMs <= 86400000L -> "past ${timeWindowMs / 3600000} hours"
+                else -> "past ${timeWindowMs / 86400000} days"
+            }
+
+            val prompt = PromptTemplates.buildPatternRecognitionPrompt(recentDetections, timeDesc)
+            val response = mediaPipeLlmClient.generateResponse(prompt)
+
+            if (response != null) {
+                val llmPatterns = LlmOutputParser.parsePatternAnalysis(response)
+                if (llmPatterns.isNotEmpty()) {
+                    return@withContext llmPatterns
+                }
+            }
+        }
+
+        // Fall back to rule-based pattern detection
+        patterns.addAll(detectCoordinatedSurveillance(recentDetections))
+        patterns.addAll(detectFollowingPattern(recentDetections))
+        patterns.addAll(detectTimingCorrelation(recentDetections))
+        patterns.addAll(detectGeographicClustering(recentDetections))
+        patterns.addAll(detectEscalationPattern(recentDetections))
+        patterns.addAll(detectMultimodalSurveillance(recentDetections))
+
+        patterns.sortedByDescending { it.confidence }
+    }
+
+    /**
+     * Rule-based: Detect coordinated surveillance (multiple related devices active together)
+     */
+    private fun detectCoordinatedSurveillance(detections: List<Detection>): List<PatternInsight> {
+        // Group by time windows (5 minute buckets)
+        val timeGroups = detections.groupBy { it.timestamp / 300000 }
+
+        val patterns = mutableListOf<PatternInsight>()
+
+        for ((_, group) in timeGroups) {
+            if (group.size >= 3) {
+                // Multiple devices detected within same 5-minute window
+                val deviceTypes = group.map { it.deviceType }.distinct()
+                if (deviceTypes.size >= 2) {
+                    patterns.add(PatternInsight(
+                        patternType = PatternType.COORDINATED_SURVEILLANCE,
+                        affectedDetections = group.map { it.id },
+                        description = "${group.size} devices detected simultaneously: ${deviceTypes.joinToString { it.displayName }}",
+                        implication = "Multiple surveillance devices operating together may indicate coordinated monitoring",
+                        confidence = minOf(0.4f + (group.size * 0.1f), 0.9f)
+                    ))
+                }
+            }
+        }
+
+        return patterns
+    }
+
+    /**
+     * Rule-based: Detect if devices appear to be following the user
+     */
+    private fun detectFollowingPattern(detections: List<Detection>): List<PatternInsight> {
+        // Group detections by device (MAC or SSID)
+        val byDevice = detections.groupBy { it.macAddress ?: it.ssid ?: it.deviceName }
+            .filter { it.key != null && it.value.size >= 2 }
+
+        val patterns = mutableListOf<PatternInsight>()
+
+        for ((_, deviceDetections) in byDevice) {
+            val locations = deviceDetections.mapNotNull {
+                if (it.latitude != null && it.longitude != null) it.latitude to it.longitude
+                else null
+            }.distinct()
+
+            if (locations.size >= 2) {
+                // Same device detected at multiple distinct locations
+                val firstDet = deviceDetections.first()
+                patterns.add(PatternInsight(
+                    patternType = PatternType.FOLLOWING_PATTERN,
+                    affectedDetections = deviceDetections.map { it.id },
+                    description = "${firstDet.deviceType.displayName} detected at ${locations.size} different locations",
+                    implication = "This device may be following you or is mobile surveillance equipment",
+                    confidence = minOf(0.5f + (locations.size * 0.15f), 0.95f)
+                ))
+            }
+        }
+
+        return patterns
+    }
+
+    /**
+     * Rule-based: Detect timing correlations (devices activating at similar times)
+     */
+    private fun detectTimingCorrelation(detections: List<Detection>): List<PatternInsight> {
+        if (detections.size < 4) return emptyList()
+
+        // Check for regular intervals
+        val sorted = detections.sortedBy { it.timestamp }
+        val intervals = sorted.zipWithNext { a, b -> b.timestamp - a.timestamp }
+
+        if (intervals.size < 3) return emptyList()
+
+        val avgInterval = intervals.average()
+        val variance = intervals.map { (it - avgInterval) * (it - avgInterval) }.average()
+        val stdDev = kotlin.math.sqrt(variance)
+
+        // Low variance indicates regular timing
+        if (stdDev < avgInterval * 0.3 && avgInterval < 600000) { // Less than 30% variance, intervals < 10 min
+            return listOf(PatternInsight(
+                patternType = PatternType.TIMING_CORRELATION,
+                affectedDetections = detections.map { it.id },
+                description = "Detections occurring at regular ${(avgInterval / 60000).toInt()}-minute intervals",
+                implication = "Regular timing suggests automated or scheduled surveillance sweeps",
+                confidence = 0.7f - (stdDev / avgInterval).toFloat().coerceIn(0f, 0.3f)
+            ))
+        }
+
+        return emptyList()
+    }
+
+    /**
+     * Rule-based: Detect geographic clustering
+     */
+    private fun detectGeographicClustering(detections: List<Detection>): List<PatternInsight> {
+        val locatedDetections = detections.filter { it.latitude != null && it.longitude != null }
+        if (locatedDetections.size < 3) return emptyList()
+
+        // Find clusters using simple distance-based grouping
+        val clusters = mutableListOf<List<Detection>>()
+        val used = mutableSetOf<String>()
+
+        for (detection in locatedDetections) {
+            if (detection.id in used) continue
+
+            val cluster = locatedDetections.filter { other ->
+                other.id !in used &&
+                calculateDistance(detection.latitude!!, detection.longitude!!,
+                    other.latitude!!, other.longitude!!) < CLUSTER_RADIUS_METERS
+            }
+
+            if (cluster.size >= 3) {
+                clusters.add(cluster)
+                used.addAll(cluster.map { it.id })
+            }
+        }
+
+        return clusters.map { cluster ->
+            val types = cluster.map { it.deviceType.displayName }.distinct()
+            PatternInsight(
+                patternType = PatternType.GEOGRAPHIC_CLUSTERING,
+                affectedDetections = cluster.map { it.id },
+                description = "${cluster.size} devices clustered within ${CLUSTER_RADIUS_METERS.toInt()}m: ${types.joinToString()}",
+                implication = "Concentrated surveillance infrastructure in this area",
+                confidence = minOf(0.5f + (cluster.size * 0.1f), 0.9f)
+            )
+        }
+    }
+
+    /**
+     * Rule-based: Detect escalation in threat levels over time
+     */
+    private fun detectEscalationPattern(detections: List<Detection>): List<PatternInsight> {
+        if (detections.size < 3) return emptyList()
+
+        val sorted = detections.sortedBy { it.timestamp }
+        val scores = sorted.map { it.threatScore }
+
+        // Check if threat scores are generally increasing
+        var increases = 0
+        var decreases = 0
+        for (i in 1 until scores.size) {
+            if (scores[i] > scores[i - 1]) increases++
+            else if (scores[i] < scores[i - 1]) decreases++
+        }
+
+        if (increases > decreases * 2 && increases >= 3) {
+            val firstScore = scores.first()
+            val lastScore = scores.last()
+            return listOf(PatternInsight(
+                patternType = PatternType.ESCALATION_PATTERN,
+                affectedDetections = sorted.map { it.id },
+                description = "Threat scores increasing from $firstScore to $lastScore",
+                implication = "Surveillance activity appears to be escalating in your area",
+                confidence = 0.6f + (increases.toFloat() / scores.size * 0.3f)
+            ))
+        }
+
+        return emptyList()
+    }
+
+    /**
+     * Rule-based: Detect multimodal surveillance (different detection types targeting same area)
+     */
+    private fun detectMultimodalSurveillance(detections: List<Detection>): List<PatternInsight> {
+        val protocols = detections.map { it.protocol }.distinct()
+
+        if (protocols.size >= 3) {
+            return listOf(PatternInsight(
+                patternType = PatternType.MULTIMODAL_SURVEILLANCE,
+                affectedDetections = detections.map { it.id },
+                description = "Multiple surveillance modalities active: ${protocols.joinToString { it.displayName }}",
+                implication = "Comprehensive surveillance using multiple technologies (WiFi, cellular, audio, etc.)",
+                confidence = 0.7f + (protocols.size * 0.05f).coerceAtMost(0.2f)
+            ))
+        }
+
+        return emptyList()
     }
 
     /**
@@ -633,7 +1108,11 @@ class DetectionAnalyzer @Inject constructor(
         val category: String,
         val surveillanceType: String,
         val typicalOperator: String? = null,
-        val legalFramework: String? = null
+        val legalFramework: String? = null,
+        // User-friendly fields for different explanation levels
+        val simpleDescription: String? = null,      // Short, simple language for non-technical users
+        val simplePrivacyImpact: String? = null,    // Privacy impact in simple terms
+        val privacyImpact: String? = null           // Standard privacy impact explanation
     )
 
     /**
@@ -699,7 +1178,13 @@ class DetectionAnalyzer @Inject constructor(
 
             // Cell Site Simulators
             DeviceType.STINGRAY_IMSI -> DeviceInfo(
-                description = "Cell-site simulator (IMSI catcher/Stingray) that mimics a cell tower to force phones to connect. Can intercept calls, texts, and precisely track device locations. Often mounted in vehicles or aircraft.",
+                description = "Cell-site simulator (IMSI catcher/Stingray) that mimics a cell tower to force phones to connect. " +
+                    "Detection analysis includes: encryption downgrade chain tracking (5G→4G→3G→2G), " +
+                    "signal spike correlation with new tower appearances, IMSI catcher signature scoring (0-100%), " +
+                    "movement analysis via Haversine distance calculations, and cell trust scoring based on " +
+                    "historical tower observations. Key indicators: forced encryption downgrades with simultaneous " +
+                    "signal spikes, unfamiliar cell IDs in familiar areas, and impossible movement speeds suggesting " +
+                    "tower location jumps. Can intercept calls, texts, and precisely track device locations.",
                 category = "Cell Site Simulator",
                 surveillanceType = "Communications Interception",
                 typicalOperator = "Law enforcement (requires warrant in most jurisdictions)",
@@ -943,7 +1428,14 @@ class DetectionAnalyzer @Inject constructor(
 
             // Ultrasonic
             DeviceType.ULTRASONIC_BEACON -> DeviceInfo(
-                description = "Ultrasonic tracking beacon detected. Uses inaudible sound to track users across devices, often for advertising attribution.",
+                description = "Ultrasonic tracking beacon detected. Uses inaudible sound (18-22 kHz) to track users across devices. " +
+                    "Detection analysis includes: amplitude fingerprinting (steady vs pulsing vs modulated patterns), " +
+                    "source attribution against known beacon types (SilverPush, Alphonso, Signal360, LISNR, Shopkick), " +
+                    "cross-location correlation to detect beacons following the user across multiple locations, " +
+                    "signal-to-noise ratio analysis, and tracking likelihood scoring (0-100%). Key indicators: " +
+                    "same frequency/amplitude profile detected at multiple distinct locations, pulsing amplitude " +
+                    "patterns matching known ad-tech signatures, and persistence score indicating dedicated tracking. " +
+                    "Often used for advertising attribution and cross-device identity resolution.",
                 category = "Cross-Device Tracking",
                 surveillanceType = "Ultrasonic Tracking",
                 legalFramework = "FTC has taken action against undisclosed tracking"
@@ -958,7 +1450,14 @@ class DetectionAnalyzer @Inject constructor(
 
             // GNSS Threats
             DeviceType.GNSS_SPOOFER -> DeviceInfo(
-                description = "GPS/GNSS spoofing device detected. Transmits fake satellite signals to manipulate location data. Your reported position may be inaccurate.",
+                description = "GPS/GNSS spoofing device detected. Transmits fake satellite signals to manipulate location data. " +
+                    "Detection analysis includes: constellation fingerprinting (expected vs observed GPS/GLONASS/Galileo/BeiDou), " +
+                    "C/N0 baseline deviation (abnormal signal strength uniformity indicates fake signals), " +
+                    "clock drift accumulation tracking (spoofed signals often show erratic drift patterns), " +
+                    "satellite geometry analysis (spoofed signals may show unnaturally uniform spacing or angles), " +
+                    "and composite spoofing likelihood scoring (0-100%). Key indicators: missing expected constellations, " +
+                    "C/N0 values deviating >2σ from baseline, erratic clock drift trends, and unnaturally uniform signal strengths. " +
+                    "Your reported position may be inaccurate.",
                 category = "GNSS Attack",
                 surveillanceType = "Location Manipulation",
                 legalFramework = "Federal crime to interfere with GPS signals"
@@ -1070,9 +1569,12 @@ class DetectionAnalyzer @Inject constructor(
                 "IMEI (device hardware ID)",
                 "Phone calls (content and metadata)",
                 "SMS/text messages",
-                "Real-time precise location",
+                "Real-time precise location via triangulation",
                 "Device model and capabilities",
-                "All nearby device identifiers"
+                "All nearby device identifiers within range",
+                "Encryption capability downgrades forced on devices",
+                "Movement patterns via cell handoff analysis",
+                "Network attachment timestamps and duration"
             )
             DeviceType.CELLEBRITE_FORENSICS, DeviceType.GRAYKEY_DEVICE -> listOf(
                 "All phone contents including deleted data",
@@ -1121,9 +1623,13 @@ class DetectionAnalyzer @Inject constructor(
             )
             DeviceType.ULTRASONIC_BEACON -> listOf(
                 "Cross-device tracking identifiers",
-                "Physical location association",
-                "Advertising/content attribution",
-                "App usage correlation"
+                "Physical location association with retail/venue presence",
+                "Advertising/content attribution across devices",
+                "App usage correlation and engagement patterns",
+                "Precise indoor positioning via beacon triangulation",
+                "Dwell time at specific locations/displays",
+                "Multi-device identity linking (phone + tablet + laptop)",
+                "Temporal patterns of user presence"
             )
             DeviceType.BLUETOOTH_BEACON, DeviceType.RETAIL_TRACKER -> listOf(
                 "Device presence and proximity",
@@ -1140,6 +1646,15 @@ class DetectionAnalyzer @Inject constructor(
                 "Behavioral profiling via connection patterns",
                 "Potential audio/video if hidden cameras present",
                 "Network traffic metadata if rogue AP involved"
+            )
+            DeviceType.GNSS_SPOOFER, DeviceType.GNSS_JAMMER -> listOf(
+                "Target device's reliance on GPS for location",
+                "Effectiveness of location manipulation on target",
+                "Time synchronization disruption capability",
+                "Navigation system confusion/misdirection",
+                "Geofencing bypass for location-restricted apps",
+                "False alibi generation through location spoofing",
+                "Disruption of location-based emergency services"
             )
             else -> listOf(
                 "Device-specific data collection varies",
@@ -1234,7 +1749,10 @@ class DetectionAnalyzer @Inject constructor(
             }
             DeviceType.STINGRAY_IMSI -> {
                 recommendations.add("Switch to airplane mode if you need complete privacy")
-                recommendations.add("Signal-based encryption apps still provide some protection")
+                recommendations.add("Signal-based encryption apps (Signal, WhatsApp) still provide some protection")
+                recommendations.add("Check technical details for IMSI catcher score and encryption downgrade evidence")
+                recommendations.add("If movement analysis shows 'impossible speed', your location may be manipulated")
+                recommendations.add("Consider using WiFi calling if available and trusted network exists")
             }
             DeviceType.WIFI_PINEAPPLE, DeviceType.ROGUE_AP -> {
                 recommendations.add("Do NOT connect to unknown WiFi networks")
@@ -1242,9 +1760,12 @@ class DetectionAnalyzer @Inject constructor(
                 recommendations.add("Verify network names before connecting")
             }
             DeviceType.GNSS_SPOOFER -> {
-                recommendations.add("Your GPS location may be inaccurate")
-                recommendations.add("Use alternative navigation methods")
-                recommendations.add("Be cautious of location-dependent apps")
+                recommendations.add("Your GPS location may be inaccurate - verify with visual landmarks")
+                recommendations.add("Use alternative navigation (WiFi positioning, cell triangulation, maps offline)")
+                recommendations.add("Be cautious of location-dependent apps (banking, delivery, rideshare)")
+                recommendations.add("Check technical details for constellation analysis and spoofing likelihood")
+                recommendations.add("If C/N0 deviation is high or clock drift erratic, spoofing is very likely")
+                recommendations.add("Navigation-critical activities should be postponed until GPS normalizes")
             }
             DeviceType.RF_ANOMALY -> {
                 recommendations.add("Note this location - high hidden network density detected")
@@ -1252,6 +1773,13 @@ class DetectionAnalyzer @Inject constructor(
                 recommendations.add("Consider using VPN if connecting to any network here")
                 recommendations.add("Check detection details for surveillance vendor indicators")
                 recommendations.add("If persistent across visits, this may be coordinated surveillance")
+            }
+            DeviceType.ULTRASONIC_BEACON -> {
+                recommendations.add("Close apps with microphone permissions when not needed")
+                recommendations.add("Check technical details for source attribution (SilverPush, Alphonso, etc.)")
+                recommendations.add("If 'following user' flag is set, beacon may be tracking you across locations")
+                recommendations.add("Consider disabling microphone access for advertising/shopping apps")
+                recommendations.add("High tracking likelihood indicates active cross-device surveillance")
             }
             else -> {}
         }
@@ -1517,17 +2045,25 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Download selected model with retry logic and resumable download support.
+     * Progress callbacks are dispatched to the Main thread for UI safety.
      */
     suspend fun downloadModel(
         modelId: String = currentModel.id,
         onProgress: (Int) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
+        // Wrap progress callback to ensure it runs on Main thread for UI safety
+        val safeProgress: suspend (Int) -> Unit = { progress ->
+            withContext(Dispatchers.Main) {
+                onProgress(progress)
+            }
+        }
+
         try {
             val model = AiModel.fromId(modelId)
 
             if (model == AiModel.RULE_BASED) {
                 // No download needed
-                onProgress(100)
+                safeProgress(100)
                 return@withContext true
             }
 
@@ -1535,9 +2071,9 @@ class DetectionAnalyzer @Inject constructor(
                 // Gemini Nano is managed by Google Play Services
                 // Just verify AI Core is available
                 _modelStatus.value = AiModelStatus.Downloading(50)
-                onProgress(50)
+                safeProgress(50)
                 val available = tryInitializeGeminiNano(aiSettingsRepository.settings.first())
-                onProgress(100)
+                safeProgress(100)
                 return@withContext available
             }
 
@@ -1550,7 +2086,7 @@ class DetectionAnalyzer @Inject constructor(
             }
 
             _modelStatus.value = AiModelStatus.Downloading(0)
-            onProgress(0)
+            safeProgress(0)
 
             val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
             // Use the appropriate file extension based on model format
@@ -1562,8 +2098,15 @@ class DetectionAnalyzer @Inject constructor(
             var lastException: Exception? = null
             repeat(MAX_DOWNLOAD_RETRIES) { attempt ->
                 try {
-                    val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, onProgress)
-                    if (success) return@withContext true
+                    val success = downloadWithResume(downloadUrl, tempFile, modelFile, model.sizeMb * 1024 * 1024, safeProgress)
+                    if (success) {
+                        // Update settings and current model after successful download
+                        aiSettingsRepository.setSelectedModel(model.id)
+                        aiSettingsRepository.setModelDownloaded(true, modelFile.length() / (1024 * 1024))
+                        currentModel = model
+                        Log.i(TAG, "Model download completed, selected model: ${model.displayName}")
+                        return@withContext true
+                    }
                 } catch (e: IOException) {
                     lastException = e
                     Log.w(TAG, "Download attempt ${attempt + 1} failed: ${e.message}")
@@ -1585,13 +2128,14 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Download with resume support for interrupted downloads.
+     * Progress callback is invoked from IO thread but should be safe (wrapped by caller).
      */
-    private fun downloadWithResume(
+    private suspend fun downloadWithResume(
         downloadUrl: String,
         tempFile: File,
         finalFile: File,
         expectedSize: Long,
-        onProgress: (Int) -> Unit
+        onProgress: suspend (Int) -> Unit
     ): Boolean {
         // Check for existing partial download
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
@@ -1615,9 +2159,9 @@ class DetectionAnalyzer @Inject constructor(
                     tempFile.delete()
                     return downloadWithResume(downloadUrl, tempFile, finalFile, expectedSize, onProgress)
                 }
-                // Handle authentication errors from HuggingFace
+                // Handle authentication errors (shouldn't happen with public repos)
                 if (response.code == 401 || response.code == 403) {
-                    throw IOException("Authentication required. Please accept the Gemma license at huggingface.co/google/gemma and try again, or use 'Import Model' to load a manually downloaded .task file.")
+                    throw IOException("Download failed: Authentication required (HTTP ${response.code}). Try using 'Import Model' to load a manually downloaded file.")
                 }
                 throw IOException("Download failed: HTTP ${response.code}")
             }
@@ -1628,6 +2172,7 @@ class DetectionAnalyzer @Inject constructor(
 
             // Use append mode for resume, otherwise create fresh
             val appendMode = response.code == 206
+            var lastProgressUpdate = 0L
             FileOutputStream(tempFile, appendMode).use { output ->
                 body.byteStream().use { input ->
                     val buffer = ByteArray(8192)
@@ -1644,8 +2189,13 @@ class DetectionAnalyzer @Inject constructor(
                             ((downloadedBytes / (expectedSize.toDouble())) * 100).toInt().coerceIn(0, 99)
                         }
 
-                        _modelStatus.value = AiModelStatus.Downloading(progress)
-                        onProgress(progress)
+                        // Throttle progress updates to avoid overwhelming the UI (max once per 100ms)
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressUpdate > 100) {
+                            _modelStatus.value = AiModelStatus.Downloading(progress)
+                            onProgress(progress)
+                            lastProgressUpdate = now
+                        }
                     }
                 }
             }
@@ -1762,40 +2312,55 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Switch to a different model.
+     * Clears the analysis cache to prevent stale results from the previous model.
      */
-    suspend fun selectModel(modelId: String): Boolean {
+    suspend fun selectModel(modelId: String): Boolean = modelStateMutex.withLock {
         val model = AiModel.fromId(modelId)
+
+        // Clear cache when switching models to prevent serving stale results
+        analysisCache.clear()
+        Log.d(TAG, "Cleared analysis cache for model switch to: ${model.displayName}")
 
         if (model == AiModel.RULE_BASED) {
             currentModel = model
             isModelLoaded = true
             aiSettingsRepository.setSelectedModel(modelId)
             _modelStatus.value = AiModelStatus.Ready
-            return true
+            return@withLock true
         }
 
         // Gemini Nano is managed by Google Play Services, no file check needed
         if (model == AiModel.GEMINI_NANO) {
             if (!deviceInfo.isPixel8OrNewer || !deviceInfo.hasNpu) {
                 Log.w(TAG, "Device does not support Gemini Nano")
-                return false
+                return@withLock false
             }
             currentModel = model
             aiSettingsRepository.setSelectedModel(modelId)
-            return initializeModel()
+            return@withLock initializeModel()
         }
 
-        // Check if model file exists (using appropriate extension for format)
+        // Check if model file exists (check both .task and .bin extensions)
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
         val fileExtension = AiModel.getFileExtension(model)
         val modelFile = File(modelDir, "${model.id}$fileExtension")
 
-        return if (modelFile.exists() && modelFile.length() > 1000) {
+        // Also check alternate extension
+        val alternateExtension = if (fileExtension == ".task") ".bin" else ".task"
+        val alternateFile = File(modelDir, "${model.id}$alternateExtension")
+
+        val actualFile = when {
+            modelFile.exists() && modelFile.length() > 1000 -> modelFile
+            alternateFile.exists() && alternateFile.length() > 1000 -> alternateFile
+            else -> null
+        }
+
+        return@withLock if (actualFile != null) {
             currentModel = model
             aiSettingsRepository.setSelectedModel(modelId)
             initializeModel()
         } else {
-            Log.d(TAG, "Model file not found: ${modelFile.absolutePath}")
+            Log.d(TAG, "Model file not found: ${modelFile.absolutePath} or ${alternateFile.absolutePath}")
             false // Need to download first
         }
     }
@@ -1825,5 +2390,156 @@ class DetectionAnalyzer @Inject constructor(
     suspend fun isAvailable(): Boolean {
         val settings = aiSettingsRepository.settings.first()
         return settings.enabled
+    }
+
+    // ==================== SEMANTIC CACHE FUNCTIONS ====================
+
+    /**
+     * Find a semantically similar cached result.
+     * Returns the cached result if a detection with similar characteristics exists.
+     */
+    private fun findSimilarCachedResult(detection: Detection): AiAnalysisResult? {
+        if (!semanticCacheEnabled) return null
+
+        val now = System.currentTimeMillis()
+
+        for ((_, entry) in analysisCache) {
+            // Skip expired entries
+            if (now - entry.timestamp > CACHE_EXPIRY_MS) continue
+
+            val similarity = computeDetectionSimilarity(detection, entry.detection)
+            if (similarity >= semanticSimilarityThreshold) {
+                Log.d(TAG, "Semantic cache hit! Similarity: ${(similarity * 100).toInt()}%")
+                return entry.result.copy(
+                    analysis = entry.result.analysis?.let {
+                        "$it\n\n_[Analysis from similar detection]_"
+                    }
+                )
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Compute semantic similarity between two detections.
+     * Returns a value between 0.0 (completely different) and 1.0 (identical).
+     */
+    private fun computeDetectionSimilarity(a: Detection, b: Detection): Float {
+        var score = 0f
+        var weight = 0f
+
+        // Device type must match (heaviest weight)
+        if (a.deviceType == b.deviceType) {
+            score += 0.35f
+        }
+        weight += 0.35f
+
+        // Protocol match
+        if (a.protocol == b.protocol) {
+            score += 0.15f
+        }
+        weight += 0.15f
+
+        // Detection method match
+        if (a.detectionMethod == b.detectionMethod) {
+            score += 0.15f
+        }
+        weight += 0.15f
+
+        // Threat level match
+        if (a.threatLevel == b.threatLevel) {
+            score += 0.1f
+        }
+        weight += 0.1f
+
+        // Signal strength within 10 dBm
+        if (kotlin.math.abs(a.rssi - b.rssi) <= 10) {
+            score += 0.1f
+        }
+        weight += 0.1f
+
+        // Threat score within 10 points
+        if (kotlin.math.abs(a.threatScore - b.threatScore) <= 10) {
+            score += 0.1f
+        }
+        weight += 0.1f
+
+        // Manufacturer match (if both have it)
+        if (a.manufacturer != null && b.manufacturer != null && a.manufacturer == b.manufacturer) {
+            score += 0.05f
+        }
+        weight += 0.05f
+
+        return score / weight
+    }
+
+    // ==================== MODEL WARM-UP ====================
+
+    /**
+     * Warm up the LLM model with a simple query to reduce first-inference latency.
+     * Call this after model initialization for better user experience.
+     */
+    suspend fun warmUpModel(): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Starting model warm-up...")
+
+        if (currentModel == AiModel.GEMINI_NANO && geminiNanoInitialized) {
+            // Gemini Nano doesn't need warm-up (always ready)
+            Log.d(TAG, "Gemini Nano ready (no warm-up needed)")
+            return@withContext true
+        }
+
+        if (!mediaPipeLlmClient.isReady()) {
+            Log.w(TAG, "MediaPipe LLM not ready for warm-up")
+            return@withContext false
+        }
+
+        try {
+            val warmupPrompt = """<start_of_turn>user
+What is an IMSI catcher? Reply in one sentence.
+<end_of_turn>
+<start_of_turn>model
+"""
+            val startTime = System.currentTimeMillis()
+            val response = mediaPipeLlmClient.generateResponse(warmupPrompt)
+            val duration = System.currentTimeMillis() - startTime
+
+            if (response != null) {
+                Log.i(TAG, "Model warm-up completed in ${duration}ms")
+                return@withContext true
+            } else {
+                Log.w(TAG, "Model warm-up returned null response")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Model warm-up failed: ${e.message}")
+            return@withContext false
+        }
+    }
+
+    /**
+     * Check if the model is warmed up and ready for fast inference.
+     */
+    fun isModelWarmedUp(): Boolean {
+        return when {
+            currentModel == AiModel.GEMINI_NANO -> geminiNanoInitialized
+            currentModel == AiModel.RULE_BASED -> true
+            else -> mediaPipeLlmClient.isReady()
+        }
+    }
+
+    /**
+     * Get estimated inference time based on model and device capabilities.
+     */
+    fun getEstimatedInferenceTimeMs(): Long {
+        return when (currentModel) {
+            AiModel.GEMINI_NANO -> 500L  // NPU accelerated
+            AiModel.RULE_BASED -> 10L    // No LLM, instant
+            else -> if (deviceInfo.hasNpu || deviceInfo.availableRamMb > 8000) {
+                2000L  // Good hardware
+            } else {
+                5000L  // Standard hardware
+            }
+        }
     }
 }

@@ -107,6 +107,11 @@ class CellularMonitor(private val context: Context) {
     private var estimatedMovementSpeed: Double = 0.0 // lat/lon units per minute
     private var lastAnyAnomalyTime: Long = 0L // Global cooldown for all anomalies
 
+    // Downgrade chain tracking for IMSI catcher signature detection
+    private val downgradeHistory = mutableListOf<Pair<Long, String>>() // timestamp to network generation
+    private val maxDowngradeHistorySize = 20
+    private var lastOperator: String? = null
+
     // Callback for cell info changes
     @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
@@ -139,6 +144,72 @@ class CellularMonitor(private val context: Context) {
         val locations: MutableList<Pair<Double, Double>> = mutableListOf(), // lat/lon pairs
         var operator: String? = null,
         var networkType: String? = null
+    )
+
+    /**
+     * Movement classification based on speed
+     */
+    enum class MovementType(val displayName: String, val maxSpeedKmh: Double) {
+        STATIONARY("Stationary", 1.0),
+        WALKING("Walking", 7.0),
+        RUNNING("Running", 20.0),
+        CYCLING("Cycling", 40.0),
+        VEHICLE("Vehicle", 150.0),
+        HIGH_SPEED_VEHICLE("High-Speed Vehicle", 350.0),
+        IMPOSSIBLE("Impossible/Teleport", Double.MAX_VALUE)
+    }
+
+    /**
+     * Encryption strength classification
+     */
+    enum class EncryptionStrength(val displayName: String, val description: String) {
+        STRONG("Strong", "5G/LTE with modern encryption (AES-256)"),
+        MODERATE("Moderate", "3G UMTS encryption (KASUMI)"),
+        WEAK("Weak", "2G with A5/1 cipher (crackable)"),
+        NONE("None/Broken", "2G with A5/0 or no encryption")
+    }
+
+    /**
+     * Comprehensive analysis of cellular anomalies including IMSI catcher signatures
+     */
+    data class CellularAnomalyAnalysis(
+        // IMSI Catcher Signature Detection
+        val encryptionDowngradeChain: List<String>,    // ["5G", "4G", "3G", "2G"] sequence
+        val downgradeWithSignalSpike: Boolean,         // Downgrade coincided with signal increase
+        val downgradeWithNewTower: Boolean,            // Downgrade coincided with unknown tower
+        val imsiCatcherScore: Int,                     // 0-100 composite IMSI catcher likelihood
+
+        // Movement Analysis (Haversine)
+        val distanceMeters: Double,                    // Distance from last position
+        val speedKmh: Double,                          // Calculated speed
+        val movementType: MovementType,                // Inferred movement type
+        val impossibleSpeed: Boolean,                  // Speed exceeds physical possibility
+        val timeBetweenSamplesMs: Long,               // Time between measurements
+
+        // Cell Trust Analysis
+        val cellTrustScore: Int,                       // 0-100 trust score
+        val cellSeenCount: Int,                        // Times this cell has been seen
+        val isInFamiliarArea: Boolean,                 // User is in known area
+        val nearbyTrustedCells: Int,                   // Count of trusted cells in vicinity
+        val cellAgeSeconds: Long,                      // How long cell has been in database
+
+        // Encryption Assessment
+        val currentEncryption: EncryptionStrength,
+        val previousEncryption: EncryptionStrength?,
+        val encryptionDowngraded: Boolean,
+        val vulnerabilityNote: String?,
+
+        // Network Context
+        val networkGenerationChange: String?,          // e.g., "5G → 2G"
+        val lacTacChanged: Boolean,
+        val operatorChanged: Boolean,
+        val isRoaming: Boolean,
+
+        // Signal Analysis
+        val signalDeltaDbm: Int,                       // Change in signal strength
+        val signalSpikeDetected: Boolean,
+        val currentSignalDbm: Int,
+        val signalQuality: String                      // "Excellent", "Good", "Fair", "Poor"
     )
     
     /**
@@ -373,6 +444,8 @@ class CellularMonitor(private val context: Context) {
         _seenCellTowers.value = emptyList()
         eventHistory.clear()
         _cellularEvents.value = emptyList()
+        downgradeHistory.clear()
+        lastOperator = null
         // Don't clear trusted cells - keep learning
     }
     
@@ -416,6 +489,10 @@ class CellularMonitor(private val context: Context) {
         currentLatitude = null
         currentLongitude = null
         estimatedMovementSpeed = 0.0
+
+        // Clear downgrade tracking
+        downgradeHistory.clear()
+        lastOperator = null
 
         // Clear status
         _cellStatus.value = null
@@ -532,92 +609,121 @@ class CellularMonitor(private val context: Context) {
             return
         }
 
+        // Build comprehensive analysis using enrichment functions
+        val analysis = buildCellularAnalysis(current, previous)
+
         val contributingFactors = mutableListOf<String>()
         var totalScore = 0
 
         val mccMnc = "${current.mcc}-${current.mnc}"
         val timeSinceLastSnapshot = current.timestamp - previous.timestamp
 
-        // BUG FIX: Only consider user stationary if we have RECENT location data.
-        // If GPS is stale/unavailable, assume user MIGHT be moving (benefit of the doubt).
-        val hasRecentLocation = hasRecentLocationData()
-        val isStationary = hasRecentLocation && estimatedMovementSpeed < MOVEMENT_SPEED_THRESHOLD
+        // Use enriched movement analysis instead of simple threshold
+        val isStationary = analysis.movementType == MovementType.STATIONARY ||
+            analysis.movementType == MovementType.WALKING
+        val currentCellTrusted = analysis.cellTrustScore >= 60
 
-        val currentCellTrusted = isCellTrusted(current.cellId?.toString())
-        
         // 1. CRITICAL: Suspicious MCC/MNC - always flag
         if (mccMnc in SUSPICIOUS_MCC_MNC) {
+            val enrichedFactors = buildCellularContributingFactors(analysis) + listOf(
+                "Test network MCC/MNC detected",
+                "Network: $mccMnc"
+            )
             reportAnomalyImproved(
                 type = AnomalyType.SUSPICIOUS_NETWORK,
                 description = "Connected to suspicious test network",
-                technicalDetails = "MCC/MNC $mccMnc is a known test/development network identifier commonly used by IMSI catchers",
-                contributingFactors = listOf("Test network MCC/MNC detected", "Network: $mccMnc"),
+                technicalDetails = buildCellularTechnicalDetails(analysis, current, previous),
+                contributingFactors = enrichedFactors,
                 confidence = AnomalyConfidence.CRITICAL,
                 current = current,
-                previous = previous
+                previous = previous,
+                analysis = analysis
             )
             return // Don't analyze further - this is definitive
         }
-        
-        // 2. HIGH: Encryption downgrade to 2G
-        if (isEncryptionDowngrade(previous.networkType, current.networkType)) {
-            contributingFactors.add("Encryption downgrade: ${getNetworkTypeName(previous.networkType)} → ${getNetworkTypeName(current.networkType)}")
+
+        // 2. HIGH: Encryption downgrade to 2G - now with IMSI catcher signature detection
+        if (analysis.encryptionDowngraded && analysis.currentEncryption.ordinal >= EncryptionStrength.WEAK.ordinal) {
+            contributingFactors.add("Encryption downgrade: ${analysis.previousEncryption?.displayName} → ${analysis.currentEncryption.displayName}")
             totalScore += AnomalyType.ENCRYPTION_DOWNGRADE.baseScore
-            
-            // Additional factors that increase suspicion
-            if (isStationary) {
-                contributingFactors.add("Device is stationary")
+
+            // Use IMSI catcher score to boost confidence
+            if (analysis.imsiCatcherScore >= 70) {
+                totalScore += 30
+                contributingFactors.add("HIGH IMSI catcher signature (${analysis.imsiCatcherScore}%)")
+            } else if (analysis.imsiCatcherScore >= 50) {
+                totalScore += 15
+                contributingFactors.add("Moderate IMSI catcher signature (${analysis.imsiCatcherScore}%)")
+            }
+
+            // Additional factors from enrichment
+            if (analysis.downgradeWithSignalSpike) {
+                contributingFactors.add("Downgrade with signal spike (+${analysis.signalDeltaDbm} dBm)")
                 totalScore += 15
             }
-            if (!currentCellTrusted) {
-                contributingFactors.add("New/unknown cell tower")
+            if (analysis.downgradeWithNewTower) {
+                contributingFactors.add("Downgrade to unknown cell tower")
                 totalScore += 10
             }
-            
-            // 2G downgrade is always at least MEDIUM
+            if (isStationary) {
+                contributingFactors.add("Device is ${analysis.movementType.displayName.lowercase()}")
+                totalScore += 15
+            }
+            if (analysis.impossibleSpeed) {
+                contributingFactors.add("Impossible movement detected (${String.format("%.0f", analysis.speedKmh)} km/h)")
+                totalScore += 20
+            }
+
+            // 2G downgrade is always at least MEDIUM, but boost based on IMSI score
             val confidence = when {
-                totalScore >= 100 -> AnomalyConfidence.CRITICAL
-                totalScore >= 85 -> AnomalyConfidence.HIGH
+                analysis.imsiCatcherScore >= 70 || totalScore >= 100 -> AnomalyConfidence.CRITICAL
+                analysis.imsiCatcherScore >= 50 || totalScore >= 85 -> AnomalyConfidence.HIGH
                 else -> AnomalyConfidence.MEDIUM
             }
-            
+
             reportAnomalyImproved(
                 type = AnomalyType.ENCRYPTION_DOWNGRADE,
-                description = "Network forced to use weaker 2G encryption",
-                technicalDetails = "Downgraded from ${getNetworkTypeName(previous.networkType)} to ${getNetworkTypeName(current.networkType)}. " +
-                    "2G networks (GSM/EDGE) use A5/1 or A5/0 encryption which is vulnerable or non-existent.",
+                description = "Network forced to use weaker encryption - IMSI catcher likelihood: ${analysis.imsiCatcherScore}%",
+                technicalDetails = buildCellularTechnicalDetails(analysis, current, previous),
                 contributingFactors = contributingFactors,
                 confidence = confidence,
                 current = current,
-                previous = previous
+                previous = previous,
+                analysis = analysis
             )
             return
         }
-        
-        // 3. Cell tower changed - check context
+
+        // 3. Cell tower changed - check context with enriched analysis
         if (current.cellId != previous.cellId && current.cellId != null) {
             // Record timeline event first
             addTimelineEvent(
                 type = if (currentCellTrusted) CellularEventType.RETURNED_TO_TRUSTED else CellularEventType.CELL_HANDOFF,
                 title = if (currentCellTrusted) "Returned to Known Cell" else "Cell Handoff",
-                description = "Cell changed: ${previous.cellId ?: "?"} → ${current.cellId}",
+                description = "Cell changed: ${previous.cellId ?: "?"} → ${current.cellId} (${analysis.movementType.displayName}, ${String.format("%.0f", analysis.distanceMeters)}m)",
                 cellId = current.cellId.toString(),
                 networkType = getNetworkTypeName(current.networkType),
                 signalStrength = current.signalStrength
             )
-            
-            // Only flag if suspicious circumstances
+
+            // Use enriched movement analysis for better detection
             if (isStationary && !currentCellTrusted) {
                 // Stationary + new cell = suspicious
-                contributingFactors.add("Cell changed while stationary")
-                contributingFactors.add("New cell tower not previously seen")
+                contributingFactors.add("Cell changed while ${analysis.movementType.displayName.lowercase()}")
+                contributingFactors.add("New cell tower (trust: ${analysis.cellTrustScore}%)")
                 totalScore += AnomalyType.STATIONARY_CELL_CHANGE.baseScore + 20
+
+                // Check for impossible movement (potential IMSI catcher mobility)
+                if (analysis.impossibleSpeed) {
+                    contributingFactors.add("IMPOSSIBLE movement: ${String.format("%.0f", analysis.speedKmh)} km/h")
+                    totalScore += 25
+                }
             } else if (isStationary && currentCellTrusted) {
                 // Stationary but returned to known cell - probably normal
                 addTimelineEvent(
                     type = CellularEventType.CELL_HANDOFF,
                     title = "Normal Handoff",
-                    description = "Switched to trusted cell ${current.cellId}",
+                    description = "Switched to trusted cell ${current.cellId} (trust: ${analysis.cellTrustScore}%)",
                     cellId = current.cellId.toString(),
                     networkType = getNetworkTypeName(current.networkType),
                     signalStrength = current.signalStrength,
@@ -625,63 +731,75 @@ class CellularMonitor(private val context: Context) {
                 )
                 // Don't report as anomaly
             } else if (!isStationary) {
-                // Moving - cell changes are expected
-                // Only log in timeline, don't report
+                // Moving - cell changes are expected, but check for impossible speed
+                if (analysis.impossibleSpeed) {
+                    contributingFactors.add("IMPOSSIBLE movement speed: ${String.format("%.0f", analysis.speedKmh)} km/h")
+                    totalScore += 30
+                }
             }
         }
-        
+
         // 4. Check for rapid cell switching
         val recentChanges = countRecentCellChanges(60_000)
         val switchThreshold = if (isStationary) RAPID_SWITCH_COUNT_WALKING else RAPID_SWITCH_COUNT_DRIVING
-        
+
         if (recentChanges > switchThreshold) {
             contributingFactors.add("$recentChanges cell changes in last minute")
-            contributingFactors.add(if (isStationary) "Device is stationary" else "Device is moving")
+            contributingFactors.add("Movement: ${analysis.movementType.displayName}")
             totalScore += AnomalyType.RAPID_CELL_SWITCHING.baseScore
-            
+
             if (isStationary) {
                 totalScore += 25 // Much more suspicious if not moving
             }
         }
-        
-        // 5. Check for signal spike
-        val signalDelta = current.signalStrength - (previous.signalStrength)
-        if (signalDelta > SIGNAL_SPIKE_THRESHOLD && timeSinceLastSnapshot < SIGNAL_SPIKE_TIME_WINDOW) {
-            contributingFactors.add("Signal spiked +${signalDelta}dBm in ${timeSinceLastSnapshot/1000}s")
+
+        // 5. Check for signal spike - now with enriched context
+        if (analysis.signalSpikeDetected) {
+            contributingFactors.add("Signal spiked +${analysis.signalDeltaDbm}dBm in ${timeSinceLastSnapshot/1000}s")
             totalScore += AnomalyType.SIGNAL_SPIKE.baseScore
-            
+
             // More suspicious if combined with cell change
             if (current.cellId != previous.cellId) {
                 contributingFactors.add("Combined with cell tower change")
                 totalScore += 15
             }
         }
-        
-        // 6. Unknown cell in familiar area
-        if (!currentCellTrusted && isInFamiliarArea()) {
-            contributingFactors.add("Unknown cell tower in familiar location")
+
+        // 6. Unknown cell in familiar area - use enriched analysis
+        if (!currentCellTrusted && analysis.isInFamiliarArea) {
+            contributingFactors.add("Unknown cell (trust: ${analysis.cellTrustScore}%) in familiar area (${analysis.nearbyTrustedCells} trusted cells nearby)")
             totalScore += AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA.baseScore
         }
-        
+
         // 7. LAC/TAC anomaly
-        if (hasLacTacAnomaly(previous, current)) {
+        if (analysis.lacTacChanged) {
             contributingFactors.add("Location area code changed without cell change")
             totalScore += AnomalyType.LAC_TAC_ANOMALY.baseScore
         }
-        
+
+        // 8. NEW: Check for operator change
+        if (analysis.operatorChanged) {
+            contributingFactors.add("Carrier/operator changed unexpectedly")
+            totalScore += 20
+        }
+
         // Determine if we should report based on total score and factors
         if (contributingFactors.isNotEmpty() && totalScore >= 50) {
+            // Use both factor count and IMSI score for confidence
             val confidence = when {
-                contributingFactors.size >= 4 -> AnomalyConfidence.CRITICAL
+                analysis.imsiCatcherScore >= 70 -> AnomalyConfidence.CRITICAL
+                contributingFactors.size >= 4 || analysis.imsiCatcherScore >= 50 -> AnomalyConfidence.HIGH
                 contributingFactors.size >= 3 -> AnomalyConfidence.HIGH
                 contributingFactors.size >= 2 -> AnomalyConfidence.MEDIUM
                 else -> AnomalyConfidence.LOW
             }
-            
+
             // Only report if confidence is at least MEDIUM, unless score is very high
             if (confidence.ordinal >= AnomalyConfidence.MEDIUM.ordinal || totalScore >= 70) {
                 val primaryType = when {
-                    contributingFactors.any { it.contains("stationary", ignoreCase = true) && it.contains("cell", ignoreCase = true) } ->
+                    analysis.impossibleSpeed -> AnomalyType.CELL_TOWER_CHANGE // Likely spoofing/IMSI catcher
+                    contributingFactors.any { it.contains("stationary", ignoreCase = true) || it.contains("walking", ignoreCase = true) } &&
+                    contributingFactors.any { it.contains("cell", ignoreCase = true) } ->
                         AnomalyType.STATIONARY_CELL_CHANGE
                     contributingFactors.any { it.contains("rapid", ignoreCase = true) || it.contains("changes in last", ignoreCase = true) } ->
                         AnomalyType.RAPID_CELL_SWITCHING
@@ -691,22 +809,23 @@ class CellularMonitor(private val context: Context) {
                         AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA
                     else -> AnomalyType.CELL_TOWER_CHANGE
                 }
-                
+
                 reportAnomalyImproved(
                     type = primaryType,
-                    description = "Multiple suspicious indicators detected",
-                    technicalDetails = contributingFactors.joinToString("; "),
+                    description = "Multiple suspicious indicators detected - IMSI likelihood: ${analysis.imsiCatcherScore}%",
+                    technicalDetails = buildCellularTechnicalDetails(analysis, current, previous),
                     contributingFactors = contributingFactors,
                     confidence = confidence,
                     current = current,
-                    previous = previous
+                    previous = previous,
+                    analysis = analysis
                 )
             } else {
                 // Low confidence - just log to timeline
                 addTimelineEvent(
                     type = CellularEventType.CELL_HANDOFF,
                     title = "Cell Activity",
-                    description = contributingFactors.firstOrNull() ?: "Cell network change",
+                    description = "${contributingFactors.firstOrNull() ?: "Cell network change"} (IMSI: ${analysis.imsiCatcherScore}%)",
                     cellId = current.cellId?.toString(),
                     networkType = getNetworkTypeName(current.networkType),
                     signalStrength = current.signalStrength,
@@ -723,7 +842,8 @@ class CellularMonitor(private val context: Context) {
         contributingFactors: List<String>,
         confidence: AnomalyConfidence,
         current: CellSnapshot,
-        previous: CellSnapshot
+        previous: CellSnapshot,
+        analysis: CellularAnomalyAnalysis? = null
     ) {
         val now = System.currentTimeMillis()
         val lastTime = lastAnomalyTimes[type] ?: 0
@@ -734,20 +854,37 @@ class CellularMonitor(private val context: Context) {
         }
         lastAnomalyTimes[type] = now
         lastAnyAnomalyTime = now // Update global cooldown
-        
-        // Calculate severity based on confidence and base score
-        val severity = when (confidence) {
-            AnomalyConfidence.CRITICAL -> ThreatLevel.CRITICAL
-            AnomalyConfidence.HIGH -> ThreatLevel.HIGH
-            AnomalyConfidence.MEDIUM -> ThreatLevel.MEDIUM
-            AnomalyConfidence.LOW -> ThreatLevel.LOW
+
+        // Calculate severity based on confidence, base score, and IMSI catcher score
+        val severity = when {
+            analysis?.imsiCatcherScore ?: 0 >= 70 -> ThreatLevel.CRITICAL
+            confidence == AnomalyConfidence.CRITICAL -> ThreatLevel.CRITICAL
+            analysis?.imsiCatcherScore ?: 0 >= 50 -> ThreatLevel.HIGH
+            confidence == AnomalyConfidence.HIGH -> ThreatLevel.HIGH
+            confidence == AnomalyConfidence.MEDIUM -> ThreatLevel.MEDIUM
+            else -> ThreatLevel.LOW
         }
-        
+
+        // Build enriched description if analysis is available
+        val enrichedDescription = if (analysis != null) {
+            buildString {
+                append(description)
+                if (analysis.impossibleSpeed) {
+                    append(" | IMPOSSIBLE MOVEMENT: ${String.format("%.0f", analysis.speedKmh)} km/h")
+                }
+                if (analysis.downgradeWithSignalSpike) {
+                    append(" | Downgrade + Signal Spike")
+                }
+            }
+        } else {
+            description
+        }
+
         val anomaly = CellularAnomaly(
             type = type,
             severity = severity,
             confidence = confidence,
-            description = description,
+            description = enrichedDescription,
             technicalDetails = technicalDetails,
             cellId = current.cellId?.toInt(),
             previousCellId = previous.cellId?.toInt(),
@@ -760,23 +897,31 @@ class CellularMonitor(private val context: Context) {
             longitude = currentLongitude,
             contributingFactors = contributingFactors
         )
-        
+
         detectedAnomalies.add(anomaly)
         _anomalies.value = detectedAnomalies.toList()
-        
-        // Add to timeline
+
+        // Add to timeline with enriched info
+        val timelineTitle = if (analysis != null && analysis.imsiCatcherScore >= 50) {
+            "${type.emoji} ${type.displayName} (IMSI: ${analysis.imsiCatcherScore}%)"
+        } else {
+            "${type.emoji} ${type.displayName}"
+        }
+
         addTimelineEvent(
             type = CellularEventType.ANOMALY_DETECTED,
-            title = "${type.emoji} ${type.displayName}",
-            description = description,
+            title = timelineTitle,
+            description = enrichedDescription,
             cellId = current.cellId?.toString(),
             networkType = getNetworkTypeName(current.networkType),
             signalStrength = current.signalStrength,
             isAnomaly = true,
             threatLevel = severity
         )
-        
-        Log.w(TAG, "ANOMALY [${confidence.displayName}]: ${type.displayName} - $description")
+
+        // Enhanced logging with IMSI catcher score
+        val imsiInfo = analysis?.let { " | IMSI Score: ${it.imsiCatcherScore}%" } ?: ""
+        Log.w(TAG, "ANOMALY [${confidence.displayName}]: ${type.displayName} - $description$imsiInfo")
     }
     
     private fun addTimelineEvent(
@@ -1126,6 +1271,418 @@ class CellularMonitor(private val context: Context) {
             .toList()
     }
     
+    // ==================== ENRICHMENT ANALYSIS FUNCTIONS ====================
+
+    /**
+     * Calculate the Haversine distance between two lat/lon points in meters.
+     * Uses the spherical law of cosines for accuracy on Earth's surface.
+     */
+    private fun haversineDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadiusMeters = 6_371_000.0 // Earth's radius in meters
+
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+
+        return earthRadiusMeters * c
+    }
+
+    /**
+     * Infer movement type from speed in km/h
+     */
+    private fun inferMovementType(speedKmh: Double): MovementType {
+        return when {
+            speedKmh < MovementType.STATIONARY.maxSpeedKmh -> MovementType.STATIONARY
+            speedKmh < MovementType.WALKING.maxSpeedKmh -> MovementType.WALKING
+            speedKmh < MovementType.RUNNING.maxSpeedKmh -> MovementType.RUNNING
+            speedKmh < MovementType.CYCLING.maxSpeedKmh -> MovementType.CYCLING
+            speedKmh < MovementType.VEHICLE.maxSpeedKmh -> MovementType.VEHICLE
+            speedKmh < MovementType.HIGH_SPEED_VEHICLE.maxSpeedKmh -> MovementType.HIGH_SPEED_VEHICLE
+            else -> MovementType.IMPOSSIBLE
+        }
+    }
+
+    /**
+     * Get encryption strength for a network generation
+     */
+    private fun getEncryptionStrength(networkType: Int): EncryptionStrength {
+        val gen = getNetworkGeneration(networkType)
+        return when (gen) {
+            5, 4 -> EncryptionStrength.STRONG
+            3 -> EncryptionStrength.MODERATE
+            2 -> EncryptionStrength.WEAK // Could be NONE depending on A5/0 vs A5/1
+            else -> EncryptionStrength.NONE
+        }
+    }
+
+    /**
+     * Get a human-readable network generation name
+     */
+    private fun getNetworkGenerationName(networkType: Int): String {
+        return when (getNetworkGeneration(networkType)) {
+            5 -> "5G"
+            4 -> "4G"
+            3 -> "3G"
+            2 -> "2G"
+            else -> "Unknown"
+        }
+    }
+
+    /**
+     * Track the encryption downgrade chain over time
+     */
+    private fun trackDowngradeChain(networkType: Int) {
+        val genName = getNetworkGenerationName(networkType)
+        val now = System.currentTimeMillis()
+
+        // Remove old entries (older than 5 minutes)
+        val cutoff = now - 300_000
+        downgradeHistory.removeAll { it.first < cutoff }
+
+        // Add current
+        if (downgradeHistory.isEmpty() || downgradeHistory.last().second != genName) {
+            downgradeHistory.add(now to genName)
+            if (downgradeHistory.size > maxDowngradeHistorySize) {
+                downgradeHistory.removeAt(0)
+            }
+        }
+    }
+
+    /**
+     * Get the recent downgrade chain (e.g., ["5G", "4G", "3G", "2G"])
+     */
+    private fun getRecentDowngradeChain(): List<String> {
+        return downgradeHistory.map { it.second }
+    }
+
+    /**
+     * Check if there's an IMSI catcher signature in the downgrade pattern
+     * Returns score 0-100
+     */
+    private fun calculateImsiCatcherScore(
+        analysis: CellularAnomalyAnalysis
+    ): Int {
+        var score = 0
+
+        // Downgrade chain analysis - progressive downgrade is highly suspicious
+        val chain = analysis.encryptionDowngradeChain
+        if (chain.size >= 2) {
+            val hasProgressiveDowngrade = chain.zipWithNext().all { (prev, curr) ->
+                val prevGen = when (prev) { "5G" -> 5; "4G" -> 4; "3G" -> 3; "2G" -> 2; else -> 0 }
+                val currGen = when (curr) { "5G" -> 5; "4G" -> 4; "3G" -> 3; "2G" -> 2; else -> 0 }
+                currGen < prevGen || currGen == prevGen
+            }
+            if (hasProgressiveDowngrade && chain.last() == "2G") {
+                score += 30 // Clear downgrade pattern ending in 2G
+            }
+        }
+
+        // Ended on 2G specifically
+        if (analysis.currentEncryption == EncryptionStrength.WEAK ||
+            analysis.currentEncryption == EncryptionStrength.NONE) {
+            score += 25
+        }
+
+        // Downgrade with signal spike - classic IMSI catcher behavior
+        if (analysis.downgradeWithSignalSpike) {
+            score += 20
+        }
+
+        // Downgrade with new/unknown tower
+        if (analysis.downgradeWithNewTower) {
+            score += 15
+        }
+
+        // User was stationary
+        if (analysis.movementType == MovementType.STATIONARY) {
+            score += 10
+        }
+
+        // Low cell trust
+        if (analysis.cellTrustScore < 30) {
+            score += 10
+        }
+
+        // Impossible movement (potential spoofing)
+        if (analysis.impossibleSpeed) {
+            score += 15
+        }
+
+        return score.coerceIn(0, 100)
+    }
+
+    /**
+     * Count trusted cells near a location
+     */
+    private fun countNearbyTrustedCells(lat: Double?, lon: Double?): Int {
+        if (lat == null || lon == null) return 0
+
+        return trustedCells.values.count { cell ->
+            cell.seenCount >= TRUSTED_CELL_THRESHOLD &&
+            cell.locations.any { (cellLat, cellLon) ->
+                val distance = haversineDistanceMeters(lat, lon, cellLat, cellLon)
+                distance < 500 // Within 500 meters
+            }
+        }
+    }
+
+    /**
+     * Get signal quality description
+     */
+    private fun getSignalQuality(signalDbm: Int): String {
+        return when {
+            signalDbm >= -70 -> "Excellent"
+            signalDbm >= -85 -> "Good"
+            signalDbm >= -100 -> "Fair"
+            signalDbm >= -110 -> "Poor"
+            else -> "Very Poor"
+        }
+    }
+
+    /**
+     * Build comprehensive cellular analysis from current and previous snapshots
+     */
+    private fun buildCellularAnalysis(
+        current: CellSnapshot,
+        previous: CellSnapshot?
+    ): CellularAnomalyAnalysis {
+        val now = System.currentTimeMillis()
+
+        // Movement analysis using Haversine
+        var distanceMeters = 0.0
+        var speedKmh = 0.0
+        var timeBetweenMs = 0L
+
+        if (previous != null && current.latitude != null && current.longitude != null &&
+            previous.latitude != null && previous.longitude != null) {
+            distanceMeters = haversineDistanceMeters(
+                previous.latitude, previous.longitude,
+                current.latitude, current.longitude
+            )
+            timeBetweenMs = current.timestamp - previous.timestamp
+            if (timeBetweenMs > 0) {
+                val hours = timeBetweenMs / 3_600_000.0
+                speedKmh = (distanceMeters / 1000.0) / hours
+            }
+        }
+
+        val movementType = inferMovementType(speedKmh)
+        val impossibleSpeed = movementType == MovementType.IMPOSSIBLE
+
+        // Encryption analysis
+        val currentEncryption = getEncryptionStrength(current.networkType)
+        val previousEncryption = previous?.let { getEncryptionStrength(it.networkType) }
+        val encryptionDowngraded = previousEncryption != null &&
+            currentEncryption.ordinal > previousEncryption.ordinal
+
+        // Track and get downgrade chain
+        trackDowngradeChain(current.networkType)
+        val chain = getRecentDowngradeChain()
+
+        // Signal analysis
+        val signalDelta = previous?.let { current.signalStrength - it.signalStrength } ?: 0
+        val signalSpiked = signalDelta > SIGNAL_SPIKE_THRESHOLD &&
+            timeBetweenMs < SIGNAL_SPIKE_TIME_WINDOW
+
+        // Cell trust analysis
+        val cellIdStr = current.cellId?.toString()
+        val trustedInfo = cellIdStr?.let { trustedCells[it] }
+        val cellTrustScore = when {
+            trustedInfo == null -> 0
+            trustedInfo.seenCount >= 20 -> 100
+            trustedInfo.seenCount >= 10 -> 80
+            trustedInfo.seenCount >= 5 -> 60
+            trustedInfo.seenCount >= 2 -> 30
+            else -> 10
+        }
+        val cellSeenCount = trustedInfo?.seenCount ?: 0
+        val cellAgeSeconds = trustedInfo?.let { (now - it.firstSeen) / 1000 } ?: 0
+
+        // Area familiarity
+        val inFamiliarArea = isInFamiliarArea()
+        val nearbyTrusted = countNearbyTrustedCells(current.latitude, current.longitude)
+
+        // Network context
+        val networkGenChange = if (previous != null && getNetworkGeneration(previous.networkType) != getNetworkGeneration(current.networkType)) {
+            "${getNetworkGenerationName(previous.networkType)} → ${getNetworkGenerationName(current.networkType)}"
+        } else null
+
+        val lacTacChanged = hasLacTacAnomaly(previous ?: current, current)
+        val currentOperator = telephonyManager.networkOperatorName
+        val operatorChanged = lastOperator != null && lastOperator != currentOperator
+        lastOperator = currentOperator
+
+        // Vulnerability note
+        val vulnerabilityNote = when (currentEncryption) {
+            EncryptionStrength.NONE -> "WARNING: No encryption - all communications are in plaintext"
+            EncryptionStrength.WEAK -> "A5/1 cipher can be cracked in real-time with commodity hardware"
+            EncryptionStrength.MODERATE -> "KASUMI cipher has known weaknesses but requires significant resources"
+            EncryptionStrength.STRONG -> null
+        }
+
+        // Build initial analysis to calculate IMSI score
+        val prelimAnalysis = CellularAnomalyAnalysis(
+            encryptionDowngradeChain = chain,
+            downgradeWithSignalSpike = encryptionDowngraded && signalSpiked,
+            downgradeWithNewTower = encryptionDowngraded && cellTrustScore < 30,
+            imsiCatcherScore = 0, // Will be calculated
+            distanceMeters = distanceMeters,
+            speedKmh = speedKmh,
+            movementType = movementType,
+            impossibleSpeed = impossibleSpeed,
+            timeBetweenSamplesMs = timeBetweenMs,
+            cellTrustScore = cellTrustScore,
+            cellSeenCount = cellSeenCount,
+            isInFamiliarArea = inFamiliarArea,
+            nearbyTrustedCells = nearbyTrusted,
+            cellAgeSeconds = cellAgeSeconds,
+            currentEncryption = currentEncryption,
+            previousEncryption = previousEncryption,
+            encryptionDowngraded = encryptionDowngraded,
+            vulnerabilityNote = vulnerabilityNote,
+            networkGenerationChange = networkGenChange,
+            lacTacChanged = lacTacChanged,
+            operatorChanged = operatorChanged,
+            isRoaming = telephonyManager.isNetworkRoaming,
+            signalDeltaDbm = signalDelta,
+            signalSpikeDetected = signalSpiked,
+            currentSignalDbm = current.signalStrength,
+            signalQuality = getSignalQuality(current.signalStrength)
+        )
+
+        // Calculate IMSI catcher score
+        val imsiScore = calculateImsiCatcherScore(prelimAnalysis)
+
+        return prelimAnalysis.copy(imsiCatcherScore = imsiScore)
+    }
+
+    /**
+     * Build enriched technical details string from analysis
+     */
+    private fun buildCellularTechnicalDetails(
+        analysis: CellularAnomalyAnalysis,
+        current: CellSnapshot,
+        previous: CellSnapshot?
+    ): String {
+        val parts = mutableListOf<String>()
+
+        // IMSI Catcher likelihood
+        parts.add("IMSI Catcher Likelihood: ${analysis.imsiCatcherScore}%")
+
+        // Encryption details
+        parts.add("Encryption: ${analysis.currentEncryption.displayName}")
+        if (analysis.encryptionDowngraded && analysis.previousEncryption != null) {
+            parts.add("Downgrade: ${analysis.previousEncryption.displayName} → ${analysis.currentEncryption.displayName}")
+        }
+        analysis.vulnerabilityNote?.let { parts.add("⚠️ $it") }
+
+        // Movement analysis
+        if (analysis.distanceMeters > 0) {
+            parts.add("Movement: ${String.format("%.1f", analysis.distanceMeters)}m at ${String.format("%.1f", analysis.speedKmh)} km/h (${analysis.movementType.displayName})")
+        }
+        if (analysis.impossibleSpeed) {
+            parts.add("⚠️ IMPOSSIBLE SPEED - potential location spoofing or IMSI catcher mobility")
+        }
+
+        // Cell trust
+        parts.add("Cell Trust: ${analysis.cellTrustScore}% (seen ${analysis.cellSeenCount} times)")
+        if (analysis.cellAgeSeconds > 0) {
+            val ageMinutes = analysis.cellAgeSeconds / 60
+            parts.add("Cell age: ${ageMinutes}min in database")
+        }
+
+        // Network context
+        analysis.networkGenerationChange?.let { parts.add("Network change: $it") }
+        if (analysis.lacTacChanged) parts.add("⚠️ LAC/TAC changed without cell change")
+        if (analysis.operatorChanged) parts.add("⚠️ Operator changed")
+        if (analysis.isRoaming) parts.add("Currently roaming")
+
+        // Signal
+        parts.add("Signal: ${analysis.currentSignalDbm} dBm (${analysis.signalQuality})")
+        if (analysis.signalSpikeDetected) {
+            parts.add("⚠️ Signal spiked +${analysis.signalDeltaDbm} dBm")
+        }
+
+        // Downgrade chain
+        if (analysis.encryptionDowngradeChain.size > 1) {
+            parts.add("Recent network chain: ${analysis.encryptionDowngradeChain.joinToString(" → ")}")
+        }
+
+        return parts.joinToString("\n")
+    }
+
+    /**
+     * Build contributing factors list from analysis
+     */
+    private fun buildCellularContributingFactors(
+        analysis: CellularAnomalyAnalysis
+    ): List<String> {
+        val factors = mutableListOf<String>()
+
+        if (analysis.encryptionDowngraded) {
+            factors.add("Encryption downgraded to ${analysis.currentEncryption.displayName}")
+        }
+
+        if (analysis.downgradeWithSignalSpike) {
+            factors.add("Downgrade coincided with signal spike (+${analysis.signalDeltaDbm} dBm)")
+        }
+
+        if (analysis.downgradeWithNewTower) {
+            factors.add("Downgrade to unknown/untrusted cell tower")
+        }
+
+        if (analysis.impossibleSpeed) {
+            factors.add("Impossible movement speed (${String.format("%.0f", analysis.speedKmh)} km/h)")
+        }
+
+        if (analysis.movementType == MovementType.STATIONARY && analysis.cellTrustScore < 30) {
+            factors.add("Cell changed while stationary to untrusted tower")
+        }
+
+        if (analysis.cellTrustScore < 20) {
+            factors.add("Very low cell trust score (${analysis.cellTrustScore}%)")
+        }
+
+        if (!analysis.isInFamiliarArea && analysis.nearbyTrustedCells == 0) {
+            factors.add("In unfamiliar area with no trusted cells nearby")
+        }
+
+        if (analysis.lacTacChanged) {
+            factors.add("Location area code changed without cell change (unusual)")
+        }
+
+        if (analysis.operatorChanged) {
+            factors.add("Carrier/operator changed unexpectedly")
+        }
+
+        if (analysis.signalSpikeDetected) {
+            factors.add("Sudden signal spike detected")
+        }
+
+        analysis.vulnerabilityNote?.let {
+            factors.add("Vulnerability: $it")
+        }
+
+        // IMSI catcher chain detection
+        val chain = analysis.encryptionDowngradeChain
+        if (chain.size >= 3 && chain.last() == "2G") {
+            factors.add("Progressive downgrade pattern detected: ${chain.joinToString(" → ")}")
+        }
+
+        if (analysis.imsiCatcherScore >= 70) {
+            factors.add("HIGH IMSI catcher signature score: ${analysis.imsiCatcherScore}%")
+        } else if (analysis.imsiCatcherScore >= 50) {
+            factors.add("Moderate IMSI catcher signature score: ${analysis.imsiCatcherScore}%")
+        }
+
+        return factors
+    }
+
     /**
      * Convert a cellular anomaly to a Detection for storage
      */

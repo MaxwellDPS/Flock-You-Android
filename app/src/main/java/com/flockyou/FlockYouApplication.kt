@@ -3,6 +3,8 @@ package com.flockyou
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.flockyou.ai.DetectionAnalyzer
+import com.flockyou.data.AiSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.repository.OuiRepository
 import com.flockyou.worker.OuiUpdateWorker
@@ -26,6 +28,12 @@ class FlockYouApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var ouiRepository: OuiRepository
 
+    @Inject
+    lateinit var aiSettingsRepository: AiSettingsRepository
+
+    @Inject
+    lateinit var detectionAnalyzer: DetectionAnalyzer
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val workManagerConfiguration: Configuration
@@ -39,6 +47,11 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // Initialize OUI database updates
         applicationScope.launch {
             initializeOuiUpdates()
+        }
+
+        // Initialize AI model if enabled
+        applicationScope.launch {
+            initializeAiModel()
         }
     }
 
@@ -57,6 +70,15 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // If database is empty, trigger immediate download
         if (!ouiRepository.hasData()) {
             OuiUpdateWorker.triggerImmediateUpdate(this)
+        }
+    }
+
+    private suspend fun initializeAiModel() {
+        val settings = aiSettingsRepository.settings.first()
+
+        // Initialize the AI model if AI analysis is enabled
+        if (settings.enabled) {
+            detectionAnalyzer.initializeModel()
         }
     }
 }

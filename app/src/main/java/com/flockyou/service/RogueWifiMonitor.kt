@@ -174,7 +174,62 @@ class RogueWifiMonitor(private val context: Context) {
         val timestamp: Long,
         val latitude: Double,
         val longitude: Double,
-        val rssi: Int
+        val rssi: Int,
+        val userLatitude: Double? = null,  // User's location at time of sighting
+        val userLongitude: Double? = null
+    )
+
+    /**
+     * Time pattern classification for network appearances
+     */
+    enum class TimePattern(val displayName: String) {
+        RANDOM("Random"),
+        PERIODIC("Periodic"),
+        CORRELATED("Correlated with user"),
+        UNKNOWN("Unknown")
+    }
+
+    /**
+     * Signal trend classification
+     */
+    enum class SignalTrend(val displayName: String) {
+        STABLE("Stable"),
+        APPROACHING("Approaching"),
+        DEPARTING("Departing"),
+        ERRATIC("Erratic")
+    }
+
+    /**
+     * Comprehensive following network analysis
+     */
+    data class FollowingNetworkAnalysis(
+        // Temporal Patterns
+        val sightingCount: Int,
+        val distinctLocations: Int,
+        val avgTimeBetweenSightingsMs: Long,
+        val timePattern: TimePattern,
+        val trackingDurationMs: Long,
+
+        // Movement Correlation
+        val pathCorrelation: Float,              // 0.0-1.0, how closely network follows user path
+        val leadsUser: Boolean,                   // Network appears before user arrives at location
+        val lagTimeMs: Long?,                     // Average time delay behind user
+
+        // Signal Analysis
+        val signalConsistency: Float,             // 0-1, how consistent is signal strength
+        val signalTrend: SignalTrend,
+        val avgSignalStrength: Int,
+        val signalVariance: Float,
+
+        // Device Classification
+        val likelyMobile: Boolean,                // Signal pattern suggests mobile device
+        val vehicleMounted: Boolean,              // Large movements suggest vehicle
+        val possibleFootSurveillance: Boolean,    // Slower, closer movements
+
+        // Risk Score
+        val followingConfidence: Float,           // 0-100%
+        val followingDurationMs: Long,
+        val riskIndicators: List<String>
     )
 
     data class WifiAnomaly(
@@ -361,11 +416,19 @@ class RogueWifiMonitor(private val context: Context) {
                 bssidsForSsid.add(bssid)
             }
 
-            // Track networks for following detection
-            currentLatitude?.let { lat ->
-                currentLongitude?.let { lon ->
+            // Track networks for following detection - include user's location at time of sighting
+            currentLatitude?.let { userLat ->
+                currentLongitude?.let { userLon ->
                     val sightings = followingNetworks.getOrPut(bssid) { mutableListOf() }
-                    sightings.add(NetworkSighting(now, lat, lon, result.level))
+                    // Network location is approximated by user location (we're detecting the network nearby)
+                    sightings.add(NetworkSighting(
+                        timestamp = now,
+                        latitude = userLat,  // Network seen at user's location
+                        longitude = userLon,
+                        rssi = result.level,
+                        userLatitude = userLat,
+                        userLongitude = userLon
+                    ))
                     // Keep only recent sightings
                     sightings.removeAll { now - it.timestamp > TRACKING_DURATION_MS }
                 }
@@ -705,36 +768,41 @@ class RogueWifiMonitor(private val context: Context) {
         for ((bssid, sightings) in followingNetworks) {
             if (sightings.size < 3) continue
 
-            // Check if network has been seen at multiple distinct locations
-            val distinctLocations = mutableListOf<Pair<Double, Double>>()
-            for (sighting in sightings) {
-                val isDistinct = distinctLocations.none { existing ->
-                    kotlin.math.abs(sighting.latitude - existing.first) < FOLLOWING_LOCATION_THRESHOLD &&
-                    kotlin.math.abs(sighting.longitude - existing.second) < FOLLOWING_LOCATION_THRESHOLD
-                }
-                if (isDistinct) {
-                    distinctLocations.add(sighting.latitude to sighting.longitude)
-                }
-            }
+            // Build enriched following analysis
+            val analysis = buildFollowingAnalysis(bssid, sightings)
 
-            if (distinctLocations.size >= 3) {
-                // Network seen at 3+ distinct locations = following
+            // Only report if we have significant following indicators
+            if (analysis.distinctLocations >= 3 || analysis.followingConfidence >= 50) {
                 val history = networkHistory[bssid]
+
+                // Determine confidence based on enriched analysis
+                val confidence = when {
+                    analysis.followingConfidence >= 80 -> AnomalyConfidence.CRITICAL
+                    analysis.followingConfidence >= 60 -> AnomalyConfidence.HIGH
+                    analysis.followingConfidence >= 40 -> AnomalyConfidence.MEDIUM
+                    else -> AnomalyConfidence.LOW
+                }
+
+                // Build enriched description
+                val description = buildString {
+                    append("Network appears to be following your movement")
+                    if (analysis.vehicleMounted) {
+                        append(" (vehicle-mounted)")
+                    } else if (analysis.possibleFootSurveillance) {
+                        append(" (possible foot surveillance)")
+                    }
+                    append(" - confidence: ${String.format("%.0f", analysis.followingConfidence)}%")
+                }
 
                 reportAnomaly(
                     type = WifiAnomalyType.FOLLOWING_NETWORK,
-                    description = "Network appears to be following your movement",
-                    technicalDetails = "BSSID $bssid has been detected at ${distinctLocations.size} " +
-                        "distinct locations over the past ${TRACKING_DURATION_MS / 60000} minutes",
+                    description = description,
+                    technicalDetails = buildFollowingTechnicalDetails(analysis),
                     ssid = history?.ssid,
                     bssid = bssid,
                     rssi = sightings.lastOrNull()?.rssi,
-                    confidence = AnomalyConfidence.HIGH,
-                    contributingFactors = listOf(
-                        "Seen at ${distinctLocations.size} locations",
-                        "Over ${sightings.size} sightings",
-                        "Tracking duration: ${(now - sightings.first().timestamp) / 1000}s"
-                    )
+                    confidence = confidence,
+                    contributingFactors = buildFollowingContributingFactors(analysis)
                 )
 
                 // Clear to avoid repeated alerts
@@ -951,6 +1019,299 @@ class RogueWifiMonitor(private val context: Context) {
 
     fun destroy() {
         stopMonitoring()
+    }
+
+    // ==================== ENRICHMENT ANALYSIS FUNCTIONS ====================
+
+    /**
+     * Calculate Haversine distance between two points in meters
+     */
+    private fun haversineDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadiusMeters = 6_371_000.0
+
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+
+        return earthRadiusMeters * c
+    }
+
+    /**
+     * Detect time pattern in sightings
+     */
+    private fun detectTimePattern(sightings: List<NetworkSighting>): TimePattern {
+        if (sightings.size < 3) return TimePattern.UNKNOWN
+
+        val intervals = sightings.zipWithNext { a, b -> b.timestamp - a.timestamp }
+
+        if (intervals.isEmpty()) return TimePattern.UNKNOWN
+
+        val avgInterval = intervals.average()
+        val variance = intervals.map { (it - avgInterval) * (it - avgInterval) }.average()
+        val stdDev = kotlin.math.sqrt(variance)
+
+        // Check for periodicity (low variance relative to mean)
+        val coefficientOfVariation = if (avgInterval > 0) stdDev / avgInterval else 0.0
+
+        return when {
+            coefficientOfVariation < 0.3 -> TimePattern.PERIODIC
+            coefficientOfVariation > 1.0 -> TimePattern.RANDOM
+            else -> TimePattern.CORRELATED
+        }
+    }
+
+    /**
+     * Calculate path correlation - how closely network follows user path
+     */
+    private fun calculatePathCorrelation(sightings: List<NetworkSighting>): Float {
+        if (sightings.size < 3) return 0f
+
+        // Check if network location correlates with user location
+        val sightingsWithUserLoc = sightings.filter {
+            it.userLatitude != null && it.userLongitude != null
+        }
+
+        if (sightingsWithUserLoc.size < 2) return 0f
+
+        // Calculate average distance between network and user at each sighting
+        val distances = sightingsWithUserLoc.map { sighting ->
+            haversineDistanceMeters(
+                sighting.latitude, sighting.longitude,
+                sighting.userLatitude!!, sighting.userLongitude!!
+            )
+        }
+
+        // Lower distance variance = higher correlation
+        val avgDistance = distances.average()
+        val variance = distances.map { (it - avgDistance) * (it - avgDistance) }.average()
+
+        // Normalize: 0 = no correlation, 1 = perfect correlation
+        // If average distance is consistently within 200m, that's high correlation
+        val consistentRange = avgDistance < 200 && kotlin.math.sqrt(variance) < 100
+        val moderateRange = avgDistance < 500 && kotlin.math.sqrt(variance) < 200
+
+        return when {
+            consistentRange -> 0.9f
+            moderateRange -> 0.6f
+            avgDistance < 1000 -> 0.3f
+            else -> 0.1f
+        }
+    }
+
+    /**
+     * Analyze signal trend from sightings
+     */
+    private fun analyzeSignalTrend(sightings: List<NetworkSighting>): SignalTrend {
+        if (sightings.size < 3) return SignalTrend.STABLE
+
+        val signals = sightings.map { it.rssi }
+        val firstHalf = signals.take(signals.size / 2).average()
+        val secondHalf = signals.drop(signals.size / 2).average()
+
+        val variance = signals.map { (it - signals.average()) * (it - signals.average()) }.average()
+
+        return when {
+            variance > 100 -> SignalTrend.ERRATIC
+            secondHalf - firstHalf > 10 -> SignalTrend.APPROACHING
+            firstHalf - secondHalf > 10 -> SignalTrend.DEPARTING
+            else -> SignalTrend.STABLE
+        }
+    }
+
+    /**
+     * Determine if device is likely mobile based on signal patterns
+     */
+    private fun isLikelyMobile(sightings: List<NetworkSighting>): Boolean {
+        if (sightings.size < 3) return false
+
+        // Check if network location varies significantly
+        val locations = sightings.map { it.latitude to it.longitude }
+        val centerLat = locations.map { it.first }.average()
+        val centerLon = locations.map { it.second }.average()
+
+        val maxDistance = locations.maxOfOrNull { (lat, lon) ->
+            haversineDistanceMeters(lat, lon, centerLat, centerLon)
+        } ?: 0.0
+
+        // If network has moved more than 50 meters, it's likely mobile
+        return maxDistance > 50
+    }
+
+    /**
+     * Determine if likely vehicle-mounted surveillance
+     */
+    private fun isVehicleMounted(sightings: List<NetworkSighting>): Boolean {
+        if (sightings.size < 3) return false
+
+        // Calculate speeds between sightings
+        val speeds = sightings.zipWithNext { a, b ->
+            val distance = haversineDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+            val timeHours = (b.timestamp - a.timestamp) / 3_600_000.0
+            if (timeHours > 0) distance / 1000.0 / timeHours else 0.0 // km/h
+        }
+
+        // If average speed suggests vehicle (> 20 km/h)
+        val avgSpeed = speeds.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        return avgSpeed > 20
+    }
+
+    /**
+     * Determine if likely foot surveillance (walking pace, close)
+     */
+    private fun isPossibleFootSurveillance(sightings: List<NetworkSighting>): Boolean {
+        if (sightings.size < 3) return false
+
+        // Check signal strength (foot surveillance = closer = stronger signal)
+        val avgSignal = sightings.map { it.rssi }.average()
+        val isClose = avgSignal > -60
+
+        // Check movement speed
+        val speeds = sightings.zipWithNext { a, b ->
+            val distance = haversineDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+            val timeHours = (b.timestamp - a.timestamp) / 3_600_000.0
+            if (timeHours > 0) distance / 1000.0 / timeHours else 0.0
+        }
+        val avgSpeed = speeds.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        val isWalkingPace = avgSpeed > 0 && avgSpeed < 8 // 0-8 km/h
+
+        return isClose && isWalkingPace
+    }
+
+    /**
+     * Build comprehensive following network analysis
+     */
+    private fun buildFollowingAnalysis(bssid: String, sightings: List<NetworkSighting>): FollowingNetworkAnalysis {
+        val now = System.currentTimeMillis()
+
+        // Count distinct locations
+        val distinctLocs = mutableListOf<Pair<Double, Double>>()
+        for (sighting in sightings) {
+            val isDistinct = distinctLocs.none { existing ->
+                haversineDistanceMeters(sighting.latitude, sighting.longitude, existing.first, existing.second) < 50
+            }
+            if (isDistinct) {
+                distinctLocs.add(sighting.latitude to sighting.longitude)
+            }
+        }
+
+        // Time analysis
+        val trackingDuration = if (sightings.isNotEmpty()) {
+            sightings.last().timestamp - sightings.first().timestamp
+        } else 0L
+
+        val avgTimeBetween = if (sightings.size > 1) {
+            trackingDuration / (sightings.size - 1)
+        } else 0L
+
+        val timePattern = detectTimePattern(sightings)
+
+        // Movement correlation
+        val pathCorrelation = calculatePathCorrelation(sightings)
+
+        // Check if network leads or follows user
+        val leadsUser = false // Would need more sophisticated tracking
+        val lagTimeMs: Long? = null
+
+        // Signal analysis
+        val signals = sightings.map { it.rssi }
+        val avgSignal = signals.average().toInt()
+        val signalVariance = if (signals.isNotEmpty()) {
+            signals.map { (it - avgSignal) * (it - avgSignal) }.average().toFloat()
+        } else 0f
+
+        val signalConsistency = 1 - (kotlin.math.sqrt(signalVariance.toDouble()) / 30).coerceIn(0.0, 1.0).toFloat()
+        val signalTrend = analyzeSignalTrend(sightings)
+
+        // Device classification
+        val likelyMobile = isLikelyMobile(sightings)
+        val vehicleMounted = isVehicleMounted(sightings)
+        val footSurveillance = isPossibleFootSurveillance(sightings)
+
+        // Risk indicators
+        val riskIndicators = mutableListOf<String>()
+        if (distinctLocs.size >= 3) riskIndicators.add("Seen at ${distinctLocs.size} distinct locations")
+        if (pathCorrelation > 0.7) riskIndicators.add("High path correlation (${String.format("%.0f", pathCorrelation * 100)}%)")
+        if (likelyMobile) riskIndicators.add("Device appears to be mobile")
+        if (vehicleMounted) riskIndicators.add("Movement pattern suggests vehicle")
+        if (footSurveillance) riskIndicators.add("Pattern suggests foot surveillance (close, walking pace)")
+        if (signalTrend == SignalTrend.APPROACHING) riskIndicators.add("Signal strength increasing (approaching)")
+        if (trackingDuration > 180_000) riskIndicators.add("Tracking for ${trackingDuration / 60_000}+ minutes")
+        if (timePattern == TimePattern.CORRELATED) riskIndicators.add("Appearance pattern correlated with user movement")
+
+        // Calculate overall confidence
+        var confidence = 0f
+        confidence += distinctLocs.size * 10f
+        confidence += pathCorrelation * 30f
+        if (likelyMobile) confidence += 15f
+        if (vehicleMounted) confidence += 10f
+        if (footSurveillance) confidence += 20f
+        if (trackingDuration > 180_000) confidence += 10f
+        if (timePattern == TimePattern.CORRELATED) confidence += 15f
+
+        return FollowingNetworkAnalysis(
+            sightingCount = sightings.size,
+            distinctLocations = distinctLocs.size,
+            avgTimeBetweenSightingsMs = avgTimeBetween,
+            timePattern = timePattern,
+            trackingDurationMs = trackingDuration,
+            pathCorrelation = pathCorrelation,
+            leadsUser = leadsUser,
+            lagTimeMs = lagTimeMs,
+            signalConsistency = signalConsistency,
+            signalTrend = signalTrend,
+            avgSignalStrength = avgSignal,
+            signalVariance = signalVariance,
+            likelyMobile = likelyMobile,
+            vehicleMounted = vehicleMounted,
+            possibleFootSurveillance = footSurveillance,
+            followingConfidence = confidence.coerceIn(0f, 100f),
+            followingDurationMs = trackingDuration,
+            riskIndicators = riskIndicators
+        )
+    }
+
+    /**
+     * Build enriched technical details from following analysis
+     */
+    private fun buildFollowingTechnicalDetails(analysis: FollowingNetworkAnalysis): String {
+        val parts = mutableListOf<String>()
+
+        parts.add("Following Confidence: ${String.format("%.0f", analysis.followingConfidence)}%")
+        parts.add("Sightings: ${analysis.sightingCount} at ${analysis.distinctLocations} distinct locations")
+        parts.add("Tracking Duration: ${analysis.trackingDurationMs / 1000}s")
+
+        // Movement classification
+        val deviceType = when {
+            analysis.vehicleMounted -> "Vehicle-mounted"
+            analysis.possibleFootSurveillance -> "Foot surveillance"
+            analysis.likelyMobile -> "Mobile device"
+            else -> "Stationary/Unknown"
+        }
+        parts.add("Device Classification: $deviceType")
+
+        // Path correlation
+        parts.add("Path Correlation: ${String.format("%.0f", analysis.pathCorrelation * 100)}%")
+
+        // Signal info
+        parts.add("Avg Signal: ${analysis.avgSignalStrength} dBm (${analysis.signalTrend.displayName})")
+        parts.add("Signal Consistency: ${String.format("%.0f", analysis.signalConsistency * 100)}%")
+
+        // Time pattern
+        parts.add("Time Pattern: ${analysis.timePattern.displayName}")
+
+        return parts.joinToString("\n")
+    }
+
+    /**
+     * Build contributing factors from following analysis
+     */
+    private fun buildFollowingContributingFactors(analysis: FollowingNetworkAnalysis): List<String> {
+        return analysis.riskIndicators
     }
 
     /**

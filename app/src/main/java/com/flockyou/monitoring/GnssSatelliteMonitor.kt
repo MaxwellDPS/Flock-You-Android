@@ -104,6 +104,16 @@ class GnssSatelliteMonitor(private val context: Context) {
     private val satelliteCountHistory = mutableListOf<Int>()
     private var lastClockBiasNs: Long? = null
 
+    // Enhanced tracking for enrichments
+    private val clockDriftHistory = mutableListOf<Long>()     // Accumulated drift values
+    private var cumulativeClockDriftNs: Long = 0L
+    private val constellationHistory = mutableListOf<Set<ConstellationType>>()
+    private var cn0BaselineMean: Double = 0.0
+    private var cn0BaselineStdDev: Double = 0.0
+    private var cn0BaselineCalculated: Boolean = false
+    private val maxDriftHistorySize = 50
+    private val driftJumpThresholdNs = 100_000L  // 100 microseconds
+
     // Anomaly rate limiting
     private val lastAnomalyTimes = mutableMapOf<GnssAnomalyType, Long>()
 
@@ -234,6 +244,61 @@ class GnssSatelliteMonitor(private val context: Context) {
         CONSTELLATION_LOST,
         MEASUREMENTS_AVAILABLE
     }
+
+    /**
+     * Clock drift trend classification
+     */
+    enum class DriftTrend(val displayName: String) {
+        STABLE("Stable"),
+        INCREASING("Increasing"),
+        DECREASING("Decreasing"),
+        ERRATIC("Erratic")
+    }
+
+    /**
+     * Comprehensive GNSS anomaly analysis with enriched data
+     */
+    data class GnssAnomalyAnalysis(
+        // Constellation Fingerprinting
+        val expectedConstellations: Set<ConstellationType>,
+        val observedConstellations: Set<ConstellationType>,
+        val missingConstellations: Set<ConstellationType>,
+        val unexpectedConstellation: Boolean,
+        val constellationMatchScore: Int,        // 0-100
+
+        // C/N0 Baseline Analysis
+        val historicalCn0Mean: Double,
+        val historicalCn0StdDev: Double,
+        val currentCn0Mean: Double,
+        val cn0DeviationSigmas: Double,          // How many std devs from mean
+        val cn0Anomalous: Boolean,
+        val cn0TooUniform: Boolean,              // Spoofing indicator
+        val cn0Variance: Double,
+
+        // Clock Drift Accumulation
+        val cumulativeDriftNs: Long,
+        val driftTrend: DriftTrend,
+        val driftAnomalous: Boolean,
+        val maxDriftInWindowNs: Long,
+        val driftJumpCount: Int,                 // Number of large jumps
+
+        // Satellite Geometry Analysis
+        val geometryScore: Float,                // 0-1.0, DOP-like
+        val elevationDistribution: String,       // "Normal", "Clustered", "Suspicious"
+        val azimuthCoverage: Float,              // 0-360 coverage percentage
+        val lowElevHighSignalCount: Int,         // Spoofing indicator
+
+        // Signal Anomaly Scoring
+        val uniformityScore: Float,              // 0-1.0, lower = more uniform (suspicious)
+        val signalSpikeCount: Int,
+        val signalDropCount: Int,
+
+        // Composite Spoofing Score
+        val spoofingLikelihood: Float,           // 0-100%
+        val jammingLikelihood: Float,            // 0-100%
+        val spoofingIndicators: List<String>,
+        val jammingIndicators: List<String>
+    )
 
     // ==================== Lifecycle ====================
 
@@ -470,21 +535,30 @@ class GnssSatelliteMonitor(private val context: Context) {
             multipathIndicators.add(m.multipathIndicator)
         }
 
-        // Check for clock anomalies
+        // Track clock drift accumulation for enriched analysis
         val currentBias = clock.biasNanos.toLong()
-        lastClockBiasNs?.let { prevBias ->
-            val drift = abs(currentBias - prevBias)
-            if (drift > MAX_CLOCK_DRIFT_NS) {
+        trackClockDriftAccumulation(currentBias)
+
+        // Check for immediate large clock anomalies
+        if (clockDriftHistory.isNotEmpty()) {
+            val lastDrift = clockDriftHistory.last()
+            if (abs(lastDrift) > MAX_CLOCK_DRIFT_NS) {
+                val driftTrend = analyzeDriftTrend()
                 reportAnomaly(
                     type = GnssAnomalyType.CLOCK_ANOMALY,
-                    description = "Large clock discontinuity detected",
-                    technicalDetails = "Clock drift: ${drift}ns (threshold: ${MAX_CLOCK_DRIFT_NS}ns)",
-                    confidence = AnomalyConfidence.MEDIUM,
-                    contributingFactors = listOf("Clock bias jumped ${drift / 1_000_000}ms")
+                    description = "Large clock discontinuity detected - trend: ${driftTrend.displayName}",
+                    technicalDetails = "Clock drift: ${abs(lastDrift)}ns (threshold: ${MAX_CLOCK_DRIFT_NS}ns)\n" +
+                        "Cumulative drift: ${cumulativeClockDriftNs / 1_000_000}ms\n" +
+                        "Jump count: ${countDriftJumps()}",
+                    confidence = if (driftTrend == DriftTrend.ERRATIC) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
+                    contributingFactors = listOf(
+                        "Clock bias jumped ${abs(lastDrift) / 1_000_000}ms",
+                        "Drift trend: ${driftTrend.displayName}",
+                        "Total jumps: ${countDriftJumps()}"
+                    )
                 )
             }
         }
-        lastClockBiasNs = currentBias
 
         val measurementData = GnssMeasurementData(
             clockBiasNs = clock.biasNanos,
@@ -589,59 +663,109 @@ class GnssSatelliteMonitor(private val context: Context) {
     }
 
     private fun runAnomalyDetection(satellites: List<SatelliteInfo>, status: GnssEnvironmentStatus) {
-        // Spoofing detection
+        // Build comprehensive enriched analysis
+        val analysis = buildGnssAnalysis(satellites, status)
+
+        // Spoofing detection with enriched analysis
         if (status.spoofingRiskLevel == SpoofingRiskLevel.HIGH ||
-            status.spoofingRiskLevel == SpoofingRiskLevel.CRITICAL) {
-            val factors = mutableListOf<String>()
+            status.spoofingRiskLevel == SpoofingRiskLevel.CRITICAL ||
+            analysis.spoofingLikelihood >= 50) {
 
-            val cn0Values = satellites.map { it.cn0DbHz.toDouble() }
-            val variance = calculateVariance(cn0Values)
-            if (variance < SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD) {
-                factors.add("C/N0 variance too uniform: ${String.format("%.2f", variance)} dB-Hz")
+            val enrichedFactors = buildGnssContributingFactors(analysis)
+
+            val confidence = when {
+                analysis.spoofingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
+                status.spoofingRiskLevel == SpoofingRiskLevel.CRITICAL -> AnomalyConfidence.CRITICAL
+                analysis.spoofingLikelihood >= 60 -> AnomalyConfidence.HIGH
+                status.spoofingRiskLevel == SpoofingRiskLevel.HIGH -> AnomalyConfidence.HIGH
+                analysis.spoofingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
+                else -> AnomalyConfidence.LOW
             }
-
-            val highSignal = satellites.count { it.cn0DbHz > MAX_VALID_CN0_DBH }
-            if (highSignal > 0) factors.add("$highSignal satellites with abnormally high C/N0")
-
-            val lowElevHighSignal = satellites.count { it.elevationDegrees < 5 && it.cn0DbHz > 40 }
-            if (lowElevHighSignal > 0) factors.add("$lowElevHighSignal low-elevation sats with high signal")
 
             reportAnomaly(
                 type = GnssAnomalyType.SPOOFING_DETECTED,
-                description = "GNSS spoofing indicators detected",
-                technicalDetails = "Risk level: ${status.spoofingRiskLevel.displayName}",
-                confidence = if (status.spoofingRiskLevel == SpoofingRiskLevel.CRITICAL)
-                    AnomalyConfidence.CRITICAL else AnomalyConfidence.HIGH,
-                contributingFactors = factors,
+                description = "GNSS spoofing indicators - likelihood: ${String.format("%.0f", analysis.spoofingLikelihood)}%",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
+                confidence = confidence,
+                contributingFactors = enrichedFactors,
                 affectedConstellations = satellites.map { it.constellation }.distinct()
             )
         }
 
-        // Jamming detection
-        if (status.jammingDetected) {
+        // Jamming detection with enriched analysis
+        if (status.jammingDetected || analysis.jammingLikelihood >= 50) {
+            val enrichedFactors = buildGnssContributingFactors(analysis)
+
+            val confidence = when {
+                analysis.jammingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
+                analysis.jammingLikelihood >= 60 -> AnomalyConfidence.HIGH
+                analysis.jammingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
+                else -> AnomalyConfidence.LOW
+            }
+
             reportAnomaly(
                 type = GnssAnomalyType.JAMMING_DETECTED,
-                description = "GNSS jamming detected - sudden signal degradation",
-                technicalDetails = "Avg C/N0 dropped from ${cn0History.dropLast(3).takeLast(5).takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0} to ${cn0History.takeLast(3).takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0} dB-Hz",
-                confidence = AnomalyConfidence.HIGH,
+                description = "GNSS jamming indicators - likelihood: ${String.format("%.0f", analysis.jammingLikelihood)}%",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
+                confidence = confidence,
+                contributingFactors = enrichedFactors
+            )
+        }
+
+        // Signal uniformity anomaly (spoofing indicator) - enriched
+        if (analysis.cn0TooUniform && !status.jammingDetected) {
+            reportAnomaly(
+                type = GnssAnomalyType.SIGNAL_UNIFORMITY,
+                description = "Signal uniformity suspicious - variance: ${String.format("%.2f", analysis.cn0Variance)}",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
+                confidence = AnomalyConfidence.MEDIUM,
+                contributingFactors = analysis.spoofingIndicators
+            )
+        }
+
+        // Clock drift anomaly - enriched
+        if (analysis.driftAnomalous) {
+            reportAnomaly(
+                type = GnssAnomalyType.CLOCK_ANOMALY,
+                description = "Clock drift anomaly - ${analysis.driftTrend.displayName}, ${analysis.driftJumpCount} jumps",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
+                confidence = if (analysis.driftJumpCount > 5) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
                 contributingFactors = listOf(
-                    "Rapid signal strength decrease",
-                    "Multiple constellations affected"
+                    "Drift trend: ${analysis.driftTrend.displayName}",
+                    "Jump count: ${analysis.driftJumpCount}",
+                    "Max drift: ${analysis.maxDriftInWindowNs / 1000} µs"
                 )
             )
         }
 
-        // Constellation dropout
+        // Elevation anomaly (low elevation + high signal = spoofing)
+        if (analysis.lowElevHighSignalCount > 2) {
+            reportAnomaly(
+                type = GnssAnomalyType.ELEVATION_ANOMALY,
+                description = "${analysis.lowElevHighSignalCount} low-elevation satellites with suspiciously high signal",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
+                confidence = AnomalyConfidence.HIGH,
+                contributingFactors = listOf(
+                    "Low elevation (<5°) satellites with C/N0 > 40 dB-Hz",
+                    "This pattern is physically implausible without spoofing",
+                    "Geometry score: ${String.format("%.0f", analysis.geometryScore * 100)}%"
+                )
+            )
+        }
+
+        // Constellation dropout - enriched
         val currentConstellations = status.constellationCounts.keys
         if (currentConstellations.size == 1 && satellites.size >= 6) {
-            val missing = ConstellationType.entries
-                .filter { it != ConstellationType.UNKNOWN && it !in currentConstellations }
             reportAnomaly(
                 type = GnssAnomalyType.CONSTELLATION_DROPOUT,
-                description = "Only ${currentConstellations.first().displayName} visible",
-                technicalDetails = "Missing constellations: ${missing.joinToString { it.displayName }}",
+                description = "Only ${currentConstellations.first().displayName} visible (missing: ${analysis.missingConstellations.joinToString { it.code }})",
+                technicalDetails = buildGnssTechnicalDetails(analysis),
                 confidence = AnomalyConfidence.LOW,
-                contributingFactors = listOf("Single constellation environment unusual in open sky")
+                contributingFactors = listOf(
+                    "Constellation match score: ${analysis.constellationMatchScore}%",
+                    "Expected: ${analysis.expectedConstellations.joinToString { it.code }}",
+                    "Single constellation unusual in open sky"
+                )
             )
         }
     }
@@ -739,6 +863,411 @@ class GnssSatelliteMonitor(private val context: Context) {
             eventHistory.removeAt(eventHistory.size - 1)
         }
         _events.value = eventHistory.toList()
+    }
+
+    // ==================== ENRICHMENT ANALYSIS FUNCTIONS ====================
+
+    /**
+     * Get expected constellations based on location.
+     * Different regions have different constellation visibility.
+     */
+    private fun getExpectedConstellations(lat: Double?, lon: Double?): Set<ConstellationType> {
+        // GPS is globally available
+        val expected = mutableSetOf(ConstellationType.GPS)
+
+        // GLONASS is globally available
+        expected.add(ConstellationType.GLONASS)
+
+        // Galileo is globally available (EU system)
+        expected.add(ConstellationType.GALILEO)
+
+        // BeiDou has better coverage in Asia-Pacific
+        if (lat != null && lon != null) {
+            if (lon > 70 && lon < 180) { // Asia-Pacific region
+                expected.add(ConstellationType.BEIDOU)
+            }
+            // QZSS primarily covers Japan and surrounding area
+            if (lat > 20 && lat < 50 && lon > 120 && lon < 150) {
+                expected.add(ConstellationType.QZSS)
+            }
+            // NavIC/IRNSS covers India
+            if (lat > 0 && lat < 40 && lon > 60 && lon < 100) {
+                expected.add(ConstellationType.IRNSS)
+            }
+        }
+
+        // SBAS depends on region but is generally expected
+        expected.add(ConstellationType.SBAS)
+
+        return expected
+    }
+
+    /**
+     * Update C/N0 baseline from history - creates adaptive thresholds
+     */
+    private fun updateCn0Baseline() {
+        if (cn0History.size < 20) return
+
+        // Use the middle 80% of samples to exclude outliers
+        val sorted = cn0History.sorted()
+        val trimStart = (sorted.size * 0.1).toInt()
+        val trimEnd = (sorted.size * 0.9).toInt()
+        val trimmed = sorted.subList(trimStart, trimEnd)
+
+        if (trimmed.isNotEmpty()) {
+            cn0BaselineMean = trimmed.average()
+            cn0BaselineStdDev = kotlin.math.sqrt(calculateVariance(trimmed))
+            cn0BaselineCalculated = true
+        }
+    }
+
+    /**
+     * Track clock drift accumulation and detect anomalies
+     */
+    private fun trackClockDriftAccumulation(biasNs: Long) {
+        lastClockBiasNs?.let { prevBias ->
+            val drift = biasNs - prevBias
+            cumulativeClockDriftNs += drift
+
+            clockDriftHistory.add(drift)
+            if (clockDriftHistory.size > maxDriftHistorySize) {
+                clockDriftHistory.removeAt(0)
+            }
+        }
+        lastClockBiasNs = biasNs
+    }
+
+    /**
+     * Analyze clock drift trend
+     */
+    private fun analyzeDriftTrend(): DriftTrend {
+        if (clockDriftHistory.size < 5) return DriftTrend.STABLE
+
+        val recent = clockDriftHistory.takeLast(5)
+        val older = clockDriftHistory.dropLast(5).takeLast(5)
+
+        if (older.isEmpty()) return DriftTrend.STABLE
+
+        val recentAvg = recent.average()
+        val olderAvg = older.average()
+
+        // Check for erratic behavior (high variance)
+        val variance = calculateVariance(recent.map { it.toDouble() })
+        if (variance > driftJumpThresholdNs * driftJumpThresholdNs) {
+            return DriftTrend.ERRATIC
+        }
+
+        return when {
+            recentAvg > olderAvg * 1.5 -> DriftTrend.INCREASING
+            recentAvg < olderAvg * 0.5 -> DriftTrend.DECREASING
+            else -> DriftTrend.STABLE
+        }
+    }
+
+    /**
+     * Count significant drift jumps
+     */
+    private fun countDriftJumps(): Int {
+        return clockDriftHistory.count { abs(it) > driftJumpThresholdNs }
+    }
+
+    /**
+     * Analyze satellite geometry for spoofing indicators
+     */
+    private fun analyzeGeometry(satellites: List<SatelliteInfo>): Triple<Float, String, Float> {
+        if (satellites.isEmpty()) return Triple(0f, "No satellites", 0f)
+
+        // Analyze elevation distribution
+        val elevations = satellites.map { it.elevationDegrees }
+        val elevMean = elevations.average()
+        val elevVariance = calculateVariance(elevations.map { it.toDouble() })
+
+        val elevationDistribution = when {
+            elevVariance < 100 && elevMean > 30 -> "Clustered" // Suspicious
+            elevVariance < 200 -> "Narrow"
+            else -> "Normal"
+        }
+
+        // Calculate azimuth coverage (0-360 degrees)
+        val azimuths = satellites.map { it.azimuthDegrees.toInt() }
+        val azimuthBuckets = (0 until 12).map { bucket ->
+            val start = bucket * 30
+            val end = start + 30
+            azimuths.any { it >= start && it < end }
+        }
+        val azimuthCoverage = (azimuthBuckets.count { it } / 12.0f) * 100f
+
+        // Geometry score (simplified DOP-like metric)
+        // Good geometry = wide elevation spread + good azimuth coverage
+        val geometryScore = when {
+            elevationDistribution == "Normal" && azimuthCoverage > 66 -> 0.9f
+            elevationDistribution == "Normal" && azimuthCoverage > 33 -> 0.7f
+            elevationDistribution == "Narrow" && azimuthCoverage > 50 -> 0.5f
+            elevationDistribution == "Clustered" -> 0.3f
+            else -> 0.4f
+        }
+
+        return Triple(geometryScore, elevationDistribution, azimuthCoverage)
+    }
+
+    /**
+     * Build comprehensive GNSS analysis
+     */
+    private fun buildGnssAnalysis(
+        satellites: List<SatelliteInfo>,
+        status: GnssEnvironmentStatus
+    ): GnssAnomalyAnalysis {
+        // Update baselines
+        updateCn0Baseline()
+
+        // Constellation fingerprinting
+        val observed = satellites.map { it.constellation }.toSet() - ConstellationType.UNKNOWN
+        val expected = getExpectedConstellations(currentLatitude, currentLongitude)
+        val missing = expected - observed
+        val unexpected = observed.any { it !in expected && it != ConstellationType.UNKNOWN }
+
+        // Track constellation history
+        constellationHistory.add(observed)
+        if (constellationHistory.size > HISTORY_SIZE) constellationHistory.removeAt(0)
+
+        val constellationMatchScore = if (expected.isNotEmpty()) {
+            ((observed.intersect(expected).size.toFloat() / expected.size) * 100).toInt()
+        } else 100
+
+        // C/N0 analysis
+        val cn0Values = satellites.map { it.cn0DbHz.toDouble() }
+        val currentMean = if (cn0Values.isNotEmpty()) cn0Values.average() else 0.0
+        val cn0Variance = calculateVariance(cn0Values)
+
+        val cn0DeviationSigmas = if (cn0BaselineCalculated && cn0BaselineStdDev > 0) {
+            abs(currentMean - cn0BaselineMean) / cn0BaselineStdDev
+        } else 0.0
+
+        val cn0Anomalous = cn0DeviationSigmas > 3.0
+        val cn0TooUniform = cn0Variance < SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD &&
+            satellites.size >= MIN_SATELLITES_FOR_FIX
+
+        // Uniformity score (lower = more uniform = more suspicious)
+        val uniformityScore = if (cn0Variance > 0) {
+            (cn0Variance / 20.0).coerceIn(0.0, 1.0).toFloat()
+        } else 0f
+
+        // Clock drift analysis
+        val driftTrend = analyzeDriftTrend()
+        val driftJumpCount = countDriftJumps()
+        val maxDrift = clockDriftHistory.maxOfOrNull { abs(it) } ?: 0L
+        val driftAnomalous = driftTrend == DriftTrend.ERRATIC || driftJumpCount > 3
+
+        // Geometry analysis
+        val (geometryScore, elevDistribution, azimuthCoverage) = analyzeGeometry(satellites)
+
+        // Count low elevation with high signal (spoofing indicator)
+        val lowElevHighSignal = satellites.count {
+            it.elevationDegrees < SPOOFING_ELEVATION_THRESHOLD && it.cn0DbHz > 40
+        }
+
+        // Signal spike/drop counts from history
+        val signalSpikeCount = if (cn0History.size > 2) {
+            cn0History.zipWithNext().count { (prev, curr) -> curr - prev > 10 }
+        } else 0
+        val signalDropCount = if (cn0History.size > 2) {
+            cn0History.zipWithNext().count { (prev, curr) -> prev - curr > 10 }
+        } else 0
+
+        // Build spoofing indicators list
+        val spoofingIndicators = mutableListOf<String>()
+        if (cn0TooUniform) spoofingIndicators.add("Signal uniformity too perfect (variance: ${String.format("%.2f", cn0Variance)})")
+        if (lowElevHighSignal > 2) spoofingIndicators.add("$lowElevHighSignal low-elevation satellites with suspiciously high signal")
+        if (elevDistribution == "Clustered") spoofingIndicators.add("Satellites clustered at similar elevations")
+        if (satellites.any { it.cn0DbHz > MAX_VALID_CN0_DBH }) spoofingIndicators.add("Abnormally high signal strength detected")
+        if (satellites.none { it.hasEphemeris } && satellites.size >= MIN_SATELLITES_FOR_FIX) {
+            spoofingIndicators.add("No satellites have ephemeris data (unusual)")
+        }
+        if (constellationMatchScore < 50) spoofingIndicators.add("Missing expected constellations")
+
+        // Build jamming indicators list
+        val jammingIndicators = mutableListOf<String>()
+        if (signalDropCount > 3) jammingIndicators.add("Multiple sudden signal drops detected")
+        if (status.jammingDetected) jammingIndicators.add("Rapid degradation across all signals")
+        if (cn0Anomalous && currentMean < cn0BaselineMean) jammingIndicators.add("Signal strength significantly below baseline")
+
+        // Calculate composite scores
+        val spoofingLikelihood = calculateSpoofingLikelihood(
+            cn0TooUniform, lowElevHighSignal, elevDistribution,
+            uniformityScore, satellites, status
+        )
+        val jammingLikelihood = calculateJammingLikelihood(
+            status, signalDropCount, cn0Anomalous, currentMean
+        )
+
+        return GnssAnomalyAnalysis(
+            expectedConstellations = expected,
+            observedConstellations = observed,
+            missingConstellations = missing,
+            unexpectedConstellation = unexpected,
+            constellationMatchScore = constellationMatchScore,
+            historicalCn0Mean = cn0BaselineMean,
+            historicalCn0StdDev = cn0BaselineStdDev,
+            currentCn0Mean = currentMean,
+            cn0DeviationSigmas = cn0DeviationSigmas,
+            cn0Anomalous = cn0Anomalous,
+            cn0TooUniform = cn0TooUniform,
+            cn0Variance = cn0Variance,
+            cumulativeDriftNs = cumulativeClockDriftNs,
+            driftTrend = driftTrend,
+            driftAnomalous = driftAnomalous,
+            maxDriftInWindowNs = maxDrift,
+            driftJumpCount = driftJumpCount,
+            geometryScore = geometryScore,
+            elevationDistribution = elevDistribution,
+            azimuthCoverage = azimuthCoverage,
+            lowElevHighSignalCount = lowElevHighSignal,
+            uniformityScore = uniformityScore,
+            signalSpikeCount = signalSpikeCount,
+            signalDropCount = signalDropCount,
+            spoofingLikelihood = spoofingLikelihood,
+            jammingLikelihood = jammingLikelihood,
+            spoofingIndicators = spoofingIndicators,
+            jammingIndicators = jammingIndicators
+        )
+    }
+
+    /**
+     * Calculate spoofing likelihood percentage
+     */
+    private fun calculateSpoofingLikelihood(
+        cn0TooUniform: Boolean,
+        lowElevHighSignal: Int,
+        elevDistribution: String,
+        uniformityScore: Float,
+        satellites: List<SatelliteInfo>,
+        status: GnssEnvironmentStatus
+    ): Float {
+        var score = 0f
+
+        if (cn0TooUniform) score += 25f
+        if (lowElevHighSignal > 0) score += lowElevHighSignal * 8f
+        if (elevDistribution == "Clustered") score += 15f
+        if (uniformityScore < 0.2f && satellites.size >= MIN_SATELLITES_FOR_FIX) score += 20f
+        if (satellites.any { it.cn0DbHz > MAX_VALID_CN0_DBH }) score += 15f
+        if (satellites.none { it.hasEphemeris } && satellites.size >= MIN_SATELLITES_FOR_FIX) score += 10f
+
+        // Boost based on existing risk assessment
+        when (status.spoofingRiskLevel) {
+            SpoofingRiskLevel.CRITICAL -> score = (score * 1.5f).coerceAtMost(100f)
+            SpoofingRiskLevel.HIGH -> score = (score * 1.3f).coerceAtMost(100f)
+            else -> {}
+        }
+
+        return score.coerceIn(0f, 100f)
+    }
+
+    /**
+     * Calculate jamming likelihood percentage
+     */
+    private fun calculateJammingLikelihood(
+        status: GnssEnvironmentStatus,
+        signalDropCount: Int,
+        cn0Anomalous: Boolean,
+        currentMean: Double
+    ): Float {
+        var score = 0f
+
+        if (status.jammingDetected) score += 50f
+        if (signalDropCount > 3) score += signalDropCount * 5f
+        if (cn0Anomalous && currentMean < cn0BaselineMean) score += 20f
+        if (status.satellitesUsedInFix < MIN_SATELLITES_FOR_FIX && satelliteCountHistory.takeLast(3).average() > 6) {
+            score += 25f
+        }
+
+        return score.coerceIn(0f, 100f)
+    }
+
+    /**
+     * Build enriched technical details from analysis
+     */
+    private fun buildGnssTechnicalDetails(analysis: GnssAnomalyAnalysis): String {
+        val parts = mutableListOf<String>()
+
+        // Spoofing/Jamming likelihood
+        parts.add("Spoofing Likelihood: ${String.format("%.0f", analysis.spoofingLikelihood)}%")
+        parts.add("Jamming Likelihood: ${String.format("%.0f", analysis.jammingLikelihood)}%")
+
+        // C/N0 Analysis
+        parts.add("C/N0: ${String.format("%.1f", analysis.currentCn0Mean)} dB-Hz (baseline: ${String.format("%.1f", analysis.historicalCn0Mean)})")
+        if (analysis.cn0TooUniform) {
+            parts.add("⚠️ Signal uniformity suspicious (variance: ${String.format("%.2f", analysis.cn0Variance)})")
+        }
+        if (analysis.cn0DeviationSigmas > 2) {
+            parts.add("⚠️ Signal ${String.format("%.1f", analysis.cn0DeviationSigmas)}σ from baseline")
+        }
+
+        // Geometry
+        parts.add("Geometry Score: ${String.format("%.0f", analysis.geometryScore * 100)}%")
+        parts.add("Elevation Distribution: ${analysis.elevationDistribution}")
+        parts.add("Azimuth Coverage: ${String.format("%.0f", analysis.azimuthCoverage)}%")
+        if (analysis.lowElevHighSignalCount > 0) {
+            parts.add("⚠️ ${analysis.lowElevHighSignalCount} low-elev satellites with high signal")
+        }
+
+        // Clock Drift
+        if (analysis.driftTrend != DriftTrend.STABLE) {
+            parts.add("Clock Drift: ${analysis.driftTrend.displayName}")
+        }
+        if (analysis.driftJumpCount > 0) {
+            parts.add("Drift Jumps: ${analysis.driftJumpCount}")
+        }
+
+        // Constellations
+        parts.add("Constellations: ${analysis.observedConstellations.joinToString { it.code }}")
+        if (analysis.missingConstellations.isNotEmpty()) {
+            parts.add("Missing: ${analysis.missingConstellations.joinToString { it.code }}")
+        }
+
+        return parts.joinToString("\n")
+    }
+
+    /**
+     * Build contributing factors from analysis
+     */
+    private fun buildGnssContributingFactors(analysis: GnssAnomalyAnalysis): List<String> {
+        val factors = mutableListOf<String>()
+
+        // Add spoofing indicators
+        factors.addAll(analysis.spoofingIndicators)
+
+        // Add jamming indicators
+        factors.addAll(analysis.jammingIndicators)
+
+        // Add geometry issues
+        if (analysis.geometryScore < 0.5f) {
+            factors.add("Poor satellite geometry (score: ${String.format("%.0f", analysis.geometryScore * 100)}%)")
+        }
+
+        // Add constellation issues
+        if (analysis.constellationMatchScore < 70) {
+            factors.add("Constellation coverage ${analysis.constellationMatchScore}% of expected")
+        }
+
+        // Add drift issues
+        if (analysis.driftAnomalous) {
+            factors.add("Clock drift anomaly (${analysis.driftTrend.displayName}, ${analysis.driftJumpCount} jumps)")
+        }
+
+        // Summary scores
+        if (analysis.spoofingLikelihood >= 70) {
+            factors.add("HIGH spoofing likelihood: ${String.format("%.0f", analysis.spoofingLikelihood)}%")
+        } else if (analysis.spoofingLikelihood >= 40) {
+            factors.add("Moderate spoofing likelihood: ${String.format("%.0f", analysis.spoofingLikelihood)}%")
+        }
+
+        if (analysis.jammingLikelihood >= 70) {
+            factors.add("HIGH jamming likelihood: ${String.format("%.0f", analysis.jammingLikelihood)}%")
+        } else if (analysis.jammingLikelihood >= 40) {
+            factors.add("Moderate jamming likelihood: ${String.format("%.0f", analysis.jammingLikelihood)}%")
+        }
+
+        return factors
     }
 
     // ==================== Detection Conversion ====================

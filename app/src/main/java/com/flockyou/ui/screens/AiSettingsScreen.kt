@@ -224,7 +224,7 @@ fun AiSettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Note: Gemma models require accepting the license at huggingface.co. If download fails, use 'Import Model' instead.",
+                                "Models download from public repositories. No authentication required.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiary
                             )
@@ -261,6 +261,7 @@ fun AiSettingsScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImportModelDialog(
     availableModels: List<AiModel>,
@@ -282,7 +283,7 @@ private fun ImportModelDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Download a .task file from huggingface.co/litert-community, then select it here.",
+                    text = "Download a .task or .bin model file, then select it here to import.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

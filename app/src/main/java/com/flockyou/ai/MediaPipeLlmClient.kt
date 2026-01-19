@@ -10,9 +10,11 @@ import com.flockyou.data.model.Detection
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,8 +23,8 @@ import javax.inject.Singleton
  * Client for running on-device LLM inference using MediaPipe LLM Inference API.
  * All processing happens entirely on-device with no cloud connectivity.
  *
- * Supports models in MediaPipe .task format (e.g., Gemma models from Kaggle).
- * Note: Raw GGUF files are NOT supported - models must be converted to .task format.
+ * Supports models in MediaPipe .task and .bin formats (e.g., Gemma models).
+ * Note: Raw GGUF files are NOT supported - models must be converted to .task/.bin format.
  */
 @Singleton
 class MediaPipeLlmClient @Inject constructor(
@@ -31,6 +33,8 @@ class MediaPipeLlmClient @Inject constructor(
     companion object {
         private const val TAG = "MediaPipeLlmClient"
         private const val MAX_TOKENS = 512
+        private const val INFERENCE_TIMEOUT_MS = 60_000L // 60 second timeout for inference
+        private const val INIT_TIMEOUT_MS = 30_000L // 30 second timeout for initialization
     }
 
     private var llmInference: LlmInference? = null
@@ -41,7 +45,7 @@ class MediaPipeLlmClient @Inject constructor(
 
     /**
      * Initialize the LLM with a specific model file.
-     * The model file must be in MediaPipe .task format.
+     * The model file must be in MediaPipe .task or .bin format.
      */
     suspend fun initialize(modelFile: File, config: InferenceConfig = InferenceConfig(
         maxTokens = MAX_TOKENS,
@@ -58,68 +62,92 @@ class MediaPipeLlmClient @Inject constructor(
         cleanup()
         initializationError = null
 
-        return@withLock withContext(Dispatchers.IO) {
-            try {
-                if (!modelFile.exists()) {
-                    initializationError = "Model file not found: ${modelFile.absolutePath}"
-                    Log.e(TAG, initializationError!!)
-                    return@withContext false
+        return@withLock try {
+            withTimeout(INIT_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    if (!modelFile.exists()) {
+                        initializationError = "Model file not found: ${modelFile.absolutePath}"
+                        Log.e(TAG, initializationError!!)
+                        return@withContext false
+                    }
+
+                    // Verify file has supported extension (.task or .bin)
+                    val validExtensions = listOf(".task", ".bin")
+                    if (!validExtensions.any { modelFile.name.endsWith(it) }) {
+                        initializationError = "Invalid model format. Expected .task or .bin file, got: ${modelFile.name}. " +
+                            "MediaPipe requires models in .task or .bin format."
+                        Log.e(TAG, initializationError!!)
+                        return@withContext false
+                    }
+
+                    // Verify minimum file size (at least 10MB for a real model)
+                    val minSizeBytes = 10 * 1024 * 1024L
+                    if (modelFile.length() < minSizeBytes) {
+                        initializationError = "Model file too small (${modelFile.length() / 1024 / 1024} MB). " +
+                            "Expected at least ${minSizeBytes / 1024 / 1024} MB for a valid model."
+                        Log.e(TAG, initializationError!!)
+                        return@withContext false
+                    }
+
+                    Log.d(TAG, "Initializing MediaPipe LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
+
+                    // Build LLM inference options
+                    val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
+                        .setModelPath(modelFile.absolutePath)
+                        .setMaxTokens(config.maxTokens)
+
+                    val options = optionsBuilder.build()
+
+                    // Create the LLM inference instance
+                    llmInference = LlmInference.createFromOptions(context, options)
+                    currentModelPath = modelFile.absolutePath
+                    isInitialized = true
+
+                    Log.i(TAG, "MediaPipe LLM initialized successfully: ${modelFile.name}")
+                    true
                 }
-
-                // Verify file has .task extension
-                if (!modelFile.name.endsWith(".task")) {
-                    initializationError = "Invalid model format. Expected .task file, got: ${modelFile.name}. " +
-                        "MediaPipe requires models in .task format. Download from Kaggle or convert using MediaPipe tools."
-                    Log.e(TAG, initializationError!!)
-                    return@withContext false
-                }
-
-                Log.d(TAG, "Initializing MediaPipe LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
-
-                // Build LLM inference options
-                val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
-                    .setModelPath(modelFile.absolutePath)
-                    .setMaxTokens(config.maxTokens)
-
-                val options = optionsBuilder.build()
-
-                // Create the LLM inference instance
-                llmInference = LlmInference.createFromOptions(context, options)
-                currentModelPath = modelFile.absolutePath
-                isInitialized = true
-
-                Log.i(TAG, "MediaPipe LLM initialized successfully: ${modelFile.name}")
-                true
-
-            } catch (e: Exception) {
-                initializationError = "Failed to initialize MediaPipe LLM: ${e.message}"
-                Log.e(TAG, initializationError!!, e)
-                isInitialized = false
-                false
             }
+        } catch (e: TimeoutCancellationException) {
+            initializationError = "Model initialization timed out after ${INIT_TIMEOUT_MS / 1000} seconds"
+            Log.e(TAG, initializationError!!)
+            isInitialized = false
+            false
+        } catch (e: Exception) {
+            initializationError = "Failed to initialize MediaPipe LLM: ${e.message}"
+            Log.e(TAG, initializationError!!, e)
+            isInitialized = false
+            false
         }
     }
 
     /**
      * Generate text completion for the given prompt.
+     * Includes timeout protection to prevent indefinite hangs.
      */
-    suspend fun generateResponse(prompt: String): String? = withContext(Dispatchers.IO) {
+    suspend fun generateResponse(prompt: String): String? {
         val inference = llmInference
         if (inference == null || !isInitialized) {
             Log.w(TAG, "MediaPipe LLM not initialized")
-            return@withContext null
+            return null
         }
 
-        try {
-            Log.d(TAG, "Generating response for prompt (${prompt.length} chars)")
-            val startTime = System.currentTimeMillis()
+        return try {
+            withTimeout(INFERENCE_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    Log.d(TAG, "Generating response for prompt (${prompt.length} chars)")
+                    val startTime = System.currentTimeMillis()
 
-            val response = inference.generateResponse(prompt)
+                    val response = inference.generateResponse(prompt)
 
-            val duration = System.currentTimeMillis() - startTime
-            Log.d(TAG, "Generated response in ${duration}ms (${response?.length ?: 0} chars)")
+                    val duration = System.currentTimeMillis() - startTime
+                    Log.d(TAG, "Generated response in ${duration}ms (${response?.length ?: 0} chars)")
 
-            response
+                    response
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Inference timed out after ${INFERENCE_TIMEOUT_MS / 1000} seconds")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Error generating response", e)
             null

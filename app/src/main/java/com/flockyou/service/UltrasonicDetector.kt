@@ -121,7 +121,81 @@ class UltrasonicDetector(private val context: Context) {
         var detectionCount: Int = 1,
         val possibleSource: String,
         val latitude: Double?,
-        val longitude: Double?
+        val longitude: Double?,
+        // Enhanced fields for enrichment
+        var amplitudeHistory: MutableList<Double> = mutableListOf(),
+        var locationHistory: MutableList<LocationEntry> = mutableListOf()
+    )
+
+    data class LocationEntry(
+        val timestamp: Long,
+        val latitude: Double,
+        val longitude: Double
+    )
+
+    /**
+     * Amplitude profile classification
+     */
+    enum class AmplitudeProfile(val displayName: String) {
+        STEADY("Steady"),
+        PULSING("Pulsing"),
+        MODULATED("Modulated"),
+        ERRATIC("Erratic")
+    }
+
+    /**
+     * Known beacon type classification
+     */
+    enum class KnownBeaconType(val displayName: String, val company: String) {
+        SILVERPUSH("SilverPush", "SilverPush Technologies"),
+        ALPHONSO("Alphonso", "Alphonso Inc"),
+        SIGNAL360("Signal360", "Signal360"),
+        LISNR("LISNR", "LISNR"),
+        SHOPKICK("Shopkick", "Shopkick/SK Telecom"),
+        UNKNOWN("Unknown", "Unknown Source")
+    }
+
+    /**
+     * Source category classification
+     */
+    enum class SourceCategory(val displayName: String) {
+        ADVERTISING("Advertising/Marketing"),
+        RETAIL("Retail Tracking"),
+        TRACKING("Cross-Device Tracking"),
+        ANALYTICS("Analytics/Attribution"),
+        UNKNOWN("Unknown Purpose")
+    }
+
+    /**
+     * Comprehensive beacon analysis with enriched data
+     */
+    data class BeaconAnalysis(
+        // Amplitude Fingerprinting
+        val peakAmplitudeDb: Double,
+        val avgAmplitudeDb: Double,
+        val amplitudeVariance: Float,
+        val amplitudeProfile: AmplitudeProfile,
+
+        // Source Attribution
+        val frequencyHz: Int,
+        val matchedSource: KnownBeaconType,
+        val sourceConfidence: Float,              // 0-100%
+        val sourceCategory: SourceCategory,
+
+        // Cross-Location Analysis
+        val locationsDetected: Int,
+        val persistenceScore: Float,              // 0-1, how persistent is this beacon
+        val followingUser: Boolean,               // Detected at multiple user locations
+        val totalDetectionCount: Int,
+        val detectionDurationMs: Long,
+
+        // Environmental Context
+        val noiseFloorDb: Double,
+        val snrDb: Double,                        // Signal-to-noise ratio
+
+        // Risk Assessment
+        val trackingLikelihood: Float,            // 0-100%
+        val riskIndicators: List<String>
     )
 
     data class UltrasonicAnomaly(
@@ -455,8 +529,30 @@ class UltrasonicDetector(private val context: Context) {
                 if (peakAmplitude > existing.peakAmplitudeDb) {
                     existing.peakAmplitudeDb = peakAmplitude
                 }
+                // Track amplitude history for enrichment
+                existing.amplitudeHistory.add(avgAmplitude)
+                if (existing.amplitudeHistory.size > 50) {
+                    existing.amplitudeHistory.removeAt(0)
+                }
+                // Track location history for cross-location detection
+                currentLatitude?.let { lat ->
+                    currentLongitude?.let { lon ->
+                        existing.locationHistory.add(LocationEntry(now, lat, lon))
+                        if (existing.locationHistory.size > 20) {
+                            existing.locationHistory.removeAt(0)
+                        }
+                    }
+                }
             } else {
                 // New beacon detected
+                val initialAmplitudeHistory = mutableListOf(avgAmplitude)
+                val initialLocationHistory = mutableListOf<LocationEntry>()
+                currentLatitude?.let { lat ->
+                    currentLongitude?.let { lon ->
+                        initialLocationHistory.add(LocationEntry(now, lat, lon))
+                    }
+                }
+
                 val beacon = BeaconDetection(
                     frequency = freq,
                     firstDetected = now,
@@ -464,19 +560,24 @@ class UltrasonicDetector(private val context: Context) {
                     peakAmplitudeDb = peakAmplitude,
                     possibleSource = possibleSource,
                     latitude = currentLatitude,
-                    longitude = currentLongitude
+                    longitude = currentLongitude,
+                    amplitudeHistory = initialAmplitudeHistory,
+                    locationHistory = initialLocationHistory
                 )
                 activeBeacons[freq] = beacon
+
+                // Build enriched analysis for new beacon
+                val analysis = buildBeaconAnalysis(beacon)
 
                 addTimelineEvent(
                     type = UltrasonicEventType.BEACON_DETECTED,
                     title = "📢 Beacon Detected: ${freq}Hz",
-                    description = possibleSource,
+                    description = "${possibleSource} (${String.format("%.0f", analysis.trackingLikelihood)}% tracking likelihood)",
                     frequency = freq,
                     threatLevel = if (isKnownBeacon) ThreatLevel.HIGH else ThreatLevel.MEDIUM
                 )
 
-                // Report anomaly for new beacon
+                // Report anomaly for new beacon with enriched analysis
                 val anomalyType = when {
                     possibleSource.contains("SilverPush") || possibleSource.contains("Alphonso") ->
                         UltrasonicAnomalyType.ADVERTISING_BEACON
@@ -490,21 +591,22 @@ class UltrasonicDetector(private val context: Context) {
                         UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
                 }
 
+                // Determine confidence from enriched analysis
+                val confidence = when {
+                    analysis.trackingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
+                    analysis.trackingLikelihood >= 60 || isKnownBeacon -> AnomalyConfidence.HIGH
+                    analysis.trackingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
+                    else -> AnomalyConfidence.LOW
+                }
+
                 reportAnomaly(
                     type = anomalyType,
-                    description = "Ultrasonic tracking beacon detected at ${freq}Hz",
-                    technicalDetails = "Detected $possibleSource beacon. " +
-                        "Peak amplitude: ${String.format("%.1f", peakAmplitude)}dB above noise floor. " +
-                        "This may be used for cross-device tracking or advertising attribution.",
+                    description = "Ultrasonic tracking beacon detected at ${freq}Hz - tracking likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%",
+                    technicalDetails = buildBeaconTechnicalDetails(analysis),
                     frequency = freq,
                     amplitudeDb = peakAmplitude,
-                    confidence = if (isKnownBeacon) AnomalyConfidence.HIGH else AnomalyConfidence.MEDIUM,
-                    contributingFactors = listOf(
-                        "Frequency: ${freq}Hz",
-                        "Amplitude: ${String.format("%.1f", peakAmplitude)}dB",
-                        "Source: $possibleSource",
-                        if (isKnownBeacon) "Matches known tracking beacon" else "Unknown beacon pattern"
-                    )
+                    confidence = confidence,
+                    contributingFactors = buildBeaconContributingFactors(analysis)
                 )
             }
         }
@@ -731,6 +833,250 @@ class UltrasonicDetector(private val context: Context) {
         )
 
         Log.i(TAG, "Test detection triggered successfully")
+    }
+
+    // ==================== ENRICHMENT ANALYSIS FUNCTIONS ====================
+
+    /**
+     * Calculate Haversine distance between two points in meters
+     */
+    private fun haversineDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadiusMeters = 6_371_000.0
+
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+
+        return earthRadiusMeters * c
+    }
+
+    /**
+     * Analyze amplitude profile from history
+     */
+    private fun analyzeAmplitudeProfile(amplitudes: List<Double>): AmplitudeProfile {
+        if (amplitudes.size < 3) return AmplitudeProfile.STEADY
+
+        val avg = amplitudes.average()
+        val variance = amplitudes.map { (it - avg) * (it - avg) }.average()
+        val stdDev = sqrt(variance)
+
+        // Check for pulsing (regular on/off pattern)
+        val crossings = amplitudes.zipWithNext().count { (a, b) ->
+            (a > avg && b < avg) || (a < avg && b > avg)
+        }
+        val crossingRate = crossings.toFloat() / amplitudes.size
+
+        return when {
+            stdDev < 2.0 -> AmplitudeProfile.STEADY
+            crossingRate > 0.3 && crossingRate < 0.6 -> AmplitudeProfile.PULSING
+            crossingRate > 0.6 -> AmplitudeProfile.ERRATIC
+            else -> AmplitudeProfile.MODULATED
+        }
+    }
+
+    /**
+     * Attribute beacon source based on frequency and characteristics
+     */
+    private fun attributeBeaconSource(freq: Int, amplitude: Double, profile: AmplitudeProfile): Pair<KnownBeaconType, Float> {
+        // Match against known beacon frequencies
+        return when {
+            abs(freq - 18000) <= FREQUENCY_TOLERANCE -> {
+                // SilverPush typically uses 18kHz
+                KnownBeaconType.SILVERPUSH to 85f
+            }
+            abs(freq - 18500) <= FREQUENCY_TOLERANCE -> {
+                // Alphonso typically uses 18.5kHz
+                KnownBeaconType.ALPHONSO to 85f
+            }
+            abs(freq - 19000) <= FREQUENCY_TOLERANCE -> {
+                // Signal360 uses 19kHz range
+                KnownBeaconType.SIGNAL360 to 70f
+            }
+            abs(freq - 19500) <= FREQUENCY_TOLERANCE -> {
+                // LISNR uses 19.5kHz
+                KnownBeaconType.LISNR to 70f
+            }
+            abs(freq - 20000) <= FREQUENCY_TOLERANCE -> {
+                // Shopkick uses 20kHz
+                KnownBeaconType.SHOPKICK to 65f
+            }
+            else -> {
+                // Unknown source
+                KnownBeaconType.UNKNOWN to 30f
+            }
+        }
+    }
+
+    /**
+     * Determine source category
+     */
+    private fun getSourceCategory(source: KnownBeaconType, freq: Int): SourceCategory {
+        return when (source) {
+            KnownBeaconType.SILVERPUSH -> SourceCategory.ADVERTISING
+            KnownBeaconType.ALPHONSO -> SourceCategory.ADVERTISING
+            KnownBeaconType.SIGNAL360 -> SourceCategory.ANALYTICS
+            KnownBeaconType.LISNR -> SourceCategory.TRACKING
+            KnownBeaconType.SHOPKICK -> SourceCategory.RETAIL
+            KnownBeaconType.UNKNOWN -> {
+                when {
+                    freq in 19500..20500 -> SourceCategory.RETAIL
+                    freq >= 20500 -> SourceCategory.TRACKING
+                    else -> SourceCategory.UNKNOWN
+                }
+            }
+        }
+    }
+
+    /**
+     * Count distinct locations where beacon was detected
+     */
+    private fun countDistinctLocations(locationHistory: List<LocationEntry>): Int {
+        if (locationHistory.isEmpty()) return 0
+
+        val distinctLocs = mutableListOf<Pair<Double, Double>>()
+        for (entry in locationHistory) {
+            val isDistinct = distinctLocs.none { existing ->
+                haversineDistanceMeters(entry.latitude, entry.longitude, existing.first, existing.second) < 100
+            }
+            if (isDistinct) {
+                distinctLocs.add(entry.latitude to entry.longitude)
+            }
+        }
+        return distinctLocs.size
+    }
+
+    /**
+     * Build comprehensive beacon analysis
+     */
+    private fun buildBeaconAnalysis(beacon: BeaconDetection): BeaconAnalysis {
+        val amplitudes = beacon.amplitudeHistory
+        val locations = beacon.locationHistory
+
+        // Amplitude analysis
+        val avgAmplitude = if (amplitudes.isNotEmpty()) amplitudes.average() else beacon.peakAmplitudeDb
+        val amplitudeVariance = if (amplitudes.size > 1) {
+            amplitudes.map { (it - avgAmplitude) * (it - avgAmplitude) }.average().toFloat()
+        } else 0f
+
+        val profile = analyzeAmplitudeProfile(amplitudes)
+
+        // Source attribution
+        val (matchedSource, confidence) = attributeBeaconSource(beacon.frequency, avgAmplitude, profile)
+        val category = getSourceCategory(matchedSource, beacon.frequency)
+
+        // Cross-location analysis
+        val distinctLocations = countDistinctLocations(locations)
+        val followingUser = distinctLocations >= 2
+        val detectionDuration = beacon.lastDetected - beacon.firstDetected
+
+        // Persistence score (how long has this been active)
+        val persistenceScore = when {
+            detectionDuration > 300_000 -> 1.0f  // > 5 minutes
+            detectionDuration > 120_000 -> 0.7f  // > 2 minutes
+            detectionDuration > 60_000 -> 0.5f   // > 1 minute
+            detectionDuration > 30_000 -> 0.3f   // > 30 seconds
+            else -> 0.1f
+        }
+
+        // Environmental context
+        val snrDb = avgAmplitude - noiseFloorDb
+
+        // Risk indicators
+        val riskIndicators = mutableListOf<String>()
+        if (matchedSource != KnownBeaconType.UNKNOWN) {
+            riskIndicators.add("Matches ${matchedSource.company} beacon signature")
+        }
+        if (followingUser) {
+            riskIndicators.add("Detected at $distinctLocations different locations")
+        }
+        if (persistenceScore > 0.5f) {
+            riskIndicators.add("Persistent signal (${detectionDuration / 1000}s)")
+        }
+        if (snrDb > 20) {
+            riskIndicators.add("Strong signal (SNR: ${String.format("%.1f", snrDb)} dB)")
+        }
+        if (profile == AmplitudeProfile.PULSING) {
+            riskIndicators.add("Pulsing pattern - typical of beacon encoding")
+        }
+        if (beacon.detectionCount > 10) {
+            riskIndicators.add("Repeatedly detected (${beacon.detectionCount} times)")
+        }
+
+        // Calculate tracking likelihood
+        var trackingLikelihood = confidence * 0.4f
+        if (followingUser) trackingLikelihood += 20f
+        if (persistenceScore > 0.5f) trackingLikelihood += 15f
+        if (profile == AmplitudeProfile.PULSING) trackingLikelihood += 10f
+        if (snrDb > 20) trackingLikelihood += 10f
+        if (category == SourceCategory.TRACKING) trackingLikelihood += 10f
+
+        return BeaconAnalysis(
+            peakAmplitudeDb = beacon.peakAmplitudeDb,
+            avgAmplitudeDb = avgAmplitude,
+            amplitudeVariance = amplitudeVariance,
+            amplitudeProfile = profile,
+            frequencyHz = beacon.frequency,
+            matchedSource = matchedSource,
+            sourceConfidence = confidence,
+            sourceCategory = category,
+            locationsDetected = distinctLocations,
+            persistenceScore = persistenceScore,
+            followingUser = followingUser,
+            totalDetectionCount = beacon.detectionCount,
+            detectionDurationMs = detectionDuration,
+            noiseFloorDb = noiseFloorDb,
+            snrDb = snrDb,
+            trackingLikelihood = trackingLikelihood.coerceIn(0f, 100f),
+            riskIndicators = riskIndicators
+        )
+    }
+
+    /**
+     * Build enriched technical details from analysis
+     */
+    private fun buildBeaconTechnicalDetails(analysis: BeaconAnalysis): String {
+        val parts = mutableListOf<String>()
+
+        // Tracking likelihood
+        parts.add("Tracking Likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%")
+
+        // Source attribution
+        parts.add("Source: ${analysis.matchedSource.company} (${String.format("%.0f", analysis.sourceConfidence)}% match)")
+        parts.add("Category: ${analysis.sourceCategory.displayName}")
+
+        // Amplitude info
+        parts.add("Frequency: ${analysis.frequencyHz} Hz")
+        parts.add("Peak Amplitude: ${String.format("%.1f", analysis.peakAmplitudeDb)} dB")
+        parts.add("Avg Amplitude: ${String.format("%.1f", analysis.avgAmplitudeDb)} dB")
+        parts.add("Signal Profile: ${analysis.amplitudeProfile.displayName}")
+        parts.add("SNR: ${String.format("%.1f", analysis.snrDb)} dB")
+
+        // Persistence
+        parts.add("Duration: ${analysis.detectionDurationMs / 1000}s")
+        parts.add("Detections: ${analysis.totalDetectionCount}")
+        parts.add("Persistence: ${String.format("%.0f", analysis.persistenceScore * 100)}%")
+
+        // Location
+        if (analysis.locationsDetected > 1) {
+            parts.add("⚠️ Detected at ${analysis.locationsDetected} distinct locations")
+        }
+        if (analysis.followingUser) {
+            parts.add("⚠️ Beacon appears to follow user movement")
+        }
+
+        return parts.joinToString("\n")
+    }
+
+    /**
+     * Build contributing factors from analysis
+     */
+    private fun buildBeaconContributingFactors(analysis: BeaconAnalysis): List<String> {
+        return analysis.riskIndicators
     }
 
     /**

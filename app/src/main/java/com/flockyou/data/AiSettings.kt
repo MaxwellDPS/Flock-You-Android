@@ -85,15 +85,16 @@ enum class AiModel(
         modelFormat = ModelFormat.AICORE
     ),
     // MediaPipe-compatible Gemma 3 models (latest, recommended)
+    // Using public t-ghosh repository that doesn't require authentication
     GEMMA3_1B(
         id = "gemma3-1b",
         displayName = "Gemma 3 1B",
-        description = "Latest Gemma 3 1B model. Excellent quality, ~530MB. Requires HuggingFace login.",
-        sizeMb = 530,
+        description = "Latest Gemma 3 1B model. Excellent quality, ~555MB. No authentication required.",
+        sizeMb = 555,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 26,
-        // HuggingFace LiteRT Community - requires accepting Gemma license
-        downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+        // Public repository - no authentication required
+        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma3-1B-it-int4.task",
         quantization = "INT4",
         modelFormat = ModelFormat.TASK
     ),
@@ -101,24 +102,25 @@ enum class AiModel(
     GEMMA_2B_CPU(
         id = "gemma-2b-cpu",
         displayName = "Gemma 2B (CPU)",
-        description = "Google's Gemma 2B optimized for CPU. ~1.3GB download. Requires HuggingFace login.",
+        description = "Google's Gemma 2B optimized for CPU. ~1.35GB download. No authentication required.",
         sizeMb = 1350,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 26,
-        // HuggingFace LiteRT Community URL
-        downloadUrl = "https://huggingface.co/litert-community/Gemma-2B-IT/resolve/main/gemma-2b-it-cpu-int4.task",
+        // Public repository - no authentication required (uses .bin format)
+        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma-1.1-2b-it-cpu-int4.bin",
         quantization = "INT4",
-        modelFormat = ModelFormat.TASK
+        modelFormat = ModelFormat.TASK // MediaPipe also supports .bin files
     ),
     GEMMA_2B_GPU(
         id = "gemma-2b-gpu",
-        displayName = "Gemma 2B (GPU)",
-        description = "Google's Gemma 2B with GPU acceleration. Faster inference on supported devices.",
-        sizeMb = 1350,
-        capabilities = listOf("Text generation", "Reasoning", "Summarization", "GPU acceleration"),
+        displayName = "Gemma 2 2B (CPU INT8)",
+        description = "Gemma 2 2B with INT8 quantization. Higher quality, larger size (~3.2GB).",
+        sizeMb = 3200,
+        capabilities = listOf("Text generation", "Reasoning", "Summarization", "Higher accuracy"),
         minAndroidVersion = 28,
-        downloadUrl = "https://huggingface.co/litert-community/Gemma-2B-IT/resolve/main/gemma-2b-it-gpu-int4.task",
-        quantization = "INT4",
+        // Public repository - no authentication required
+        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma2-2b-it-cpu-int8.task",
+        quantization = "INT8",
         modelFormat = ModelFormat.TASK
     );
 
@@ -152,9 +154,19 @@ enum class AiModel(
         }
 
         /**
-         * Get the file extension for the model format
+         * Get the file extension for the model format.
+         * Extracts extension from downloadUrl if available, otherwise uses format default.
          */
         fun getFileExtension(model: AiModel): String {
+            // If model has a download URL, extract extension from it
+            model.downloadUrl?.let { url ->
+                return when {
+                    url.endsWith(".task") -> ".task"
+                    url.endsWith(".bin") -> ".bin"
+                    else -> ".task" // Default for TASK format
+                }
+            }
+            // Fallback based on format
             return when (model.modelFormat) {
                 ModelFormat.TASK -> ".task"
                 ModelFormat.AICORE -> "" // No file, managed by AICore
