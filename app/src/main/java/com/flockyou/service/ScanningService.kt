@@ -952,16 +952,17 @@ class ScanningService : Service() {
     private var satelliteStateJob: Job? = null
     private var satelliteAnomalyJob: Job? = null
     
+    @SuppressLint("MissingPermission")
     private fun startSatelliteMonitoring() {
         if (!hasTelephonyPermissions()) {
             satelliteStatus.value = SubsystemStatus.PermissionDenied("READ_PHONE_STATE")
             Log.w(TAG, "Missing telephony permissions for satellite monitoring")
             return
         }
-        
+
         Log.d(TAG, "Starting satellite monitoring")
         satelliteStatus.value = SubsystemStatus.Active
-        
+
         satelliteMonitor?.startMonitoring()
         
         // Collect satellite state updates

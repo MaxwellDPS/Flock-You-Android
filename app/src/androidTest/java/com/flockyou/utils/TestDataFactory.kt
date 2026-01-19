@@ -215,4 +215,160 @@ object TestDataFactory {
             createSatelliteDetection()
         )
     }
+
+    // ==================== Time-Based Detections ====================
+
+    /**
+     * Create a detection with a specific timestamp.
+     */
+    fun createDetectionWithTimestamp(timestamp: Long): Detection {
+        return createTestDetection().copy(
+            firstSeen = timestamp,
+            lastSeen = timestamp
+        )
+    }
+
+    /**
+     * Create a detection with a specific location.
+     */
+    fun createDetectionWithLocation(lat: Double, lng: Double): Detection {
+        return createTestDetection(
+            latitude = lat,
+            longitude = lng
+        )
+    }
+
+    /**
+     * Create multiple detections within a time range.
+     *
+     * @param startTime The starting timestamp
+     * @param count Number of detections to create
+     * @param intervalMs Interval between detections in milliseconds
+     */
+    fun createDetectionsInTimeRange(
+        startTime: Long,
+        count: Int,
+        intervalMs: Long = 60000L
+    ): List<Detection> {
+        return List(count) { index ->
+            val timestamp = startTime + (index * intervalMs)
+            createTestDetection(
+                macAddress = String.format("AA:BB:CC:DD:EE:%02X", index % 256)
+            ).copy(
+                id = (index + 1).toLong(),
+                firstSeen = timestamp,
+                lastSeen = timestamp
+            )
+        }
+    }
+
+    /**
+     * Create old detections for retention testing.
+     *
+     * @param count Number of detections
+     * @param hoursOld How many hours old the detections should be
+     */
+    fun createOldDetections(count: Int, hoursOld: Int): List<Detection> {
+        val oldTimestamp = System.currentTimeMillis() - (hoursOld * 60 * 60 * 1000L)
+        return List(count) { index ->
+            createTestDetection(
+                macAddress = String.format("OLD:OLD:OLD:DD:EE:%02X", index % 256)
+            ).copy(
+                id = (index + 1).toLong(),
+                firstSeen = oldTimestamp,
+                lastSeen = oldTimestamp
+            )
+        }
+    }
+
+    // ==================== Danger Zone Helpers ====================
+
+    /**
+     * Create a danger zone at a specific location.
+     */
+    fun createDangerZoneAtLocation(
+        lat: Double,
+        lng: Double,
+        radius: Float = 500f,
+        name: String = "Test Danger Zone"
+    ): DangerZone {
+        return DangerZone(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            latitude = lat,
+            longitude = lng,
+            radiusMeters = radius,
+            enabled = true
+        )
+    }
+
+    // ==================== Batch Creation Helpers ====================
+
+    /**
+     * Create detections for each threat level.
+     */
+    fun createDetectionsForAllThreatLevels(): List<Detection> {
+        return ThreatLevel.values().mapIndexed { index, level ->
+            createTestDetection(
+                threatLevel = level,
+                macAddress = String.format("TL:TL:TL:TL:TL:%02X", index)
+            )
+        }
+    }
+
+    /**
+     * Create detections for each protocol.
+     */
+    fun createDetectionsForAllProtocols(): List<Detection> {
+        return listOf(
+            createTestDetection(protocol = DetectionProtocol.WIFI),
+            createTestDetection(protocol = DetectionProtocol.BLE, macAddress = "11:22:33:44:55:66"),
+            createStingrayDetection(),
+            createSatelliteDetection(),
+            createUltrasonicBeaconDetection()
+        )
+    }
+
+    /**
+     * Create detections for each device type available.
+     */
+    fun createDetectionsForDeviceTypes(types: List<DeviceType>): List<Detection> {
+        return types.mapIndexed { index, type ->
+            createTestDetection(
+                deviceType = type,
+                macAddress = String.format("DT:DT:DT:DT:DT:%02X", index)
+            )
+        }
+    }
+
+    // ==================== Edge Case Helpers ====================
+
+    /**
+     * Create a detection with maximum field lengths.
+     */
+    fun createMaxLengthDetection(): Detection {
+        return createTestDetection(
+            ssid = "A".repeat(255),
+            macAddress = "AA:BB:CC:DD:EE:FF"
+        ).copy(
+            deviceName = "B".repeat(255),
+            manufacturer = "C".repeat(255),
+            matchedPatterns = "D".repeat(500)
+        )
+    }
+
+    /**
+     * Create a detection with all nullable fields set to null.
+     */
+    fun createMinimalDetection(): Detection {
+        return createTestDetection(
+            macAddress = null,
+            ssid = null,
+            latitude = null,
+            longitude = null
+        ).copy(
+            manufacturer = null,
+            matchedPatterns = null
+        )
+    }
 }

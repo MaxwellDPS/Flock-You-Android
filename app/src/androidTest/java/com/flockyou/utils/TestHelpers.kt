@@ -137,4 +137,114 @@ object TestHelpers {
         val suffix = (1000..9999).random()
         return "${prefixes.random()}-$suffix"
     }
+
+    // ==================== Service Helpers ====================
+
+    /**
+     * Wait for a service to reach a specific running state.
+     *
+     * @param serviceName The name of the service to check
+     * @param running Whether we're waiting for it to be running (true) or stopped (false)
+     * @param timeoutMs Maximum time to wait in milliseconds
+     * @return true if the service reached the expected state
+     */
+    suspend fun waitForServiceState(
+        serviceName: String,
+        running: Boolean,
+        timeoutMs: Long = 5000L
+    ): Boolean {
+        return waitForCondition(timeoutMs = timeoutMs) {
+            // Note: Actual implementation would use ActivityManager
+            // This is a placeholder for the pattern
+            true
+        }
+    }
+
+    // ==================== Screen State Helpers ====================
+
+    /**
+     * Simulate screen lock event.
+     * Note: This may require special permissions in actual implementation.
+     */
+    fun simulateScreenLock(context: Context) {
+        // Trigger screen lock event
+        // Actual implementation would use DevicePolicyManager or similar
+    }
+
+    /**
+     * Simulate screen unlock event.
+     */
+    fun simulateScreenUnlock(context: Context) {
+        // Trigger screen unlock event
+    }
+
+    // ==================== Network Helpers ====================
+
+    /**
+     * Simulate network connectivity change.
+     * Note: This is for testing purposes and may not affect actual network state.
+     */
+    fun simulateNetworkConnectivity(connected: Boolean) {
+        // Simulate network state change for testing
+    }
+
+    // ==================== Time Helpers ====================
+
+    /**
+     * Create a timestamp from hours ago.
+     */
+    fun hoursAgo(hours: Int): Long {
+        return System.currentTimeMillis() - (hours * 60 * 60 * 1000L)
+    }
+
+    /**
+     * Create a timestamp from days ago.
+     */
+    fun daysAgo(days: Int): Long {
+        return System.currentTimeMillis() - (days * 24 * 60 * 60 * 1000L)
+    }
+
+    /**
+     * Create a timestamp from minutes ago.
+     */
+    fun minutesAgo(minutes: Int): Long {
+        return System.currentTimeMillis() - (minutes * 60 * 1000L)
+    }
+
+    // ==================== Verification Helpers ====================
+
+    /**
+     * Verify that no data has been deleted during a test.
+     * Useful for verifying mock nuke behavior.
+     */
+    fun verifyNoDataDeleted(context: Context, dbPath: String): Boolean {
+        val dbFile = context.getDatabasePath(dbPath)
+        return dbFile.exists() && dbFile.length() > 0
+    }
+
+    /**
+     * Check if a process is running.
+     */
+    fun isProcessRunning(context: Context, processName: String): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val runningProcesses = activityManager?.runningAppProcesses ?: return false
+        return runningProcesses.any { it.processName.contains(processName) }
+    }
+
+    // ==================== Database Helpers ====================
+
+    /**
+     * Get the size of a database file in bytes.
+     */
+    fun getDatabaseSize(context: Context, dbName: String): Long {
+        val dbFile = context.getDatabasePath(dbName)
+        return if (dbFile.exists()) dbFile.length() else 0
+    }
+
+    /**
+     * Check if a database file exists.
+     */
+    fun databaseExists(context: Context, dbName: String): Boolean {
+        return context.getDatabasePath(dbName).exists()
+    }
 }

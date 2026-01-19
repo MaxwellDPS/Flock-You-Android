@@ -1,5 +1,6 @@
 package com.flockyou.monitoring
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -348,6 +349,7 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Handle service state changes
      */
+    @SuppressLint("MissingPermission")
     private fun handleServiceStateChange(serviceState: ServiceState) {
         coroutineScope.launch {
             @Suppress("UNUSED_VARIABLE")
@@ -620,12 +622,13 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Update terrestrial baseline
      */
+    @SuppressLint("MissingPermission")
     private fun updateTerrestrialBaseline() {
         coroutineScope.launch {
             try {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) 
-                    == PackageManager.PERMISSION_GRANTED) {
-                    
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
+                    == PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+
                     val signalStrength = telephonyManager.signalStrength
                     signalStrength?.let {
                         val dbm = getBestSignalDbm(it)
@@ -657,11 +660,15 @@ class SatelliteMonitor(private val context: Context) {
     /**
      * Start periodic satellite state checks
      */
+    @SuppressLint("MissingPermission")
     private fun startPeriodicChecks() {
         coroutineScope.launch {
             while (isActive) {
                 try {
-                    checkCurrentState()
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
+                        == PackageManager.PERMISSION_GRANTED) {
+                        checkCurrentState()
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in periodic check", e)
                 }
