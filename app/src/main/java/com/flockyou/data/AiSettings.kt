@@ -100,17 +100,18 @@ enum class AiModel(
         apiStability = ApiStability.ALPHA
     ),
     // MediaPipe-compatible Gemma 3 models (latest, recommended)
-    // Using public t-ghosh repository that doesn't require authentication
+    // Official litert-community Gemma 3 1B model optimized for both GPU and CPU
+    // See: https://huggingface.co/litert-community/Gemma3-1B-IT
     GEMMA3_1B(
         id = "gemma3-1b",
         displayName = "Gemma 3 1B",
-        description = "Latest Gemma 3 1B model. Excellent quality, ~555MB. No authentication required.",
-        sizeMb = 555,
+        description = "Official Gemma 3 1B model with GPU/CPU support. ~529MB. No authentication required.",
+        sizeMb = 529,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 26,
-        // Public repository - no authentication required
-        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma3-1B-it-int4.task",
-        quantization = "INT4",
+        // Official litert-community repository - GPU optimized
+        downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+        quantization = "INT4 QAT",
         modelFormat = ModelFormat.TASK,
         apiStability = ApiStability.STABLE
     ),

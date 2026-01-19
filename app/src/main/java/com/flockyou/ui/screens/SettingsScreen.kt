@@ -54,9 +54,9 @@ fun SettingsScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val viewModel: MainViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsState()
-    val scanStats by ScanningService.scanStats.collectAsState()
-    val errorLog by ScanningService.errorLog.collectAsState()
-    val currentConfig by ScanningService.currentSettings.collectAsState()
+    // Use IPC-based data from uiState instead of direct companion object access
+    val scanStats = uiState.scanStats
+    val errorLog = uiState.recentErrors
     val ouiSettings by viewModel.ouiSettings.collectAsState()
     val isOuiUpdating by viewModel.isOuiUpdating.collectAsState()
 
@@ -83,13 +83,14 @@ fun SettingsScreen(
         }
     }
     
-    // Scan timing settings state
-    var wifiInterval by remember { mutableStateOf(currentConfig.wifiScanInterval / 1000) }
-    var bleDuration by remember { mutableStateOf(currentConfig.bleScanDuration / 1000) }
-    var enableBle by remember { mutableStateOf(currentConfig.enableBle) }
-    var enableWifi by remember { mutableStateOf(currentConfig.enableWifi) }
-    var enableCellular by remember { mutableStateOf(currentConfig.enableCellular) }
-    var trackSeenDevices by remember { mutableStateOf(currentConfig.trackSeenDevices) }
+    // Scan timing settings state - using default values since config is stored in DataStore
+    // These are just initial UI state; actual config comes from ScanSettingsRepository
+    var wifiInterval by remember { mutableStateOf(35) }
+    var bleDuration by remember { mutableStateOf(10) }
+    var enableBle by remember { mutableStateOf(true) }
+    var enableWifi by remember { mutableStateOf(true) }
+    var enableCellular by remember { mutableStateOf(true) }
+    var trackSeenDevices by remember { mutableStateOf(true) }
     
     Scaffold(
         topBar = {
@@ -353,7 +354,7 @@ fun SettingsScreen(
                             )
                             Slider(
                                 value = wifiInterval.toFloat(),
-                                onValueChange = { wifiInterval = it.toLong() },
+                                onValueChange = { wifiInterval = it.toInt() },
                                 valueRange = 30f..120f,
                                 steps = 8,
                                 onValueChangeFinished = {
@@ -378,7 +379,7 @@ fun SettingsScreen(
                             )
                             Slider(
                                 value = bleDuration.toFloat(),
-                                onValueChange = { bleDuration = it.toLong() },
+                                onValueChange = { bleDuration = it.toInt() },
                                 valueRange = 5f..30f,
                                 steps = 4,
                                 onValueChangeFinished = {

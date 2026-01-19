@@ -88,6 +88,8 @@ data class MainUiState(
     val gnssMeasurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData? = null,
     // Detector health status
     val detectorHealth: Map<String, ScanningService.DetectorHealthStatus> = emptyMap(),
+    // Scan statistics
+    val scanStats: ScanningService.ScanStatistics = ScanningService.ScanStatistics(),
     // UI settings
     val advancedMode: Boolean = false,
     // AI Analysis
@@ -349,6 +351,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             serviceConnection.detectorHealth.collect { health ->
                 _uiState.update { it.copy(detectorHealth = health) }
+            }
+        }
+
+        // Scan statistics collection
+        viewModelScope.launch {
+            serviceConnection.scanStats.collect { stats ->
+                _uiState.update { it.copy(scanStats = stats) }
             }
         }
 

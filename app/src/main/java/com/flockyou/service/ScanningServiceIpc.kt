@@ -61,6 +61,7 @@ object ScanningServiceIpc {
     const val MSG_DETECTOR_HEALTH = 115
     const val MSG_ERROR_LOG = 116
     const val MSG_DETECTION_REFRESH = 117
+    const val MSG_SCAN_STATS = 118
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -100,6 +101,7 @@ object ScanningServiceIpc {
     const val KEY_GNSS_MEASUREMENTS_JSON = "gnss_measurements_json"
     const val KEY_DETECTOR_HEALTH_JSON = "detector_health_json"
     const val KEY_ERROR_LOG_JSON = "error_log_json"
+    const val KEY_SCAN_STATS_JSON = "scan_stats_json"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -225,6 +227,10 @@ object ScanningServiceIpc {
                     }
                     MSG_DETECTION_REFRESH -> {
                         connection.notifyDetectionRefresh()
+                    }
+                    MSG_SCAN_STATS -> {
+                        val json = msg.data?.getString(KEY_SCAN_STATS_JSON)
+                        connection.updateScanStats(json)
                     }
                     else -> super.handleMessage(msg)
                 }
@@ -368,6 +374,10 @@ class ScanningServiceConnection(private val context: Context) {
     // Error log (mirrored from service process)
     private val _errorLog = MutableStateFlow<List<ScanningService.ScanError>>(emptyList())
     val errorLog: StateFlow<List<ScanningService.ScanError>> = _errorLog.asStateFlow()
+
+    // Scan statistics (mirrored from service process)
+    private val _scanStats = MutableStateFlow(ScanningService.ScanStatistics())
+    val scanStats: StateFlow<ScanningService.ScanStatistics> = _scanStats.asStateFlow()
 
     // Detection refresh event (notifies UI to refresh detections from database)
     private val _detectionRefreshEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
@@ -779,13 +789,18 @@ class ScanningServiceConnection(private val context: Context) {
     }
 
     internal fun updateDetectorHealth(json: String?) {
-        if (json == null) return
+        if (json == null) {
+            Log.w(tag, "Received null detector health JSON")
+            return
+        }
         try {
+            Log.d(tag, "Received detector health JSON (${json.length} chars)")
             val type = object : TypeToken<Map<String, ScanningService.DetectorHealthStatus>>() {}.type
             val health: Map<String, ScanningService.DetectorHealthStatus> = ScanningServiceIpc.gson.fromJson(json, type)
+            Log.d(tag, "Parsed detector health: ${health.size} detectors, running=${health.values.count { it.isRunning }}")
             _detectorHealth.value = health
         } catch (e: Exception) {
-            Log.e(tag, "Failed to parse detector health JSON", e)
+            Log.e(tag, "Failed to parse detector health JSON: $json", e)
         }
     }
 
@@ -802,5 +817,15 @@ class ScanningServiceConnection(private val context: Context) {
 
     internal fun notifyDetectionRefresh() {
         _detectionRefreshEvent.tryEmit(Unit)
+    }
+
+    internal fun updateScanStats(json: String?) {
+        if (json == null) return
+        try {
+            val stats: ScanningService.ScanStatistics = ScanningServiceIpc.gson.fromJson(json, ScanningService.ScanStatistics::class.java)
+            _scanStats.value = stats
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse scan stats JSON", e)
+        }
     }
 }

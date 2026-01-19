@@ -23,7 +23,7 @@ enum class CellularPattern(val displayName: String, val description: String, val
     RAPID_CELL_SWITCHING("Rapid Cell Switching", "Detects abnormal cell tower handoff rates", true),
     SIGNAL_SPIKE("Signal Spike", "Detects sudden signal strength changes", true),
     LAC_TAC_ANOMALY("LAC/TAC Anomaly", "Detects location area changes without cell change", true),
-    UNKNOWN_CELL_TOWER("Unknown Cell Tower", "Alerts on connection to untrusted cell towers", false),
+    UNKNOWN_CELL_TOWER("Unknown Cell Tower", "Alerts on connection to untrusted cell towers", true),
     CELL_ID_CHANGE("Cell ID Change", "Logs all cell tower changes", false),
     ROAMING_ANOMALY("Roaming Anomaly", "Detects unexpected roaming state changes", true)
 }
@@ -68,7 +68,7 @@ enum class WifiPattern(val displayName: String, val description: String, val def
     STINGRAY_WIFI("StingRay WiFi", "Cell site simulator WiFi signatures", true),
     BODY_CAM_WIFI("Body Camera WiFi", "Body-worn camera WiFi hotspots", true),
     DRONE_WIFI("Drone WiFi", "Police/surveillance drone WiFi patterns", true),
-    GENERIC_SUSPECT("Generic Suspicious", "Other suspicious WiFi patterns", true)
+    GENERIC_SUSPECT("Generic Suspicious", "Other suspicious WiFi patterns", false)
 }
 
 /**

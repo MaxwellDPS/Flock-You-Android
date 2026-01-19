@@ -765,9 +765,11 @@ class ScanningService : Service() {
             client.send(detectionMsg)
 
             // Send detector health
+            val healthJson = ScanningServiceIpc.gson.toJson(detectorHealth.value)
+            Log.d(TAG, "Sending detector health to client: ${detectorHealth.value.size} detectors, running=${detectorHealth.value.values.count { it.isRunning }}")
             val healthMsg = Message.obtain(null, ScanningServiceIpc.MSG_DETECTOR_HEALTH)
             healthMsg.data = Bundle().apply {
-                putString(ScanningServiceIpc.KEY_DETECTOR_HEALTH_JSON, ScanningServiceIpc.gson.toJson(detectorHealth.value))
+                putString(ScanningServiceIpc.KEY_DETECTOR_HEALTH_JSON, healthJson)
             }
             client.send(healthMsg)
 
@@ -777,6 +779,13 @@ class ScanningService : Service() {
                 putString(ScanningServiceIpc.KEY_ERROR_LOG_JSON, ScanningServiceIpc.gson.toJson(errorLog.value))
             }
             client.send(errorMsg)
+
+            // Send scan statistics
+            val statsMsg = Message.obtain(null, ScanningServiceIpc.MSG_SCAN_STATS)
+            statsMsg.data = Bundle().apply {
+                putString(ScanningServiceIpc.KEY_SCAN_STATS_JSON, ScanningServiceIpc.gson.toJson(scanStats.value))
+            }
+            client.send(statsMsg)
         } catch (e: RemoteException) {
             Log.e(TAG, "Failed to send all data to client", e)
         }
@@ -1585,7 +1594,22 @@ class ScanningService : Service() {
             }
         }
     }
-    
+
+    /**
+     * Broadcast scan statistics to all registered IPC clients.
+     */
+    private fun broadcastScanStats() {
+        if (ipcClients.isEmpty()) return
+        val json = ScanningServiceIpc.gson.toJson(scanStats.value)
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_SCAN_STATS).apply {
+                data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_SCAN_STATS_JSON, json)
+                }
+            }
+        }
+    }
+
     private fun stopScanning() {
         scanStatus.value = ScanStatus.Stopping
         isScanning.value = false
@@ -2377,6 +2401,9 @@ class ScanningService : Service() {
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
             isBleScanningActive = true
             bleStatus.value = SubsystemStatus.Active
+            // Update total BLE scan count
+            scanStats.value = scanStats.value.copy(totalBleScans = scanStats.value.totalBleScans + 1)
+            broadcastScanStats()
             Log.d(TAG, "BLE scan started (aggressive=$aggressiveMode)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start BLE scan", e)
@@ -2503,7 +2530,8 @@ class ScanningService : Service() {
             bleDevicesSeen = scanStats.value.bleDevicesSeen + 1,
             lastBleSuccessTime = System.currentTimeMillis()
         )
-        
+        broadcastScanStats()
+
         // Check for Raven device (by service UUIDs)
         if (DetectionPatterns.isRavenDevice(serviceUuids)) {
             val matchedServices = DetectionPatterns.matchRavenServices(serviceUuids)
@@ -2716,7 +2744,8 @@ class ScanningService : Service() {
         scanStats.value = scanStats.value.copy(
             totalWifiScans = scanStats.value.totalWifiScans + 1
         )
-        
+        broadcastScanStats()
+
         try {
             @Suppress("DEPRECATION")
             val started = wifiManager.startScan()
@@ -2753,7 +2782,8 @@ class ScanningService : Service() {
                         scanStats.value = stats.copy(
                             throttledWifiScans = stats.throttledWifiScans + 1
                         )
-                        
+                        broadcastScanStats()
+
                         // Only log throttle error once per minute to reduce spam
                         val lastThrottle = lastWifiThrottleLogTime
                         val now = System.currentTimeMillis()
@@ -2894,6 +2924,7 @@ class ScanningService : Service() {
             successfulWifiScans = scanStats.value.successfulWifiScans + 1,
             lastWifiSuccessTime = System.currentTimeMillis()
         )
+        broadcastScanStats()
 
         // Feed results to Rogue WiFi Monitor for evil twin/rogue AP detection
         rogueWifiMonitor?.processScanResults(results)
