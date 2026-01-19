@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,6 +21,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.flockyou.monitoring.GnssSatelliteMonitor
+import com.flockyou.monitoring.GnssSatelliteMonitor.*
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
@@ -47,8 +51,13 @@ fun NearbyDevicesScreen(
     val satelliteAnomalies = uiState.satelliteAnomalies
     val satelliteStatus = uiState.satelliteStatus
     
+    // GNSS satellite monitoring data
+    val gnssStatus = uiState.gnssStatus
+    val gnssSatellites = uiState.gnssSatellites
+    val gnssAnomalies = uiState.gnssAnomalies
+
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("BLE", "WiFi", "Cellular", "Satellite")
+    val tabs = listOf("BLE", "WiFi", "Cellular", "GNSS", "Satellite")
     
     Scaffold(
         topBar = {
@@ -94,6 +103,7 @@ fun NearbyDevicesScreen(
                                         0 -> Icons.Default.Bluetooth
                                         1 -> Icons.Default.Wifi
                                         2 -> Icons.Default.CellTower
+                                        3 -> Icons.Default.GpsFixed
                                         else -> Icons.Default.SatelliteAlt
                                     },
                                     contentDescription = null,
@@ -110,7 +120,11 @@ fun NearbyDevicesScreen(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge { Text(seenWifiNetworks.size.toString()) }
                                     }
-                                    3 -> if (satelliteAnomalies.isNotEmpty()) {
+                                    3 -> if (gnssSatellites.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge { Text(gnssSatellites.size.toString()) }
+                                    }
+                                    4 -> if (satelliteAnomalies.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge(
                                             containerColor = MaterialTheme.colorScheme.error
@@ -241,6 +255,15 @@ fun NearbyDevicesScreen(
                     )
                 }
                 3 -> {
+                    // GNSS tab
+                    GnssStatusContent(
+                        gnssStatus = gnssStatus,
+                        gnssSatellites = gnssSatellites,
+                        gnssAnomalies = gnssAnomalies,
+                        isScanning = isScanning
+                    )
+                }
+                4 -> {
                     // Satellite tab
                     SatelliteStatusContent(
                         satelliteState = satelliteState,

@@ -127,7 +127,8 @@ class ScanningService : Service() {
         val learnedSignatures = MutableStateFlow<List<LearnedSignature>>(emptyList())
 
         // Packet rate tracking for Signal trigger detection (advertising spike detection)
-        private val devicePacketCounts = mutableMapOf<String, MutableList<Long>>()  // MAC -> timestamps
+        private val devicePacketCounts = java.util.concurrent.ConcurrentHashMap<String, MutableList<Long>>()  // MAC -> timestamps
+        private val packetCountsLock = Any()  // Lock for thread-safe list modification
         val highActivityDevices = MutableStateFlow<List<String>>(emptyList())  // MACs with advertising spikes
 
         private const val MAX_ERROR_LOG_SIZE = 50
@@ -193,18 +194,26 @@ class ScanningService : Service() {
          */
         fun trackPacket(macAddress: String): Float {
             val now = System.currentTimeMillis()
-            val packets = devicePacketCounts.getOrPut(macAddress) { mutableListOf() }
-            packets.add(now)
-
-            // Remove old packets outside the window
             val cutoff = now - PACKET_RATE_WINDOW_MS
-            packets.removeAll { it < cutoff }
 
-            // Calculate rate
-            val rate = if (packets.size > 1) {
-                packets.size.toFloat() / (PACKET_RATE_WINDOW_MS / 1000f)
-            } else {
-                0f
+            val rate = synchronized(packetCountsLock) {
+                val packets = devicePacketCounts.getOrPut(macAddress) { mutableListOf() }
+                packets.add(now)
+
+                // Remove old packets outside the window - use iterator for safe removal
+                val iterator = packets.iterator()
+                while (iterator.hasNext()) {
+                    if (iterator.next() < cutoff) {
+                        iterator.remove()
+                    }
+                }
+
+                // Calculate rate
+                if (packets.size > 1) {
+                    packets.size.toFloat() / (PACKET_RATE_WINDOW_MS / 1000f)
+                } else {
+                    0f
+                }
             }
 
             // Check for high activity (potential Signal trigger activation)
