@@ -10,6 +10,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -590,6 +591,55 @@ class ScanningServiceConnection(private val context: Context) {
         }
 
         bindInternal()
+    }
+
+    /**
+     * Send a message with retry logic on failure.
+     *
+     * @param messageType The IPC message type to send
+     * @param configureMessage Optional lambda to configure the message (e.g., set data bundle)
+     * @param maxRetries Maximum number of retry attempts (default 3)
+     * @param onFailure Optional callback when all retries are exhausted
+     */
+    private fun sendMessageWithRetry(
+        messageType: Int,
+        configureMessage: ((Message) -> Unit)? = null,
+        maxRetries: Int = 3,
+        onFailure: ((Exception) -> Unit)? = null
+    ) {
+        var lastException: Exception? = null
+
+        for (attempt in 0 until maxRetries) {
+            if (!_isBound.value) {
+                Log.w(tag, "Cannot send message $messageType - not bound")
+                lastException = IllegalStateException("Service not bound")
+                break
+            }
+
+            try {
+                val msg = Message.obtain(null, messageType)
+                msg.replyTo = clientMessenger
+                configureMessage?.invoke(msg)
+                serviceMessenger?.send(msg)
+                return // Success
+            } catch (e: RemoteException) {
+                Log.w(tag, "Failed to send message $messageType (attempt ${attempt + 1}/$maxRetries): ${e.message}")
+                lastException = e
+
+                if (attempt < maxRetries - 1) {
+                    // Small delay before retry
+                    Thread.sleep(100L * (attempt + 1))
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Unexpected error sending message $messageType: ${e.message}", e)
+                lastException = e
+                break // Don't retry on unexpected errors
+            }
+        }
+
+        // All retries exhausted
+        Log.e(tag, "Failed to send message $messageType after $maxRetries attempts")
+        onFailure?.invoke(lastException ?: Exception("Unknown error"))
     }
 
     /**
