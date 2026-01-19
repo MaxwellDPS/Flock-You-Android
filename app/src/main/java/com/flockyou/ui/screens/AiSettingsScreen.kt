@@ -384,7 +384,7 @@ private fun ModelSelectionCard(
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
-                        progress = { downloadProgress / 100f },
+                        progress = downloadProgress / 100f,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
