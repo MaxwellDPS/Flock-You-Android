@@ -21,6 +21,8 @@ import com.flockyou.data.repository.EphemeralDetectionRepository
 import com.flockyou.worker.DataRetentionWorker
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.network.OrbotHelper
+import com.flockyou.network.TorAwareHttpClient
+import com.flockyou.network.TorConnectionStatus
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.RfSignalAnalyzer
 import com.flockyou.service.RogueWifiMonitor
@@ -83,6 +85,7 @@ class MainViewModel @Inject constructor(
     private val broadcastSettingsRepository: BroadcastSettingsRepository,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val orbotHelper: OrbotHelper,
+    private val torAwareHttpClient: TorAwareHttpClient,
     private val workManager: WorkManager
 ) : AndroidViewModel(application) {
 
@@ -129,6 +132,12 @@ class MainViewModel @Inject constructor(
 
     private val _isOrbotRunning = MutableStateFlow(false)
     val isOrbotRunning: StateFlow<Boolean> = _isOrbotRunning.asStateFlow()
+
+    private val _torConnectionStatus = MutableStateFlow<TorConnectionStatus?>(null)
+    val torConnectionStatus: StateFlow<TorConnectionStatus?> = _torConnectionStatus.asStateFlow()
+
+    private val _isTorTesting = MutableStateFlow(false)
+    val isTorTesting: StateFlow<Boolean> = _isTorTesting.asStateFlow()
 
     init {
         // Check Orbot status periodically
@@ -500,6 +509,18 @@ class MainViewModel @Inject constructor(
 
     fun openOrbotInstallPage() {
         orbotHelper.openOrbotInstallPage()
+    }
+
+    fun testTorConnection() {
+        viewModelScope.launch {
+            _isTorTesting.value = true
+            _torConnectionStatus.value = torAwareHttpClient.testTorConnection()
+            _isTorTesting.value = false
+        }
+    }
+
+    fun clearTorStatus() {
+        _torConnectionStatus.value = null
     }
 
     // Broadcast Settings Management

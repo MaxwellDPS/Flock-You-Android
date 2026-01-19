@@ -30,6 +30,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.OuiSettings
 import com.flockyou.network.OrbotHelper
+import com.flockyou.network.TorConnectionStatus
 import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
 import com.flockyou.ui.components.SectionHeader
@@ -951,6 +952,8 @@ fun NetworkPrivacySection(viewModel: MainViewModel) {
     val networkSettings by viewModel.networkSettings.collectAsState()
     val isOrbotInstalled by viewModel.isOrbotInstalled.collectAsState()
     val isOrbotRunning by viewModel.isOrbotRunning.collectAsState()
+    val torConnectionStatus by viewModel.torConnectionStatus.collectAsState()
+    val isTorTesting by viewModel.isTorTesting.collectAsState()
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -985,6 +988,7 @@ fun NetworkPrivacySection(viewModel: MainViewModel) {
                     onCheckedChange = { enabled ->
                         scope.launch {
                             viewModel.setUseTorProxy(enabled)
+                            viewModel.clearTorStatus()
                         }
                     },
                     enabled = isOrbotInstalled
@@ -1063,6 +1067,128 @@ fun NetworkPrivacySection(viewModel: MainViewModel) {
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+
+                // Tor Exit IP Badge
+                torConnectionStatus?.let { status ->
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TorExitBadge(status = status)
+                }
+
+                // Test Connection Button
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { viewModel.testTorConnection() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isTorTesting
+                ) {
+                    if (isTorTesting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Testing...")
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Test Connection")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TorExitBadge(status: TorConnectionStatus) {
+    val backgroundColor = when {
+        status.isTor -> MaterialTheme.colorScheme.primaryContainer
+        status.isConnected -> MaterialTheme.colorScheme.tertiaryContainer
+        else -> MaterialTheme.colorScheme.errorContainer
+    }
+    val contentColor = when {
+        status.isTor -> MaterialTheme.colorScheme.onPrimaryContainer
+        status.isConnected -> MaterialTheme.colorScheme.onTertiaryContainer
+        else -> MaterialTheme.colorScheme.onErrorContainer
+    }
+    val icon = when {
+        status.isTor -> Icons.Default.Shield
+        status.isConnected -> Icons.Default.Warning
+        else -> Icons.Default.Error
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = when {
+                        status.isTor -> "Tor Connected"
+                        status.isConnected -> "Connected (Not Tor)"
+                        else -> "Connection Failed"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = contentColor
+                )
+            }
+
+            if (status.exitIp != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = contentColor.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Exit IP: ${status.exitIp}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = contentColor
+                    )
+                }
+
+                if (status.country != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Public,
+                            contentDescription = null,
+                            tint = contentColor.copy(alpha = 0.7f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${status.country} (${status.countryCode})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = contentColor
+                        )
+                    }
+                }
+            }
+
+            if (status.error != null && !status.isTor) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = status.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor.copy(alpha = 0.7f)
+                )
             }
         }
     }
