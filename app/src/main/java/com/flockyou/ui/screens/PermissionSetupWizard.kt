@@ -16,8 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -93,7 +91,7 @@ fun PermissionSetupWizard(
     ) {
         // Progress indicator
         LinearProgressIndicator(
-            progress = { (currentPage + 1).toFloat() / totalPages },
+            progress = (currentPage + 1).toFloat() / totalPages,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -261,7 +259,7 @@ private fun WelcomePage(
         ) {
             Text(if (hasPermissionsToRequest) "See Required Permissions" else "Continue")
             Spacer(modifier = Modifier.width(8.dp))
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+            Icon(Icons.Filled.ArrowForward, contentDescription = null)
         }
     }
 }
@@ -364,7 +362,7 @@ private fun PermissionCategoryPage(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             TextButton(onClick = onPrevious) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                Icon(Icons.Filled.ArrowBack, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Previous")
             }
@@ -372,7 +370,7 @@ private fun PermissionCategoryPage(
             Button(onClick = onNext) {
                 Text("Next")
                 Spacer(modifier = Modifier.width(8.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+                Icon(Icons.Filled.ArrowForward, contentDescription = null)
             }
         }
     }
@@ -656,7 +654,7 @@ private fun FinalPage(
         Spacer(modifier = Modifier.height(8.dp))
 
         TextButton(onClick = onPrevious) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+            Icon(Icons.Filled.ArrowBack, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("Review Permissions")
         }
