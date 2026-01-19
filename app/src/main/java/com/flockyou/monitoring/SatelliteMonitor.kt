@@ -123,6 +123,10 @@ class SatelliteMonitor(private val context: Context) {
         const val UNEXPECTED_SATELLITE_THRESHOLD_MS = 5000L
         const val RAPID_HANDOFF_THRESHOLD_MS = 2000L
         const val MIN_SIGNAL_FOR_TERRESTRIAL_DBM = -100
+
+        // Default timing values (can be overridden by updateScanTiming)
+        const val DEFAULT_PERIODIC_CHECK_INTERVAL_MS = 5000L
+        const val DEFAULT_ANOMALY_DETECTION_INTERVAL_MS = 10000L
     }
     
     private val telephonyManager: TelephonyManager by lazy {
@@ -133,6 +137,10 @@ class SatelliteMonitor(private val context: Context) {
 
     // Telephony callback reference for proper cleanup
     private var telephonyCallback: TelephonyCallback? = null
+
+    // Configurable timing
+    private var periodicCheckIntervalMs: Long = DEFAULT_PERIODIC_CHECK_INTERVAL_MS
+    private var anomalyDetectionIntervalMs: Long = DEFAULT_ANOMALY_DETECTION_INTERVAL_MS
 
     // State flows
     private val _satelliteState = MutableStateFlow(SatelliteConnectionState())
@@ -261,6 +269,16 @@ class SatelliteMonitor(private val context: Context) {
         checkDeviceSatelliteSupport()
     }
     
+    /**
+     * Update scan timing configuration.
+     * @param intervalSeconds Time between satellite state checks (5-60 seconds)
+     */
+    fun updateScanTiming(intervalSeconds: Int) {
+        periodicCheckIntervalMs = (intervalSeconds.coerceIn(5, 60) * 1000L)
+        anomalyDetectionIntervalMs = (intervalSeconds.coerceIn(5, 60) * 2 * 1000L) // Anomaly check at 2x interval
+        Log.d(TAG, "Updated scan timing: periodic=${periodicCheckIntervalMs}ms, anomaly=${anomalyDetectionIntervalMs}ms")
+    }
+
     /**
      * Stop monitoring
      */
@@ -686,7 +704,7 @@ class SatelliteMonitor(private val context: Context) {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in periodic check", e)
                 }
-                delay(5000) // Check every 5 seconds
+                delay(periodicCheckIntervalMs)
             }
         }
     }
@@ -718,7 +736,7 @@ class SatelliteMonitor(private val context: Context) {
         coroutineScope.launch {
             // Monitor for timing-based anomalies
             while (isActive) {
-                delay(10000) // Check every 10 seconds
+                delay(anomalyDetectionIntervalMs)
                 
                 if (_satelliteState.value.isConnected) {
                     performTimingAnalysis()

@@ -40,8 +40,8 @@ class CellularMonitor(private val context: Context) {
         // Thresholds - tuned to reduce false positives
         private const val SIGNAL_SPIKE_THRESHOLD = 25 // dBm - increased from 20
         private const val SIGNAL_SPIKE_TIME_WINDOW = 5_000L // Must occur within 5 seconds
-        private const val MIN_ANOMALY_INTERVAL_MS = 60_000L // 1 minute between same anomaly type
-        private const val GLOBAL_ANOMALY_COOLDOWN_MS = 30_000L // 30 seconds between ANY anomaly
+        private const val DEFAULT_MIN_ANOMALY_INTERVAL_MS = 60_000L // 1 minute between same anomaly type
+        private const val DEFAULT_GLOBAL_ANOMALY_COOLDOWN_MS = 30_000L // 30 seconds between ANY anomaly
         private const val CELL_HISTORY_SIZE = 100
         private const val TRUSTED_CELL_THRESHOLD = 5 // Seen 5+ times = trusted
         private const val TRUSTED_CELL_LOCATION_RADIUS = 0.002 // ~200m in lat/lon (was 500m - too broad)
@@ -68,7 +68,11 @@ class CellularMonitor(private val context: Context) {
     }
     
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-    
+
+    // Configurable timing
+    private var minAnomalyIntervalMs: Long = DEFAULT_MIN_ANOMALY_INTERVAL_MS
+    private var globalAnomalyCooldownMs: Long = DEFAULT_GLOBAL_ANOMALY_COOLDOWN_MS
+
     // Monitoring state
     private var isMonitoring = false
     private var currentLatitude: Double? = null
@@ -310,16 +314,26 @@ class CellularMonitor(private val context: Context) {
     fun stopMonitoring() {
         isMonitoring = false
         unregisterCellListener()
-        
+
         addTimelineEvent(
             type = CellularEventType.MONITORING_STOPPED,
             title = "Cellular Monitoring Stopped",
             description = "IMSI catcher detection paused"
         )
-        
+
         Log.d(TAG, "Stopped cellular monitoring")
     }
-    
+
+    /**
+     * Update scan timing configuration.
+     * @param intervalSeconds Cooldown time between anomaly reports (1-30 seconds)
+     */
+    fun updateScanTiming(intervalSeconds: Int) {
+        minAnomalyIntervalMs = (intervalSeconds.coerceIn(1, 30) * 1000L)
+        globalAnomalyCooldownMs = (intervalSeconds.coerceIn(1, 30) * 500L) // Half the min interval
+        Log.d(TAG, "Updated anomaly cooldown: min=${minAnomalyIntervalMs}ms, global=${globalAnomalyCooldownMs}ms")
+    }
+
     fun updateLocation(latitude: Double, longitude: Double) {
         val now = System.currentTimeMillis()
 
@@ -514,7 +528,7 @@ class CellularMonitor(private val context: Context) {
     private fun analyzeForAnomaliesImproved(previous: CellSnapshot, current: CellSnapshot) {
         // Global cooldown - don't spam alerts
         val now = System.currentTimeMillis()
-        if (now - lastAnyAnomalyTime < GLOBAL_ANOMALY_COOLDOWN_MS) {
+        if (now - lastAnyAnomalyTime < globalAnomalyCooldownMs) {
             return
         }
 
@@ -715,7 +729,7 @@ class CellularMonitor(private val context: Context) {
         val lastTime = lastAnomalyTimes[type] ?: 0
 
         // Rate limit same anomaly type
-        if (now - lastTime < MIN_ANOMALY_INTERVAL_MS) {
+        if (now - lastTime < minAnomalyIntervalMs) {
             return
         }
         lastAnomalyTimes[type] = now

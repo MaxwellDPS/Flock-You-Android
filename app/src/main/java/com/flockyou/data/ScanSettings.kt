@@ -19,7 +19,17 @@ data class ScanSettings(
     val seenDeviceTimeoutMinutes: Int = 5,
     val enableBleScanning: Boolean = true,
     val enableWifiScanning: Boolean = true,
-    val trackSeenDevices: Boolean = true
+    val trackSeenDevices: Boolean = true,
+    // RF detection timing
+    val rfScanIntervalSeconds: Int = 30,
+    // Ultrasonic detection timing
+    val ultrasonicScanIntervalSeconds: Int = 30,
+    val ultrasonicScanDurationSeconds: Int = 5,
+    // GNSS/Satellite detection timing
+    val gnssScanIntervalSeconds: Int = 5,
+    val satelliteScanIntervalSeconds: Int = 10,
+    // Cellular detection timing
+    val cellularScanIntervalSeconds: Int = 5
 )
 
 @Singleton
@@ -34,6 +44,16 @@ class ScanSettingsRepository @Inject constructor(
         val ENABLE_BLE = booleanPreferencesKey("enable_ble_scanning")
         val ENABLE_WIFI = booleanPreferencesKey("enable_wifi_scanning")
         val TRACK_SEEN_DEVICES = booleanPreferencesKey("track_seen_devices")
+        // RF detection timing
+        val RF_SCAN_INTERVAL = intPreferencesKey("rf_scan_interval_seconds")
+        // Ultrasonic detection timing
+        val ULTRASONIC_SCAN_INTERVAL = intPreferencesKey("ultrasonic_scan_interval_seconds")
+        val ULTRASONIC_SCAN_DURATION = intPreferencesKey("ultrasonic_scan_duration_seconds")
+        // GNSS/Satellite detection timing
+        val GNSS_SCAN_INTERVAL = intPreferencesKey("gnss_scan_interval_seconds")
+        val SATELLITE_SCAN_INTERVAL = intPreferencesKey("satellite_scan_interval_seconds")
+        // Cellular detection timing
+        val CELLULAR_SCAN_INTERVAL = intPreferencesKey("cellular_scan_interval_seconds")
     }
     
     val settings: Flow<ScanSettings> = context.dataStore.data.map { preferences ->
@@ -44,7 +64,13 @@ class ScanSettingsRepository @Inject constructor(
             seenDeviceTimeoutMinutes = preferences[PreferencesKeys.SEEN_DEVICE_TIMEOUT] ?: 5,
             enableBleScanning = preferences[PreferencesKeys.ENABLE_BLE] ?: true,
             enableWifiScanning = preferences[PreferencesKeys.ENABLE_WIFI] ?: true,
-            trackSeenDevices = preferences[PreferencesKeys.TRACK_SEEN_DEVICES] ?: true
+            trackSeenDevices = preferences[PreferencesKeys.TRACK_SEEN_DEVICES] ?: true,
+            rfScanIntervalSeconds = preferences[PreferencesKeys.RF_SCAN_INTERVAL] ?: 30,
+            ultrasonicScanIntervalSeconds = preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] ?: 30,
+            ultrasonicScanDurationSeconds = preferences[PreferencesKeys.ULTRASONIC_SCAN_DURATION] ?: 5,
+            gnssScanIntervalSeconds = preferences[PreferencesKeys.GNSS_SCAN_INTERVAL] ?: 5,
+            satelliteScanIntervalSeconds = preferences[PreferencesKeys.SATELLITE_SCAN_INTERVAL] ?: 10,
+            cellularScanIntervalSeconds = preferences[PreferencesKeys.CELLULAR_SCAN_INTERVAL] ?: 5
         )
     }
     
@@ -87,6 +113,42 @@ class ScanSettingsRepository @Inject constructor(
     suspend fun setTrackSeenDevices(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.TRACK_SEEN_DEVICES] = enabled
+        }
+    }
+
+    suspend fun updateRfScanInterval(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.RF_SCAN_INTERVAL] = seconds.coerceIn(10, 120)
+        }
+    }
+
+    suspend fun updateUltrasonicScanInterval(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] = seconds.coerceIn(15, 120)
+        }
+    }
+
+    suspend fun updateUltrasonicScanDuration(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.ULTRASONIC_SCAN_DURATION] = seconds.coerceIn(3, 15)
+        }
+    }
+
+    suspend fun updateGnssScanInterval(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.GNSS_SCAN_INTERVAL] = seconds.coerceIn(1, 30)
+        }
+    }
+
+    suspend fun updateSatelliteScanInterval(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SATELLITE_SCAN_INTERVAL] = seconds.coerceIn(5, 60)
+        }
+    }
+
+    suspend fun updateCellularScanInterval(seconds: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.CELLULAR_SCAN_INTERVAL] = seconds.coerceIn(1, 30)
         }
     }
 }

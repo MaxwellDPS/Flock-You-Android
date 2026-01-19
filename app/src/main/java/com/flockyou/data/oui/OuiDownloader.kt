@@ -49,7 +49,8 @@ class OuiDownloader @Inject constructor(
 
             val request = Request.Builder()
                 .url(IEEE_OUI_CSV_URL)
-                .header("Accept", "text/csv")
+                .header("Accept", "text/csv,text/plain,*/*")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .build()
 
             val response = httpClient.newCall(request).execute()

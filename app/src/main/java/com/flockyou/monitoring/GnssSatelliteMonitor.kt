@@ -60,7 +60,7 @@ class GnssSatelliteMonitor(private val context: Context) {
         // Timing thresholds
         const val MAX_CLOCK_DRIFT_NS = 1_000_000L  // 1ms max drift between measurements
         const val HISTORY_SIZE = 100
-        const val ANOMALY_COOLDOWN_MS = 30_000L  // 30 seconds between same anomaly type
+        const val DEFAULT_ANOMALY_COOLDOWN_MS = 30_000L  // 30 seconds between same anomaly type
     }
 
     private val locationManager: LocationManager by lazy {
@@ -68,6 +68,9 @@ class GnssSatelliteMonitor(private val context: Context) {
     }
 
     private var coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Configurable timing
+    private var anomalyCooldownMs: Long = DEFAULT_ANOMALY_COOLDOWN_MS
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // Current satellite status
@@ -276,6 +279,15 @@ class GnssSatelliteMonitor(private val context: Context) {
     fun updateLocation(latitude: Double, longitude: Double) {
         currentLatitude = latitude
         currentLongitude = longitude
+    }
+
+    /**
+     * Update scan timing configuration.
+     * @param intervalSeconds Cooldown time between same anomaly type reports (1-30 seconds)
+     */
+    fun updateScanTiming(intervalSeconds: Int) {
+        anomalyCooldownMs = (intervalSeconds.coerceIn(1, 30) * 1000L)
+        Log.d(TAG, "Updated anomaly cooldown: ${anomalyCooldownMs}ms")
     }
 
     // ==================== GNSS Status Callback ====================
@@ -645,7 +657,7 @@ class GnssSatelliteMonitor(private val context: Context) {
         // Rate limiting
         val now = System.currentTimeMillis()
         val lastTime = lastAnomalyTimes[type] ?: 0L
-        if (now - lastTime < ANOMALY_COOLDOWN_MS) return
+        if (now - lastTime < anomalyCooldownMs) return
         lastAnomalyTimes[type] = now
 
         val severity = when (confidence) {

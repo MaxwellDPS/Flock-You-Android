@@ -410,6 +410,9 @@ class ScanningService : Service() {
     @Inject
     lateinit var privacySettingsRepository: com.flockyou.data.PrivacySettingsRepository
 
+    @Inject
+    lateinit var scanSettingsRepository: com.flockyou.data.ScanSettingsRepository
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
@@ -1118,6 +1121,39 @@ class ScanningService : Service() {
                         stopUltrasonicDetection()
                     }
                 }
+            }
+        }
+
+        // Collect scan settings and update detector timings
+        serviceScope.launch {
+            scanSettingsRepository.settings.collect { settings ->
+                Log.d(TAG, "Scan settings updated - applying to detectors")
+
+                // Update ultrasonic detector timing
+                ultrasonicDetector?.updateScanTiming(
+                    intervalSeconds = settings.ultrasonicScanIntervalSeconds,
+                    durationSeconds = settings.ultrasonicScanDurationSeconds
+                )
+
+                // Update GNSS satellite monitor timing
+                gnssSatelliteMonitor?.updateScanTiming(settings.gnssScanIntervalSeconds)
+
+                // Update satellite monitor timing
+                satelliteMonitor?.updateScanTiming(settings.satelliteScanIntervalSeconds)
+
+                // Update cellular monitor timing
+                cellularMonitor?.updateScanTiming(settings.cellularScanIntervalSeconds)
+
+                // Update WiFi/BLE scan config (these are used by the scan loop)
+                currentSettings.value = ScanConfig(
+                    wifiScanInterval = settings.wifiScanIntervalSeconds * 1000L,
+                    bleScanDuration = settings.bleScanDurationSeconds * 1000L,
+                    inactiveTimeout = settings.inactiveTimeoutSeconds * 1000L,
+                    seenDeviceTimeout = settings.seenDeviceTimeoutMinutes * 60 * 1000L,
+                    enableBle = settings.enableBleScanning,
+                    enableWifi = settings.enableWifiScanning,
+                    trackSeenDevices = settings.trackSeenDevices
+                )
             }
         }
 

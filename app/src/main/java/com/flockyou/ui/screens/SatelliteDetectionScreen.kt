@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -103,8 +104,9 @@ fun SatelliteDetectionScreen(
                                 Icon(
                                     imageVector = when (index) {
                                         0 -> Icons.Outlined.Satellite
-                                        1 -> Icons.Default.Warning
-                                        2 -> Icons.Default.Map
+                                        1 -> Icons.Default.GpsFixed
+                                        2 -> Icons.Default.Warning
+                                        3 -> Icons.Default.Map
                                         else -> Icons.Default.Checklist
                                     },
                                     contentDescription = null,
@@ -113,7 +115,13 @@ fun SatelliteDetectionScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(title)
                                 when (index) {
-                                    1 -> if (satelliteAnomalies.isNotEmpty()) {
+                                    1 -> if (gnssAnomalies.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        ) { Text(gnssAnomalies.size.toString()) }
+                                    }
+                                    2 -> if (satelliteAnomalies.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge(
                                             containerColor = MaterialTheme.colorScheme.error
@@ -159,12 +167,20 @@ fun SatelliteDetectionScreen(
                     satelliteStatus = satelliteStatus,
                     isScanning = isScanning
                 )
-                1 -> SatelliteAnomaliesContent(
+                1 -> GnssStatusContent(
+                    gnssStatus = gnssStatus,
+                    gnssSatellites = gnssSatellites,
+                    gnssAnomalies = gnssAnomalies,
+                    gnssEvents = gnssEvents,
+                    gnssMeasurements = gnssMeasurements,
+                    isScanning = isScanning
+                )
+                2 -> SatelliteAnomaliesContent(
                     anomalies = satelliteAnomalies,
                     onClear = { /* No clear function available */ }
                 )
-                2 -> SatelliteCoverageContent()
-                3 -> SatelliteRulesContent()
+                3 -> SatelliteCoverageContent()
+                4 -> SatelliteRulesContent()
             }
         }
     }
@@ -213,6 +229,727 @@ private fun SatelliteStatusContent(
         item {
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+private fun GnssStatusContent(
+    gnssStatus: GnssEnvironmentStatus?,
+    gnssSatellites: List<SatelliteInfo>,
+    gnssAnomalies: List<GnssAnomaly>,
+    gnssEvents: List<GnssEvent>,
+    gnssMeasurements: GnssMeasurementData?,
+    isScanning: Boolean
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Main GNSS status card
+        item {
+            GnssMainStatusCard(
+                gnssStatus = gnssStatus,
+                isScanning = isScanning
+            )
+        }
+
+        // Satellite constellation breakdown
+        if (gnssStatus != null && gnssStatus.constellationCounts.isNotEmpty()) {
+            item {
+                GnssConstellationCard(gnssStatus = gnssStatus)
+            }
+        }
+
+        // Individual satellites
+        if (gnssSatellites.isNotEmpty()) {
+            item {
+                Text(
+                    text = "VISIBLE SATELLITES (${gnssSatellites.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            itemsIndexed(
+                items = gnssSatellites.sortedByDescending { it.cn0DbHz },
+                key = { index, satellite -> "${satellite.constellation.code}${satellite.svid}_$index" }
+            ) { _, satellite ->
+                GnssSatelliteCard(satellite = satellite)
+            }
+        }
+
+        // GNSS Anomalies
+        if (gnssAnomalies.isNotEmpty()) {
+            item {
+                Text(
+                    text = "GNSS ANOMALIES (${gnssAnomalies.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(
+                items = gnssAnomalies.sortedByDescending { it.timestamp },
+                key = { it.id }
+            ) { anomaly ->
+                GnssAnomalyCard(anomaly = anomaly, dateFormat = dateFormat)
+            }
+        }
+
+        // Raw measurements
+        if (gnssMeasurements != null) {
+            item {
+                GnssMeasurementsCard(measurements = gnssMeasurements)
+            }
+        }
+
+        // Recent events
+        if (gnssEvents.isNotEmpty()) {
+            item {
+                Text(
+                    text = "RECENT EVENTS",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(
+                items = gnssEvents.take(10),
+                key = { it.id }
+            ) { event ->
+                GnssEventCard(event = event, dateFormat = dateFormat)
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun GnssMainStatusCard(
+    gnssStatus: GnssEnvironmentStatus?,
+    isScanning: Boolean
+) {
+    val hasFix = gnssStatus?.hasFix == true
+    val spoofingRisk = gnssStatus?.spoofingRiskLevel ?: SpoofingRiskLevel.UNKNOWN
+
+    val riskColor = when (spoofingRisk) {
+        SpoofingRiskLevel.NONE -> Color(0xFF4CAF50)
+        SpoofingRiskLevel.LOW -> Color(0xFF8BC34A)
+        SpoofingRiskLevel.MEDIUM -> Color(0xFFFF9800)
+        SpoofingRiskLevel.HIGH -> Color(0xFFF44336)
+        SpoofingRiskLevel.CRITICAL -> Color(0xFFD32F2F)
+        SpoofingRiskLevel.UNKNOWN -> Color(0xFF9E9E9E)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasFix) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.GpsFixed,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = if (hasFix) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when {
+                                        hasFix -> Color(0xFF4CAF50)
+                                        isScanning -> Color(0xFFFFC107)
+                                        else -> Color(0xFF9E9E9E)
+                                    }
+                                )
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = if (hasFix) "GNSS Fix Active" else "No GNSS Fix",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = when {
+                                hasFix -> "${gnssStatus?.satellitesUsedInFix ?: 0} satellites in fix"
+                                isScanning -> "Acquiring satellites..."
+                                else -> "GNSS monitoring inactive"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Spoofing risk indicator
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = riskColor.copy(alpha = 0.2f)
+                    ) {
+                        Text(
+                            text = spoofingRisk.displayName,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = riskColor,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (gnssStatus?.jammingDetected == true) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFD32F2F).copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "JAMMING",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFD32F2F),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (gnssStatus != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    GnssMetric(
+                        label = "Satellites",
+                        value = "${gnssStatus.totalSatellites}"
+                    )
+                    GnssMetric(
+                        label = "In Fix",
+                        value = "${gnssStatus.satellitesUsedInFix}"
+                    )
+                    GnssMetric(
+                        label = "Avg C/N0",
+                        value = "${String.format("%.1f", gnssStatus.averageCn0DbHz)} dB"
+                    )
+                    GnssMetric(
+                        label = "Raw Data",
+                        value = if (gnssStatus.hasRawMeasurements) "Yes" else "No"
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GnssMetric(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GnssConstellationCard(gnssStatus: GnssEnvironmentStatus) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Satellite,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Constellations",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                gnssStatus.constellationCounts.forEach { (constellation, count) ->
+                    AssistChip(
+                        onClick = { },
+                        label = { Text("${constellation.displayName}: $count") },
+                        leadingIcon = {
+                            Text(
+                                text = constellation.code,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    )
+                }
+            }
+
+            // DOP values if available
+            if (gnssStatus.hdop != null || gnssStatus.vdop != null || gnssStatus.pdop != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    gnssStatus.hdop?.let {
+                        GnssMetric(label = "HDOP", value = String.format("%.1f", it))
+                    }
+                    gnssStatus.vdop?.let {
+                        GnssMetric(label = "VDOP", value = String.format("%.1f", it))
+                    }
+                    gnssStatus.pdop?.let {
+                        GnssMetric(label = "PDOP", value = String.format("%.1f", it))
+                    }
+                    gnssStatus.fixAccuracyMeters?.let {
+                        GnssMetric(label = "Accuracy", value = "${String.format("%.1f", it)}m")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GnssSatelliteCard(satellite: SatelliteInfo) {
+    val signalColor = when {
+        satellite.cn0DbHz >= 40 -> Color(0xFF4CAF50)
+        satellite.cn0DbHz >= 25 -> Color(0xFFFFC107)
+        else -> Color(0xFFF44336)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (satellite.usedInFix) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Constellation indicator
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = satellite.constellation.code,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${satellite.constellation.displayName} ${satellite.svid}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (satellite.usedInFix) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "IN FIX",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF4CAF50)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "El: ${String.format("%.0f", satellite.elevationDegrees)}° Az: ${String.format("%.0f", satellite.azimuthDegrees)}°",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (satellite.hasEphemeris) {
+                        Text(
+                            text = "EPH",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF4CAF50)
+                        )
+                    }
+                    if (satellite.hasAlmanac) {
+                        Text(
+                            text = "ALM",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF2196F3)
+                        )
+                    }
+                    satellite.carrierFrequencyHz?.let {
+                        Text(
+                            text = "${String.format("%.0f", it / 1_000_000)} MHz",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // Signal strength
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "${String.format("%.1f", satellite.cn0DbHz)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = signalColor
+                )
+                Text(
+                    text = "dB-Hz",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GnssAnomalyCard(
+    anomaly: GnssAnomaly,
+    dateFormat: SimpleDateFormat
+) {
+    val severityColor = when (anomaly.severity) {
+        com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+        com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336)
+        com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800)
+        com.flockyou.data.model.ThreatLevel.LOW -> Color(0xFFFFC107)
+        com.flockyou.data.model.ThreatLevel.INFO -> Color(0xFF2196F3)
+    }
+
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = severityColor.copy(alpha = 0.1f)
+        ),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = anomaly.type.emoji,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Column {
+                        Text(
+                            text = anomaly.type.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = dateFormat.format(Date(anomaly.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = severityColor.copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = anomaly.confidence.displayName,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = severityColor
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = anomaly.description,
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Technical Details:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = anomaly.technicalDetails,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    if (anomaly.contributingFactors.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Contributing Factors:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        anomaly.contributingFactors.forEach { factor ->
+                            Text(
+                                text = "• $factor",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (anomaly.affectedConstellations.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Affected: ${anomaly.affectedConstellations.joinToString { it.displayName }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GnssMeasurementsCard(measurements: GnssMeasurementData) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DataUsage,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Raw GNSS Measurements",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                GnssMetric(label = "Measurements", value = "${measurements.measurementCount}")
+                GnssMetric(
+                    label = "Pseudorange",
+                    value = if (measurements.hasPseudorange) "✓" else "✗"
+                )
+                GnssMetric(
+                    label = "Carrier Phase",
+                    value = if (measurements.hasCarrierPhase) "✓" else "✗"
+                )
+                GnssMetric(
+                    label = "Doppler",
+                    value = if (measurements.hasDoppler) "✓" else "✗"
+                )
+            }
+
+            if (measurements.clockBiasNs != null || measurements.clockDriftNsPerSec != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                measurements.clockBiasNs?.let {
+                    Text(
+                        text = "Clock Bias: ${String.format("%.2f", it / 1_000_000)} ms",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                measurements.clockDriftNsPerSec?.let {
+                    Text(
+                        text = "Clock Drift: ${String.format("%.2f", it)} ns/s",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                measurements.clockDiscontinuityCount?.let {
+                    Text(
+                        text = "Discontinuities: $it",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Multipath indicator
+            val multipathCount = measurements.multipathIndicators.count { it == 1 }
+            if (multipathCount > 0) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFFFF9800).copy(alpha = 0.1f)
+                ) {
+                    Text(
+                        text = "⚠️ Multipath detected on $multipathCount satellites",
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFFF9800)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GnssEventCard(
+    event: GnssEvent,
+    dateFormat: SimpleDateFormat
+) {
+    val eventColor = if (event.isAnomaly) {
+        when (event.threatLevel) {
+            com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F)
+            com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336)
+            com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800)
+            com.flockyou.data.model.ThreatLevel.LOW -> Color(0xFFFFC107)
+            com.flockyou.data.model.ThreatLevel.INFO -> Color(0xFF2196F3)
+        }
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(eventColor)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = event.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (event.isAnomaly) FontWeight.Bold else FontWeight.Normal,
+                color = if (event.isAnomaly) eventColor else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = event.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            text = dateFormat.format(Date(event.timestamp)),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

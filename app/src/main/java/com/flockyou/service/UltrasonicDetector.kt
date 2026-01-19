@@ -57,8 +57,9 @@ class UltrasonicDetector(private val context: Context) {
         private const val DETECTION_THRESHOLD_DB = -40.0 // dB above noise floor
         private const val BEACON_DURATION_THRESHOLD_MS = 500L // Must persist for 500ms
         private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between alerts
-        private const val SCAN_DURATION_MS = 5_000L // 5 second scan windows
-        private const val SCAN_INTERVAL_MS = 30_000L // Scan every 30 seconds
+        // Default timing values (can be overridden by updateScanTiming)
+        private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
+        private const val DEFAULT_SCAN_INTERVAL_MS = 30_000L // Scan every 30 seconds
 
         // Known beacon frequencies (Hz) - commonly used by tracking companies
         private val KNOWN_BEACON_FREQUENCIES = listOf(
@@ -80,6 +81,10 @@ class UltrasonicDetector(private val context: Context) {
     private var isMonitoring = false
     private var detectorJob: Job? = null
     private val detectorScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Configurable timing
+    private var scanDurationMs: Long = DEFAULT_SCAN_DURATION_MS
+    private var scanIntervalMs: Long = DEFAULT_SCAN_INTERVAL_MS
 
     // Location
     private var currentLatitude: Double? = null
@@ -215,7 +220,7 @@ class UltrasonicDetector(private val context: Context) {
         detectorJob = detectorScope.launch {
             while (isActive && isMonitoring) {
                 performScan()
-                delay(SCAN_INTERVAL_MS)
+                delay(scanIntervalMs)
             }
         }
     }
@@ -238,6 +243,17 @@ class UltrasonicDetector(private val context: Context) {
     fun updateLocation(latitude: Double, longitude: Double) {
         currentLatitude = latitude
         currentLongitude = longitude
+    }
+
+    /**
+     * Update scan timing configuration.
+     * @param intervalSeconds Time between scans (15-120 seconds)
+     * @param durationSeconds Duration of each scan (3-15 seconds)
+     */
+    fun updateScanTiming(intervalSeconds: Int, durationSeconds: Int) {
+        scanIntervalMs = (intervalSeconds.coerceIn(15, 120) * 1000L)
+        scanDurationMs = (durationSeconds.coerceIn(3, 15) * 1000L)
+        Log.d(TAG, "Updated scan timing: interval=${scanIntervalMs}ms, duration=${scanDurationMs}ms")
     }
 
     /**
@@ -290,7 +306,7 @@ class UltrasonicDetector(private val context: Context) {
                 val scanStartTime = System.currentTimeMillis()
 
                 // Collect samples for scan duration
-                while (System.currentTimeMillis() - scanStartTime < SCAN_DURATION_MS && isMonitoring) {
+                while (System.currentTimeMillis() - scanStartTime < scanDurationMs && isMonitoring) {
                     val readCount = audioRecord?.read(tempBuffer, 0, FFT_SIZE) ?: 0
 
                     if (readCount > 0) {
