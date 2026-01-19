@@ -569,7 +569,7 @@ class SatelliteMonitor(private val context: Context) {
                 severity = AnomalySeverity.MEDIUM,
                 description = "Device switched to satellite (${state.networkName}) despite good terrestrial signal (${lastTerrestrialSignal} dBm)",
                 technicalDetails = mapOf(
-                    "lastTerrestrialSignal" to (lastTerrestrialSignal ?: 0),
+                    "lastTerrestrialSignal" to (lastTerrestrialSignal ?: Int.MIN_VALUE),
                     "timeSinceSwitch" to (System.currentTimeMillis() - lastTerrestrialTimestamp),
                     "satelliteNetwork" to (state.networkName ?: "Unknown"),
                     "connectionType" to state.connectionType.name
