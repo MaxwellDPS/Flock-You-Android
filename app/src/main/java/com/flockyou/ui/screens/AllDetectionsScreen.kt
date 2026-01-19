@@ -720,7 +720,7 @@ private fun UnifiedPatternCard(
                 val uriHandler = LocalUriHandler.current
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    HorizontalDivider()
+                    Divider()
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(

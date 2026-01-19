@@ -518,81 +518,130 @@ private fun ModelSelectorDialog(
     onDownloadModel: (AiModel) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Categorize models
+    val builtInModels = availableModels.filter { it == AiModel.RULE_BASED }
+    val googleAiModels = availableModels.filter { it == AiModel.GEMINI_NANO }
+    val downloadableModels = availableModels.filter {
+        it != AiModel.RULE_BASED && it != AiModel.GEMINI_NANO
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select AI Model") },
+        title = {
+            Column {
+                Text("Select AI Engine")
+                Text(
+                    text = "Choose how detection analysis is performed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
         text = {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(availableModels) { model ->
-                    val isSelected = model.id == currentModelId
-                    val isDownloaded = model == AiModel.RULE_BASED || model == AiModel.GEMINI_NANO // Simplified check
+                // Built-in section
+                if (builtInModels.isNotEmpty()) {
+                    item {
+                        EngineCategoryHeader(
+                            title = "Built-in",
+                            subtitle = "No download required",
+                            icon = Icons.Default.CheckCircle
+                        )
+                    }
+                    items(builtInModels) { model ->
+                        EngineOptionCard(
+                            model = model,
+                            isSelected = model.id == currentModelId,
+                            isRecommended = true,
+                            recommendedReason = "Works everywhere",
+                            onSelect = { onSelectModel(model) }
+                        )
+                    }
+                }
 
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (isDownloaded || model == AiModel.RULE_BASED) {
-                                    onSelectModel(model)
-                                } else {
-                                    onDownloadModel(model)
-                                }
-                            },
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = model.displayName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        if (model.requiresNpu) {
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            SuggestionChip(
-                                                onClick = { },
-                                                label = { Text("NPU", style = MaterialTheme.typography.labelSmall) }
-                                            )
-                                        }
-                                    }
-                                    if (model.sizeMb > 0) {
-                                        Text(
-                                            text = "${model.sizeMb} MB • ${model.quantization}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                } else if (model.sizeMb > 0 && model != AiModel.GEMINI_NANO) {
-                                    Icon(
-                                        imageVector = Icons.Default.Download,
-                                        contentDescription = "Download required",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                // Google AI section (Gemini Nano)
+                if (googleAiModels.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        EngineCategoryHeader(
+                            title = "Google AI",
+                            subtitle = "Powered by Gemini Nano via AICore",
+                            icon = Icons.Default.AutoAwesome
+                        )
+                    }
+                    items(googleAiModels) { model ->
+                        val hasAiCore = deviceCapabilities?.hasAiCore == true
+                        EngineOptionCard(
+                            model = model,
+                            isSelected = model.id == currentModelId,
+                            isRecommended = hasAiCore,
+                            recommendedReason = if (hasAiCore) "Best for Pixel 8+" else null,
+                            isAvailable = hasAiCore,
+                            unavailableReason = if (!hasAiCore) "Requires Pixel 8+ with AICore" else null,
+                            onSelect = { if (hasAiCore) onSelectModel(model) }
+                        )
+                    }
+                }
+
+                // Downloadable GGUF Models section
+                if (downloadableModels.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        EngineCategoryHeader(
+                            title = "Downloadable Models",
+                            subtitle = "GGUF format • Runs on any device",
+                            icon = Icons.Default.Download
+                        )
+                    }
+
+                    // Small models (< 500MB)
+                    val smallModels = downloadableModels.filter { it.sizeMb < 500 }
+                    val largeModels = downloadableModels.filter { it.sizeMb >= 500 }
+
+                    if (smallModels.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Lightweight (< 500 MB)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                            )
+                        }
+                        items(smallModels) { model ->
+                            EngineOptionCard(
+                                model = model,
+                                isSelected = model.id == currentModelId,
+                                isRecommended = model == AiModel.SMOLLM_360M,
+                                recommendedReason = if (model == AiModel.SMOLLM_360M) "Best balance" else null,
+                                showDownloadIcon = true,
+                                onSelect = { onDownloadModel(model) }
+                            )
+                        }
+                    }
+
+                    if (largeModels.isNotEmpty()) {
+                        item {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = model.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "Full-Size (500+ MB)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                            )
+                        }
+                        items(largeModels) { model ->
+                            val hasEnoughRam = (deviceCapabilities?.availableRamMb ?: 0) > model.sizeMb * 1.5
+                            EngineOptionCard(
+                                model = model,
+                                isSelected = model.id == currentModelId,
+                                isRecommended = model == AiModel.GEMMA2_2B && hasEnoughRam,
+                                recommendedReason = if (model == AiModel.GEMMA2_2B && hasEnoughRam) "Best quality" else null,
+                                isAvailable = hasEnoughRam,
+                                unavailableReason = if (!hasEnoughRam) "Needs ${(model.sizeMb * 1.5).toInt()} MB RAM" else null,
+                                showDownloadIcon = true,
+                                onSelect = { if (hasEnoughRam) onDownloadModel(model) }
                             )
                         }
                     }
@@ -605,6 +654,174 @@ private fun ModelSelectorDialog(
             }
         }
     )
+}
+
+@Composable
+private fun EngineCategoryHeader(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EngineOptionCard(
+    model: AiModel,
+    isSelected: Boolean,
+    isRecommended: Boolean = false,
+    recommendedReason: String? = null,
+    isAvailable: Boolean = true,
+    unavailableReason: String? = null,
+    showDownloadIcon: Boolean = false,
+    onSelect: () -> Unit
+) {
+    val alpha = if (isAvailable) 1f else 0.5f
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = isAvailable) { onSelect() },
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                isRecommended && isAvailable -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha)
+            }
+        ),
+        border = when {
+            isSelected -> BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+            isRecommended && isAvailable -> BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
+            else -> null
+        }
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = model.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+                        )
+                        if (model.requiresNpu) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = "NPU",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        if (isRecommended && recommendedReason != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = recommendedReason,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    if (model.sizeMb > 0) {
+                        Text(
+                            text = "${model.sizeMb} MB • ${model.quantization}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+                        )
+                    }
+                }
+                when {
+                    isSelected -> Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    !isAvailable -> Icon(
+                        imageVector = Icons.Default.Block,
+                        contentDescription = "Unavailable",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    showDownloadIcon -> Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Download required",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = if (!isAvailable && unavailableReason != null) unavailableReason else model.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (!isAvailable) MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+            )
+
+            // Show capabilities for non-rule-based models
+            if (model != AiModel.RULE_BASED && isAvailable) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    model.capabilities.take(3).forEach { cap ->
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = cap,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
