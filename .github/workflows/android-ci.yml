@@ -604,7 +604,7 @@ jobs:
           echo "Generated release notes"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Flock You ${{ steps.version.outputs.tag }}"
