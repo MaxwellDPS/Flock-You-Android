@@ -92,9 +92,17 @@ class MediaPipeLlmClient @Inject constructor(
                     Log.d(TAG, "Initializing MediaPipe LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
 
                     // Build LLM inference options
+                    // Must set PreferredBackend to GPU or CPU (not legacy) for models with input masks
                     val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
                         .setModelPath(modelFile.absolutePath)
                         .setMaxTokens(config.maxTokens)
+                        .setPreferredBackend(
+                            if (config.useGpuAcceleration) {
+                                LlmInference.Backend.GPU
+                            } else {
+                                LlmInference.Backend.CPU
+                            }
+                        )
 
                     val options = optionsBuilder.build()
 

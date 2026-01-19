@@ -106,6 +106,14 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            keepDebugSymbols += listOf(
+                "*/libllm_inference_engine_jni.so",
+                "*/libsqlcipher.so",
+                "*/libtensorflowlite_gpu_jni.so",
+                "*/libtensorflowlite_jni.so"
+            )
+        }
     }
 
     // Ensure all build variants are visible in Android Studio
