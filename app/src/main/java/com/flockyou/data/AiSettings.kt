@@ -13,7 +13,8 @@ import javax.inject.Singleton
 private val Context.aiSettingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "ai_settings")
 
 /**
- * AI analysis settings for on-device LLM inference.
+ * AI analysis settings for LOCAL ON-DEVICE LLM inference only.
+ * No cloud APIs - all analysis happens on the device for maximum privacy.
  */
 data class AiSettings(
     val enabled: Boolean = false,
@@ -27,42 +28,39 @@ data class AiSettings(
     val autoAnalyzeNewDetections: Boolean = false,
     val maxTokens: Int = 256,
     val temperatureTenths: Int = 7, // 0.7 stored as int to avoid float precision issues
-    val lastModelUpdate: Long = 0,
-    val fallbackToCloudApi: Boolean = false,
-    val cloudApiKey: String = ""
+    val lastModelUpdate: Long = 0
 )
 
 /**
  * Available on-device LLM models for analysis.
+ * All models run entirely on-device - no cloud connectivity required.
  */
 enum class AiModel(
     val displayName: String,
     val description: String,
     val sizeMb: Long,
-    val capabilities: List<String>
+    val capabilities: List<String>,
+    val minAndroidVersion: Int = 26, // Android 8.0
+    val requiresPixel8: Boolean = false
 ) {
     GEMINI_NANO(
         displayName = "Gemini Nano",
-        description = "Google's smallest on-device model. Fast inference, privacy-focused.",
+        description = "Google's on-device model. Requires Pixel 8+ or compatible device.",
         sizeMb = 300,
-        capabilities = listOf("Text generation", "Summarization", "Classification")
+        capabilities = listOf("Text generation", "Summarization", "Classification"),
+        requiresPixel8 = true
     ),
-    GEMMA_2B(
-        displayName = "Gemma 2B",
-        description = "Google's open-weight model. Better quality, larger size.",
-        sizeMb = 1400,
-        capabilities = listOf("Text generation", "Reasoning", "Code understanding")
-    ),
-    PHI_2(
-        displayName = "Phi-2 (2.7B)",
-        description = "Microsoft's compact model. Good reasoning capabilities.",
-        sizeMb = 1600,
-        capabilities = listOf("Text generation", "Reasoning", "Analysis")
+    RULE_BASED(
+        displayName = "Rule-Based Analysis",
+        description = "Built-in analysis using curated threat intelligence. Works on all devices.",
+        sizeMb = 0,
+        capabilities = listOf("Device identification", "Threat assessment", "Recommendations")
     )
 }
 
 /**
  * Result of an AI analysis operation.
+ * All analysis is performed locally on the device.
  */
 data class AiAnalysisResult(
     val success: Boolean,
@@ -72,8 +70,8 @@ data class AiAnalysisResult(
     val confidence: Float = 0f,
     val processingTimeMs: Long = 0,
     val error: String? = null,
-    val modelUsed: String = "",
-    val wasOnDevice: Boolean = true
+    val modelUsed: String = "rule-based",
+    val wasOnDevice: Boolean = true // Always true - no cloud fallback
 )
 
 /**
@@ -104,8 +102,6 @@ class AiSettingsRepository @Inject constructor(
         val MAX_TOKENS = intPreferencesKey("ai_max_tokens")
         val TEMPERATURE_TENTHS = intPreferencesKey("ai_temperature_tenths")
         val LAST_MODEL_UPDATE = longPreferencesKey("ai_last_model_update")
-        val FALLBACK_TO_CLOUD = booleanPreferencesKey("ai_fallback_to_cloud")
-        val CLOUD_API_KEY = stringPreferencesKey("ai_cloud_api_key")
     }
 
     val settings: Flow<AiSettings> = context.aiSettingsDataStore.data.map { prefs ->
@@ -121,9 +117,7 @@ class AiSettingsRepository @Inject constructor(
             autoAnalyzeNewDetections = prefs[Keys.AUTO_ANALYZE] ?: false,
             maxTokens = prefs[Keys.MAX_TOKENS] ?: 256,
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
-            lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0,
-            fallbackToCloudApi = prefs[Keys.FALLBACK_TO_CLOUD] ?: false,
-            cloudApiKey = prefs[Keys.CLOUD_API_KEY] ?: ""
+            lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0
         )
     }
 
@@ -171,14 +165,6 @@ class AiSettingsRepository @Inject constructor(
 
     suspend fun setTemperature(tenths: Int) {
         context.aiSettingsDataStore.edit { it[Keys.TEMPERATURE_TENTHS] = tenths.coerceIn(0, 10) }
-    }
-
-    suspend fun setFallbackToCloud(enabled: Boolean) {
-        context.aiSettingsDataStore.edit { it[Keys.FALLBACK_TO_CLOUD] = enabled }
-    }
-
-    suspend fun setCloudApiKey(key: String) {
-        context.aiSettingsDataStore.edit { it[Keys.CLOUD_API_KEY] = key }
     }
 
     suspend fun clearSettings() {

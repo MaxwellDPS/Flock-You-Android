@@ -187,13 +187,10 @@ dependencies {
     // Android Auto - Car App Library (optional)
     implementation("androidx.car.app:app:1.4.0")
 
-    // Google AI - Gemini Nano on-device inference
+    // Google AI - Gemini Nano on-device inference (LOCAL ONLY - no cloud API)
     implementation("com.google.ai.edge.litert:litert:1.0.1")
     implementation("com.google.ai.edge.litert:litert-gpu:1.0.1")
     implementation("com.google.ai.edge.litert:litert-support:1.0.1")
-
-    // Google Generative AI SDK (for Gemini API fallback when on-device unavailable)
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
     
     // Testing - Unit Tests
     testImplementation("junit:junit:4.13.2")

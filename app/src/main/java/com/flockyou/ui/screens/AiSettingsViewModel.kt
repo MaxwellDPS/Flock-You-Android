@@ -51,7 +51,7 @@ class AiSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             aiSettingsRepository.setEnabled(enabled)
             if (enabled) {
-                // Try to initialize the model when enabled
+                // Initialize the model when enabled
                 detectionAnalyzer.initializeModel()
             }
         }
@@ -84,30 +84,6 @@ class AiSettingsViewModel @Inject constructor(
     fun setUseGpuAcceleration(enabled: Boolean) {
         viewModelScope.launch {
             aiSettingsRepository.setUseGpuAcceleration(enabled)
-        }
-    }
-
-    fun setMaxTokens(tokens: Int) {
-        viewModelScope.launch {
-            aiSettingsRepository.setMaxTokens(tokens)
-        }
-    }
-
-    fun setTemperature(tenths: Int) {
-        viewModelScope.launch {
-            aiSettingsRepository.setTemperature(tenths)
-        }
-    }
-
-    fun setFallbackToCloud(enabled: Boolean) {
-        viewModelScope.launch {
-            aiSettingsRepository.setFallbackToCloud(enabled)
-        }
-    }
-
-    fun setCloudApiKey(key: String) {
-        viewModelScope.launch {
-            aiSettingsRepository.setCloudApiKey(key)
         }
     }
 
@@ -190,7 +166,7 @@ class AiSettingsViewModel @Inject constructor(
                 _testResult.value = result.analysis
                 Toast.makeText(
                     application,
-                    "Analysis completed in ${result.processingTimeMs}ms",
+                    "Analysis completed in ${result.processingTimeMs}ms (${result.modelUsed})",
                     Toast.LENGTH_SHORT
                 ).show()
             } else {

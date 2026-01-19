@@ -3,7 +3,6 @@ package com.flockyou.ui.screens
 import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -11,16 +10,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.AiModel
 import com.flockyou.data.AiModelStatus
 import com.flockyou.data.AiSettings
 import com.flockyou.ui.components.SectionHeader
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +27,7 @@ fun AiSettingsScreen(
     val modelStatus by viewModel.modelStatus.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val isAnalyzing by viewModel.isAnalyzing.collectAsState()
-    val scope = rememberCoroutineScope()
+    val testResult by viewModel.testResult.collectAsState()
 
     Scaffold(
         topBar = {
@@ -53,6 +48,11 @@ fun AiSettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Privacy Notice
+            item {
+                PrivacyNoticeCard()
+            }
+
             // Main Enable Toggle
             item {
                 AiEnableCard(
@@ -100,23 +100,7 @@ fun AiSettingsScreen(
                 item {
                     PerformanceCard(
                         settings = settings,
-                        onGpuChange = { viewModel.setUseGpuAcceleration(it) },
-                        onMaxTokensChange = { viewModel.setMaxTokens(it) },
-                        onTemperatureChange = { viewModel.setTemperature(it) }
-                    )
-                }
-
-                // Cloud Fallback
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SectionHeader(title = "Cloud Fallback (Optional)")
-                }
-
-                item {
-                    CloudFallbackCard(
-                        settings = settings,
-                        onFallbackChange = { viewModel.setFallbackToCloud(it) },
-                        onApiKeyChange = { viewModel.setCloudApiKey(it) }
+                        onGpuChange = { viewModel.setUseGpuAcceleration(it) }
                     )
                 }
 
@@ -130,7 +114,9 @@ fun AiSettingsScreen(
                     TestAnalysisCard(
                         isAnalyzing = isAnalyzing,
                         modelStatus = modelStatus,
-                        onTest = { viewModel.testAnalysis() }
+                        testResult = testResult,
+                        onTest = { viewModel.testAnalysis() },
+                        onClearResult = { viewModel.clearTestResult() }
                     )
                 }
             }
@@ -143,6 +129,41 @@ fun AiSettingsScreen(
 
             item {
                 Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacyNoticeCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "100% Local & Private",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "All AI analysis runs entirely on your device. Your detection data never leaves your phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -188,7 +209,7 @@ private fun AiEnableCard(
                         !enabled -> "Enable to get intelligent threat insights"
                         modelStatus is AiModelStatus.Ready -> "Ready for analysis"
                         modelStatus is AiModelStatus.Downloading -> "Downloading model..."
-                        else -> "Download model to begin"
+                        else -> "Using rule-based analysis"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -217,10 +238,10 @@ private fun ModelStatusCard(
                 Icon(
                     imageVector = when (modelStatus) {
                         is AiModelStatus.Ready -> Icons.Default.CheckCircle
-                        is AiModelStatus.Downloading -> Icons.Default.CloudDownload
+                        is AiModelStatus.Downloading -> Icons.Default.Download
                         is AiModelStatus.Initializing -> Icons.Default.Refresh
                         is AiModelStatus.Error -> Icons.Default.Error
-                        else -> Icons.Default.CloudOff
+                        else -> Icons.Default.Memory
                     },
                     contentDescription = null,
                     tint = when (modelStatus) {
@@ -238,10 +259,10 @@ private fun ModelStatusCard(
                     )
                     Text(
                         text = when (modelStatus) {
-                            is AiModelStatus.NotDownloaded -> "Not downloaded (~300 MB)"
+                            is AiModelStatus.NotDownloaded -> "Optional: Gemini Nano (~300 MB)"
                             is AiModelStatus.Downloading -> "Downloading... $downloadProgress%"
                             is AiModelStatus.Initializing -> "Initializing..."
-                            is AiModelStatus.Ready -> "Ready (${settings.modelSizeMb} MB)"
+                            is AiModelStatus.Ready -> if (settings.modelSizeMb > 0) "Ready (${settings.modelSizeMb} MB)" else "Ready (rule-based)"
                             is AiModelStatus.Error -> modelStatus.message
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -258,13 +279,41 @@ private fun ModelStatusCard(
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
-                        progress = { downloadProgress / 100f },
+                        progress = downloadProgress / 100f,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            // Info about rule-based fallback
+            if (modelStatus is AiModelStatus.NotDownloaded) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Rule-based analysis works without downloading. The LLM model is optional and provides enhanced natural language explanations.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             // Action buttons
             Row(
@@ -273,31 +322,33 @@ private fun ModelStatusCard(
             ) {
                 when (modelStatus) {
                     is AiModelStatus.NotDownloaded, is AiModelStatus.Error -> {
-                        Button(
+                        OutlinedButton(
                             onClick = onDownload,
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download Model")
+                            Text("Download LLM")
                         }
                     }
                     is AiModelStatus.Ready -> {
-                        OutlinedButton(
-                            onClick = onInitialize,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Reinitialize")
-                        }
-                        OutlinedButton(
-                            onClick = onDelete,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = null)
+                        if (settings.modelSizeMb > 0) {
+                            OutlinedButton(
+                                onClick = onInitialize,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Reinitialize")
+                            }
+                            OutlinedButton(
+                                onClick = onDelete,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null)
+                            }
                         }
                     }
                     is AiModelStatus.Downloading, is AiModelStatus.Initializing -> {
@@ -330,7 +381,7 @@ private fun CapabilitiesCard(
                 onCheckedChange = onAnalyzeDetectionsChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.Security,
@@ -340,7 +391,7 @@ private fun CapabilitiesCard(
                 onCheckedChange = onThreatAssessmentsChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.DeviceUnknown,
@@ -350,7 +401,7 @@ private fun CapabilitiesCard(
                 onCheckedChange = onIdentifyUnknownChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.AutoAwesome,
@@ -404,9 +455,7 @@ private fun CapabilityToggle(
 @Composable
 private fun PerformanceCard(
     settings: AiSettings,
-    onGpuChange: (Boolean) -> Unit,
-    onMaxTokensChange: (Int) -> Unit,
-    onTemperatureChange: (Int) -> Unit
+    onGpuChange: (Boolean) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -428,7 +477,7 @@ private fun PerformanceCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "Use GPU for faster inference",
+                        text = "Use GPU for faster LLM inference (when available)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -438,149 +487,6 @@ private fun PerformanceCard(
                     onCheckedChange = onGpuChange
                 )
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Max Tokens Slider
-            Text(
-                text = "Response Length: ${settings.maxTokens} tokens",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Slider(
-                value = settings.maxTokens.toFloat(),
-                onValueChange = { onMaxTokensChange(it.toInt()) },
-                valueRange = 64f..512f,
-                steps = 7
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Temperature Slider
-            Text(
-                text = "Creativity: ${settings.temperatureTenths / 10f}",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                text = "Lower = more factual, Higher = more creative",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Slider(
-                value = settings.temperatureTenths.toFloat(),
-                onValueChange = { onTemperatureChange(it.toInt()) },
-                valueRange = 0f..10f,
-                steps = 9
-            )
-        }
-    }
-}
-
-@Composable
-private fun CloudFallbackCard(
-    settings: AiSettings,
-    onFallbackChange: (Boolean) -> Unit,
-    onApiKeyChange: (String) -> Unit
-) {
-    var showApiKey by remember { mutableStateOf(false) }
-    var apiKeyInput by remember { mutableStateOf(settings.cloudApiKey) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Cloud,
-                    contentDescription = null,
-                    tint = if (settings.fallbackToCloudApi) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Use Gemini API Fallback",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = "Use cloud API when on-device unavailable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = settings.fallbackToCloudApi,
-                    onCheckedChange = onFallbackChange
-                )
-            }
-
-            AnimatedVisibility(visible = settings.fallbackToCloudApi) {
-                Column {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Cloud API sends detection data to Google servers. On-device analysis is more private.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = apiKeyInput,
-                        onValueChange = {
-                            apiKeyInput = it
-                            onApiKeyChange(it)
-                        },
-                        label = { Text("Gemini API Key") },
-                        placeholder = { Text("Enter your API key") },
-                        visualTransformation = if (showApiKey)
-                            VisualTransformation.None
-                        else
-                            PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showApiKey = !showApiKey }) {
-                                Icon(
-                                    imageVector = if (showApiKey)
-                                        Icons.Default.VisibilityOff
-                                    else
-                                        Icons.Default.Visibility,
-                                    contentDescription = if (showApiKey) "Hide" else "Show"
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "Get an API key from aistudio.google.com",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
     }
 }
@@ -589,7 +495,9 @@ private fun CloudFallbackCard(
 private fun TestAnalysisCard(
     isAnalyzing: Boolean,
     modelStatus: AiModelStatus,
-    onTest: () -> Unit
+    testResult: String?,
+    onTest: () -> Unit,
+    onClearResult: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -600,7 +508,7 @@ private fun TestAnalysisCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Run a test analysis to verify the AI is working correctly.",
+                text = "Run a test analysis to see how the AI analyzes a sample detection.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -625,6 +533,47 @@ private fun TestAnalysisCard(
                     Text("Run Test Analysis")
                 }
             }
+
+            // Show test result
+            AnimatedVisibility(visible = testResult != null) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Analysis Result",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                IconButton(
+                                    onClick = onClearResult,
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Close",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = testResult ?: "",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -646,7 +595,7 @@ private fun InfoCard() {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "About AI Analysis",
+                    text = "About Local AI Analysis",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Medium
                 )
@@ -655,23 +604,13 @@ private fun InfoCard() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "AI analysis uses Google's Gemini Nano model running entirely on your device. " +
-                        "Your detection data never leaves your phone unless you enable cloud fallback.\n\n" +
-                        "The AI can help explain detected surveillance devices, assess threat levels, " +
-                        "and identify unknown devices based on their wireless characteristics.",
+                text = "All analysis runs 100% on your device. No data is ever sent to any server.\n\n" +
+                        "Two analysis modes are available:",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Recommended models:",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
 
             AiModel.entries.forEach { model ->
                 Row(
@@ -686,7 +625,7 @@ private fun InfoCard() {
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = "${model.displayName} (~${model.sizeMb} MB)",
+                            text = if (model.sizeMb > 0) "${model.displayName} (~${model.sizeMb} MB)" else model.displayName,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )

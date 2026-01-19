@@ -122,12 +122,19 @@ private fun ModelNotReadyContent(
     onConfigureAi: () -> Unit
 ) {
     Column {
-        val (icon, message) = when (modelStatus) {
-            is AiModelStatus.NotDownloaded -> Icons.Default.CloudDownload to "Download the AI model to enable analysis"
-            is AiModelStatus.Downloading -> Icons.Default.CloudSync to "Model downloading... ${(modelStatus as? AiModelStatus.Downloading)?.progressPercent ?: 0}%"
-            is AiModelStatus.Initializing -> Icons.Default.Refresh to "Initializing AI model..."
-            is AiModelStatus.Error -> Icons.Default.Error to (modelStatus as? AiModelStatus.Error)?.message ?: "Error loading model"
-            else -> Icons.Default.Info to "Model not ready"
+        val icon = when (modelStatus) {
+            is AiModelStatus.NotDownloaded -> Icons.Default.CloudDownload
+            is AiModelStatus.Downloading -> Icons.Default.CloudSync
+            is AiModelStatus.Initializing -> Icons.Default.Refresh
+            is AiModelStatus.Error -> Icons.Default.Error
+            else -> Icons.Default.Info
+        }
+        val message: String = when (modelStatus) {
+            is AiModelStatus.NotDownloaded -> "Download the AI model to enable analysis"
+            is AiModelStatus.Downloading -> "Model downloading... ${modelStatus.progressPercent}%"
+            is AiModelStatus.Initializing -> "Initializing AI model..."
+            is AiModelStatus.Error -> modelStatus.message
+            else -> "Model not ready"
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
