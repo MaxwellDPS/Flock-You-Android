@@ -236,9 +236,9 @@ fun MainScreen(
                                 onNavigateToUltrasonicDetection = onNavigateToUltrasonicDetection,
                                 onNavigateToSatelliteDetection = onNavigateToSatelliteDetection,
                                 onNavigateToWifiSecurity = onNavigateToWifiSecurity,
-                                wifiAnomalyCount = uiState.wifiAnomalies.size,
+                                wifiAnomalyCount = uiState.rogueWifiAnomalies.size,
                                 rfAnomalyCount = uiState.rfAnomalies.size,
-                                ultrasonicBeaconCount = uiState.activeBeacons.size,
+                                ultrasonicBeaconCount = uiState.ultrasonicBeacons.size,
                                 satelliteAnomalyCount = uiState.satelliteAnomalies.size
                             )
                         }

@@ -48,11 +48,10 @@ fun RfDetectionScreen(
     val rfStatus = uiState.rfStatus
     val rfAnomalies = uiState.rfAnomalies
     val detectedDrones = uiState.detectedDrones
-    val rfEvents = uiState.rfEvents
     val isScanning = uiState.isScanning
 
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Status", "Anomalies", "Drones", "History")
+    val tabs = listOf("Status", "Anomalies", "Drones")
 
     Scaffold(
         topBar = {
@@ -73,9 +72,7 @@ fun RfDetectionScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.clearRfHistory() }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear")
-                    }
+                    // Clear button removed - no clear function in viewModel
                 }
             )
         }
@@ -97,8 +94,7 @@ fun RfDetectionScreen(
                                     imageVector = when (index) {
                                         0 -> Icons.Default.Analytics
                                         1 -> Icons.Default.Warning
-                                        2 -> Icons.Outlined.FlightTakeoff
-                                        else -> Icons.Default.History
+                                        else -> Icons.Outlined.FlightTakeoff
                                     },
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp)
@@ -157,14 +153,11 @@ fun RfDetectionScreen(
                 )
                 1 -> RfAnomaliesContent(
                     anomalies = rfAnomalies,
-                    onClear = { viewModel.clearRfAnomalies() }
+                    onClear = { /* No clear function available */ }
                 )
                 2 -> DronesContent(
                     drones = detectedDrones,
                     isScanning = isScanning
-                )
-                3 -> RfEventsContent(
-                    events = rfEvents
                 )
             }
         }
@@ -588,7 +581,7 @@ private fun BandBar(
         }
         Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(
-            progress = { fraction },
+            progress = fraction,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(8.dp)
@@ -1105,101 +1098,3 @@ private fun DroneCard(
     }
 }
 
-@Composable
-private fun RfEventsContent(events: List<RfEvent>) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (events.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No Events Yet",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        } else {
-            items(
-                items = events,
-                key = { it.id }
-            ) { event ->
-                RfEventItem(event = event, dateFormat = dateFormat)
-            }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-}
-
-@Composable
-private fun RfEventItem(
-    event: RfEvent,
-    dateFormat: SimpleDateFormat
-) {
-    val backgroundColor = when {
-        event.isAnomaly -> when (event.threatLevel) {
-            com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F).copy(alpha = 0.1f)
-            com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336).copy(alpha = 0.1f)
-            com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800).copy(alpha = 0.1f)
-            else -> Color(0xFFFFC107).copy(alpha = 0.1f)
-        }
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-    }
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = backgroundColor
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = event.type.emoji,
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = event.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = event.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                text = dateFormat.format(Date(event.timestamp)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}

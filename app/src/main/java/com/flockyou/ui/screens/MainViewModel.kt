@@ -423,6 +423,10 @@ class MainViewModel @Inject constructor(
     }
 
     fun startScanning() {
+        // Optimistically update UI state immediately for responsive feedback
+        // The actual IPC state sync will confirm or correct this
+        _uiState.update { it.copy(isScanning = true, scanStatus = ScanningService.ScanStatus.Starting) }
+
         // First, start the service (required for foreground service)
         val intent = Intent(application, ScanningService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -432,9 +436,19 @@ class MainViewModel @Inject constructor(
         }
         // Also send IPC command (service will receive both, but IPC ensures state sync)
         serviceConnection.startScanning()
+
+        // Request state after a short delay to ensure we get the actual service state
+        // This handles the race condition where IPC client isn't registered yet
+        viewModelScope.launch {
+            delay(500)
+            serviceConnection.requestState()
+        }
     }
 
     fun stopScanning() {
+        // Optimistically update UI state immediately for responsive feedback
+        _uiState.update { it.copy(isScanning = false, scanStatus = ScanningService.ScanStatus.Idle) }
+
         // Send IPC command to stop scanning
         serviceConnection.stopScanning()
         // Also stop the service

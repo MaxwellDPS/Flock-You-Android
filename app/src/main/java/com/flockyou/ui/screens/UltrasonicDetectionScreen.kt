@@ -46,12 +46,11 @@ fun UltrasonicDetectionScreen(
 
     val ultrasonicStatus = uiState.ultrasonicStatus
     val ultrasonicAnomalies = uiState.ultrasonicAnomalies
-    val activeBeacons = uiState.activeBeacons
-    val ultrasonicEvents = uiState.ultrasonicEvents
+    val ultrasonicBeacons = uiState.ultrasonicBeacons
     val isScanning = uiState.isScanning
 
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Status", "Beacons", "Anomalies", "History")
+    val tabs = listOf("Status", "Beacons", "Anomalies")
 
     Scaffold(
         topBar = {
@@ -72,16 +71,7 @@ fun UltrasonicDetectionScreen(
                     }
                 },
                 actions = {
-                    // Manual scan trigger
-                    IconButton(
-                        onClick = { viewModel.triggerUltrasonicScan() },
-                        enabled = isScanning
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Scan Now")
-                    }
-                    IconButton(onClick = { viewModel.clearUltrasonicHistory() }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear")
-                    }
+                    // Actions removed - no functions available in viewModel
                 }
             )
         }
@@ -103,8 +93,7 @@ fun UltrasonicDetectionScreen(
                                     imageVector = when (index) {
                                         0 -> Icons.Default.GraphicEq
                                         1 -> Icons.Outlined.VolumeUp
-                                        2 -> Icons.Default.Warning
-                                        else -> Icons.Default.History
+                                        else -> Icons.Default.Warning
                                     },
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp)
@@ -112,11 +101,11 @@ fun UltrasonicDetectionScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(title)
                                 when (index) {
-                                    1 -> if (activeBeacons.isNotEmpty()) {
+                                    1 -> if (ultrasonicBeacons.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Badge(
                                             containerColor = MaterialTheme.colorScheme.error
-                                        ) { Text(activeBeacons.size.toString()) }
+                                        ) { Text(ultrasonicBeacons.size.toString()) }
                                     }
                                     2 -> if (ultrasonicAnomalies.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -162,15 +151,12 @@ fun UltrasonicDetectionScreen(
                     isScanning = isScanning
                 )
                 1 -> BeaconsContent(
-                    beacons = activeBeacons,
+                    beacons = ultrasonicBeacons,
                     isScanning = isScanning
                 )
                 2 -> UltrasonicAnomaliesContent(
                     anomalies = ultrasonicAnomalies,
-                    onClear = { viewModel.clearUltrasonicAnomalies() }
-                )
-                3 -> UltrasonicEventsContent(
-                    events = ultrasonicEvents
+                    onClear = { /* No clear function available */ }
                 )
             }
         }
@@ -1067,107 +1053,3 @@ private fun UltrasonicAnomalyCard(
     }
 }
 
-@Composable
-private fun UltrasonicEventsContent(events: List<UltrasonicEvent>) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (events.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No Events Yet",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        } else {
-            items(
-                items = events,
-                key = { it.id }
-            ) { event ->
-                UltrasonicEventItem(event = event, dateFormat = dateFormat)
-            }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-}
-
-@Composable
-private fun UltrasonicEventItem(
-    event: UltrasonicEvent,
-    dateFormat: SimpleDateFormat
-) {
-    val backgroundColor = when {
-        event.isAnomaly -> when (event.threatLevel) {
-            com.flockyou.data.model.ThreatLevel.CRITICAL -> Color(0xFFD32F2F).copy(alpha = 0.1f)
-            com.flockyou.data.model.ThreatLevel.HIGH -> Color(0xFFF44336).copy(alpha = 0.1f)
-            com.flockyou.data.model.ThreatLevel.MEDIUM -> Color(0xFFFF9800).copy(alpha = 0.1f)
-            else -> Color(0xFFFFC107).copy(alpha = 0.1f)
-        }
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-    }
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = backgroundColor
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = event.type.emoji,
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = event.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = event.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                event.frequency?.let { freq ->
-                    Text(
-                        text = "${freq}Hz",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Text(
-                text = dateFormat.format(Date(event.timestamp)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}

@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.flockyou.monitoring.GnssSatelliteMonitor
+import com.flockyou.monitoring.GnssSatelliteMonitor.*
 import com.flockyou.monitoring.SatelliteDetectionHeuristics
 import com.flockyou.monitoring.SatelliteMonitor
 import com.flockyou.monitoring.SatelliteMonitor.*
@@ -51,8 +53,15 @@ fun SatelliteDetectionScreen(
     val satelliteStatus = uiState.satelliteStatus
     val isScanning = uiState.isScanning
 
+    // GNSS satellite monitoring data
+    val gnssStatus = uiState.gnssStatus
+    val gnssSatellites = uiState.gnssSatellites
+    val gnssAnomalies = uiState.gnssAnomalies
+    val gnssEvents = uiState.gnssEvents
+    val gnssMeasurements = uiState.gnssMeasurements
+
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Status", "Anomalies", "Coverage", "Rules")
+    val tabs = listOf("Status", "GNSS", "Anomalies", "Coverage", "Rules")
 
     Scaffold(
         topBar = {
@@ -73,9 +82,7 @@ fun SatelliteDetectionScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.clearSatelliteHistory() }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear")
-                    }
+                    // Clear button removed - no clear function in viewModel
                 }
             )
         }
@@ -154,7 +161,7 @@ fun SatelliteDetectionScreen(
                 )
                 1 -> SatelliteAnomaliesContent(
                     anomalies = satelliteAnomalies,
-                    onClear = { viewModel.clearSatelliteAnomalies() }
+                    onClear = { /* No clear function available */ }
                 )
                 2 -> SatelliteCoverageContent()
                 3 -> SatelliteRulesContent()
@@ -200,7 +207,7 @@ private fun SatelliteStatusContent(
 
         // Info card
         item {
-            SatelliteInfoCard()
+            SatelliteDetectionInfoCard()
         }
 
         item {
@@ -592,6 +599,7 @@ private fun SatelliteTechRow(label: String, value: String) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SatelliteCapabilitiesCard(capabilities: SatelliteCapabilities) {
     Card(
@@ -754,7 +762,7 @@ private fun SatelliteDeviceSupportCard() {
 }
 
 @Composable
-private fun SatelliteInfoCard() {
+private fun SatelliteDetectionInfoCard() {
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1249,7 +1257,7 @@ private fun SatelliteRulesContent() {
 }
 
 @Composable
-private fun SatelliteRuleCard(rule: SatelliteDetectionHeuristics.DetectionRules.DetectionRule) {
+private fun SatelliteRuleCard(rule: SatelliteDetectionHeuristics.DetectionRules.SatelliteDetectionRule) {
     val severityColor = when (rule.severity) {
         "CRITICAL" -> Color(0xFFD32F2F)
         "HIGH" -> Color(0xFFF44336)
