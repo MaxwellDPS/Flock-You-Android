@@ -78,15 +78,18 @@ class GeminiNanoClient @Inject constructor(
      * Check if the device supports Gemini Nano
      */
     fun isDeviceSupported(): Boolean {
-        // Check for Pixel 8+ devices with Tensor G3/G4
+        // Check for Pixel 8+ devices with Tensor G3/G4/G5
         val model = Build.MODEL.lowercase()
         val isPixel8OrNewer = model.contains("pixel 8") ||
                               model.contains("pixel 9") ||
+                              model.contains("pixel 10") ||
                               model.contains("pixel fold") ||
                               model.contains("pixel tablet")
 
         // Requires Android 14+
         val hasRequiredApiLevel = Build.VERSION.SDK_INT >= 34
+
+        Log.d(TAG, "isDeviceSupported check: model=$model, isPixel8OrNewer=$isPixel8OrNewer, apiLevel=${Build.VERSION.SDK_INT}, hasRequiredApiLevel=$hasRequiredApiLevel")
 
         return isPixel8OrNewer && hasRequiredApiLevel
     }
@@ -320,14 +323,23 @@ class GeminiNanoClient @Inject constructor(
                             return@withContext true
                         }
                         FeatureStatus.DOWNLOADABLE -> {
-                            initializationError = "Gemini Nano model needs to be downloaded first"
-                            Log.w(TAG, initializationError!!)
+                            // Auto-trigger download in background
+                            Log.i(TAG, "Gemini Nano model downloadable - starting background download")
                             _modelStatus.value = GeminiNanoStatus.NeedsDownload
+                            // Start download but don't wait for it
+                            try {
+                                client.download().collect { downloadStatus ->
+                                    Log.d(TAG, "Download status: $downloadStatus")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Background download failed: ${e.message}")
+                            }
+                            initializationError = "Gemini Nano model is downloading - will be available soon"
                             return@withContext false
                         }
                         FeatureStatus.DOWNLOADING -> {
                             initializationError = "Gemini Nano model is currently downloading"
-                            Log.w(TAG, initializationError!!)
+                            Log.i(TAG, initializationError!!)
                             _modelStatus.value = GeminiNanoStatus.Downloading(0)
                             return@withContext false
                         }

@@ -1,10 +1,14 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.flockyou.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.service.UltrasonicDetector
 import com.flockyou.service.UltrasonicDetector.*
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -49,8 +54,14 @@ fun UltrasonicDetectionScreen(
     val ultrasonicBeacons = uiState.ultrasonicBeacons
     val isScanning = uiState.isScanning
 
-    var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Status", "Beacons", "Anomalies")
+
+    // Pager state for swipe navigation between tabs
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { tabs.size }
+    )
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -81,12 +92,18 @@ fun UltrasonicDetectionScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Tab row
-            TabRow(selectedTabIndex = selectedTab) {
+            // Tab row with swipe support
+            TabRow(selectedTabIndex = pagerState.currentPage) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            if (pagerState.currentPage != index && !pagerState.isScrollInProgress) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            }
+                        },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -144,20 +161,25 @@ fun UltrasonicDetectionScreen(
                 }
             }
 
-            // Tab content
-            when (selectedTab) {
-                0 -> UltrasonicStatusContent(
-                    status = ultrasonicStatus,
-                    isScanning = isScanning
-                )
-                1 -> BeaconsContent(
-                    beacons = ultrasonicBeacons,
-                    isScanning = isScanning
-                )
-                2 -> UltrasonicAnomaliesContent(
-                    anomalies = ultrasonicAnomalies,
-                    onClear = { /* No clear function available */ }
-                )
+            // Swipeable HorizontalPager for tab content
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (page) {
+                    0 -> UltrasonicStatusContent(
+                        status = ultrasonicStatus,
+                        isScanning = isScanning
+                    )
+                    1 -> BeaconsContent(
+                        beacons = ultrasonicBeacons,
+                        isScanning = isScanning
+                    )
+                    2 -> UltrasonicAnomaliesContent(
+                        anomalies = ultrasonicAnomalies,
+                        onClear = { /* No clear function available */ }
+                    )
+                }
             }
         }
     }

@@ -1,0 +1,244 @@
+#pragma once
+
+#include <furi.h>
+#include <furi_hal.h>
+#include <furi_hal_usb.h>
+#include <furi_hal_usb_cdc.h>
+#include <gui/gui.h>
+#include <gui/view_dispatcher.h>
+#include <gui/scene_manager.h>
+#include <gui/modules/widget.h>
+#include <gui/modules/variable_item_list.h>
+#include <gui/modules/submenu.h>
+#include <gui/modules/popup.h>
+#include <notification/notification_messages.h>
+
+// Forward declarations
+typedef struct FlockBridgeApp FlockBridgeApp;
+typedef struct FlockBtSerial FlockBtSerial;
+typedef struct FlockUsbCdc FlockUsbCdc;
+typedef struct FlockWifiScanner FlockWifiScanner;
+typedef struct FlockSubGhzScanner FlockSubGhzScanner;
+typedef struct FlockBleScanner FlockBleScanner;
+typedef struct FlockIrScanner FlockIrScanner;
+typedef struct FlockNfcScanner FlockNfcScanner;
+typedef struct FlockWipsEngine FlockWipsEngine;
+
+// ============================================================================
+// Connection Mode
+// ============================================================================
+
+typedef enum {
+    FlockConnectionNone,
+    FlockConnectionBluetooth,
+    FlockConnectionUsb,
+} FlockConnectionMode;
+
+// ============================================================================
+// View IDs
+// ============================================================================
+
+typedef enum {
+    FlockBridgeViewMain,
+    FlockBridgeViewStatus,
+    FlockBridgeViewWifiScan,
+    FlockBridgeViewSubGhzScan,
+    FlockBridgeViewBleScan,
+    FlockBridgeViewIrScan,
+    FlockBridgeViewNfcScan,
+    FlockBridgeViewWips,
+    FlockBridgeViewSettings,
+    FlockBridgeViewConnection,
+} FlockBridgeView;
+
+// ============================================================================
+// Scene IDs
+// ============================================================================
+
+typedef enum {
+    FlockBridgeSceneMain,
+    FlockBridgeSceneStatus,
+    FlockBridgeSceneWifiScan,
+    FlockBridgeSceneSubGhzScan,
+    FlockBridgeSceneBleScan,
+    FlockBridgeSceneIrScan,
+    FlockBridgeSceneNfcScan,
+    FlockBridgeSceneWips,
+    FlockBridgeSceneSettings,
+    FlockBridgeSceneConnection,
+    FlockBridgeSceneCount,
+} FlockBridgeScene;
+
+// ============================================================================
+// Custom Events
+// ============================================================================
+
+typedef enum {
+    // Connection events
+    FlockBridgeEventBtConnected,
+    FlockBridgeEventBtDisconnected,
+    FlockBridgeEventBtDataReceived,
+    FlockBridgeEventUsbConnected,
+    FlockBridgeEventUsbDisconnected,
+    FlockBridgeEventUsbDataReceived,
+
+    // Scan events
+    FlockBridgeEventWifiScanComplete,
+    FlockBridgeEventSubGhzDetection,
+    FlockBridgeEventBleScanComplete,
+    FlockBridgeEventIrDetection,
+    FlockBridgeEventNfcDetection,
+    FlockBridgeEventWipsAlert,
+    FlockBridgeEventRefreshStatus,
+} FlockBridgeCustomEvent;
+
+// ============================================================================
+// USB CDC Handler Structure
+// ============================================================================
+
+struct FlockUsbCdc {
+    FuriHalUsbInterface* usb_if_prev;
+    FuriThread* rx_thread;
+    FuriStreamBuffer* rx_stream;
+    FuriStreamBuffer* tx_stream;
+    FuriMutex* mutex;
+    bool connected;
+    bool running;
+
+    // Callback for received data
+    void (*data_callback)(void* context, uint8_t* data, size_t length);
+    void* callback_context;
+};
+
+// ============================================================================
+// Main Application Structure
+// ============================================================================
+
+struct FlockBridgeApp {
+    // GUI Components
+    Gui* gui;
+    ViewDispatcher* view_dispatcher;
+    SceneManager* scene_manager;
+
+    // Views
+    Widget* widget_main;
+    Widget* widget_status;
+    VariableItemList* var_item_list;
+    Submenu* submenu;
+    Popup* popup;
+
+    // Connection Mode
+    FlockConnectionMode connection_mode;
+    FlockConnectionMode preferred_connection;
+
+    // Bluetooth Serial
+    FlockBtSerial* bt_serial;
+    bool bt_connected;
+
+    // USB CDC
+    FlockUsbCdc* usb_cdc;
+    bool usb_connected;
+
+    // WiFi Scanner (via ESP32 board)
+    FlockWifiScanner* wifi_scanner;
+    bool wifi_board_connected;
+
+    // Sub-GHz Scanner
+    FlockSubGhzScanner* subghz_scanner;
+    bool subghz_ready;
+
+    // BLE Scanner (internal Flipper BLE)
+    FlockBleScanner* ble_scanner;
+    bool ble_ready;
+
+    // IR Scanner
+    FlockIrScanner* ir_scanner;
+    bool ir_ready;
+
+    // NFC Scanner
+    FlockNfcScanner* nfc_scanner;
+    bool nfc_ready;
+
+    // WIPS Engine
+    FlockWipsEngine* wips_engine;
+
+    // Statistics
+    uint32_t wifi_scan_count;
+    uint32_t subghz_detection_count;
+    uint32_t ble_scan_count;
+    uint32_t ir_detection_count;
+    uint32_t nfc_detection_count;
+    uint32_t wips_alert_count;
+    uint32_t messages_sent;
+    uint32_t messages_received;
+
+    // State
+    bool scanning_active;
+    uint32_t uptime_start;
+
+    // Buffers
+    uint8_t tx_buffer[1024];
+    uint8_t rx_buffer[256];
+    size_t rx_buffer_len;
+
+    // Notifications
+    NotificationApp* notifications;
+
+    // Mutex for thread safety
+    FuriMutex* mutex;
+};
+
+// ============================================================================
+// Application Lifecycle
+// ============================================================================
+
+FlockBridgeApp* flock_bridge_app_alloc(void);
+void flock_bridge_app_free(FlockBridgeApp* app);
+
+// ============================================================================
+// Connection Management
+// ============================================================================
+
+/**
+ * Send data to the connected device (auto-selects BT or USB)
+ */
+bool flock_bridge_send_data(FlockBridgeApp* app, const uint8_t* data, size_t length);
+
+/**
+ * Get the current connection status string
+ */
+const char* flock_bridge_get_connection_status(FlockBridgeApp* app);
+
+/**
+ * Switch connection mode
+ */
+void flock_bridge_set_connection_mode(FlockBridgeApp* app, FlockConnectionMode mode);
+
+// ============================================================================
+// USB CDC Functions
+// ============================================================================
+
+FlockUsbCdc* flock_usb_cdc_alloc(void);
+void flock_usb_cdc_free(FlockUsbCdc* usb);
+bool flock_usb_cdc_start(FlockUsbCdc* usb);
+void flock_usb_cdc_stop(FlockUsbCdc* usb);
+bool flock_usb_cdc_send(FlockUsbCdc* usb, const uint8_t* data, size_t length);
+void flock_usb_cdc_set_callback(
+    FlockUsbCdc* usb,
+    void (*callback)(void* context, uint8_t* data, size_t length),
+    void* context);
+
+// ============================================================================
+// Scene Handlers
+// ============================================================================
+
+extern void (*const flock_bridge_scene_on_enter_handlers[])(void*);
+extern bool (*const flock_bridge_scene_on_event_handlers[])(void*, SceneManagerEvent);
+extern void (*const flock_bridge_scene_on_exit_handlers[])(void*);
+extern const SceneManagerHandlers flock_bridge_scene_handlers;
+
+// Navigation callback
+bool flock_bridge_navigation_event_callback(void* context);
+
+// Main entry point
+int32_t flock_bridge_app(void* p);

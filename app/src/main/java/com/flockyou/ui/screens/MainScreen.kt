@@ -36,6 +36,8 @@ import androidx.compose.ui.draw.clip
 import com.flockyou.ui.components.*
 import com.flockyou.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.snapshotFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,23 +58,27 @@ fun MainScreen(
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
 
     // Pager state for swipe navigation between tabs
+    // Use pagerState as single source of truth for tab position
     val pagerState = rememberPagerState(
         initialPage = uiState.selectedTab,
         pageCount = { 3 }
     )
     val coroutineScope = rememberCoroutineScope()
 
-    // Sync pager with tab selection
-    LaunchedEffect(uiState.selectedTab) {
-        if (pagerState.currentPage != uiState.selectedTab) {
-            pagerState.animateScrollToPage(uiState.selectedTab)
-        }
-    }
+    // Track if we're currently animating from a programmatic navigation
+    // This prevents the pager from fighting with the ViewModel during animations
+    var isNavigatingProgrammatically by remember { mutableStateOf(false) }
 
-    // Sync tab selection with pager swipe
-    LaunchedEffect(pagerState.currentPage) {
-        if (uiState.selectedTab != pagerState.currentPage) {
-            viewModel.selectTab(pagerState.currentPage)
+    // Sync ViewModel state when pager settles after user swipe
+    // Use snapshotFlow with settledPage to only trigger when page is fully settled
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collectLatest { settledPage ->
+            // Only update ViewModel if this wasn't a programmatic navigation
+            // and the values are actually different
+            if (!isNavigatingProgrammatically && uiState.selectedTab != settledPage) {
+                viewModel.selectTab(settledPage)
+            }
+            isNavigatingProgrammatically = false
         }
     }
     
@@ -149,26 +155,29 @@ fun MainScreen(
             )
         },
         bottomBar = {
+            // Helper function to navigate to a page with debounce protection
+            val navigateToPage: (Int) -> Unit = { targetPage ->
+                // Skip if we're already on this page or animation is in progress
+                if (pagerState.currentPage != targetPage && !pagerState.isScrollInProgress) {
+                    isNavigatingProgrammatically = true
+                    coroutineScope.launch {
+                        pagerState.animateScrollToPage(targetPage)
+                    }
+                }
+            }
+
             NavigationBar {
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home") },
                     selected = pagerState.currentPage == 0,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(0)
-                        }
-                    }
+                    onClick = { navigateToPage(0) }
                 )
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.History, contentDescription = "History") },
                     label = { Text("History") },
                     selected = pagerState.currentPage == 1,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(1)
-                        }
-                    }
+                    onClick = { navigateToPage(1) }
                 )
                 NavigationBarItem(
                     icon = {
@@ -184,11 +193,7 @@ fun MainScreen(
                     },
                     label = { Text("Cellular") },
                     selected = pagerState.currentPage == 2,
-                    onClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(2)
-                        }
-                    }
+                    onClick = { navigateToPage(2) }
                 )
             }
         }

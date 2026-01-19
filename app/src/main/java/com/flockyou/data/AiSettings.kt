@@ -16,10 +16,21 @@ private val Context.aiSettingsDataStore: DataStore<Preferences> by preferencesDa
  * AI analysis settings for LOCAL ON-DEVICE LLM inference only.
  * No cloud APIs - all analysis happens on the device for maximum privacy.
  */
+/**
+ * LLM engine preference for manual selection.
+ */
+enum class LlmEnginePreference(val id: String, val displayName: String, val description: String) {
+    AUTO("auto", "Auto (Recommended)", "Automatically selects the best available engine"),
+    GEMINI_NANO("gemini-nano", "Gemini Nano", "Google's on-device AI via ML Kit GenAI (Pixel 8+, Alpha API)"),
+    MEDIAPIPE("mediapipe", "MediaPipe LLM", "MediaPipe with Gemma models (works on most devices)"),
+    RULE_BASED("rule-based", "Rule-Based Only", "No LLM, use built-in rules only")
+}
+
 data class AiSettings(
     val enabled: Boolean = false,
     val modelDownloaded: Boolean = false,
     val selectedModel: String = "rule-based", // Selected model ID
+    val preferredEngine: String = "auto", // LLM engine preference: auto, gemini-nano, mediapipe, rule-based
     val modelSizeMb: Long = 0,
     val useGpuAcceleration: Boolean = true,
     val useNpuAcceleration: Boolean = true, // Pixel NPU support
@@ -357,6 +368,7 @@ class AiSettingsRepository @Inject constructor(
         val ENABLED = booleanPreferencesKey("ai_enabled")
         val MODEL_DOWNLOADED = booleanPreferencesKey("ai_model_downloaded")
         val SELECTED_MODEL = stringPreferencesKey("ai_selected_model")
+        val PREFERRED_ENGINE = stringPreferencesKey("ai_preferred_engine")
         val MODEL_SIZE_MB = longPreferencesKey("ai_model_size_mb")
         val USE_GPU = booleanPreferencesKey("ai_use_gpu")
         val USE_NPU = booleanPreferencesKey("ai_use_npu")
@@ -379,6 +391,7 @@ class AiSettingsRepository @Inject constructor(
             enabled = prefs[Keys.ENABLED] ?: false,
             modelDownloaded = prefs[Keys.MODEL_DOWNLOADED] ?: false,
             selectedModel = prefs[Keys.SELECTED_MODEL] ?: "rule-based",
+            preferredEngine = prefs[Keys.PREFERRED_ENGINE] ?: "auto",
             modelSizeMb = prefs[Keys.MODEL_SIZE_MB] ?: 0,
             useGpuAcceleration = prefs[Keys.USE_GPU] ?: true,
             useNpuAcceleration = prefs[Keys.USE_NPU] ?: true,
@@ -417,6 +430,10 @@ class AiSettingsRepository @Inject constructor(
 
     suspend fun setSelectedModel(modelId: String) {
         context.aiSettingsDataStore.edit { it[Keys.SELECTED_MODEL] = modelId }
+    }
+
+    suspend fun setPreferredEngine(engineId: String) {
+        context.aiSettingsDataStore.edit { it[Keys.PREFERRED_ENGINE] = engineId }
     }
 
     suspend fun setUseGpuAcceleration(useGpu: Boolean) {

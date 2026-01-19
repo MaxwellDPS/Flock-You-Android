@@ -144,13 +144,16 @@ class StandardWifiScanner(
                         _scanResults.value = results
                         if (success) {
                             Log.d(TAG, "WiFi scan completed: ${results.size} networks found")
+                            _lastError.value = null // Clear any previous error
                         } else {
                             Log.w(TAG, "WiFi scan failed or throttled, returning cached results")
                             _lastError.value = "Scan throttled by OS"
                         }
                     } catch (e: SecurityException) {
                         Log.e(TAG, "Permission denied getting scan results", e)
-                        _lastError.value = "Permission denied: ${e.message}"
+                        _lastError.value = "Permission revoked: WiFi scan permission denied"
+                        // Notify that we need to stop due to permission revocation
+                        _isActive.value = false
                     }
                 }
             }

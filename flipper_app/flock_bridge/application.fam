@@ -1,0 +1,29 @@
+App(
+    appid="flock_bridge",
+    name="Flock Bridge",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="flock_bridge_app",
+    stack_size=8 * 1024,
+    fap_category="Tools",
+    fap_icon="icons/flock_bridge_10px.png",
+    fap_icon_assets="icons",
+    fap_author="FlockYou",
+    fap_version="1.1",
+    fap_description="Multi-spectrum scanner bridging Sub-GHz, BLE, IR, NFC detections to Flock You Android app with WIPS",
+    sources=[
+        "flock_bridge.c",
+        "helpers/*.c",
+        "protocol/*.c",
+        "scanners/*.c",
+    ],
+    requires=[
+        "gui",
+        "bt",
+        "subghz",
+        "infrared",
+        "nfc",
+    ],
+    provides=[
+        "bt_serial",
+    ],
+)

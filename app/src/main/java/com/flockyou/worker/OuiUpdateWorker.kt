@@ -12,6 +12,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -29,6 +30,7 @@ class OuiUpdateWorker @AssistedInject constructor(
         const val WORK_NAME_PERIODIC = "oui_periodic_update"
         const val WORK_NAME_ONETIME = "oui_onetime_update"
         private const val BATCH_INSERT_SIZE = 1000
+        private const val NETWORK_TIMEOUT_MS = 60_000L // 60 second timeout for network operations
 
         /**
          * Schedule periodic OUI updates.
@@ -113,8 +115,15 @@ class OuiUpdateWorker @AssistedInject constructor(
                 loadBundledData()
             }
 
-            // Try to download fresh data from IEEE
-            val result = ouiDownloader.downloadAndParse()
+            // Try to download fresh data from IEEE with timeout
+            val result = try {
+                withTimeout(NETWORK_TIMEOUT_MS) {
+                    ouiDownloader.downloadAndParse()
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.e(TAG, "OUI download timed out after ${NETWORK_TIMEOUT_MS / 1000} seconds")
+                OuiDownloadResult.Error("Download timed out", e)
+            }
 
             return@withContext when (result) {
                 is OuiDownloadResult.Success -> {

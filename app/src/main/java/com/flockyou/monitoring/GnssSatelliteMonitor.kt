@@ -106,6 +106,7 @@ class GnssSatelliteMonitor(
     private val cn0History = mutableListOf<Double>()
     private val satelliteCountHistory = mutableListOf<Int>()
     private var lastClockBiasNs: Long? = null
+    private var lastDiscontinuityCount: Int? = null  // Track hardware clock discontinuities
 
     // Enhanced tracking for enrichments
     private val clockDriftHistory = mutableListOf<Long>()     // Accumulated drift values
@@ -857,10 +858,27 @@ class GnssSatelliteMonitor(
         }
     }
 
+    /**
+     * Calculate variance of a list of values.
+     * Returns 0.0 for empty or single-element lists.
+     * Callers should check for empty/single-element input to avoid
+     * using 0.0 variance in division operations.
+     */
     private fun calculateVariance(values: List<Double>): Double {
-        if (values.isEmpty()) return 0.0
+        if (values.size < 2) return 0.0 // Need at least 2 values for meaningful variance
         val mean = values.average()
         return values.map { (it - mean) * (it - mean) }.average()
+    }
+
+    /**
+     * Safe variance calculation that returns null instead of 0.0 for invalid inputs.
+     * Use this when the result will be used as a divisor.
+     */
+    private fun calculateVarianceOrNull(values: List<Double>): Double? {
+        if (values.size < 2) return null
+        val mean = values.average()
+        val variance = values.map { (it - mean) * (it - mean) }.average()
+        return if (variance > 0.0) variance else null
     }
 
     private fun addTimelineEvent(
@@ -934,19 +952,43 @@ class GnssSatelliteMonitor(
         val sorted = cn0History.sorted()
         val trimStart = (sorted.size * 0.1).toInt()
         val trimEnd = (sorted.size * 0.9).toInt()
+
+        // Ensure we have a valid range (at least 2 elements for variance calculation)
+        if (trimEnd <= trimStart + 1) return
+
         val trimmed = sorted.subList(trimStart, trimEnd)
 
-        if (trimmed.isNotEmpty()) {
+        if (trimmed.size >= 2) {
             cn0BaselineMean = trimmed.average()
-            cn0BaselineStdDev = kotlin.math.sqrt(calculateVariance(trimmed))
+            val variance = calculateVariance(trimmed)
+            // Only update stdDev if variance is positive (avoid NaN from sqrt of 0)
+            cn0BaselineStdDev = if (variance > 0.0) kotlin.math.sqrt(variance) else 0.0
             cn0BaselineCalculated = true
         }
     }
 
     /**
-     * Track clock drift accumulation and detect anomalies
+     * Track clock drift accumulation and detect anomalies.
+     * Handles hardware clock discontinuities properly by resetting
+     * cumulative tracking when a discontinuity is detected.
+     *
+     * @param biasNs Current clock bias in nanoseconds
+     * @param discontinuityCount Hardware clock discontinuity count (from GnssClock)
      */
-    private fun trackClockDriftAccumulation(biasNs: Long) {
+    private fun trackClockDriftAccumulation(biasNs: Long, discontinuityCount: Int? = null) {
+        // Check for hardware clock discontinuity - reset tracking if detected
+        discontinuityCount?.let { currentCount ->
+            lastDiscontinuityCount?.let { lastCount ->
+                if (currentCount != lastCount) {
+                    Log.d(TAG, "Clock discontinuity detected ($lastCount -> $currentCount), resetting drift tracking")
+                    lastClockBiasNs = null
+                    cumulativeClockDriftNs = 0L
+                    clockDriftHistory.clear()
+                }
+            }
+            lastDiscontinuityCount = currentCount
+        }
+
         lastClockBiasNs?.let { prevBias ->
             val drift = biasNs - prevBias
             cumulativeClockDriftNs += drift

@@ -119,6 +119,9 @@ class MainViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
+    // Expose the service connection bound state for debugging
+    val serviceConnectionBound: StateFlow<Boolean> = serviceConnection.isBound
+
     // OUI Settings
     val ouiSettings: StateFlow<OuiSettings> = ouiSettingsRepository.settings
         .stateIn(

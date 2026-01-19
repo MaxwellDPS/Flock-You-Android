@@ -56,7 +56,8 @@ class StandardBluetoothScanner(
         bluetoothAdapter?.bluetoothLeScanner
     }
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val supervisorJob = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + supervisorJob)
 
     private val _isActive = MutableStateFlow(false)
     override val isActive: StateFlow<Boolean> = _isActive
@@ -140,6 +141,8 @@ class StandardBluetoothScanner(
         scanCycleJob = null
         stopScan()
         _isActive.value = false
+        // Cancel the supervisor job to clean up all coroutines
+        supervisorJob.cancel()
         Log.d(TAG, "Standard Bluetooth scanner stopped")
     }
 

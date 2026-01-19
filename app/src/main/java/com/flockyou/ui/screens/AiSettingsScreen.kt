@@ -27,6 +27,7 @@ import com.flockyou.data.AiModel
 import com.flockyou.data.AiModelStatus
 import com.flockyou.data.AiSettings
 import com.flockyou.data.ApiStability
+import com.flockyou.data.LlmEnginePreference
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.ui.components.SectionHeader
 
@@ -160,6 +161,20 @@ fun AiSettingsScreen(
                         deviceCapabilities = deviceCapabilities,
                         onGpuChange = { viewModel.setUseGpuAcceleration(it) },
                         onNpuChange = { viewModel.setUseNpuAcceleration(it) }
+                    )
+                }
+
+                // LLM Engine Selection
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SectionHeader(title = "LLM Engine")
+                }
+
+                item {
+                    LlmEngineSelectionCard(
+                        currentEngine = settings.preferredEngine,
+                        deviceCapabilities = deviceCapabilities,
+                        onEngineChange = { viewModel.setPreferredEngine(it) }
                     )
                 }
 
@@ -1176,6 +1191,191 @@ private fun CapabilityToggle(
             checked = checked,
             onCheckedChange = onCheckedChange
         )
+    }
+}
+
+@Composable
+private fun LlmEngineSelectionCard(
+    currentEngine: String,
+    deviceCapabilities: DetectionAnalyzer.DeviceCapabilities?,
+    onEngineChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentPreference = LlmEnginePreference.entries.find { it.id == currentEngine }
+        ?: LlmEnginePreference.AUTO
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Select which LLM engine to use for AI analysis",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Engine selection dropdown
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = currentPreference.displayName,
+                    onValueChange = { },
+                    readOnly = true,
+                    label = { Text("LLM Engine") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor()
+                )
+
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    LlmEnginePreference.entries.forEach { engine ->
+                        val isSupported = when (engine) {
+                            LlmEnginePreference.GEMINI_NANO -> deviceCapabilities?.hasAiCore == true
+                            else -> true
+                        }
+
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(engine.displayName)
+                                        if (!isSupported) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "(Not available)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                        if (engine == LlmEnginePreference.GEMINI_NANO) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            SuggestionChip(
+                                                onClick = { },
+                                                label = { Text("Alpha", style = MaterialTheme.typography.labelSmall) }
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = engine.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = {
+                                if (isSupported || engine == LlmEnginePreference.AUTO || engine == LlmEnginePreference.RULE_BASED) {
+                                    onEngineChange(engine.id)
+                                    expanded = false
+                                }
+                            },
+                            enabled = isSupported || engine == LlmEnginePreference.AUTO || engine == LlmEnginePreference.RULE_BASED,
+                            leadingIcon = {
+                                if (engine == currentPreference) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Current engine status
+            Spacer(modifier = Modifier.height(12.dp))
+
+            when (currentPreference) {
+                LlmEnginePreference.AUTO -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Will try: Gemini Nano → MediaPipe → Rule-Based",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                LlmEnginePreference.GEMINI_NANO -> {
+                    if (deviceCapabilities?.hasAiCore != true) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Gemini Nano requires Pixel 8+ with AICore",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Uses NPU acceleration via Google AICore",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                LlmEnginePreference.MEDIAPIPE -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Requires a downloaded Gemma model",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                LlmEnginePreference.RULE_BASED -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Rule,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "No LLM, uses built-in threat intelligence only",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

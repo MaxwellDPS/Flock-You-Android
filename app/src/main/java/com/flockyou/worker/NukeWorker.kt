@@ -211,6 +211,25 @@ class NukeWorker @AssistedInject constructor(
             return@withContext Result.success()
         }
 
+        // Verify that the specific trigger type is still enabled
+        // A user could disable a specific trigger after scheduling the work
+        val triggerStillEnabled = when (triggerSource) {
+            NukeTriggerSource.USB_CONNECTION -> settings.usbTriggerEnabled
+            NukeTriggerSource.SIM_REMOVAL -> settings.simRemovalTriggerEnabled
+            NukeTriggerSource.NETWORK_ISOLATION -> settings.networkIsolationTriggerEnabled
+            NukeTriggerSource.GEOFENCE -> settings.geofenceTriggerEnabled
+            NukeTriggerSource.DEAD_MAN_SWITCH -> settings.deadManSwitchEnabled
+            NukeTriggerSource.FAILED_AUTH -> settings.failedAuthTriggerEnabled
+            NukeTriggerSource.RAPID_REBOOT -> settings.rapidRebootTriggerEnabled
+            NukeTriggerSource.MANUAL -> true // Manual trigger is always allowed if nuke is enabled
+            NukeTriggerSource.DURESS_CODE -> settings.duressCodeEnabled
+        }
+
+        if (!triggerStillEnabled) {
+            Log.w(TAG, "Nuke cancelled - trigger '$triggerSource' is no longer enabled")
+            return@withContext Result.success()
+        }
+
         // Execute the nuke
         val result = nukeManager.executeNuke(triggerSource)
 

@@ -30,14 +30,33 @@ class ScannerFactory(private val context: Context) {
     companion object {
         private const val TAG = "ScannerFactory"
 
-        // Singleton instance for convenience
+        /**
+         * Singleton instance using lazy delegate for thread-safe initialization.
+         * Note: This is initialized on first access after app start.
+         */
         @Volatile
-        private var instance: ScannerFactory? = null
+        private var applicationContext: Context? = null
 
+        private val lazyInstance = lazy {
+            val ctx = applicationContext
+                ?: throw IllegalStateException("ScannerFactory.getInstance() must be called with context first")
+            ScannerFactory(ctx)
+        }
+
+        /**
+         * Get or create the singleton ScannerFactory instance.
+         * Uses lazy initialization for proper thread safety.
+         */
         fun getInstance(context: Context): ScannerFactory {
-            return instance ?: synchronized(this) {
-                instance ?: ScannerFactory(context.applicationContext).also { instance = it }
+            // Store application context on first call
+            if (applicationContext == null) {
+                synchronized(this) {
+                    if (applicationContext == null) {
+                        applicationContext = context.applicationContext
+                    }
+                }
             }
+            return lazyInstance.value
         }
     }
 

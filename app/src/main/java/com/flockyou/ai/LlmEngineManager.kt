@@ -6,6 +6,7 @@ import com.flockyou.data.AiAnalysisResult
 import com.flockyou.data.AiModel
 import com.flockyou.data.AiSettings
 import com.flockyou.data.InferenceConfig
+import com.flockyou.data.LlmEnginePreference
 import com.flockyou.data.ModelFormat
 import com.flockyou.data.model.Detection
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -74,7 +75,7 @@ class LlmEngineManager @Inject constructor(
 
     /**
      * Initialize the LLM engine manager.
-     * Attempts to initialize engines in order of preference.
+     * Respects the user's engine preference from settings.
      *
      * @param preferredModel The model user has selected (may influence engine choice)
      * @param settings Current AI settings
@@ -87,27 +88,57 @@ class LlmEngineManager @Inject constructor(
         Log.i(TAG, "=== LlmEngineManager.initialize START ===")
         Log.d(TAG, "Preferred model: ${preferredModel.id} (${preferredModel.displayName})")
         Log.d(TAG, "Model format: ${preferredModel.modelFormat}")
+        Log.d(TAG, "Engine preference: ${settings.preferredEngine}")
 
         _engineStatus.value = EngineStatus.Initializing
 
-        // Determine the best engine based on model format and preferences
-        val initResult = when (preferredModel.modelFormat) {
-            ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
-                // Try ML Kit GenAI first (Gemini Nano)
-                tryInitializeGeminiNano() ?: tryInitializeMediaPipe(settings)
+        // Parse the engine preference
+        val enginePreference = LlmEnginePreference.entries.find { it.id == settings.preferredEngine }
+            ?: LlmEnginePreference.AUTO
+
+        // Determine the engine based on user preference
+        val initResult = when (enginePreference) {
+            LlmEnginePreference.GEMINI_NANO -> {
+                // User explicitly wants Gemini Nano
+                Log.i(TAG, "User selected Gemini Nano engine")
+                tryInitializeGeminiNano()
             }
-            ModelFormat.TASK -> {
-                // User explicitly selected a MediaPipe model
+            LlmEnginePreference.MEDIAPIPE -> {
+                // User explicitly wants MediaPipe
+                Log.i(TAG, "User selected MediaPipe engine")
                 tryInitializeMediaPipe(settings, preferredModel)
             }
-            ModelFormat.NONE -> {
-                // Rule-based selected - no initialization needed
+            LlmEnginePreference.RULE_BASED -> {
+                // User explicitly wants rule-based only
+                Log.i(TAG, "User selected Rule-Based engine")
                 EngineInitResult(LlmEngine.RULE_BASED, true)
+            }
+            LlmEnginePreference.AUTO -> {
+                // Auto mode: determine based on model format and device capabilities
+                Log.i(TAG, "Auto mode: determining best engine")
+                when (preferredModel.modelFormat) {
+                    ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
+                        // Try ML Kit GenAI first (Gemini Nano)
+                        tryInitializeGeminiNano() ?: tryInitializeMediaPipe(settings)
+                    }
+                    ModelFormat.TASK -> {
+                        // User explicitly selected a MediaPipe model
+                        tryInitializeMediaPipe(settings, preferredModel)
+                    }
+                    ModelFormat.NONE -> {
+                        // Rule-based selected - no initialization needed
+                        EngineInitResult(LlmEngine.RULE_BASED, true)
+                    }
+                }
             }
         }
 
-        // If preferred engine failed, try fallbacks
-        val finalResult = initResult ?: tryFallbackChain(settings)
+        // If preferred engine failed and we're not in a specific preference mode, try fallbacks
+        val finalResult = if (initResult == null && enginePreference == LlmEnginePreference.AUTO) {
+            tryFallbackChain(settings)
+        } else {
+            initResult
+        }
 
         if (finalResult != null && finalResult.success) {
             _activeEngine.value = finalResult.engine
@@ -115,6 +146,11 @@ class LlmEngineManager @Inject constructor(
             isInitialized = true
             Log.i(TAG, "Engine manager initialized successfully with: ${finalResult.engine}")
             return@withLock true
+        }
+
+        // If specific engine was requested but failed, show error but fall back to rule-based
+        if (enginePreference != LlmEnginePreference.AUTO && enginePreference != LlmEnginePreference.RULE_BASED) {
+            Log.w(TAG, "Requested engine ${enginePreference.displayName} failed to initialize")
         }
 
         // Always have rule-based as final fallback
@@ -327,6 +363,11 @@ class LlmEngineManager @Inject constructor(
                             recordSuccess(LlmEngine.MEDIAPIPE)
                         } else {
                             recordFailure(LlmEngine.MEDIAPIPE, result.error ?: "Unknown error")
+                            // Check for detokenizer crash - MediaPipe will handle session recreation internally
+                            if (result.error?.contains("RET_CHECK") == true ||
+                                result.error?.contains("detokenizer") == true) {
+                                Log.w(TAG, "MediaPipe detokenizer error detected, session will be recreated on next call")
+                            }
                         }
                         result
                     } else null
@@ -430,9 +471,20 @@ class LlmEngineManager @Inject constructor(
     /**
      * Cleanup resources.
      */
-    fun cleanup() {
+    suspend fun cleanup() {
         geminiNanoClient.cleanup()
         mediaPipeLlmClient.cleanup()
+        isInitialized = false
+        _engineStatus.value = EngineStatus.NotInitialized
+        _activeEngine.value = LlmEngine.RULE_BASED
+    }
+
+    /**
+     * Synchronous cleanup for non-suspend contexts (e.g., onDestroy).
+     */
+    fun cleanupSync() {
+        geminiNanoClient.cleanup()
+        mediaPipeLlmClient.cleanupSync()
         isInitialized = false
         _engineStatus.value = EngineStatus.NotInitialized
         _activeEngine.value = LlmEngine.RULE_BASED

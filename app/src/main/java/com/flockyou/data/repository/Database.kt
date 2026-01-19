@@ -28,42 +28,72 @@ import javax.crypto.spec.GCMParameterSpec
  * Type converters for Room database.
  * Uses defensive enum parsing to handle invalid values gracefully
  * instead of crashing with IllegalArgumentException.
+ * Logs warnings when using fallback values to aid debugging.
  */
 class Converters {
+    companion object {
+        private const val TAG = "DbConverters"
+    }
+
     @TypeConverter
     fun fromDetectionProtocol(value: DetectionProtocol): String = value.name
 
     @TypeConverter
     fun toDetectionProtocol(value: String): DetectionProtocol =
-        try { DetectionProtocol.valueOf(value) } catch (e: IllegalArgumentException) { DetectionProtocol.BLUETOOTH_LE }
+        try {
+            DetectionProtocol.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid DetectionProtocol '$value', using default BLUETOOTH_LE")
+            DetectionProtocol.BLUETOOTH_LE
+        }
 
     @TypeConverter
     fun fromDetectionMethod(value: DetectionMethod): String = value.name
 
     @TypeConverter
     fun toDetectionMethod(value: String): DetectionMethod =
-        try { DetectionMethod.valueOf(value) } catch (e: IllegalArgumentException) { DetectionMethod.BLE_DEVICE_NAME }
+        try {
+            DetectionMethod.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid DetectionMethod '$value', using default BLE_DEVICE_NAME")
+            DetectionMethod.BLE_DEVICE_NAME
+        }
 
     @TypeConverter
     fun fromDeviceType(value: DeviceType): String = value.name
 
     @TypeConverter
     fun toDeviceType(value: String): DeviceType =
-        try { DeviceType.valueOf(value) } catch (e: IllegalArgumentException) { DeviceType.UNKNOWN_SURVEILLANCE }
+        try {
+            DeviceType.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid DeviceType '$value', using default UNKNOWN_SURVEILLANCE")
+            DeviceType.UNKNOWN_SURVEILLANCE
+        }
 
     @TypeConverter
     fun fromSignalStrength(value: SignalStrength): String = value.name
 
     @TypeConverter
     fun toSignalStrength(value: String): SignalStrength =
-        try { SignalStrength.valueOf(value) } catch (e: IllegalArgumentException) { SignalStrength.MEDIUM }
+        try {
+            SignalStrength.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid SignalStrength '$value', using default MEDIUM")
+            SignalStrength.MEDIUM
+        }
 
     @TypeConverter
     fun fromThreatLevel(value: ThreatLevel): String = value.name
 
     @TypeConverter
     fun toThreatLevel(value: String): ThreatLevel =
-        try { ThreatLevel.valueOf(value) } catch (e: IllegalArgumentException) { ThreatLevel.LOW }
+        try {
+            ThreatLevel.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid ThreatLevel '$value', using default LOW")
+            ThreatLevel.LOW
+        }
 }
 
 /**
@@ -391,12 +421,43 @@ object DatabaseKeyManager {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     builder.setIsStrongBoxBacked(false)
                 }
-                keyGenerator.init(builder.build())
-                keyGenerator.generateKey()
+                try {
+                    keyGenerator.init(builder.build())
+                    keyGenerator.generateKey()
+                } catch (teeException: Exception) {
+                    // TEE also failed - try software-only as last resort
+                    Log.w(TAG, "TEE key creation also failed, falling back to software-only", teeException)
+                    createSoftwareOnlyKey(keyGenerator)
+                }
             } else {
-                throw e
+                // Non-StrongBox already failed - try software-only
+                Log.w(TAG, "Hardware-backed key creation failed, falling back to software-only", e)
+                createSoftwareOnlyKey(keyGenerator)
             }
         }
+    }
+
+    /**
+     * Create a software-only key as a last resort fallback.
+     * This is less secure but allows the app to function on devices
+     * where hardware-backed keys fail unexpectedly.
+     */
+    private fun createSoftwareOnlyKey(keyGenerator: KeyGenerator): SecretKey {
+        // Create a simple software-only key without hardware requirements
+        val softwareBuilder = KeyGenParameterSpec.Builder(
+            KEYSTORE_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .setRandomizedEncryptionRequired(true)
+            // No StrongBox or other hardware requirements
+
+        keyGenerator.init(softwareBuilder.build())
+        val key = keyGenerator.generateKey()
+        Log.w(TAG, "Created software-only database key (less secure)")
+        return key
     }
 
     /**

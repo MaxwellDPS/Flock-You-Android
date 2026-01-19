@@ -186,6 +186,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
 
+    // USB Serial for Flipper Zero USB CDC communication
+    implementation("com.github.mik3y:usb-serial-for-android:3.7.0")
+
     // Security - Encrypted SharedPreferences for storing DB passphrase
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 

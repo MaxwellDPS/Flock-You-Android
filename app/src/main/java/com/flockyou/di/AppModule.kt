@@ -266,4 +266,5 @@ object AppModule {
             it.bind()
         }
     }
+
 }

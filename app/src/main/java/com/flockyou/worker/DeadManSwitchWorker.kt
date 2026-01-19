@@ -5,10 +5,15 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.hilt.work.HiltWorker
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import androidx.work.*
 import com.flockyou.MainActivity
 import com.flockyou.R
@@ -48,9 +53,34 @@ class DeadManSwitchWorker @AssistedInject constructor(
         private val NOTIFICATION_ID = NotificationIds.DEAD_MAN_SWITCH_WARNING
 
         // Shared preferences keys for tracking authentication time
-        private const val PREFS_NAME = "dead_man_switch_prefs"
+        private const val PREFS_NAME = "dead_man_switch_prefs_encrypted"
         private const val KEY_LAST_AUTH_TIME = "last_auth_time"
         private const val KEY_WARNING_SHOWN = "warning_shown"
+        private const val KEY_AUTH_HMAC = "auth_time_hmac" // HMAC for tamper detection
+
+        /**
+         * Get encrypted SharedPreferences for secure storage of dead man's switch data.
+         * Falls back to regular SharedPreferences if encryption fails.
+         */
+        private fun getSecurePrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+
+                EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create EncryptedSharedPreferences, using fallback", e)
+                // Fallback to regular prefs - better than crashing
+                context.getSharedPreferences("dead_man_switch_prefs_fallback", Context.MODE_PRIVATE)
+            }
+        }
 
         /**
          * Schedule periodic dead man's switch checks.
@@ -88,9 +118,10 @@ class DeadManSwitchWorker @AssistedInject constructor(
         /**
          * Record that the user has authenticated.
          * Call this from the lock screen or app unlock.
+         * Uses encrypted SharedPreferences for tamper resistance.
          */
         fun recordAuthentication(context: Context) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = getSecurePrefs(context)
             prefs.edit()
                 .putLong(KEY_LAST_AUTH_TIME, System.currentTimeMillis())
                 .putBoolean(KEY_WARNING_SHOWN, false)
@@ -104,17 +135,19 @@ class DeadManSwitchWorker @AssistedInject constructor(
 
         /**
          * Get the last authentication time.
+         * Uses encrypted SharedPreferences for tamper resistance.
          */
         fun getLastAuthTime(context: Context): Long {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = getSecurePrefs(context)
             return prefs.getLong(KEY_LAST_AUTH_TIME, System.currentTimeMillis())
         }
 
         /**
          * Initialize the last auth time if not set.
+         * Uses encrypted SharedPreferences for tamper resistance.
          */
         fun initializeIfNeeded(context: Context) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = getSecurePrefs(context)
             if (!prefs.contains(KEY_LAST_AUTH_TIME)) {
                 prefs.edit()
                     .putLong(KEY_LAST_AUTH_TIME, System.currentTimeMillis())
@@ -135,7 +168,7 @@ class DeadManSwitchWorker @AssistedInject constructor(
             return@withContext Result.success()
         }
 
-        val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSecurePrefs(applicationContext)
         val lastAuthTime = prefs.getLong(KEY_LAST_AUTH_TIME, System.currentTimeMillis())
         val warningShown = prefs.getBoolean(KEY_WARNING_SHOWN, false)
 

@@ -165,6 +165,14 @@ class AiSettingsViewModel @Inject constructor(
         }
     }
 
+    fun setPreferredEngine(engineId: String) {
+        viewModelScope.launch {
+            aiSettingsRepository.setPreferredEngine(engineId)
+            // Re-initialize with the new engine preference
+            detectionAnalyzer.initializeModel()
+        }
+    }
+
     fun selectModelForDownload(model: AiModel) {
         _selectedModelForDownload.value = model
     }

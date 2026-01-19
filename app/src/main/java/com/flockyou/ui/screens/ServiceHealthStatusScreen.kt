@@ -1,8 +1,10 @@
 package com.flockyou.ui.screens
 
+import android.util.Log
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,10 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import com.flockyou.service.ScanningService.DetectorHealthStatus
 import java.text.SimpleDateFormat
@@ -40,9 +44,15 @@ fun ServiceHealthStatusScreen(
     val detectorHealth = uiState.detectorHealth
     val isScanning = uiState.isScanning
     val scanStatus = uiState.scanStatus
+    val isBound by viewModel.serviceConnectionBound.collectAsState()
+
+    // Log state changes for debugging
+    LaunchedEffect(detectorHealth, isScanning, scanStatus, isBound) {
+        Log.d("ServiceHealthScreen", "State update: isBound=$isBound, isScanning=$isScanning, scanStatus=$scanStatus, detectors=${detectorHealth.size}")
+    }
 
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Overview", "Detectors", "Errors")
+    val tabs = listOf("Overview", "Live Activity", "Detectors", "Errors")
 
     Scaffold(
         topBar = {
@@ -103,7 +113,10 @@ fun ServiceHealthStatusScreen(
             )
 
             // Tab row
-            TabRow(selectedTabIndex = selectedTab) {
+            ScrollableTabRow(
+                selectedTabIndex = selectedTab,
+                edgePadding = 0.dp
+            ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
                         selected = selectedTab == index,
@@ -112,8 +125,9 @@ fun ServiceHealthStatusScreen(
                         icon = {
                             when (index) {
                                 0 -> Icon(Icons.Default.Dashboard, contentDescription = null)
-                                1 -> Icon(Icons.Default.Sensors, contentDescription = null)
-                                2 -> Icon(Icons.Default.Warning, contentDescription = null)
+                                1 -> Icon(Icons.Default.Radar, contentDescription = null)
+                                2 -> Icon(Icons.Default.Sensors, contentDescription = null)
+                                3 -> Icon(Icons.Default.Warning, contentDescription = null)
                             }
                         }
                     )
@@ -126,10 +140,16 @@ fun ServiceHealthStatusScreen(
                     detectorHealth = detectorHealth,
                     scanStatus = scanStatus,
                     isScanning = isScanning,
+                    isBound = isBound,
                     uiState = uiState
                 )
-                1 -> DetectorHealthContent(detectorHealth = detectorHealth)
-                2 -> ErrorsContent(
+                1 -> LiveActivityContent(
+                    uiState = uiState,
+                    isScanning = isScanning,
+                    isBound = isBound
+                )
+                2 -> DetectorHealthContent(detectorHealth = detectorHealth)
+                3 -> ErrorsContent(
                     detectorHealth = detectorHealth,
                     recentErrors = uiState.recentErrors
                 )
@@ -231,6 +251,7 @@ private fun HealthOverviewContent(
     detectorHealth: Map<String, DetectorHealthStatus>,
     scanStatus: ScanningService.ScanStatus,
     isScanning: Boolean,
+    isBound: Boolean,
     uiState: MainUiState
 ) {
     LazyColumn(
@@ -238,9 +259,14 @@ private fun HealthOverviewContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // IPC Connection Status Card (for debugging)
+        item {
+            IpcConnectionStatusCard(isBound = isBound, isScanning = isScanning, scanStatus = scanStatus)
+        }
+
         // Quick stats card
         item {
-            QuickStatsCard(detectorHealth = detectorHealth, isScanning = isScanning)
+            QuickStatsCard(detectorHealth = detectorHealth, isScanning = isScanning, scanStats = uiState.scanStats)
         }
 
         // Subsystem status section
@@ -276,9 +302,10 @@ private fun HealthOverviewContent(
 @Composable
 private fun QuickStatsCard(
     detectorHealth: Map<String, DetectorHealthStatus>,
-    isScanning: Boolean
+    isScanning: Boolean,
+    scanStats: ScanningService.ScanStatistics
 ) {
-    val totalDetectors = detectorHealth.size
+    val totalDetectors = if (detectorHealth.isEmpty()) 8 else detectorHealth.size // Default to 8 if not loaded
     val runningDetectors = detectorHealth.values.count { it.isRunning }
     val healthyDetectors = detectorHealth.values.count { it.isHealthy && it.isRunning }
     val totalRestarts = detectorHealth.values.sumOf { it.restartCount }
@@ -290,36 +317,75 @@ private fun QuickStatsCard(
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+        Column(
+            modifier = Modifier.padding(16.dp)
         ) {
-            StatItem(
-                icon = Icons.Default.Sensors,
-                value = "$runningDetectors/$totalDetectors",
-                label = "Running",
-                color = if (runningDetectors > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-            )
-            StatItem(
-                icon = Icons.Default.CheckCircle,
-                value = healthyDetectors.toString(),
-                label = "Healthy",
-                color = Color(0xFF4CAF50)
-            )
-            StatItem(
-                icon = Icons.Default.Refresh,
-                value = totalRestarts.toString(),
-                label = "Restarts",
-                color = MaterialTheme.colorScheme.tertiary
-            )
-            StatItem(
-                icon = Icons.Default.ErrorOutline,
-                value = totalFailures.toString(),
-                label = "Failures",
-                color = if (totalFailures > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-            )
+            // First row: Detector stats
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(
+                    icon = Icons.Default.Sensors,
+                    value = "$runningDetectors/$totalDetectors",
+                    label = "Running",
+                    color = if (runningDetectors > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+                StatItem(
+                    icon = Icons.Default.CheckCircle,
+                    value = healthyDetectors.toString(),
+                    label = "Healthy",
+                    color = Color(0xFF4CAF50)
+                )
+                StatItem(
+                    icon = Icons.Default.Refresh,
+                    value = totalRestarts.toString(),
+                    label = "Restarts",
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                StatItem(
+                    icon = Icons.Default.ErrorOutline,
+                    value = totalFailures.toString(),
+                    label = "Failures",
+                    color = if (totalFailures > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                )
+            }
+
+            // Divider
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Second row: Scan stats
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(
+                    icon = Icons.Default.Bluetooth,
+                    value = scanStats.totalBleScans.toString(),
+                    label = "BLE Scans",
+                    color = MaterialTheme.colorScheme.primary
+                )
+                StatItem(
+                    icon = Icons.Default.Wifi,
+                    value = scanStats.successfulWifiScans.toString(),
+                    label = "WiFi Scans",
+                    color = MaterialTheme.colorScheme.primary
+                )
+                StatItem(
+                    icon = Icons.Default.DevicesOther,
+                    value = scanStats.bleDevicesSeen.toString(),
+                    label = "BLE Seen",
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                StatItem(
+                    icon = Icons.Default.NetworkCheck,
+                    value = scanStats.wifiNetworksSeen.toString(),
+                    label = "WiFi Seen",
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
         }
     }
 }
@@ -861,6 +927,511 @@ private fun ErrorCard(
                     text = if (isRecoverable) "Auto-recovery enabled" else "Manual restart may be required",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isRecoverable) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
+/**
+ * IPC Connection Status Card - Shows the current IPC connection state and service status.
+ * This is crucial for debugging why data might not be flowing.
+ */
+@Composable
+private fun IpcConnectionStatusCard(
+    isBound: Boolean,
+    isScanning: Boolean,
+    scanStatus: ScanningService.ScanStatus
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                !isBound -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                isScanning -> Color(0xFF1B5E20).copy(alpha = 0.2f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (isBound) Icons.Default.Link else Icons.Default.LinkOff,
+                    contentDescription = null,
+                    tint = if (isBound) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "IPC Connection",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (isBound) "Connected to scanning service" else "NOT CONNECTED - Data will not update!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isBound) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            if (isBound) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (isScanning) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Scanning: ${if (isScanning) "Active" else "Inactive"}",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    Text(
+                        text = "Status: ${scanStatus.javaClass.simpleName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Live Activity Content - Shows real-time scan activity with detailed statistics.
+ * In advanced mode, shows raw data from all subsystems.
+ */
+@Composable
+private fun LiveActivityContent(
+    uiState: MainUiState,
+    isScanning: Boolean,
+    isBound: Boolean
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Connection warning if not bound
+        if (!isBound) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Service Not Connected",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = "IPC connection to scanning service is not established. Try restarting the app.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Scan Statistics Card
+        item {
+            Text(
+                text = "Scan Statistics",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        item {
+            ScanStatisticsCard(scanStats = uiState.scanStats, dateFormat = dateFormat)
+        }
+
+        // Seen Devices Summary
+        item {
+            Text(
+                text = "Seen Devices (Live)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        item {
+            SeenDevicesSummaryCard(
+                bleDevices = uiState.seenBleDevices,
+                wifiNetworks = uiState.seenWifiNetworks,
+                cellTowers = uiState.seenCellTowers
+            )
+        }
+
+        // Advanced Mode: Raw Subsystem Data
+        if (uiState.advancedMode) {
+            item {
+                Text(
+                    text = "Raw Subsystem Data (Advanced)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            // RF Signal Data
+            item {
+                RawDataCard(
+                    title = "RF Signal Analysis",
+                    icon = Icons.Default.SignalCellularAlt,
+                    data = buildString {
+                        appendLine("Total Networks: ${uiState.rfStatus?.totalNetworks ?: 0}")
+                        appendLine("Anomalies: ${uiState.rfAnomalies.size}")
+                        appendLine("Drones Detected: ${uiState.detectedDrones.size}")
+                        if (uiState.rfStatus != null) {
+                            appendLine("2.4GHz: ${uiState.rfStatus.band24GHz}, 5GHz: ${uiState.rfStatus.band5GHz}")
+                            appendLine("Jammer Suspected: ${uiState.rfStatus.jammerSuspected}")
+                        }
+                    }
+                )
+            }
+
+            // Ultrasonic Data
+            item {
+                RawDataCard(
+                    title = "Ultrasonic Detection",
+                    icon = Icons.Default.Hearing,
+                    data = buildString {
+                        appendLine("Scanning: ${uiState.ultrasonicStatus?.isScanning ?: false}")
+                        appendLine("Anomalies: ${uiState.ultrasonicAnomalies.size}")
+                        appendLine("Beacons: ${uiState.ultrasonicBeacons.size}")
+                        if (uiState.ultrasonicStatus != null) {
+                            appendLine("Noise Floor: ${String.format("%.1f", uiState.ultrasonicStatus.noiseFloorDb)} dB")
+                            appendLine("Activity Detected: ${uiState.ultrasonicStatus.ultrasonicActivityDetected}")
+                        }
+                    }
+                )
+            }
+
+            // GNSS Data
+            item {
+                RawDataCard(
+                    title = "GNSS Satellite Monitor",
+                    icon = Icons.Default.GpsFixed,
+                    data = buildString {
+                        appendLine("Total Satellites: ${uiState.gnssStatus?.totalSatellites ?: 0}")
+                        appendLine("Satellites Used: ${uiState.gnssStatus?.satellitesUsedInFix ?: 0}")
+                        appendLine("Has Fix: ${uiState.gnssStatus?.hasFix ?: false}")
+                        appendLine("Anomalies: ${uiState.gnssAnomalies.size}")
+                        appendLine("Events: ${uiState.gnssEvents.size}")
+                        if (uiState.gnssMeasurements != null) {
+                            appendLine("Has Raw Measurements: Yes")
+                        }
+                    }
+                )
+            }
+
+            // Cellular Data
+            item {
+                RawDataCard(
+                    title = "Cellular Monitor",
+                    icon = Icons.Default.CellTower,
+                    data = buildString {
+                        appendLine("Cell Towers Seen: ${uiState.seenCellTowers.size}")
+                        appendLine("Anomalies: ${uiState.cellularAnomalies.size}")
+                        appendLine("Events: ${uiState.cellularEvents.size}")
+                        if (uiState.cellStatus != null) {
+                            appendLine("Network Type: ${uiState.cellStatus.networkType}")
+                        }
+                    }
+                )
+            }
+
+            // Rogue WiFi Data
+            item {
+                RawDataCard(
+                    title = "Rogue WiFi Detection",
+                    icon = Icons.Default.WifiFind,
+                    data = buildString {
+                        appendLine("Total Networks: ${uiState.rogueWifiStatus?.totalNetworks ?: 0}")
+                        appendLine("Suspicious Networks: ${uiState.suspiciousNetworks.size}")
+                        appendLine("Anomalies: ${uiState.rogueWifiAnomalies.size}")
+                        if (uiState.rogueWifiStatus != null) {
+                            appendLine("Open Networks: ${uiState.rogueWifiStatus.openNetworks}")
+                            appendLine("Potential Evil Twins: ${uiState.rogueWifiStatus.potentialEvilTwins}")
+                        }
+                    }
+                )
+            }
+        } else {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Enable Advanced Mode in Settings to see raw subsystem data",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanStatisticsCard(
+    scanStats: ScanningService.ScanStatistics,
+    dateFormat: SimpleDateFormat
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StatColumn(
+                    label = "BLE Scans",
+                    value = scanStats.totalBleScans.toString(),
+                    subValue = scanStats.lastBleSuccessTime?.let { "Last: ${dateFormat.format(Date(it))}" }
+                )
+                StatColumn(
+                    label = "WiFi Scans",
+                    value = "${scanStats.successfulWifiScans}/${scanStats.totalWifiScans}",
+                    subValue = if (scanStats.throttledWifiScans > 0) "Throttled: ${scanStats.throttledWifiScans}" else null
+                )
+                StatColumn(
+                    label = "BLE Devices",
+                    value = scanStats.bleDevicesSeen.toString(),
+                    subValue = null
+                )
+                StatColumn(
+                    label = "WiFi Networks",
+                    value = scanStats.wifiNetworksSeen.toString(),
+                    subValue = scanStats.lastWifiSuccessTime?.let { "Last: ${dateFormat.format(Date(it))}" }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatColumn(
+    label: String,
+    value: String,
+    subValue: String?
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        subValue?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+@Composable
+private fun SeenDevicesSummaryCard(
+    bleDevices: List<ScanningService.SeenDevice>,
+    wifiNetworks: List<ScanningService.SeenDevice>,
+    cellTowers: List<CellularMonitor.SeenCellTower>
+) {
+    // Consider devices "active" if seen in the last 60 seconds
+    val currentTime = System.currentTimeMillis()
+    val activeThreshold = 60000L
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // BLE Devices
+            DeviceCountRow(
+                icon = Icons.Default.Bluetooth,
+                label = "BLE Devices",
+                count = bleDevices.size,
+                activeCount = bleDevices.count { currentTime - it.lastSeen < activeThreshold }
+            )
+
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            // WiFi Networks
+            DeviceCountRow(
+                icon = Icons.Default.Wifi,
+                label = "WiFi Networks",
+                count = wifiNetworks.size,
+                activeCount = wifiNetworks.count { currentTime - it.lastSeen < activeThreshold }
+            )
+
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            // Cell Towers
+            DeviceCountRow(
+                icon = Icons.Default.CellTower,
+                label = "Cell Towers",
+                count = cellTowers.size,
+                activeCount = cellTowers.count { currentTime - it.lastSeen < activeThreshold }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceCountRow(
+    icon: ImageVector,
+    label: String,
+    count: Int,
+    activeCount: Int
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "$count total",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (activeCount > 0) Color(0xFF4CAF50).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    text = "$activeCount active",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (activeCount > 0) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RawDataCard(
+    title: String,
+    icon: ImageVector,
+    data: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(4.dp),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Text(
+                    text = data.trim(),
+                    modifier = Modifier.padding(8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }

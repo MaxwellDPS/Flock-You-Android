@@ -1,11 +1,15 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.flockyou.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +31,7 @@ import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import com.flockyou.service.UltrasonicDetector
 import com.flockyou.service.UltrasonicDetector.*
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -63,8 +68,14 @@ fun NearbyDevicesScreen(
     val ultrasonicAnomalies = uiState.ultrasonicAnomalies
     val ultrasonicBeacons = uiState.ultrasonicBeacons
 
-    var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("BLE", "WiFi", "Cell", "GNSS", "Audio", "Sat")
+
+    // Pager state for swipe navigation between tabs
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { tabs.size }
+    )
+    val coroutineScope = rememberCoroutineScope()
     
     Scaffold(
         topBar = {
@@ -97,15 +108,21 @@ fun NearbyDevicesScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Tab row - scrollable to fit all tabs
+            // Tab row - scrollable to fit all tabs with swipe support
             ScrollableTabRow(
-                selectedTabIndex = selectedTab,
+                selectedTabIndex = pagerState.currentPage,
                 edgePadding = 8.dp
             ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            if (pagerState.currentPage != index && !pagerState.isScrollInProgress) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            }
+                        },
                         text = {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -188,123 +205,128 @@ fun NearbyDevicesScreen(
                 }
             }
             
-            // Tab content
-            when (selectedTab) {
-                0, 1 -> {
-                    // BLE and WiFi tabs
-                    val devices = if (selectedTab == 0) seenBleDevices else seenWifiNetworks
-                    
-                    if (devices.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    imageVector = if (selectedTab == 0) Icons.Default.Bluetooth else Icons.Default.Wifi,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = if (isScanning) "Scanning..." else "No devices seen yet",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "Devices that don't match surveillance patterns will appear here",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Summary card
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            // Swipeable HorizontalPager for tab content
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (page) {
+                    0, 1 -> {
+                        // BLE and WiFi tabs
+                        val devices = if (page == 0) seenBleDevices else seenWifiNetworks
+
+                        if (devices.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = if (page == 0) Icons.Default.Bluetooth else Icons.Default.Wifi,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(64.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                     )
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        horizontalArrangement = Arrangement.SpaceEvenly
-                                    ) {
-                                        StatBox(
-                                            label = "Total Seen",
-                                            value = devices.size.toString()
-                                        )
-                                        StatBox(
-                                            label = "With Names",
-                                            value = devices.count { !it.name.isNullOrEmpty() }.toString()
-                                        )
-                                        StatBox(
-                                            label = "Known Mfr",
-                                            value = devices.count { it.manufacturer != null }.toString()
-                                        )
-                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (isScanning) "Scanning..." else "No devices seen yet",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Devices that don't match surveillance patterns will appear here",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    )
                                 }
                             }
-                            
-                            items(
-                                items = devices.sortedByDescending { it.lastSeen },
-                                key = { it.id }
-                            ) { device ->
-                                SeenDeviceCard(device = device, isBle = selectedTab == 0)
-                            }
-                            
-                            item {
-                                Spacer(modifier = Modifier.height(16.dp))
+                        } else {
+                            LazyColumn(
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Summary card
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp),
+                                            horizontalArrangement = Arrangement.SpaceEvenly
+                                        ) {
+                                            StatBox(
+                                                label = "Total Seen",
+                                                value = devices.size.toString()
+                                            )
+                                            StatBox(
+                                                label = "With Names",
+                                                value = devices.count { !it.name.isNullOrEmpty() }.toString()
+                                            )
+                                            StatBox(
+                                                label = "Known Mfr",
+                                                value = devices.count { it.manufacturer != null }.toString()
+                                            )
+                                        }
+                                    }
+                                }
+
+                                items(
+                                    items = devices.sortedByDescending { it.lastSeen },
+                                    key = { it.id }
+                                ) { device ->
+                                    SeenDeviceCard(device = device, isBle = page == 0)
+                                }
+
+                                item {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                }
                             }
                         }
                     }
-                }
-                2 -> {
-                    // Cellular tab
-                    CellularStatusContent(
-                        cellStatus = cellStatus,
-                        cellularStatus = cellularStatus,
-                        seenCellTowers = seenCellTowers,
-                        cellularAnomalies = cellularAnomalies,
-                        isScanning = isScanning
-                    )
-                }
-                3 -> {
-                    // GNSS tab
-                    GnssStatusContent(
-                        gnssStatus = gnssStatus,
-                        gnssSatellites = gnssSatellites,
-                        gnssAnomalies = gnssAnomalies,
-                        isScanning = isScanning
-                    )
-                }
-                4 -> {
-                    // Ultrasonic tab
-                    UltrasonicStatusContent(
-                        ultrasonicStatus = ultrasonicStatus,
-                        ultrasonicBeacons = ultrasonicBeacons,
-                        ultrasonicAnomalies = ultrasonicAnomalies,
-                        isScanning = isScanning
-                    )
-                }
-                5 -> {
-                    // Satellite tab
-                    SatelliteStatusContent(
-                        satelliteState = satelliteState,
-                        satelliteStatus = satelliteStatus,
-                        satelliteAnomalies = satelliteAnomalies,
-                        isScanning = isScanning
-                    )
+                    2 -> {
+                        // Cellular tab
+                        CellularStatusContent(
+                            cellStatus = cellStatus,
+                            cellularStatus = cellularStatus,
+                            seenCellTowers = seenCellTowers,
+                            cellularAnomalies = cellularAnomalies,
+                            isScanning = isScanning
+                        )
+                    }
+                    3 -> {
+                        // GNSS tab
+                        GnssStatusContent(
+                            gnssStatus = gnssStatus,
+                            gnssSatellites = gnssSatellites,
+                            gnssAnomalies = gnssAnomalies,
+                            isScanning = isScanning
+                        )
+                    }
+                    4 -> {
+                        // Ultrasonic tab
+                        UltrasonicStatusContent(
+                            ultrasonicStatus = ultrasonicStatus,
+                            ultrasonicBeacons = ultrasonicBeacons,
+                            ultrasonicAnomalies = ultrasonicAnomalies,
+                            isScanning = isScanning
+                        )
+                    }
+                    5 -> {
+                        // Satellite tab
+                        SatelliteStatusContent(
+                            satelliteState = satelliteState,
+                            satelliteStatus = satelliteStatus,
+                            satelliteAnomalies = satelliteAnomalies,
+                            isScanning = isScanning
+                        )
+                    }
                 }
             }
         }

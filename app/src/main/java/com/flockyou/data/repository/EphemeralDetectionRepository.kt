@@ -17,9 +17,19 @@ import javax.inject.Singleton
  * This provides maximum privacy as no data is persisted to disk.
  *
  * Thread-safe: Uses a Mutex to protect concurrent access to the detection list.
+ * Memory-safe: Limits the maximum number of detections to prevent unbounded growth.
  */
 @Singleton
 class EphemeralDetectionRepository @Inject constructor() {
+
+    companion object {
+        private const val TAG = "EphemeralDetectionRepo"
+        /**
+         * Maximum number of detections to keep in memory.
+         * Older detections are evicted when this limit is reached.
+         */
+        private const val MAX_DETECTIONS = 10_000
+    }
 
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
     private val mutex = Mutex()
@@ -81,13 +91,25 @@ class EphemeralDetectionRepository @Inject constructor() {
     suspend fun insertDetection(detection: Detection) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.add(0, detection)
-        _detections.value = current
+        // Enforce memory limit - keep most recent detections
+        if (current.size > MAX_DETECTIONS) {
+            android.util.Log.d(TAG, "Memory limit reached (${current.size}), evicting ${current.size - MAX_DETECTIONS} oldest detections")
+            _detections.value = current.take(MAX_DETECTIONS)
+        } else {
+            _detections.value = current
+        }
     }
 
     suspend fun insertDetections(detections: List<Detection>) = mutex.withLock {
         val current = _detections.value.toMutableList()
         current.addAll(0, detections)
-        _detections.value = current
+        // Enforce memory limit - keep most recent detections
+        if (current.size > MAX_DETECTIONS) {
+            android.util.Log.d(TAG, "Memory limit reached (${current.size}), evicting ${current.size - MAX_DETECTIONS} oldest detections")
+            _detections.value = current.take(MAX_DETECTIONS)
+        } else {
+            _detections.value = current
+        }
     }
 
     suspend fun updateDetection(detection: Detection) = mutex.withLock {
