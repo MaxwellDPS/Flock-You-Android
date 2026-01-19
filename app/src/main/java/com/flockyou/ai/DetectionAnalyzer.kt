@@ -124,7 +124,7 @@ class DetectionAnalyzer @Inject constructor(
         set(value) = geminiNanoInitializedRef.set(value)
 
     private var currentInferenceConfig: InferenceConfig = InferenceConfig(
-        maxTokens = 256,
+        maxTokens = 1024,  // Increased to handle larger prompts (input + output combined)
         temperature = 0.7f,
         useGpuAcceleration = true,
         useNpuAcceleration = true

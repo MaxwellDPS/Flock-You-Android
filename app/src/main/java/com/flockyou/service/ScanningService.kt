@@ -1594,20 +1594,23 @@ class ScanningService : Service() {
         cellularStatusJob = serviceScope.launch {
             cellularMonitor?.cellStatus?.collect { status ->
                 Companion.cellStatus.value = status
+                broadcastCellularData()
             }
         }
-        
+
         // Collect seen cell tower history
         cellularHistoryJob = serviceScope.launch {
             cellularMonitor?.seenCellTowers?.collect { towers ->
                 seenCellTowers.value = towers
+                broadcastCellularData()
             }
         }
-        
+
         // Collect cellular timeline events
         cellularEventsJob = serviceScope.launch {
             cellularMonitor?.cellularEvents?.collect { events ->
                 cellularEvents.value = events
+                broadcastCellularData()
             }
         }
         
@@ -1615,6 +1618,7 @@ class ScanningService : Service() {
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
                 cellularAnomalies.value = anomalies
+                broadcastCellularData()
 
                 for (anomaly in anomalies) {
                     // Send broadcast for automation apps
@@ -1699,10 +1703,11 @@ class ScanningService : Service() {
         satelliteStateJob = serviceScope.launch {
             satelliteMonitor?.satelliteState?.collect { state ->
                 satelliteState.value = state
+                broadcastSatelliteData()
                 Log.d(TAG, "Satellite state updated: connected=${state.isConnected}, type=${state.connectionType}")
             }
         }
-        
+
         // Collect satellite anomalies
         satelliteAnomalyJob = serviceScope.launch {
             satelliteMonitor?.anomalies?.collect { anomaly ->
@@ -1718,6 +1723,7 @@ class ScanningService : Service() {
                     currentAnomalies.removeLast()
                 }
                 satelliteAnomalies.value = currentAnomalies
+                broadcastSatelliteData()
                 
                 // Convert high severity anomalies to detections
                 if (anomaly.severity in listOf(
@@ -1818,6 +1824,7 @@ class ScanningService : Service() {
         rogueWifiStatusJob = serviceScope.launch {
             rogueWifiMonitor?.wifiStatus?.collect { status ->
                 Companion.rogueWifiStatus.value = status
+                broadcastRogueWifiData()
             }
         }
 
@@ -1825,6 +1832,7 @@ class ScanningService : Service() {
         suspiciousNetworksJob = serviceScope.launch {
             rogueWifiMonitor?.suspiciousNetworks?.collect { networks ->
                 Companion.suspiciousNetworks.value = networks
+                broadcastRogueWifiData()
             }
         }
 
@@ -1832,6 +1840,7 @@ class ScanningService : Service() {
         rogueWifiEventsJob = serviceScope.launch {
             rogueWifiMonitor?.wifiEvents?.collect { events ->
                 Companion.rogueWifiEvents.value = events
+                broadcastRogueWifiData()
             }
         }
 
@@ -1918,6 +1927,7 @@ class ScanningService : Service() {
         rfStatusJob = serviceScope.launch {
             rfSignalAnalyzer?.rfStatus?.collect { status ->
                 Companion.rfStatus.value = status
+                broadcastRfData()
             }
         }
 
@@ -1925,6 +1935,7 @@ class ScanningService : Service() {
         rfEventsJob = serviceScope.launch {
             rfSignalAnalyzer?.rfEvents?.collect { events ->
                 Companion.rfEvents.value = events
+                broadcastRfData()
             }
         }
 
@@ -1932,6 +1943,7 @@ class ScanningService : Service() {
         rfDronesJob = serviceScope.launch {
             rfSignalAnalyzer?.dronesDetected?.collect { drones ->
                 Companion.detectedDrones.value = drones
+                broadcastRfData()
 
                 // Convert new drones to detections
                 for (drone in drones) {
@@ -1959,6 +1971,7 @@ class ScanningService : Service() {
         rfAnomalyJob = serviceScope.launch {
             rfSignalAnalyzer?.anomalies?.collect { anomalies ->
                 Companion.rfAnomalies.value = anomalies
+                broadcastRfData()
 
                 for (anomaly in anomalies) {
                     // Send broadcast for automation apps
@@ -2046,6 +2059,7 @@ class ScanningService : Service() {
         ultrasonicStatusJob = serviceScope.launch {
             ultrasonicDetector?.status?.collect { status ->
                 Companion.ultrasonicStatus.value = status
+                broadcastUltrasonicData()
             }
         }
 
@@ -2053,6 +2067,7 @@ class ScanningService : Service() {
         ultrasonicEventsJob = serviceScope.launch {
             ultrasonicDetector?.events?.collect { events ->
                 Companion.ultrasonicEvents.value = events
+                broadcastUltrasonicData()
             }
         }
 
@@ -2060,6 +2075,7 @@ class ScanningService : Service() {
         ultrasonicBeaconsJob = serviceScope.launch {
             ultrasonicDetector?.beaconsDetected?.collect { beacons ->
                 Companion.ultrasonicBeacons.value = beacons
+                broadcastUltrasonicData()
             }
         }
 
@@ -2067,6 +2083,7 @@ class ScanningService : Service() {
         ultrasonicAnomalyJob = serviceScope.launch {
             ultrasonicDetector?.anomalies?.collect { anomalies ->
                 Companion.ultrasonicAnomalies.value = anomalies
+                broadcastUltrasonicData()
 
                 for (anomaly in anomalies) {
                     // Send broadcast for automation apps
@@ -2150,6 +2167,7 @@ class ScanningService : Service() {
         gnssStatusJob = serviceScope.launch {
             gnssSatelliteMonitor?.gnssStatus?.collect { status ->
                 Companion.gnssStatus.value = status
+                broadcastGnssData()
             }
         }
 
@@ -2157,6 +2175,7 @@ class ScanningService : Service() {
         gnssSatellitesJob = serviceScope.launch {
             gnssSatelliteMonitor?.satellites?.collect { sats ->
                 Companion.gnssSatellites.value = sats
+                broadcastGnssData()
             }
         }
 
@@ -2164,6 +2183,7 @@ class ScanningService : Service() {
         gnssEventsJob = serviceScope.launch {
             gnssSatelliteMonitor?.events?.collect { events ->
                 Companion.gnssEvents.value = events
+                broadcastGnssData()
             }
         }
 
@@ -2171,6 +2191,7 @@ class ScanningService : Service() {
         gnssMeasurementsJob = serviceScope.launch {
             gnssSatelliteMonitor?.measurements?.collect { measurements ->
                 Companion.gnssMeasurements.value = measurements
+                broadcastGnssData()
             }
         }
 
@@ -2178,6 +2199,7 @@ class ScanningService : Service() {
         gnssAnomalyJob = serviceScope.launch {
             gnssSatelliteMonitor?.anomalies?.collect { anomalies ->
                 Companion.gnssAnomalies.value = anomalies
+                broadcastGnssData()
 
                 for (anomaly in anomalies) {
                     // Send broadcast for automation apps
@@ -2594,9 +2616,10 @@ class ScanningService : Service() {
             }
 
             seenBleDevices.value = currentList
+            broadcastSeenBleDevices()
         }
     }
-    
+
     // ==================== WiFi Scanning ====================
     
     @SuppressLint("MissingPermission")
@@ -2908,8 +2931,9 @@ class ScanningService : Service() {
         }
         
         seenWifiNetworks.value = currentList
+        broadcastSeenWifiNetworks()
     }
-    
+
     // ==================== Detection Handling ====================
 
     /**
@@ -2949,6 +2973,8 @@ class ScanningService : Service() {
                 // New detection
                 detectionCount.value++
                 lastDetection.value = privacyAwareDetection
+                broadcastLastDetection()
+                broadcastStateToClients()
 
                 Log.d(TAG, "New detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
 
@@ -2957,6 +2983,7 @@ class ScanningService : Service() {
             } else {
                 // Existing detection - update lastDetection to refresh UI
                 lastDetection.value = privacyAwareDetection
+                broadcastLastDetection()
                 Log.d(TAG, "Updated detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
             }
 
@@ -3424,6 +3451,7 @@ class ScanningService : Service() {
                 isHealthy = true
             )
         }
+        broadcastDetectorHealth()
     }
 
     /**

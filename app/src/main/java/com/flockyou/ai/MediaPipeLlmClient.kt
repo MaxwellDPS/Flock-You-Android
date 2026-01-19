@@ -35,13 +35,39 @@ class MediaPipeLlmClient @Inject constructor(
         private const val MAX_TOKENS = 512
         private const val INFERENCE_TIMEOUT_MS = 60_000L // 60 second timeout for inference
         private const val INIT_TIMEOUT_MS = 30_000L // 30 second timeout for initialization
+        private const val PREFS_NAME = "mediapipe_llm_prefs"
+        private const val KEY_GPU_FAILED = "gpu_backend_failed"
     }
 
     private var llmInference: LlmInference? = null
     private var currentModelPath: String? = null
+    private var currentBackend: LlmInference.Backend? = null
     private var isInitialized = false
     private var initializationError: String? = null
     private val initMutex = Mutex()
+
+    // Track if GPU has previously failed on this device
+    private val prefs by lazy { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+
+    private fun hasGpuFailed(): Boolean = prefs.getBoolean(KEY_GPU_FAILED, false)
+
+    private fun markGpuFailed() {
+        prefs.edit().putBoolean(KEY_GPU_FAILED, true).apply()
+        Log.w(TAG, "GPU backend marked as failed - will use CPU for future initializations")
+    }
+
+    /**
+     * Reset GPU failure flag (call this if user wants to retry GPU)
+     */
+    fun resetGpuFailure() {
+        prefs.edit().putBoolean(KEY_GPU_FAILED, false).apply()
+        Log.i(TAG, "GPU failure flag reset - will try GPU on next initialization")
+    }
+
+    /**
+     * Get the currently active backend
+     */
+    fun getActiveBackend(): String = currentBackend?.name ?: "NONE"
 
     /**
      * Initialize the LLM with a specific model file.
@@ -91,28 +117,59 @@ class MediaPipeLlmClient @Inject constructor(
 
                     Log.d(TAG, "Initializing MediaPipe LLM with model: ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)")
 
-                    // Build LLM inference options
+                    // Determine which backends to try
+                    // GPU is ~8x faster for prefill but can crash on some devices
                     // Must set PreferredBackend to GPU or CPU (not legacy) for models with input masks
-                    val optionsBuilder = LlmInference.LlmInferenceOptions.builder()
-                        .setModelPath(modelFile.absolutePath)
-                        .setMaxTokens(config.maxTokens)
-                        .setPreferredBackend(
-                            if (config.useGpuAcceleration) {
-                                LlmInference.Backend.GPU
-                            } else {
-                                LlmInference.Backend.CPU
+                    val gpuPreviouslyFailed = hasGpuFailed()
+                    val backendsToTry = when {
+                        !config.useGpuAcceleration -> {
+                            Log.d(TAG, "GPU disabled in config, using CPU only")
+                            listOf(LlmInference.Backend.CPU)
+                        }
+                        gpuPreviouslyFailed -> {
+                            Log.d(TAG, "GPU previously failed on this device, using CPU only")
+                            listOf(LlmInference.Backend.CPU)
+                        }
+                        else -> {
+                            Log.d(TAG, "Will try GPU first, then fall back to CPU if needed")
+                            listOf(LlmInference.Backend.GPU, LlmInference.Backend.CPU)
+                        }
+                    }
+
+                    var lastException: Exception? = null
+                    for (backend in backendsToTry) {
+                        try {
+                            Log.d(TAG, "Attempting initialization with backend: $backend")
+
+                            val options = LlmInference.LlmInferenceOptions.builder()
+                                .setModelPath(modelFile.absolutePath)
+                                .setMaxTokens(config.maxTokens)
+                                .setPreferredBackend(backend)
+                                .build()
+
+                            llmInference = LlmInference.createFromOptions(context, options)
+                            currentModelPath = modelFile.absolutePath
+                            currentBackend = backend
+                            isInitialized = true
+
+                            Log.i(TAG, "MediaPipe LLM initialized successfully with $backend backend: ${modelFile.name}")
+                            return@withContext true
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to initialize with $backend backend: ${e.message}")
+                            lastException = e
+
+                            // If GPU failed, mark it so we don't try again
+                            if (backend == LlmInference.Backend.GPU) {
+                                markGpuFailed()
                             }
-                        )
+                            // Continue to try next backend
+                        }
+                    }
 
-                    val options = optionsBuilder.build()
-
-                    // Create the LLM inference instance
-                    llmInference = LlmInference.createFromOptions(context, options)
-                    currentModelPath = modelFile.absolutePath
-                    isInitialized = true
-
-                    Log.i(TAG, "MediaPipe LLM initialized successfully: ${modelFile.name}")
-                    true
+                    // All backends failed
+                    initializationError = "Failed to initialize with any backend: ${lastException?.message}"
+                    Log.e(TAG, initializationError!!)
+                    false
                 }
             }
         } catch (e: TimeoutCancellationException) {
@@ -285,6 +342,7 @@ ${detection.ssid?.let { "- Network: $it" } ?: ""}
         }
         llmInference = null
         currentModelPath = null
+        currentBackend = null
         isInitialized = false
     }
 }

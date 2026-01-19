@@ -31,7 +31,7 @@ data class AiSettings(
     val enableBatchAnalysis: Boolean = false, // Batch analysis for density mapping
     val trackAnalysisFeedback: Boolean = true, // Learn from user feedback
     val enableFalsePositiveFiltering: Boolean = true, // Auto-filter likely false positives
-    val maxTokens: Int = 256,
+    val maxTokens: Int = 1024,
     val temperatureTenths: Int = 7, // 0.7 stored as int to avoid float precision issues
     val lastModelUpdate: Long = 0
 )
@@ -387,7 +387,7 @@ class AiSettingsRepository @Inject constructor(
             enableBatchAnalysis = prefs[Keys.BATCH_ANALYSIS] ?: false,
             trackAnalysisFeedback = prefs[Keys.TRACK_FEEDBACK] ?: true,
             enableFalsePositiveFiltering = prefs[Keys.FALSE_POSITIVE_FILTERING] ?: true,
-            maxTokens = prefs[Keys.MAX_TOKENS] ?: 256,
+            maxTokens = prefs[Keys.MAX_TOKENS] ?: 1024,
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
             lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0
         )
