@@ -41,13 +41,12 @@ import java.util.*
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
-    onNavigateToPatterns: () -> Unit,
     onNavigateToNotifications: () -> Unit = {},
-    onNavigateToRules: () -> Unit = {},
     onNavigateToDetectionSettings: () -> Unit = {},
     onNavigateToSecurity: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToNuke: () -> Unit = {}
+    onNavigateToNuke: () -> Unit = {},
+    onNavigateToAllDetections: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -483,32 +482,22 @@ fun SettingsScreen(
                 }
             }
             
-            // Detection Patterns
+            // All Detections - New unified view
             item {
                 SettingsItem(
-                    icon = Icons.Default.Pattern,
-                    title = "Detection Patterns",
-                    subtitle = "View SSIDs, BLE names, and MAC prefixes being scanned",
-                    onClick = onNavigateToPatterns
+                    icon = Icons.Default.Visibility,
+                    title = "All Detection Patterns",
+                    subtitle = "View all patterns, manage custom rules, toggle categories",
+                    onClick = onNavigateToAllDetections
                 )
             }
-            
-            // Detection Rules
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Checklist,
-                    title = "Detection Rules",
-                    subtitle = "Toggle built-in rules, add custom regex patterns",
-                    onClick = onNavigateToRules
-                )
-            }
-            
-            // Detection Tuning (new)
+
+            // Detection Tuning - Thresholds and sensitivity
             item {
                 SettingsItem(
                     icon = Icons.Default.Tune,
-                    title = "Detection Tuning",
-                    subtitle = "Toggle patterns and adjust thresholds for Cell, Satellite, BLE, WiFi",
+                    title = "Detection Sensitivity",
+                    subtitle = "Adjust thresholds for Cell, Satellite, BLE, WiFi",
                     onClick = onNavigateToDetectionSettings
                 )
             }

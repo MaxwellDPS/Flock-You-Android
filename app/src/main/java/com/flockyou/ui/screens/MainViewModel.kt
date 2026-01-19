@@ -79,6 +79,12 @@ data class MainUiState(
     val ultrasonicStatus: UltrasonicDetector.UltrasonicStatus? = null,
     val ultrasonicAnomalies: List<UltrasonicDetector.UltrasonicAnomaly> = emptyList(),
     val ultrasonicBeacons: List<UltrasonicDetector.BeaconDetection> = emptyList(),
+    // GNSS satellite monitoring
+    val gnssStatus: com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus? = null,
+    val gnssSatellites: List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo> = emptyList(),
+    val gnssAnomalies: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly> = emptyList(),
+    val gnssEvents: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent> = emptyList(),
+    val gnssMeasurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData? = null,
     // UI settings
     val advancedMode: Boolean = false
 )
@@ -308,6 +314,29 @@ class MainViewModel @Inject constructor(
             }
         }
 
+        // Consolidated GNSS satellite data collection
+        viewModelScope.launch {
+            combine(
+                serviceConnection.gnssStatus,
+                serviceConnection.gnssSatellites,
+                serviceConnection.gnssAnomalies,
+                serviceConnection.gnssEvents,
+                serviceConnection.gnssMeasurements
+            ) { status, satellites, anomalies, events, measurements ->
+                GnssDataUpdate(status, satellites, anomalies, events, measurements)
+            }.collect { update ->
+                _uiState.update {
+                    it.copy(
+                        gnssStatus = update.status,
+                        gnssSatellites = update.satellites,
+                        gnssAnomalies = update.anomalies,
+                        gnssEvents = update.events,
+                        gnssMeasurements = update.measurements
+                    )
+                }
+            }
+        }
+
         // Database state collection - consolidated
         viewModelScope.launch {
             combine(
@@ -377,6 +406,14 @@ class MainViewModel @Inject constructor(
         val seenCellTowers: List<CellularMonitor.SeenCellTower>,
         val cellularAnomalies: List<CellularMonitor.CellularAnomaly>,
         val cellularEvents: List<CellularMonitor.CellularEvent>
+    )
+
+    private data class GnssDataUpdate(
+        val status: com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?,
+        val satellites: List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>,
+        val anomalies: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>,
+        val events: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>,
+        val measurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?
     )
 
     override fun onCleared() {
@@ -478,6 +515,20 @@ class MainViewModel @Inject constructor(
             val threatMatch = state.filterThreatLevel?.let { detection.threatLevel == it } ?: true
             val typeMatch = state.filterDeviceType?.let { detection.deviceType == it } ?: true
             threatMatch && typeMatch
+        }
+    }
+
+    /**
+     * Returns RF anomalies filtered based on advanced mode.
+     * Low-confidence anomalies (interference, spectrum anomalies, unusual activity)
+     * are hidden from non-advanced users to reduce noise.
+     */
+    fun getFilteredRfAnomalies(): List<RfSignalAnalyzer.RfAnomaly> {
+        val state = _uiState.value
+        return if (state.advancedMode) {
+            state.rfAnomalies
+        } else {
+            state.rfAnomalies.filter { !it.isAdvancedOnly }
         }
     }
 

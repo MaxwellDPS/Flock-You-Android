@@ -1296,6 +1296,78 @@ object DetectionPatterns {
                     "Monitor for timing anomalies"
                 )
             )
+            DeviceType.RF_INTERFERENCE -> DeviceTypeInfo(
+                name = "RF Interference",
+                shortDescription = "Radio Frequency Interference Detected",
+                fullDescription = "Significant change in the RF environment detected. This could indicate " +
+                    "natural interference, new equipment nearby, or intentional signal manipulation.",
+                capabilities = listOf(
+                    "Disrupts wireless communications",
+                    "May affect WiFi, Bluetooth, cellular",
+                    "Can mask other surveillance activity"
+                ),
+                privacyConcerns = listOf(
+                    "May be used to disrupt security systems",
+                    "Could be part of surveillance operation",
+                    "May precede other attacks"
+                )
+            )
+            DeviceType.RF_ANOMALY -> DeviceTypeInfo(
+                name = "RF Environment Anomaly",
+                shortDescription = "Unusual RF Activity Pattern",
+                fullDescription = "Unusual patterns detected in the local RF environment. This is a " +
+                    "low-confidence detection that may indicate surveillance equipment or environmental changes.",
+                capabilities = listOf("Varies depending on source"),
+                privacyConcerns = listOf("May indicate covert RF equipment nearby")
+            )
+            DeviceType.HIDDEN_TRANSMITTER -> DeviceTypeInfo(
+                name = "Hidden Transmitter",
+                shortDescription = "Possible Covert RF Transmission",
+                fullDescription = "A potential hidden RF transmitter has been detected. This could be " +
+                    "a bug, tracker, or other covert transmission device.",
+                capabilities = listOf(
+                    "Continuous RF transmission",
+                    "May transmit audio/video/data",
+                    "Could be a tracking device"
+                ),
+                privacyConcerns = listOf(
+                    "Covert audio/video surveillance",
+                    "Location tracking",
+                    "Data exfiltration"
+                )
+            )
+            DeviceType.GNSS_SPOOFER -> DeviceTypeInfo(
+                name = "GNSS Spoofer",
+                shortDescription = "GPS/GNSS Signal Spoofing Detected",
+                fullDescription = "Fake GPS/GNSS signals detected. Someone may be attempting to " +
+                    "manipulate your location data or deceive GPS-dependent systems.",
+                capabilities = listOf(
+                    "Broadcast fake GPS coordinates",
+                    "Manipulate location-based services",
+                    "Deceive navigation systems"
+                ),
+                privacyConcerns = listOf(
+                    "Location data manipulation",
+                    "May be used for tracking or misdirection",
+                    "Can affect geofencing and location logs"
+                )
+            )
+            DeviceType.GNSS_JAMMER -> DeviceTypeInfo(
+                name = "GNSS Jammer",
+                shortDescription = "GPS/GNSS Signal Jamming Detected",
+                fullDescription = "GPS/GNSS signals are being blocked or degraded. This prevents " +
+                    "accurate location determination and may indicate a surveillance operation.",
+                capabilities = listOf(
+                    "Block GPS/GNSS signals",
+                    "Prevent location tracking",
+                    "Disable GPS-dependent security"
+                ),
+                privacyConcerns = listOf(
+                    "May be used to avoid location tracking",
+                    "Can indicate criminal activity nearby",
+                    "Affects emergency services"
+                )
+            )
             DeviceType.UNKNOWN_SURVEILLANCE -> DeviceTypeInfo(
                 name = "Unknown Surveillance Device",
                 shortDescription = "Unidentified Surveillance Equipment",

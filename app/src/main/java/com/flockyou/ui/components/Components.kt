@@ -83,8 +83,13 @@ fun DeviceType.toIcon(): ImageVector = when (this) {
     DeviceType.RF_JAMMER -> Icons.Default.SignalCellularOff
     DeviceType.DRONE -> Icons.Default.FlightTakeoff
     DeviceType.SURVEILLANCE_INFRASTRUCTURE -> Icons.Default.Business
+    DeviceType.RF_INTERFERENCE -> Icons.Default.SettingsInputAntenna
+    DeviceType.RF_ANOMALY -> Icons.Default.Insights
+    DeviceType.HIDDEN_TRANSMITTER -> Icons.Default.SpeakerPhone
     DeviceType.ULTRASONIC_BEACON -> Icons.Default.Hearing
     DeviceType.SATELLITE_NTN -> Icons.Default.SatelliteAlt
+    DeviceType.GNSS_SPOOFER -> Icons.Default.GpsOff
+    DeviceType.GNSS_JAMMER -> Icons.Default.GpsOff
     DeviceType.UNKNOWN_SURVEILLANCE -> Icons.Default.QuestionMark
 }
 
@@ -96,6 +101,7 @@ fun DetectionProtocol.toIcon(): ImageVector = when (this) {
     DetectionProtocol.BLUETOOTH_LE -> Icons.Default.Bluetooth
     DetectionProtocol.CELLULAR -> Icons.Default.CellTower
     DetectionProtocol.SATELLITE -> Icons.Default.SatelliteAlt
+    DetectionProtocol.GNSS -> Icons.Default.GpsFixed
     DetectionProtocol.AUDIO -> Icons.Default.Hearing
     DetectionProtocol.RF -> Icons.Default.SettingsInputAntenna
 }

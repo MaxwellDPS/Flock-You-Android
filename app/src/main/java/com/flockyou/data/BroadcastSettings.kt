@@ -23,6 +23,7 @@ data class BroadcastSettings(
     val broadcastOnWifiAnomaly: Boolean = true,
     val broadcastOnRfAnomaly: Boolean = true,
     val broadcastOnUltrasonic: Boolean = true,
+    val broadcastOnGnssAnomaly: Boolean = true,
     val includeLocation: Boolean = false,
     val minThreatLevel: String = "LOW" // LOW, MEDIUM, HIGH, CRITICAL
 ) {
@@ -34,6 +35,7 @@ data class BroadcastSettings(
         const val ACTION_WIFI_ANOMALY = "com.flockyou.WIFI_ANOMALY"
         const val ACTION_RF_ANOMALY = "com.flockyou.RF_ANOMALY"
         const val ACTION_ULTRASONIC = "com.flockyou.ULTRASONIC"
+        const val ACTION_GNSS_ANOMALY = "com.flockyou.GNSS_ANOMALY"
 
         // Extra keys for broadcast intents
         const val EXTRA_DETECTION_ID = "detection_id"
@@ -68,6 +70,7 @@ class BroadcastSettingsRepository @Inject constructor(
         val BROADCAST_ON_WIFI = booleanPreferencesKey("broadcast_on_wifi_anomaly")
         val BROADCAST_ON_RF = booleanPreferencesKey("broadcast_on_rf_anomaly")
         val BROADCAST_ON_ULTRASONIC = booleanPreferencesKey("broadcast_on_ultrasonic")
+        val BROADCAST_ON_GNSS = booleanPreferencesKey("broadcast_on_gnss_anomaly")
         val INCLUDE_LOCATION = booleanPreferencesKey("broadcast_include_location")
         val MIN_THREAT_LEVEL = stringPreferencesKey("broadcast_min_threat_level")
     }
@@ -81,6 +84,7 @@ class BroadcastSettingsRepository @Inject constructor(
             broadcastOnWifiAnomaly = preferences[PreferencesKeys.BROADCAST_ON_WIFI] ?: true,
             broadcastOnRfAnomaly = preferences[PreferencesKeys.BROADCAST_ON_RF] ?: true,
             broadcastOnUltrasonic = preferences[PreferencesKeys.BROADCAST_ON_ULTRASONIC] ?: true,
+            broadcastOnGnssAnomaly = preferences[PreferencesKeys.BROADCAST_ON_GNSS] ?: true,
             includeLocation = preferences[PreferencesKeys.INCLUDE_LOCATION] ?: false,
             minThreatLevel = preferences[PreferencesKeys.MIN_THREAT_LEVEL] ?: "LOW"
         )
@@ -125,6 +129,12 @@ class BroadcastSettingsRepository @Inject constructor(
     suspend fun setBroadcastOnUltrasonic(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.BROADCAST_ON_ULTRASONIC] = enabled
+        }
+    }
+
+    suspend fun setBroadcastOnGnss(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.BROADCAST_ON_GNSS] = enabled
         }
     }
 

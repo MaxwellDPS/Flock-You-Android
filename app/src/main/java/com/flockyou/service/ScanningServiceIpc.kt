@@ -54,6 +54,7 @@ object ScanningServiceIpc {
     const val MSG_RF_DATA = 111
     const val MSG_ULTRASONIC_DATA = 112
     const val MSG_LAST_DETECTION = 113
+    const val MSG_GNSS_DATA = 114
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -86,6 +87,11 @@ object ScanningServiceIpc {
     const val KEY_ULTRASONIC_ANOMALIES_JSON = "ultrasonic_anomalies_json"
     const val KEY_ULTRASONIC_BEACONS_JSON = "ultrasonic_beacons_json"
     const val KEY_LAST_DETECTION_JSON = "last_detection_json"
+    const val KEY_GNSS_STATUS_JSON = "gnss_status_json"
+    const val KEY_GNSS_SATELLITES_JSON = "gnss_satellites_json"
+    const val KEY_GNSS_ANOMALIES_JSON = "gnss_anomalies_json"
+    const val KEY_GNSS_EVENTS_JSON = "gnss_events_json"
+    const val KEY_GNSS_MEASUREMENTS_JSON = "gnss_measurements_json"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -186,6 +192,16 @@ object ScanningServiceIpc {
                 MSG_LAST_DETECTION -> {
                     val json = msg.data?.getString(KEY_LAST_DETECTION_JSON)
                     connection.updateLastDetection(json)
+                }
+                MSG_GNSS_DATA -> {
+                    val bundle = msg.data
+                    connection.updateGnssData(
+                        statusJson = bundle?.getString(KEY_GNSS_STATUS_JSON),
+                        satellitesJson = bundle?.getString(KEY_GNSS_SATELLITES_JSON),
+                        anomaliesJson = bundle?.getString(KEY_GNSS_ANOMALIES_JSON),
+                        eventsJson = bundle?.getString(KEY_GNSS_EVENTS_JSON),
+                        measurementsJson = bundle?.getString(KEY_GNSS_MEASUREMENTS_JSON)
+                    )
                 }
                 else -> super.handleMessage(msg)
             }
@@ -301,6 +317,22 @@ class ScanningServiceConnection(private val context: Context) {
     // Last detection (mirrored from service process)
     private val _lastDetection = MutableStateFlow<com.flockyou.data.model.Detection?>(null)
     val lastDetection: StateFlow<com.flockyou.data.model.Detection?> = _lastDetection.asStateFlow()
+
+    // GNSS satellite monitoring data (mirrored from service process)
+    private val _gnssStatus = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?>(null)
+    val gnssStatus: StateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?> = _gnssStatus.asStateFlow()
+
+    private val _gnssSatellites = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>>(emptyList())
+    val gnssSatellites: StateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>> = _gnssSatellites.asStateFlow()
+
+    private val _gnssAnomalies = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>>(emptyList())
+    val gnssAnomalies: StateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>> = _gnssAnomalies.asStateFlow()
+
+    private val _gnssEvents = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>>(emptyList())
+    val gnssEvents: StateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>> = _gnssEvents.asStateFlow()
+
+    private val _gnssMeasurements = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?>(null)
+    val gnssMeasurements: StateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?> = _gnssMeasurements.asStateFlow()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -673,6 +705,37 @@ class ScanningServiceConnection(private val context: Context) {
             _lastDetection.value = ScanningServiceIpc.gson.fromJson(json, com.flockyou.data.model.Detection::class.java)
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse last detection JSON", e)
+        }
+    }
+
+    internal fun updateGnssData(
+        statusJson: String?,
+        satellitesJson: String?,
+        anomaliesJson: String?,
+        eventsJson: String?,
+        measurementsJson: String?
+    ) {
+        try {
+            statusJson?.let {
+                _gnssStatus.value = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus::class.java)
+            }
+            satellitesJson?.let {
+                val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>>() {}.type
+                _gnssSatellites.value = ScanningServiceIpc.gson.fromJson(it, type)
+            }
+            anomaliesJson?.let {
+                val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>>() {}.type
+                _gnssAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+            }
+            eventsJson?.let {
+                val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>>() {}.type
+                _gnssEvents.value = ScanningServiceIpc.gson.fromJson(it, type)
+            }
+            measurementsJson?.let {
+                _gnssMeasurements.value = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData::class.java)
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse GNSS data JSON", e)
         }
     }
 }

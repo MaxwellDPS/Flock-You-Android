@@ -187,7 +187,32 @@ class RfSignalAnalyzer(private val context: Context) {
         val latitude: Double?,
         val longitude: Double?,
         val contributingFactors: List<String> = emptyList()
-    )
+    ) {
+        /**
+         * Returns true if this anomaly should only be shown to advanced users.
+         * Low-confidence anomalies like signal interference and spectrum anomalies
+         * are hidden by default to reduce noise for regular users.
+         */
+        val isAdvancedOnly: Boolean
+            get() = confidence == AnomalyConfidence.LOW ||
+                type == RfAnomalyType.SIGNAL_INTERFERENCE ||
+                type == RfAnomalyType.SPECTRUM_ANOMALY ||
+                type == RfAnomalyType.UNUSUAL_ACTIVITY
+
+        /**
+         * User-friendly display name that's more descriptive than the raw type.
+         */
+        val displayName: String
+            get() = when (type) {
+                RfAnomalyType.POSSIBLE_JAMMER -> "RF Jammer Detected"
+                RfAnomalyType.DRONE_DETECTED -> "Drone Nearby"
+                RfAnomalyType.SURVEILLANCE_AREA -> "Surveillance Zone"
+                RfAnomalyType.SIGNAL_INTERFERENCE -> "RF Interference"
+                RfAnomalyType.SPECTRUM_ANOMALY -> "RF Environment Change"
+                RfAnomalyType.UNUSUAL_ACTIVITY -> "Unusual RF Pattern"
+                RfAnomalyType.HIDDEN_TRANSMITTER -> "Hidden Transmitter"
+            }
+    }
 
     enum class AnomalyConfidence(val displayName: String) {
         LOW("Low - Possibly Normal"),
@@ -829,7 +854,10 @@ class RfSignalAnalyzer(private val context: Context) {
             RfAnomalyType.POSSIBLE_JAMMER -> DeviceType.RF_JAMMER
             RfAnomalyType.DRONE_DETECTED -> DeviceType.DRONE
             RfAnomalyType.SURVEILLANCE_AREA -> DeviceType.SURVEILLANCE_INFRASTRUCTURE
-            else -> DeviceType.UNKNOWN_SURVEILLANCE
+            RfAnomalyType.SIGNAL_INTERFERENCE -> DeviceType.RF_INTERFERENCE
+            RfAnomalyType.SPECTRUM_ANOMALY -> DeviceType.RF_ANOMALY
+            RfAnomalyType.UNUSUAL_ACTIVITY -> DeviceType.RF_ANOMALY
+            RfAnomalyType.HIDDEN_TRANSMITTER -> DeviceType.HIDDEN_TRANSMITTER
         }
 
         return Detection(

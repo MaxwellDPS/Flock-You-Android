@@ -105,7 +105,15 @@ class ScanningService : Service() {
         val ultrasonicAnomalies = MutableStateFlow<List<UltrasonicDetector.UltrasonicAnomaly>>(emptyList())
         val ultrasonicEvents = MutableStateFlow<List<UltrasonicDetector.UltrasonicEvent>>(emptyList())
         val ultrasonicBeacons = MutableStateFlow<List<UltrasonicDetector.BeaconDetection>>(emptyList())
-        
+
+        // GNSS satellite monitoring data
+        val gnssStatus = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?>(null)
+        val gnssSatellites = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>>(emptyList())
+        val gnssAnomalies = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>>(emptyList())
+        val gnssEvents = MutableStateFlow<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>>(emptyList())
+        val gnssMeasurements = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?>(null)
+        val gnssMonitorStatus = MutableStateFlow<SubsystemStatus>(SubsystemStatus.Idle)
+
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
 
@@ -445,7 +453,10 @@ class ScanningService : Service() {
 
     // Ultrasonic detector
     private var ultrasonicDetector: UltrasonicDetector? = null
-    
+
+    // GNSS satellite monitor
+    private var gnssSatelliteMonitor: com.flockyou.monitoring.GnssSatelliteMonitor? = null
+
     // Wake lock for background operation
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var powerManager: PowerManager
@@ -606,6 +617,17 @@ class ScanningService : Service() {
                 putString(ScanningServiceIpc.KEY_ULTRASONIC_BEACONS_JSON, ScanningServiceIpc.gson.toJson(ultrasonicBeacons.value))
             }
             client.send(ultrasonicMsg)
+
+            // Send GNSS data
+            val gnssMsg = Message.obtain(null, ScanningServiceIpc.MSG_GNSS_DATA)
+            gnssMsg.data = Bundle().apply {
+                gnssStatus.value?.let { putString(ScanningServiceIpc.KEY_GNSS_STATUS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+                putString(ScanningServiceIpc.KEY_GNSS_SATELLITES_JSON, ScanningServiceIpc.gson.toJson(gnssSatellites.value))
+                putString(ScanningServiceIpc.KEY_GNSS_ANOMALIES_JSON, ScanningServiceIpc.gson.toJson(gnssAnomalies.value))
+                putString(ScanningServiceIpc.KEY_GNSS_EVENTS_JSON, ScanningServiceIpc.gson.toJson(gnssEvents.value))
+                gnssMeasurements.value?.let { putString(ScanningServiceIpc.KEY_GNSS_MEASUREMENTS_JSON, ScanningServiceIpc.gson.toJson(it)) }
+            }
+            client.send(gnssMsg)
 
             // Send last detection
             val detectionMsg = Message.obtain(null, ScanningServiceIpc.MSG_LAST_DETECTION)
@@ -797,6 +819,29 @@ class ScanningService : Service() {
     }
 
     /**
+     * Broadcast GNSS satellite monitoring data to all registered IPC clients.
+     */
+    private fun broadcastGnssData() {
+        if (ipcClients.isEmpty()) return
+        val statusJson = gnssStatus.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        val satellitesJson = ScanningServiceIpc.gson.toJson(gnssSatellites.value)
+        val anomaliesJson = ScanningServiceIpc.gson.toJson(gnssAnomalies.value)
+        val eventsJson = ScanningServiceIpc.gson.toJson(gnssEvents.value)
+        val measurementsJson = gnssMeasurements.value?.let { ScanningServiceIpc.gson.toJson(it) }
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_GNSS_DATA).apply {
+                data = Bundle().apply {
+                    statusJson?.let { putString(ScanningServiceIpc.KEY_GNSS_STATUS_JSON, it) }
+                    putString(ScanningServiceIpc.KEY_GNSS_SATELLITES_JSON, satellitesJson)
+                    putString(ScanningServiceIpc.KEY_GNSS_ANOMALIES_JSON, anomaliesJson)
+                    putString(ScanningServiceIpc.KEY_GNSS_EVENTS_JSON, eventsJson)
+                    measurementsJson?.let { putString(ScanningServiceIpc.KEY_GNSS_MEASUREMENTS_JSON, it) }
+                }
+            }
+        }
+    }
+
+    /**
      * Broadcast last detection to all registered IPC clients.
      */
     private fun broadcastLastDetection() {
@@ -824,6 +869,7 @@ class ScanningService : Service() {
         broadcastRogueWifiData()
         broadcastRfData()
         broadcastUltrasonicData()
+        broadcastGnssData()
         broadcastLastDetection()
     }
 
@@ -868,6 +914,9 @@ class ScanningService : Service() {
 
         // Initialize Ultrasonic Detector
         ultrasonicDetector = UltrasonicDetector(applicationContext)
+
+        // Initialize GNSS Satellite Monitor
+        gnssSatelliteMonitor = com.flockyou.monitoring.GnssSatelliteMonitor(applicationContext)
 
         createNotificationChannel()
     }
@@ -1131,6 +1180,9 @@ class ScanningService : Service() {
             Log.d(TAG, "Ultrasonic detection disabled - user has not opted in (requires consent in Privacy settings)")
         }
 
+        // Start GNSS satellite monitoring (uses location permission already granted)
+        startGnssMonitoring()
+
         // Start heartbeat monitoring - sends periodic heartbeats to watchdog
         ServiceRestartReceiver.scheduleHeartbeat(this)
         ServiceRestartReceiver.scheduleJobSchedulerBackup(this)
@@ -1265,6 +1317,7 @@ class ScanningService : Service() {
         stopRogueWifiMonitoring()
         stopRfSignalAnalysis()
         stopUltrasonicDetection()
+        stopGnssMonitoring()
 
         // Unregister screen lock receiver
         screenLockReceiver?.let {
@@ -1823,6 +1876,118 @@ class ScanningService : Service() {
         ultrasonicBeaconsJob = null
         ultrasonicDetector?.stopMonitoring()
         Log.d(TAG, "Ultrasonic detection stopped")
+    }
+
+    // ==================== GNSS Satellite Monitoring ====================
+
+    private var gnssStatusJob: Job? = null
+    private var gnssAnomalyJob: Job? = null
+    private var gnssEventsJob: Job? = null
+    private var gnssSatellitesJob: Job? = null
+    private var gnssMeasurementsJob: Job? = null
+
+    @SuppressLint("MissingPermission")
+    private fun startGnssMonitoring() {
+        if (!hasLocationPermissions()) {
+            gnssMonitorStatus.value = SubsystemStatus.PermissionDenied("ACCESS_FINE_LOCATION")
+            Log.w(TAG, "Missing location permissions for GNSS monitoring")
+            return
+        }
+
+        Log.d(TAG, "Starting GNSS satellite monitoring for spoofing/jamming detection")
+        gnssMonitorStatus.value = SubsystemStatus.Active
+
+        gnssSatelliteMonitor?.startMonitoring()
+
+        // Collect status updates
+        gnssStatusJob = serviceScope.launch {
+            gnssSatelliteMonitor?.gnssStatus?.collect { status ->
+                Companion.gnssStatus.value = status
+            }
+        }
+
+        // Collect satellite info
+        gnssSatellitesJob = serviceScope.launch {
+            gnssSatelliteMonitor?.satellites?.collect { sats ->
+                Companion.gnssSatellites.value = sats
+            }
+        }
+
+        // Collect events
+        gnssEventsJob = serviceScope.launch {
+            gnssSatelliteMonitor?.events?.collect { events ->
+                Companion.gnssEvents.value = events
+            }
+        }
+
+        // Collect raw measurements
+        gnssMeasurementsJob = serviceScope.launch {
+            gnssSatelliteMonitor?.measurements?.collect { measurements ->
+                Companion.gnssMeasurements.value = measurements
+            }
+        }
+
+        // Collect anomalies and convert to detections
+        gnssAnomalyJob = serviceScope.launch {
+            gnssSatelliteMonitor?.anomalies?.collect { anomalies ->
+                Companion.gnssAnomalies.value = anomalies
+
+                for (anomaly in anomalies) {
+                    // Send broadcast for automation apps
+                    sendGnssAnomalyBroadcast(anomaly)
+
+                    val detection = gnssSatelliteMonitor?.anomalyToDetection(anomaly)
+                    detection?.let { det ->
+                        // Use anomaly ID as unique identifier
+                        val existing = repository.getDetectionByMacAddress(anomaly.id)
+                        if (existing == null) {
+                            try {
+                                repository.insertDetection(det.copy(macAddress = anomaly.id))
+
+                                if (anomaly.severity == ThreatLevel.CRITICAL ||
+                                    anomaly.severity == ThreatLevel.HIGH) {
+                                    alertUser(det)
+                                }
+
+                                lastDetection.value = det
+                                detectionCount.value = repository.getTotalDetectionCount()
+                                _detectionRefreshEvent.tryEmit(Unit)
+
+                                Log.w(TAG, "GNSS: ${anomaly.type.displayName} - ${anomaly.description}")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error saving GNSS detection: ${e.message}", e)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update monitor location
+        serviceScope.launch {
+            while (isScanning.value) {
+                currentLocation?.let { loc ->
+                    gnssSatelliteMonitor?.updateLocation(loc.latitude, loc.longitude)
+                }
+                delay(5000)
+            }
+        }
+    }
+
+    private fun stopGnssMonitoring() {
+        gnssStatusJob?.cancel()
+        gnssStatusJob = null
+        gnssAnomalyJob?.cancel()
+        gnssAnomalyJob = null
+        gnssEventsJob?.cancel()
+        gnssEventsJob = null
+        gnssSatellitesJob?.cancel()
+        gnssSatellitesJob = null
+        gnssMeasurementsJob?.cancel()
+        gnssMeasurementsJob = null
+        gnssSatelliteMonitor?.stopMonitoring()
+        gnssMonitorStatus.value = SubsystemStatus.Idle
+        Log.d(TAG, "GNSS monitoring stopped")
     }
 
     // ==================== BLE Scanning ====================
@@ -2618,6 +2783,32 @@ class ScanningService : Service() {
 
         sendBroadcast(intent)
         Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_ULTRASONIC}")
+    }
+
+    /**
+     * Send a broadcast for GNSS anomaly events (spoofing/jamming detection)
+     */
+    fun sendGnssAnomalyBroadcast(anomaly: com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly) {
+        val settings = currentBroadcastSettings
+        if (!settings.enabled || !settings.broadcastOnGnssAnomaly) return
+
+        val intent = Intent(com.flockyou.data.BroadcastSettings.ACTION_GNSS_ANOMALY).apply {
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_TYPE, anomaly.type.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_ANOMALY_DESCRIPTION, anomaly.description)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_THREAT_LEVEL, anomaly.severity.name)
+            putExtra(com.flockyou.data.BroadcastSettings.EXTRA_TIMESTAMP, anomaly.timestamp)
+            putExtra("technical_details", anomaly.technicalDetails)
+            putExtra("affected_constellations", anomaly.affectedConstellations.joinToString(",") { it.code })
+            putExtra("confidence", anomaly.confidence.name)
+            if (settings.includeLocation) {
+                anomaly.latitude?.let { putExtra(com.flockyou.data.BroadcastSettings.EXTRA_LATITUDE, it) }
+                anomaly.longitude?.let { putExtra(com.flockyou.data.BroadcastSettings.EXTRA_LONGITUDE, it) }
+            }
+            setPackage(null)
+        }
+
+        sendBroadcast(intent)
+        Log.d(TAG, "Broadcast sent: ${com.flockyou.data.BroadcastSettings.ACTION_GNSS_ANOMALY}")
     }
 
     /**

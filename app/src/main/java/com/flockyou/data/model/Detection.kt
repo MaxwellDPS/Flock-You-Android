@@ -50,6 +50,7 @@ enum class DetectionProtocol(val displayName: String, val icon: String) {
     BLUETOOTH_LE("Bluetooth LE", "📶"),
     CELLULAR("Cellular", "📱"),
     SATELLITE("Satellite", "🛰️"),
+    GNSS("GNSS/GPS", "🛰️"),
     AUDIO("Audio/Ultrasonic", "🔊"),
     RF("RF Analysis", "📻")
 }
@@ -98,7 +99,16 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     ULTRASONIC_RETAIL_BEACON("Retail Beacon", "Retail location tracking ultrasonic"),
     ULTRASONIC_CONTINUOUS("Continuous Ultrasonic", "Persistent ultrasonic transmission"),
     ULTRASONIC_CROSS_DEVICE("Cross-Device Tracking", "Signal linking multiple devices"),
-    ULTRASONIC_UNKNOWN("Unknown Ultrasonic", "Unidentified ultrasonic source")
+    ULTRASONIC_UNKNOWN("Unknown Ultrasonic", "Unidentified ultrasonic source"),
+    // GNSS satellite detection methods
+    GNSS_SPOOFING("GNSS Spoofing", "Fake satellite signals detected - position may be manipulated"),
+    GNSS_JAMMING("GNSS Jamming", "Satellite signals being blocked or degraded"),
+    GNSS_SIGNAL_ANOMALY("GNSS Signal Anomaly", "Unusual satellite signal characteristics"),
+    GNSS_GEOMETRY_ANOMALY("GNSS Geometry Anomaly", "Impossible satellite positions detected"),
+    GNSS_SIGNAL_LOSS("GNSS Signal Loss", "Sudden loss of satellite signals"),
+    GNSS_CLOCK_ANOMALY("GNSS Clock Anomaly", "Satellite timing discontinuity detected"),
+    GNSS_MULTIPATH("GNSS Multipath", "Severe signal reflection interference"),
+    GNSS_CONSTELLATION_ANOMALY("Constellation Anomaly", "Unexpected satellite constellation behavior")
 }
 
 enum class DeviceType(val displayName: String, val emoji: String) {
@@ -124,10 +134,16 @@ enum class DeviceType(val displayName: String, val emoji: String) {
     RF_JAMMER("RF Jammer", "📵"),
     DRONE("Drone/UAV", "🚁"),
     SURVEILLANCE_INFRASTRUCTURE("Surveillance Infrastructure", "🏢"),
+    RF_INTERFERENCE("RF Interference", "⚡"),
+    RF_ANOMALY("RF Anomaly", "📊"),
+    HIDDEN_TRANSMITTER("Hidden Transmitter", "📻"),
     // Audio device types
     ULTRASONIC_BEACON("Ultrasonic Beacon", "🔊"),
     // Satellite device types
     SATELLITE_NTN("Satellite NTN Device", "🛰️"),
+    // GNSS device types
+    GNSS_SPOOFER("GNSS Spoofer", "🎯"),
+    GNSS_JAMMER("GNSS Jammer", "📵"),
     UNKNOWN_SURVEILLANCE("Unknown Surveillance", "❓")
 }
 

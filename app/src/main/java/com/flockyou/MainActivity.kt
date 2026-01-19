@@ -44,6 +44,7 @@ import com.flockyou.ui.screens.NearbyDevicesScreen
 import com.flockyou.ui.screens.DetectionPatternsScreen
 import com.flockyou.ui.screens.NotificationSettingsScreen
 import com.flockyou.ui.screens.RuleSettingsScreen
+import com.flockyou.ui.screens.AllDetectionsScreen
 import com.flockyou.ui.screens.DetectionSettingsScreen
 import com.flockyou.ui.screens.SecuritySettingsScreen
 import com.flockyou.ui.screens.PrivacySettingsScreen
@@ -282,13 +283,12 @@ fun AppNavigation(
         composable("settings") {
             SettingsScreen(
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToPatterns = { navController.navigate("patterns") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
-                onNavigateToRules = { navController.navigate("rules") },
                 onNavigateToDetectionSettings = { navController.navigate("detection_settings") },
                 onNavigateToSecurity = { navController.navigate("security") },
                 onNavigateToPrivacy = { navController.navigate("privacy") },
-                onNavigateToNuke = { navController.navigate("nuke_settings") }
+                onNavigateToNuke = { navController.navigate("nuke_settings") },
+                onNavigateToAllDetections = { navController.navigate("all_detections") }
             )
         }
         composable("nearby") {
@@ -308,6 +308,11 @@ fun AppNavigation(
         }
         composable("rules") {
             RuleSettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("all_detections") {
+            AllDetectionsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
