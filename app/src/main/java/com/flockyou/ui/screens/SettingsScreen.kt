@@ -47,7 +47,8 @@ fun SettingsScreen(
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToNuke: () -> Unit = {},
     onNavigateToAllDetections: () -> Unit = {},
-    onNavigateToAiSettings: () -> Unit = {}
+    onNavigateToAiSettings: () -> Unit = {},
+    onNavigateToServiceHealth: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -616,6 +617,16 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // Service Health Status
+            item {
+                SettingsItem(
+                    icon = Icons.Default.MonitorHeart,
+                    title = "Service Health",
+                    subtitle = "View detector status, errors, and restart counts",
+                    onClick = onNavigateToServiceHealth
+                )
             }
 
             // Automation Broadcasts Section

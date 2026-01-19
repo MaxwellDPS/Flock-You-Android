@@ -41,8 +41,18 @@ data class AiSettings(
  */
 enum class ModelFormat {
     NONE,     // No model file needed (rule-based)
-    AICORE,   // Google AICore (Gemini Nano)
+    AICORE,   // Google AICore (Gemini Nano via legacy SDK)
+    MLKIT_GENAI, // ML Kit GenAI Prompt API (Gemini Nano, alpha)
     TASK      // MediaPipe .task format (Gemma models)
+}
+
+/**
+ * API stability status for engines.
+ */
+enum class ApiStability {
+    STABLE,   // Production-ready API
+    BETA,     // Beta API - may have minor changes
+    ALPHA     // Alpha API - no SLA, may have breaking changes
 }
 
 /**
@@ -63,7 +73,8 @@ enum class AiModel(
     val requiresNpu: Boolean = false,
     val downloadUrl: String? = null, // null means bundled or special handling
     val quantization: String = "N/A",
-    val modelFormat: ModelFormat = ModelFormat.TASK // MediaPipe format
+    val modelFormat: ModelFormat = ModelFormat.TASK, // MediaPipe format
+    val apiStability: ApiStability = ApiStability.STABLE // API stability indicator
 ) {
     RULE_BASED(
         id = "rule-based",
@@ -72,18 +83,21 @@ enum class AiModel(
         sizeMb = 0,
         capabilities = listOf("Device identification", "Threat assessment", "Recommendations"),
         quantization = "N/A",
-        modelFormat = ModelFormat.NONE
+        modelFormat = ModelFormat.NONE,
+        apiStability = ApiStability.STABLE
     ),
     GEMINI_NANO(
         id = "gemini-nano",
-        displayName = "Gemini Nano (Google AI)",
-        description = "Google's official on-device model via AI Core. Requires Pixel 8/Pro or newer with NPU.",
-        sizeMb = 0, // Managed by Google Play Services
-        capabilities = listOf("Text generation", "Summarization", "Classification", "NPU acceleration"),
+        displayName = "Gemini Nano (ML Kit)",
+        description = "Google's Gemini Nano via ML Kit GenAI Prompt API. Alpha API - may have breaking changes. Requires Pixel 8+ with AICore.",
+        sizeMb = 0, // Managed by AICore
+        capabilities = listOf("Custom prompts", "Text generation", "Multimodal input", "NPU acceleration"),
         requiresPixel8 = true,
         requiresNpu = true,
+        minAndroidVersion = 34, // Android 14+
         quantization = "INT4",
-        modelFormat = ModelFormat.AICORE
+        modelFormat = ModelFormat.MLKIT_GENAI,
+        apiStability = ApiStability.ALPHA
     ),
     // MediaPipe-compatible Gemma 3 models (latest, recommended)
     // Using public t-ghosh repository that doesn't require authentication
@@ -97,7 +111,8 @@ enum class AiModel(
         // Public repository - no authentication required
         downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma3-1B-it-int4.task",
         quantization = "INT4",
-        modelFormat = ModelFormat.TASK
+        modelFormat = ModelFormat.TASK,
+        apiStability = ApiStability.STABLE
     ),
     // MediaPipe-compatible Gemma 2 models
     GEMMA_2B_CPU(
@@ -110,7 +125,8 @@ enum class AiModel(
         // Public repository - no authentication required (uses .bin format)
         downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma-1.1-2b-it-cpu-int4.bin",
         quantization = "INT4",
-        modelFormat = ModelFormat.TASK // MediaPipe also supports .bin files
+        modelFormat = ModelFormat.TASK, // MediaPipe also supports .bin files
+        apiStability = ApiStability.STABLE
     ),
     GEMMA_2B_GPU(
         id = "gemma-2b-gpu",
@@ -122,7 +138,8 @@ enum class AiModel(
         // Public repository - no authentication required
         downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma2-2b-it-cpu-int8.task",
         quantization = "INT8",
-        modelFormat = ModelFormat.TASK
+        modelFormat = ModelFormat.TASK,
+        apiStability = ApiStability.STABLE
     );
 
     companion object {
@@ -171,6 +188,7 @@ enum class AiModel(
             return when (model.modelFormat) {
                 ModelFormat.TASK -> ".task"
                 ModelFormat.AICORE -> "" // No file, managed by AICore
+                ModelFormat.MLKIT_GENAI -> "" // No file, managed by ML Kit GenAI/AICore
                 ModelFormat.NONE -> "" // No file needed
             }
         }
@@ -188,6 +206,7 @@ enum class AiModel(
                     4. Place the .task file in the app's models folder
                 """.trimIndent()
                 ModelFormat.AICORE -> "This model is managed by Google Play Services. Ensure AICore is up to date."
+                ModelFormat.MLKIT_GENAI -> "This model is managed by ML Kit GenAI via AICore. The model will be downloaded automatically on first use."
                 ModelFormat.NONE -> "No download required."
             }
         }

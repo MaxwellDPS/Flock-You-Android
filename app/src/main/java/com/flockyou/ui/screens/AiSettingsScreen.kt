@@ -21,6 +21,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.AiModel
 import com.flockyou.data.AiModelStatus
 import com.flockyou.data.AiSettings
+import com.flockyou.data.ApiStability
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.ui.components.SectionHeader
 
@@ -728,26 +729,32 @@ private fun ModelSelectorDialog(
                     }
                 }
 
-                // Google AI section (Gemini Nano)
+                // Google AI section (Gemini Nano via ML Kit)
                 if (googleAiModels.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(8.dp))
                         EngineCategoryHeader(
-                            title = "Google AI",
-                            subtitle = "Powered by Gemini Nano via AICore",
+                            title = "Google AI (On-Device)",
+                            subtitle = "Gemini Nano via ML Kit GenAI • Pixel 8+ only",
                             icon = Icons.Default.AutoAwesome
                         )
                     }
                     items(googleAiModels) { model ->
                         val hasAiCore = deviceCapabilities?.hasAiCore == true
+                        val isPixel8 = deviceCapabilities?.isPixel8OrNewer == true
+                        val isAvailable = hasAiCore && isPixel8
                         EngineOptionCard(
                             model = model,
                             isSelected = model.id == currentModelId,
-                            isRecommended = hasAiCore,
-                            recommendedReason = if (hasAiCore) "Best for Pixel 8+" else null,
-                            isAvailable = hasAiCore,
-                            unavailableReason = if (!hasAiCore) "Requires Pixel 8+ with AICore" else null,
-                            onSelect = { if (hasAiCore) onSelectModel(model) }
+                            isRecommended = isAvailable,
+                            recommendedReason = if (isAvailable) "Best for Pixel 8+" else null,
+                            isAvailable = isAvailable,
+                            unavailableReason = when {
+                                !isPixel8 -> "Requires Pixel 8+ device"
+                                !hasAiCore -> "AICore not installed"
+                                else -> null
+                            },
+                            onSelect = { if (isAvailable) onSelectModel(model) }
                         )
                     }
                 }
@@ -901,6 +908,34 @@ private fun EngineOptionCard(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
                         )
+                        // API Stability indicator (Alpha/Beta)
+                        if (model.apiStability != ApiStability.STABLE) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = when (model.apiStability) {
+                                    ApiStability.ALPHA -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                                    ApiStability.BETA -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                }
+                            ) {
+                                Text(
+                                    text = when (model.apiStability) {
+                                        ApiStability.ALPHA -> "ALPHA"
+                                        ApiStability.BETA -> "BETA"
+                                        else -> ""
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when (model.apiStability) {
+                                        ApiStability.ALPHA -> MaterialTheme.colorScheme.error
+                                        ApiStability.BETA -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         if (model.requiresNpu) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
@@ -1060,7 +1095,7 @@ private fun AdvancedFeaturesCard(
                 onCheckedChange = onFalsePositiveFilteringChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.Timeline,
@@ -1070,7 +1105,7 @@ private fun AdvancedFeaturesCard(
                 onCheckedChange = onContextualAnalysisChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.Map,
@@ -1080,7 +1115,7 @@ private fun AdvancedFeaturesCard(
                 onCheckedChange = onBatchAnalysisChange
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             CapabilityToggle(
                 icon = Icons.Default.ThumbUp,

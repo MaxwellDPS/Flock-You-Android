@@ -60,6 +60,7 @@ import com.flockyou.ui.screens.UltrasonicDetectionScreen
 import com.flockyou.ui.screens.SatelliteDetectionScreen
 import com.flockyou.ui.screens.WifiSecurityScreen
 import com.flockyou.ui.screens.AiSettingsScreen
+import com.flockyou.ui.screens.ServiceHealthStatusScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -298,7 +299,8 @@ fun AppNavigation(
                 onNavigateToPrivacy = { navController.navigate("privacy") },
                 onNavigateToNuke = { navController.navigate("nuke_settings") },
                 onNavigateToAllDetections = { navController.navigate("all_detections") },
-                onNavigateToAiSettings = { navController.navigate("ai_settings") }
+                onNavigateToAiSettings = { navController.navigate("ai_settings") },
+                onNavigateToServiceHealth = { navController.navigate("service_health") }
             )
         }
         composable("nearby") {
@@ -375,6 +377,11 @@ fun AppNavigation(
         }
         composable("ai_settings") {
             AiSettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("service_health") {
+            ServiceHealthStatusScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

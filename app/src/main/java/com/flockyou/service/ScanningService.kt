@@ -3059,10 +3059,10 @@ class ScanningService : Service() {
             append("A ")
             append(detection.deviceType.name.replace("_", " "))
             append(" has been detected in your vicinity.\n\n")
-            if (detection.deviceName.isNotBlank()) {
+            if (!detection.deviceName.isNullOrBlank()) {
                 append("Device: ${detection.deviceName}\n")
             }
-            if (detection.ssid.isNotBlank()) {
+            if (!detection.ssid.isNullOrBlank()) {
                 append("Network: ${detection.ssid}\n")
             }
             append("\nTake appropriate security measures.")
@@ -3521,8 +3521,8 @@ class ScanningService : Service() {
             }
             DetectorHealthStatus.DETECTOR_BLE -> {
                 try {
-                    stopBleScanning()
-                    startBleScanning()
+                    stopBleScan()
+                    startBleScan()
                     Log.i(TAG, "BLE scanner restarted")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to restart BLE scanner", e)

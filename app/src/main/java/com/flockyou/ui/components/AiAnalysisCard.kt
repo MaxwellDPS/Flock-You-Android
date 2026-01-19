@@ -352,7 +352,7 @@ fun FalsePositiveBanner(
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
-                    HorizontalDivider(
+                    Divider(
                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
                     )
                     Spacer(modifier = Modifier.height(8.dp))

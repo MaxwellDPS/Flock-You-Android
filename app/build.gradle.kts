@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
 }
@@ -99,9 +100,8 @@ android {
         compose = true
         buildConfig = true  // Enable BuildConfig for debug checks
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
-    }
+    // Note: composeOptions.kotlinCompilerExtensionVersion is not needed with Kotlin 2.0+
+    // The compose compiler is now a Kotlin compiler plugin (org.jetbrains.kotlin.plugin.compose)
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -196,9 +196,11 @@ dependencies {
     // MediaPipe LLM Inference for GGUF models on-device
     implementation("com.google.mediapipe:tasks-genai:0.10.22")
 
-    // Google AI Client SDK for Gemini Nano on Pixel 8+ (via AICore)
-    // This provides access to the on-device Gemini Nano model managed by Google Play Services
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
+    // ML Kit GenAI Prompt API for Gemini Nano on-device inference (Alpha)
+    // This provides access to the on-device Gemini Nano model via AICore
+    // Requires Pixel 8+ or compatible device with Android 14+
+    // Note: Alpha API - not subject to SLA or deprecation policy
+    implementation("com.google.mlkit:genai-prompt:1.0.0-alpha1")
     
     // Testing - Unit Tests
     testImplementation("junit:junit:4.13.2")

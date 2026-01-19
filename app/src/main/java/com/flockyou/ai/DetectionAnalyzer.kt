@@ -135,6 +135,13 @@ class DetectionAnalyzer @Inject constructor(
     // Device capabilities
     private val deviceInfo: DeviceCapabilities by lazy { detectDeviceCapabilities() }
 
+    // Initialize FP analyzer with lazy MediaPipe init callback
+    init {
+        falsePositiveAnalyzer.setLazyInitCallback {
+            initializeMediaPipeForFpAnalysis()
+        }
+    }
+
     data class DeviceCapabilities(
         val isPixel8OrNewer: Boolean,
         val hasNpu: Boolean,
@@ -220,17 +227,17 @@ class DetectionAnalyzer @Inject constructor(
                     "gpu=${currentInferenceConfig.useGpuAcceleration}, " +
                     "npu=${currentInferenceConfig.useNpuAcceleration}")
 
-                val initialized = when (currentModel) {
-                    AiModel.RULE_BASED -> {
+                val initialized = when (currentModel.modelFormat) {
+                    ModelFormat.NONE -> {
                         Log.d(TAG, "Using rule-based analysis (no model initialization needed)")
                         isModelLoaded = true
                         true
                     }
-                    AiModel.GEMINI_NANO -> {
-                        Log.d(TAG, "Attempting to initialize Gemini Nano...")
+                    ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
+                        Log.d(TAG, "Attempting to initialize Gemini Nano via ML Kit GenAI (Alpha API)...")
                         tryInitializeGeminiNano(settings)
                     }
-                    else -> {
+                    ModelFormat.TASK -> {
                         Log.d(TAG, "Attempting to initialize MediaPipe model: ${currentModel.id}")
                         tryInitializeMediaPipeModel(settings)
                     }
@@ -263,27 +270,68 @@ class DetectionAnalyzer @Inject constructor(
 
     @Suppress("UNUSED_PARAMETER")
     private suspend fun tryInitializeGeminiNano(settings: AiSettings): Boolean {
-        if (!deviceInfo.isPixel8OrNewer || !deviceInfo.hasNpu) {
-            Log.d(TAG, "Device does not support Gemini Nano (requires Pixel 8+ with NPU)")
+        Log.d(TAG, "Attempting to initialize Gemini Nano via ML Kit GenAI...")
+
+        // First check device support
+        if (!geminiNanoClient.isDeviceSupported()) {
+            Log.d(TAG, "Device does not support Gemini Nano (requires Pixel 8+ with Android 14+)")
             return false
         }
 
-        if (!deviceInfo.hasAiCore) {
-            Log.d(TAG, "AICore not available - please update Google Play Services")
-            return false
-        }
-
-        // Initialize Gemini Nano via the GeminiNanoClient
+        // Initialize via GeminiNanoClient (uses ML Kit GenAI)
         val initialized = geminiNanoClient.initialize()
 
         if (initialized) {
             geminiNanoInitialized = true
             isModelLoaded = true
-            Log.i(TAG, "Gemini Nano initialized successfully via AICore")
+            Log.i(TAG, "Gemini Nano initialized successfully via ML Kit GenAI")
             return true
         }
 
-        Log.w(TAG, "Failed to initialize Gemini Nano: ${geminiNanoClient.getStatus()}")
+        // Check if download is needed
+        val status = geminiNanoClient.getStatus()
+        Log.w(TAG, "Gemini Nano initialization status: $status")
+
+        when (status) {
+            is GeminiNanoStatus.NeedsDownload -> {
+                Log.i(TAG, "Gemini Nano model needs to be downloaded first")
+            }
+            is GeminiNanoStatus.Downloading -> {
+                Log.i(TAG, "Gemini Nano model is currently downloading")
+            }
+            is GeminiNanoStatus.NotSupported -> {
+                Log.w(TAG, "Gemini Nano is not supported on this device")
+            }
+            is GeminiNanoStatus.Error -> {
+                Log.e(TAG, "Gemini Nano error: ${status.message}")
+            }
+            else -> {
+                Log.w(TAG, "Unexpected Gemini Nano status: $status")
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Download the Gemini Nano model via ML Kit GenAI.
+     * This is only needed on Pixel 8+ devices with AICore support.
+     */
+    suspend fun downloadGeminiNanoModel(onProgress: (Int) -> Unit): Boolean {
+        if (!geminiNanoClient.isDeviceSupported()) {
+            Log.w(TAG, "Cannot download Gemini Nano - device not supported")
+            return false
+        }
+
+        Log.i(TAG, "Starting Gemini Nano model download...")
+        val success = geminiNanoClient.downloadModel(onProgress)
+
+        if (success) {
+            Log.i(TAG, "Gemini Nano download completed, initializing...")
+            // After download, initialize the model
+            return geminiNanoClient.initialize()
+        }
+
         return false
     }
 
@@ -340,6 +388,85 @@ class DetectionAnalyzer @Inject constructor(
         }
 
         return success
+    }
+
+    /**
+     * Initialize MediaPipe specifically for FP analysis.
+     * This is called lazily when FP analysis needs LLM but MediaPipe isn't ready
+     * (e.g., when main model is GeminiNano or rule-based).
+     *
+     * Tries to find and load any available MediaPipe-compatible model,
+     * preferring smaller models (Gemma 1B) for faster FP analysis.
+     */
+    private suspend fun initializeMediaPipeForFpAnalysis(): Boolean = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Attempting lazy MediaPipe initialization for FP analysis")
+
+        // If MediaPipe is already ready, nothing to do
+        if (mediaPipeLlmClient.isReady()) {
+            Log.d(TAG, "MediaPipe already ready for FP analysis")
+            return@withContext true
+        }
+
+        val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
+        val allFiles = modelDir.listFiles() ?: emptyArray()
+
+        // Find available MediaPipe-compatible models (prefer smaller ones)
+        val mediaPipeModels = listOf(
+            AiModel.GEMMA3_1B,    // Smallest, fastest - preferred for FP
+            AiModel.GEMMA_2B_CPU, // Fallback - CPU version
+            AiModel.GEMMA_2B_GPU  // Fallback - GPU version
+        )
+
+        for (model in mediaPipeModels) {
+            val fileExtension = AiModel.getFileExtension(model)
+            val modelFile = File(modelDir, "${model.id}$fileExtension")
+            val alternateFile = if (fileExtension == ".task") {
+                File(modelDir, "${model.id}.bin")
+            } else {
+                File(modelDir, "${model.id}.task")
+            }
+
+            val actualFile = when {
+                modelFile.exists() && modelFile.length() > 1000 -> modelFile
+                alternateFile.exists() && alternateFile.length() > 1000 -> alternateFile
+                else -> null
+            }
+
+            if (actualFile != null) {
+                Log.i(TAG, "Found MediaPipe model for FP analysis: ${actualFile.name}")
+                val settings = aiSettingsRepository.settings.first()
+                val config = InferenceConfig.fromSettings(settings)
+
+                val success = mediaPipeLlmClient.initialize(actualFile, config)
+                if (success) {
+                    Log.i(TAG, "MediaPipe initialized successfully for FP analysis using ${model.displayName}")
+                    return@withContext true
+                } else {
+                    Log.w(TAG, "Failed to initialize ${model.displayName} for FP analysis")
+                }
+            }
+        }
+
+        // Check if any .task or .bin file exists that we could try
+        val anyModelFile = allFiles.firstOrNull {
+            (it.name.endsWith(".task") || it.name.endsWith(".bin")) && it.length() > 1000
+        }
+
+        if (anyModelFile != null) {
+            Log.i(TAG, "Found generic model file for FP analysis: ${anyModelFile.name}")
+            val settings = aiSettingsRepository.settings.first()
+            val config = InferenceConfig.fromSettings(settings)
+
+            val success = mediaPipeLlmClient.initialize(anyModelFile, config)
+            if (success) {
+                Log.i(TAG, "MediaPipe initialized with generic model for FP analysis")
+                return@withContext true
+            }
+        }
+
+        Log.w(TAG, "No MediaPipe-compatible model found for FP analysis. " +
+            "Download a Gemma model to enable LLM-enhanced FP detection.")
+        return@withContext false
     }
 
     // Mutex for analysis to prevent concurrent analysis operations
@@ -675,12 +802,13 @@ class DetectionAnalyzer @Inject constructor(
         Log.d(TAG, "State at generateAnalysis:")
         Log.d(TAG, "  - currentModel: ${currentModel.id} (${currentModel.displayName})")
         Log.d(TAG, "  - isModelLoaded: $isModelLoaded")
-        Log.d(TAG, "  - geminiNanoInitialized: $geminiNanoInitialized")
+        Log.d(TAG, "  - geminiNanoClient.isReady(): ${geminiNanoClient.isReady()}")
+        Log.d(TAG, "  - geminiNanoClient.getStatus(): ${geminiNanoClient.getStatus()}")
         Log.d(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
         Log.d(TAG, "  - mediaPipeLlmClient.getStatus(): ${mediaPipeLlmClient.getStatus()}")
 
-        // Use Gemini Nano if available and selected
-        if (currentModel == AiModel.GEMINI_NANO && geminiNanoInitialized) {
+        // Use Gemini Nano if available and selected (via ML Kit GenAI)
+        if (currentModel == AiModel.GEMINI_NANO && geminiNanoClient.isReady()) {
             val geminiResult = geminiNanoClient.analyzeDetection(detection)
             if (geminiResult.success) {
                 // Enhance with contextual insights if available
@@ -2180,13 +2308,28 @@ class DetectionAnalyzer @Inject constructor(
             }
 
             if (model == AiModel.GEMINI_NANO) {
-                // Gemini Nano is managed by Google Play Services
-                // Just verify AI Core is available
-                _modelStatus.value = AiModelStatus.Downloading(50)
-                safeProgress(50)
-                val available = tryInitializeGeminiNano(aiSettingsRepository.settings.first())
-                safeProgress(100)
-                return@withContext available
+                // Gemini Nano is managed by Google Play Services via ML Kit GenAI
+                // Download and initialize the model
+                _modelStatus.value = AiModelStatus.Downloading(0)
+                val success = downloadGeminiNanoModel { progress ->
+                    kotlinx.coroutines.runBlocking {
+                        safeProgress(progress)
+                    }
+                    _modelStatus.value = AiModelStatus.Downloading(progress)
+                }
+
+                if (success) {
+                    geminiNanoInitialized = true
+                    isModelLoaded = true
+                    _modelStatus.value = AiModelStatus.Ready
+                    aiSettingsRepository.setEnabled(true)
+                    aiSettingsRepository.setSelectedModel(model.id)
+                    Log.i(TAG, "Gemini Nano download and initialization completed")
+                } else {
+                    _modelStatus.value = AiModelStatus.Error("Failed to download Gemini Nano model")
+                    Log.w(TAG, "Gemini Nano download/init failed")
+                }
+                return@withContext success
             }
 
             val downloadUrl = model.downloadUrl
@@ -2597,8 +2740,8 @@ class DetectionAnalyzer @Inject constructor(
     suspend fun warmUpModel(): Boolean = withContext(Dispatchers.IO) {
         Log.d(TAG, "Starting model warm-up...")
 
-        if (currentModel == AiModel.GEMINI_NANO && geminiNanoInitialized) {
-            // Gemini Nano doesn't need warm-up (always ready)
+        if (currentModel == AiModel.GEMINI_NANO && geminiNanoClient.isReady()) {
+            // Gemini Nano doesn't need warm-up (always ready via AICore)
             Log.d(TAG, "Gemini Nano ready (no warm-up needed)")
             return@withContext true
         }
@@ -2636,7 +2779,7 @@ What is an IMSI catcher? Reply in one sentence.
      */
     fun isModelWarmedUp(): Boolean {
         return when {
-            currentModel == AiModel.GEMINI_NANO -> geminiNanoInitialized
+            currentModel == AiModel.GEMINI_NANO -> geminiNanoClient.isReady()
             currentModel == AiModel.RULE_BASED -> true
             else -> mediaPipeLlmClient.isReady()
         }

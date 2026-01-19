@@ -15,6 +15,10 @@ import javax.inject.Singleton
  *
  * False positives are filtered out by default but users can view them with explanations
  * of why the system believes they are not genuine surveillance devices.
+ *
+ * The analyzer uses MediaPipe LLM for enhanced analysis when available. If MediaPipe
+ * is not ready, it can attempt lazy initialization via a provided callback, or fall
+ * back to comprehensive rule-based detection.
  */
 @Singleton
 class FalsePositiveAnalyzer @Inject constructor(
@@ -30,12 +34,31 @@ class FalsePositiveAnalyzer @Inject constructor(
     }
 
     /**
+     * Optional callback to lazily initialize MediaPipe if not already ready.
+     * This allows FP analysis to use LLM even when the main model is GeminiNano or rule-based.
+     */
+    private var lazyInitCallback: (suspend () -> Boolean)? = null
+
+    /**
+     * Set a callback for lazy MediaPipe initialization.
+     * Called when FP analysis needs LLM but MediaPipe isn't ready.
+     */
+    fun setLazyInitCallback(callback: suspend () -> Boolean) {
+        lazyInitCallback = callback
+    }
+
+    /**
      * Analyze a detection for false positive likelihood.
      * Returns FalsePositiveResult with reasoning.
+     *
+     * @param detection The detection to analyze
+     * @param contextInfo Optional context about user's location/environment
+     * @param tryLazyInit If true, attempt to initialize MediaPipe if not ready
      */
     suspend fun analyzeForFalsePositive(
         detection: Detection,
-        contextInfo: FpContextInfo? = null
+        contextInfo: FpContextInfo? = null,
+        tryLazyInit: Boolean = true
     ): FalsePositiveResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
@@ -51,7 +74,24 @@ class FalsePositiveAnalyzer @Inject constructor(
         }
 
         // Try LLM analysis for more nuanced detection
-        if (mediaPipeLlmClient.isReady()) {
+        var mediaPipeReady = mediaPipeLlmClient.isReady()
+
+        // If MediaPipe not ready but we have a lazy init callback, try to initialize
+        if (!mediaPipeReady && tryLazyInit && lazyInitCallback != null) {
+            Log.d(TAG, "MediaPipe not ready, attempting lazy initialization for FP analysis")
+            try {
+                mediaPipeReady = lazyInitCallback?.invoke() ?: false
+                if (mediaPipeReady) {
+                    Log.i(TAG, "Lazy initialization successful, MediaPipe now ready for FP analysis")
+                } else {
+                    Log.w(TAG, "Lazy initialization failed, falling back to rule-based FP analysis")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during lazy initialization: ${e.message}")
+            }
+        }
+
+        if (mediaPipeReady) {
             val llmResult = analyzeFpWithLlm(detection, contextInfo, ruleBasedResult)
             if (llmResult != null) {
                 return@withContext llmResult.copy(
