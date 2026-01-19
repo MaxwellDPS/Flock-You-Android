@@ -38,8 +38,13 @@ import com.flockyou.ui.theme.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import kotlinx.coroutines.delay
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel = hiltViewModel(),
@@ -64,6 +69,20 @@ fun MainScreen(
         pageCount = { 3 }
     )
     val coroutineScope = rememberCoroutineScope()
+
+    // Pull-to-refresh state
+    var isRefreshing by remember { mutableStateOf(false) }
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isRefreshing,
+        onRefresh = {
+            isRefreshing = true
+            viewModel.requestRefresh()
+            coroutineScope.launch {
+                delay(1000) // Give time for data to refresh
+                isRefreshing = false
+            }
+        }
+    )
 
     // Track if we're currently animating from a programmatic navigation
     // This prevents the pager from fighting with the ViewModel during animations
@@ -99,12 +118,6 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.requestRefresh() }) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh"
-                        )
-                    }
                     // Only show filter button on history tab
                     if (uiState.selectedTab == 1) {
                         IconButton(onClick = { showFilterSheet = true }) {
@@ -198,21 +211,26 @@ fun MainScreen(
             }
         }
     ) { paddingValues ->
-        // Swipeable HorizontalPager for tab navigation
-        HorizontalPager(
-            state = pagerState,
+        // Swipeable HorizontalPager for tab navigation with pull-to-refresh
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-        ) { page ->
-            when (page) {
-                0 -> {
-                    // Home tab - Status and modules only (no errors, no recent detections)
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pullRefresh(pullRefreshState)
+            ) { page ->
+                when (page) {
+                    0 -> {
+                        // Home tab - Status and modules only (no errors, no recent detections)
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                         // Status card without errors
                         item(key = "status_card") {
                             StatusCard(
@@ -307,17 +325,17 @@ fun MainScreen(
                                 }
                             }
                         }
+                        }
                     }
-                }
-                1 -> {
-                    // History tab - Detection list with filters
-                    val filteredDetections = viewModel.getFilteredDetections()
+                    1 -> {
+                        // History tab - Detection list with filters
+                        val filteredDetections = viewModel.getFilteredDetections()
 
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                         // Filter chips if filters active (only on history tab)
                         if (uiState.filterThreatLevel != null || uiState.filterDeviceTypes.isNotEmpty()) {
                             item(key = "filter_chips") {
@@ -453,23 +471,32 @@ fun MainScreen(
                                 }
                             }
                         }
+                        }
+                    }
+                    2 -> {
+                        // Cellular tab content
+                        CellularTabContent(
+                            modifier = Modifier.fillMaxSize(),
+                            cellStatus = uiState.cellStatus,
+                            cellularStatus = uiState.cellularStatus,
+                            cellularAnomalies = uiState.cellularAnomalies,
+                            seenCellTowers = uiState.seenCellTowers,
+                            satelliteState = uiState.satelliteState,
+                            satelliteAnomalies = uiState.satelliteAnomalies,
+                            isScanning = uiState.isScanning,
+                            onToggleScan = { viewModel.toggleScanning() }
+                        )
                     }
                 }
-                2 -> {
-                    // Cellular tab content
-                    CellularTabContent(
-                        modifier = Modifier,
-                        cellStatus = uiState.cellStatus,
-                        cellularStatus = uiState.cellularStatus,
-                        cellularAnomalies = uiState.cellularAnomalies,
-                        seenCellTowers = uiState.seenCellTowers,
-                        satelliteState = uiState.satelliteState,
-                        satelliteAnomalies = uiState.satelliteAnomalies,
-                        isScanning = uiState.isScanning,
-                        onToggleScan = { viewModel.toggleScanning() }
-                    )
-                }
             }
+
+            // Pull-to-refresh indicator
+            PullRefreshIndicator(
+                refreshing = isRefreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
     

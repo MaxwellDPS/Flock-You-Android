@@ -23,6 +23,8 @@ typedef struct FlockBleScanner FlockBleScanner;
 typedef struct FlockIrScanner FlockIrScanner;
 typedef struct FlockNfcScanner FlockNfcScanner;
 typedef struct FlockWipsEngine FlockWipsEngine;
+typedef struct ExternalRadioManager ExternalRadioManager;
+typedef struct DetectionScheduler DetectionScheduler;
 
 // ============================================================================
 // Connection Mode
@@ -33,6 +35,29 @@ typedef enum {
     FlockConnectionBluetooth,
     FlockConnectionUsb,
 } FlockConnectionMode;
+
+// ============================================================================
+// Radio Source Mode (for user settings)
+// ============================================================================
+
+typedef enum {
+    FlockRadioSourceAuto,       // Prefer external if available
+    FlockRadioSourceInternal,   // Force internal only
+    FlockRadioSourceExternal,   // Force external only
+    FlockRadioSourceBoth,       // Use both simultaneously
+} FlockRadioSourceMode;
+
+// User settings for radio selection
+typedef struct {
+    FlockRadioSourceMode subghz_source;
+    FlockRadioSourceMode ble_source;
+    FlockRadioSourceMode wifi_source;  // External only (no internal WiFi)
+    bool enable_subghz;
+    bool enable_ble;
+    bool enable_wifi;
+    bool enable_ir;
+    bool enable_nfc;
+} FlockRadioSettings;
 
 // ============================================================================
 // View IDs
@@ -139,6 +164,13 @@ struct FlockBridgeApp {
     FlockUsbCdc* usb_cdc;
     bool usb_connected;
 
+    // External Radio (ESP32/CC1101/nRF24)
+    ExternalRadioManager* external_radio;
+    bool external_radio_connected;
+
+    // Detection Scheduler (manages all scanners)
+    DetectionScheduler* detection_scheduler;
+
     // WiFi Scanner (via ESP32 board)
     FlockWifiScanner* wifi_scanner;
     bool wifi_board_connected;
@@ -161,6 +193,9 @@ struct FlockBridgeApp {
 
     // WIPS Engine
     FlockWipsEngine* wips_engine;
+
+    // Radio Settings (user preferences)
+    FlockRadioSettings radio_settings;
 
     // Statistics
     uint32_t wifi_scan_count;
@@ -242,3 +277,27 @@ bool flock_bridge_navigation_event_callback(void* context);
 
 // Main entry point
 int32_t flock_bridge_app(void* p);
+
+// ============================================================================
+// Radio Settings Functions
+// ============================================================================
+
+/**
+ * Load radio settings from storage.
+ */
+bool flock_bridge_load_settings(FlockBridgeApp* app);
+
+/**
+ * Save radio settings to storage.
+ */
+bool flock_bridge_save_settings(FlockBridgeApp* app);
+
+/**
+ * Apply radio settings to the detection scheduler.
+ */
+void flock_bridge_apply_radio_settings(FlockBridgeApp* app);
+
+/**
+ * Get the name of a radio source mode.
+ */
+const char* flock_bridge_get_source_name(FlockRadioSourceMode mode);

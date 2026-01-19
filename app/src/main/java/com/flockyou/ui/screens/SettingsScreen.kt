@@ -56,11 +56,8 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsState()
     // Use IPC-based data from uiState instead of direct companion object access
     val scanStats = uiState.scanStats
-    val errorLog = uiState.recentErrors
     val ouiSettings by viewModel.ouiSettings.collectAsState()
     val isOuiUpdating by viewModel.isOuiUpdating.collectAsState()
-
-    var showLogs by remember { mutableStateOf(false) }
     var showScanSettings by remember { mutableStateOf(false) }
     var batteryOptimizationIgnored by remember {
         mutableStateOf(isBatteryOptimizationIgnored(context))
@@ -633,64 +630,6 @@ fun SettingsScreen(
             // Automation Broadcasts Section
             item {
                 AutomationBroadcastSection(viewModel = viewModel)
-            }
-
-            item {
-                SettingsItem(
-                    icon = Icons.Default.BugReport,
-                    title = "Error Log",
-                    subtitle = "${errorLog.size} entries",
-                    onClick = { showLogs = !showLogs },
-                    trailing = {
-                        Icon(
-                            if (showLogs) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null
-                        )
-                    }
-                )
-            }
-            
-            if (showLogs) {
-                if (errorLog.isEmpty()) {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                            )
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "No errors logged",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = { ScanningService.clearErrors() }) {
-                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Clear All")
-                            }
-                        }
-                    }
-                    
-                    items(errorLog.take(20)) { error ->
-                        LogEntryCard(error = error)
-                    }
-                }
             }
 
             // OUI Database Section

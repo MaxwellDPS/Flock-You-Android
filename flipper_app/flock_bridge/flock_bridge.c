@@ -1,13 +1,22 @@
 #include "flock_bridge_app.h"
 #include "helpers/wips_engine.h"
+#include "helpers/external_radio.h"
 #include "protocol/flock_protocol.h"
 #include "scanners/detection_scheduler.h"
 #include <furi_hal_power.h>
+#include <storage/storage.h>
 
 #define TAG "FlockBridge"
+#define FLOCK_SETTINGS_PATH APP_DATA_PATH("settings.bin")
+#define FLOCK_SETTINGS_MAGIC 0x464C4F43  // "FLOC"
+#define FLOCK_SETTINGS_VERSION 1
 
-// Global scheduler pointer (needed for callbacks)
-static DetectionScheduler* g_scheduler = NULL;
+// Settings file structure
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    FlockRadioSettings settings;
+} FlockSettingsFile;
 
 // ============================================================================
 // Scene Handler Declarations
@@ -305,27 +314,62 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     // Allocate WIPS engine
     app->wips_engine = flock_wips_engine_alloc();
 
+    // Initialize default radio settings
+    app->radio_settings.subghz_source = FlockRadioSourceAuto;
+    app->radio_settings.ble_source = FlockRadioSourceAuto;
+    app->radio_settings.wifi_source = FlockRadioSourceExternal;  // No internal WiFi
+    app->radio_settings.enable_subghz = true;
+    app->radio_settings.enable_ble = true;
+    app->radio_settings.enable_wifi = true;
+    app->radio_settings.enable_ir = true;
+    app->radio_settings.enable_nfc = true;
+
+    // Load settings from storage
+    flock_bridge_load_settings(app);
+
+    // Allocate external radio manager
+    app->external_radio = external_radio_alloc();
+    if (app->external_radio) {
+        ExternalRadioConfig ext_config = {
+            .serial_id = FuriHalSerialIdUsart,
+            .baud_rate = 115200,
+            .callback_context = app,
+        };
+        external_radio_configure(app->external_radio, &ext_config);
+    }
+
     // Allocate detection scheduler
-    g_scheduler = detection_scheduler_alloc();
-    if (g_scheduler) {
+    app->detection_scheduler = detection_scheduler_alloc();
+    if (app->detection_scheduler) {
+        // Set external radio manager
+        detection_scheduler_set_external_radio(app->detection_scheduler, app->external_radio);
+
+        // Apply radio settings to scheduler
+        flock_bridge_apply_radio_settings(app);
+
         // Configure scheduler with callbacks
         SchedulerConfig sched_config = {
-            .enable_subghz = true,
-            .enable_ble = true,
-            .enable_ir = true,
-            .enable_nfc = true,
+            .enable_subghz = app->radio_settings.enable_subghz,
+            .enable_ble = app->radio_settings.enable_ble,
+            .enable_wifi = app->radio_settings.enable_wifi,
+            .enable_ir = app->radio_settings.enable_ir,
+            .enable_nfc = app->radio_settings.enable_nfc,
             .subghz_hop_interval_ms = 500,
             .subghz_continuous = true,  // Sub-GHz runs during all downtime
             .ble_scan_duration_ms = 2000,
             .ble_scan_interval_ms = 10000,  // BLE scan every 10 seconds
             .ble_detect_trackers = true,
+            .wifi_scan_interval_ms = 10000,
+            .wifi_channel = 0,  // Channel hop
+            .wifi_monitor_probes = true,
+            .wifi_detect_deauths = true,
             .subghz_callback = on_subghz_detection,
             .ble_callback = on_ble_detection,
             .ir_callback = on_ir_detection,
             .nfc_callback = on_nfc_detection,
             .callback_context = app,
         };
-        detection_scheduler_configure(g_scheduler, &sched_config);
+        detection_scheduler_configure(app->detection_scheduler, &sched_config);
 
         // Mark scanners as ready
         app->subghz_ready = true;
@@ -348,11 +392,21 @@ void flock_bridge_app_free(FlockBridgeApp* app) {
 
     FURI_LOG_I(TAG, "Freeing Flock Bridge app");
 
+    // Save settings before exit
+    flock_bridge_save_settings(app);
+
     // Stop and free detection scheduler
-    if (g_scheduler) {
-        detection_scheduler_stop(g_scheduler);
-        detection_scheduler_free(g_scheduler);
-        g_scheduler = NULL;
+    if (app->detection_scheduler) {
+        detection_scheduler_stop(app->detection_scheduler);
+        detection_scheduler_free(app->detection_scheduler);
+        app->detection_scheduler = NULL;
+    }
+
+    // Stop and free external radio
+    if (app->external_radio) {
+        external_radio_stop(app->external_radio);
+        external_radio_free(app->external_radio);
+        app->external_radio = NULL;
     }
 
     // Stop USB CDC
@@ -510,9 +564,15 @@ int32_t flock_bridge_app(void* p) {
         flock_usb_cdc_start(app->usb_cdc);
     }
 
-    // Start detection scheduler (Sub-GHz continuous, BLE/IR/NFC periodic)
-    if (g_scheduler) {
-        detection_scheduler_start(g_scheduler);
+    // Start external radio manager (will auto-detect ESP32)
+    if (app->external_radio) {
+        external_radio_start(app->external_radio);
+        FURI_LOG_I(TAG, "External radio manager started - scanning for ESP32");
+    }
+
+    // Start detection scheduler (Sub-GHz continuous, BLE/IR/NFC periodic, WiFi if ESP32 connected)
+    if (app->detection_scheduler) {
+        detection_scheduler_start(app->detection_scheduler);
         FURI_LOG_I(TAG, "Detection scheduler started - all scanners active");
     }
 
@@ -526,4 +586,97 @@ int32_t flock_bridge_app(void* p) {
     flock_bridge_app_free(app);
 
     return 0;
+}
+
+// ============================================================================
+// Radio Settings Functions
+// ============================================================================
+
+bool flock_bridge_load_settings(FlockBridgeApp* app) {
+    if (!app) return false;
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+    bool success = false;
+
+    if (storage_file_open(file, FLOCK_SETTINGS_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        FlockSettingsFile settings_file;
+        if (storage_file_read(file, &settings_file, sizeof(settings_file)) == sizeof(settings_file)) {
+            if (settings_file.magic == FLOCK_SETTINGS_MAGIC &&
+                settings_file.version == FLOCK_SETTINGS_VERSION) {
+                memcpy(&app->radio_settings, &settings_file.settings, sizeof(FlockRadioSettings));
+                success = true;
+                FURI_LOG_I(TAG, "Settings loaded from storage");
+            } else {
+                FURI_LOG_W(TAG, "Settings file version mismatch, using defaults");
+            }
+        }
+    } else {
+        FURI_LOG_I(TAG, "No settings file found, using defaults");
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+
+    return success;
+}
+
+bool flock_bridge_save_settings(FlockBridgeApp* app) {
+    if (!app) return false;
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+    bool success = false;
+
+    if (storage_file_open(file, FLOCK_SETTINGS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        FlockSettingsFile settings_file = {
+            .magic = FLOCK_SETTINGS_MAGIC,
+            .version = FLOCK_SETTINGS_VERSION,
+        };
+        memcpy(&settings_file.settings, &app->radio_settings, sizeof(FlockRadioSettings));
+
+        if (storage_file_write(file, &settings_file, sizeof(settings_file)) == sizeof(settings_file)) {
+            success = true;
+            FURI_LOG_I(TAG, "Settings saved to storage");
+        } else {
+            FURI_LOG_E(TAG, "Failed to write settings file");
+        }
+    } else {
+        FURI_LOG_E(TAG, "Failed to open settings file for writing");
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+
+    return success;
+}
+
+void flock_bridge_apply_radio_settings(FlockBridgeApp* app) {
+    if (!app || !app->detection_scheduler) return;
+
+    // Convert FlockRadioSourceMode to RadioSourceMode
+    RadioSourceSettings sources = {
+        .subghz_source = (RadioSourceMode)app->radio_settings.subghz_source,
+        .ble_source = (RadioSourceMode)app->radio_settings.ble_source,
+        .wifi_source = (RadioSourceMode)app->radio_settings.wifi_source,
+    };
+
+    detection_scheduler_set_radio_sources(app->detection_scheduler, &sources);
+
+    FURI_LOG_I(TAG, "Radio settings applied: SubGHz=%s, BLE=%s, WiFi=%s",
+        flock_bridge_get_source_name(app->radio_settings.subghz_source),
+        flock_bridge_get_source_name(app->radio_settings.ble_source),
+        flock_bridge_get_source_name(app->radio_settings.wifi_source));
+}
+
+const char* flock_bridge_get_source_name(FlockRadioSourceMode mode) {
+    switch (mode) {
+    case FlockRadioSourceAuto: return "Auto";
+    case FlockRadioSourceInternal: return "Internal";
+    case FlockRadioSourceExternal: return "External";
+    case FlockRadioSourceBoth: return "Both";
+    default: return "Unknown";
+    }
 }

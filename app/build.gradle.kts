@@ -139,6 +139,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material") // For pull-to-refresh
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.6")
     
@@ -306,4 +307,209 @@ tasks.register("updateOuiDatabase") {
 // Hook OUI update into release builds
 tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }.configureEach {
     dependsOn("updateOuiDatabase")
+}
+
+// ================================================================
+// Flipper Zero FAP Build Tasks
+// ================================================================
+
+/**
+ * Configuration for Flipper Zero FAP building.
+ * The FAP (Flipper Application Package) is built using the ufbt tool.
+ *
+ * Prerequisites:
+ * - ufbt installed: pip install ufbt
+ * - FLIPPER_FIRMWARE_PATH environment variable (optional)
+ */
+val flipperAppDir = file("${rootDir}/flipper_app/flock_bridge")
+val flipperBuildDir = file("${buildDir}/flipper")
+val fapOutputName = "flock_bridge.fap"
+
+/**
+ * Check if ufbt (micro Flipper Build Tool) is available.
+ */
+tasks.register("checkUfbt") {
+    group = "flipper"
+    description = "Check if ufbt is installed"
+
+    doLast {
+        try {
+            val result = exec {
+                commandLine("ufbt", "--version")
+                isIgnoreExitValue = true
+            }
+            if (result.exitValue != 0) {
+                throw GradleException("ufbt not found. Install with: pip install ufbt")
+            }
+            println("ufbt found")
+        } catch (e: Exception) {
+            throw GradleException("ufbt not available: ${e.message}\nInstall with: pip install ufbt")
+        }
+    }
+}
+
+/**
+ * Build the Flipper FAP using ufbt.
+ * Run: ./gradlew buildFlipperFap
+ */
+tasks.register("buildFlipperFap") {
+    group = "flipper"
+    description = "Build the Flock Bridge FAP for Flipper Zero"
+    dependsOn("checkUfbt")
+
+    inputs.dir(flipperAppDir)
+    outputs.file(file("${flipperBuildDir}/${fapOutputName}"))
+
+    doLast {
+        // Create build directory
+        flipperBuildDir.mkdirs()
+
+        println("Building Flock Bridge FAP...")
+        println("Source: ${flipperAppDir.absolutePath}")
+
+        exec {
+            workingDir = flipperAppDir
+            commandLine(
+                "ufbt",
+                "fap_flock_bridge",
+                "COMPACT=1",
+                "DEBUG=0"
+            )
+        }
+
+        // Copy the built FAP to our build directory
+        val distDir = file("${flipperAppDir}/dist")
+        val builtFap = fileTree(distDir).matching {
+            include("**/*.fap")
+        }.singleFile
+
+        copy {
+            from(builtFap)
+            into(flipperBuildDir)
+            rename { fapOutputName }
+        }
+
+        println("FAP built successfully: ${flipperBuildDir}/${fapOutputName}")
+    }
+}
+
+/**
+ * Clean Flipper build artifacts.
+ */
+tasks.register("cleanFlipperFap") {
+    group = "flipper"
+    description = "Clean Flipper FAP build artifacts"
+
+    doLast {
+        exec {
+            workingDir = flipperAppDir
+            commandLine("ufbt", "clean")
+            isIgnoreExitValue = true
+        }
+        delete(flipperBuildDir)
+        println("Flipper build artifacts cleaned")
+    }
+}
+
+/**
+ * Copy the FAP to Android assets for bundling with the app.
+ * This allows the Android app to install the FAP to connected Flipper devices.
+ */
+tasks.register("bundleFlipperFap") {
+    group = "flipper"
+    description = "Bundle the FAP in Android assets for in-app installation"
+    dependsOn("buildFlipperFap")
+
+    val assetsFlipperDir = file("src/main/assets/flipper")
+    val targetFap = file("${assetsFlipperDir}/${fapOutputName}")
+
+    inputs.file(file("${flipperBuildDir}/${fapOutputName}"))
+    outputs.file(targetFap)
+
+    doLast {
+        assetsFlipperDir.mkdirs()
+
+        copy {
+            from(file("${flipperBuildDir}/${fapOutputName}"))
+            into(assetsFlipperDir)
+        }
+
+        // Also copy the ESP32 firmware for in-app flashing
+        val esp32FirmwareDir = file("${rootDir}/flipper_app/esp32_firmware")
+        if (esp32FirmwareDir.exists()) {
+            copy {
+                from(esp32FirmwareDir)
+                into(file("${assetsFlipperDir}/esp32"))
+                include("*.ino", "*.h", "*.cpp")
+            }
+            println("ESP32 firmware copied to assets")
+        }
+
+        println("FAP bundled in assets: ${targetFap.absolutePath}")
+        println("Size: ${targetFap.length() / 1024} KB")
+    }
+}
+
+/**
+ * Install FAP to connected Flipper via qFlipper CLI.
+ * Requires qFlipper to be installed with CLI tools.
+ */
+tasks.register("installFlipperFap") {
+    group = "flipper"
+    description = "Install FAP to connected Flipper Zero via USB"
+    dependsOn("buildFlipperFap")
+
+    doLast {
+        val fapFile = file("${flipperBuildDir}/${fapOutputName}")
+
+        println("Installing FAP to Flipper Zero...")
+
+        // Try using qFlipper CLI
+        try {
+            exec {
+                commandLine(
+                    "qFlipper-cli",
+                    "storage", "write",
+                    fapFile.absolutePath,
+                    "/ext/apps/Tools/${fapOutputName}"
+                )
+            }
+            println("FAP installed successfully!")
+            println("Location: /ext/apps/Tools/${fapOutputName}")
+        } catch (e: Exception) {
+            // Try ufbt's built-in launch feature
+            println("qFlipper CLI not found, trying ufbt...")
+            exec {
+                workingDir = flipperAppDir
+                commandLine("ufbt", "launch")
+            }
+        }
+    }
+}
+
+/**
+ * Full Flipper workflow: build, bundle, and optionally install.
+ */
+tasks.register("prepareFlipperFap") {
+    group = "flipper"
+    description = "Build and bundle the FAP for distribution"
+    dependsOn("bundleFlipperFap")
+
+    doLast {
+        println("")
+        println("=== Flipper FAP Ready ===")
+        println("FAP file: ${flipperBuildDir}/${fapOutputName}")
+        println("Bundled in: src/main/assets/flipper/${fapOutputName}")
+        println("")
+        println("To install manually:")
+        println("  1. Connect Flipper Zero via USB")
+        println("  2. Run: ./gradlew installFlipperFap")
+        println("")
+        println("Or use the in-app Flipper installer")
+    }
+}
+
+// Automatically bundle FAP for release builds
+tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }.configureEach {
+    dependsOn("bundleFlipperFap")
 }

@@ -3,6 +3,7 @@
 #include "ble_scanner.h"
 #include "ir_scanner.h"
 #include "nfc_scanner.h"
+#include "wifi_scanner.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -16,17 +17,30 @@ struct DetectionScheduler {
     SchedulerConfig config;
     SchedulerStats stats;
 
-    // Scanners
-    SubGhzScanner* subghz;
-    BleScanner* ble;
+    // Internal scanners (Flipper's built-in radios)
+    SubGhzScanner* subghz_internal;
+    BleScanner* ble_internal;
     IrScanner* ir;
     NfcScanner* nfc;
+
+    // External radio manager
+    ExternalRadioManager* external_radio;
+
+    // External scanners (via ESP32/CC1101/nRF24)
+    WifiScanner* wifi;
+    // Note: External Sub-GHz and BLE would use same external_radio
+    // but with different command sets
+
+    // Active scanner pointers (point to whichever is in use)
+    SubGhzScanner* subghz_active;
+    BleScanner* ble_active;
 
     // State
     bool running;
     ScanSlotType current_slot;
     uint8_t subghz_frequency_index;
     uint32_t last_ble_scan;
+    uint32_t last_wifi_scan;
     uint32_t start_time;
 
     // Thread
@@ -37,6 +51,7 @@ struct DetectionScheduler {
     // Pause flags
     bool subghz_paused;
     bool ble_paused;
+    bool wifi_paused;
 };
 
 // ============================================================================
@@ -84,6 +99,50 @@ static void scheduler_ble_callback(
     }
 }
 
+static void scheduler_wifi_callback(
+    const WifiNetworkExtended* network,
+    void* context) {
+
+    DetectionScheduler* scheduler = context;
+    if (!scheduler || !scheduler->running) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    scheduler->stats.wifi_networks_found++;
+    furi_mutex_release(scheduler->mutex);
+
+    if (scheduler->config.wifi_callback) {
+        scheduler->config.wifi_callback(&network->base, scheduler->config.callback_context);
+    }
+
+    FURI_LOG_I(TAG, "WiFi: %s (%d dBm, ch %d)",
+        network->base.ssid[0] ? network->base.ssid : "<hidden>",
+        network->base.rssi, network->base.channel);
+}
+
+static void scheduler_wifi_deauth_callback(
+    const WifiDeauthDetection* deauth,
+    void* context) {
+
+    DetectionScheduler* scheduler = context;
+    if (!scheduler || !scheduler->running) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    scheduler->stats.wifi_deauths_detected++;
+    furi_mutex_release(scheduler->mutex);
+
+    if (scheduler->config.wifi_deauth_callback) {
+        scheduler->config.wifi_deauth_callback(
+            deauth->bssid,
+            deauth->target_mac,
+            deauth->reason_code,
+            deauth->count,
+            scheduler->config.callback_context);
+    }
+
+    FURI_LOG_W(TAG, "WiFi deauth detected! BSSID: %02X:%02X:%02X, count: %lu",
+        deauth->bssid[3], deauth->bssid[4], deauth->bssid[5], deauth->count);
+}
+
 static void scheduler_ir_callback(
     const FlockIrDetection* detection,
     IrSignalType signal_type,
@@ -123,6 +182,42 @@ static void scheduler_nfc_callback(
 }
 
 // ============================================================================
+// Radio Source Selection Helper
+// ============================================================================
+
+static bool should_use_internal(RadioSourceMode mode, bool external_available) {
+    switch (mode) {
+    case RadioSourceAuto:
+        return !external_available;  // Use internal only if external not available
+    case RadioSourceInternal:
+        return true;
+    case RadioSourceExternal:
+        return false;
+    case RadioSourceBoth:
+        return true;  // Use both
+    default:
+        return true;
+    }
+}
+
+static bool should_use_external(RadioSourceMode mode, bool external_available) {
+    if (!external_available) return false;
+
+    switch (mode) {
+    case RadioSourceAuto:
+        return true;  // Prefer external when available
+    case RadioSourceInternal:
+        return false;
+    case RadioSourceExternal:
+        return true;
+    case RadioSourceBoth:
+        return true;  // Use both
+    default:
+        return false;
+    }
+}
+
+// ============================================================================
 // Scheduler Thread - Main Loop
 // ============================================================================
 
@@ -133,8 +228,44 @@ static int32_t scheduler_thread_func(void* context) {
 
     uint32_t last_frequency_hop = 0;
     uint32_t last_ble_scan = 0;
+    uint32_t last_wifi_scan = 0;
 
-    // Start passive scanners (IR and NFC can run alongside Sub-GHz)
+    // Determine which radios to use based on settings
+    bool ext_available = scheduler->external_radio &&
+                         external_radio_is_connected(scheduler->external_radio);
+
+    uint32_t ext_caps = ext_available ?
+        external_radio_get_capabilities(scheduler->external_radio) : 0;
+
+    bool ext_subghz_available = (ext_caps & EXT_RADIO_CAP_SUBGHZ_RX) != 0;
+    bool ext_ble_available = (ext_caps & EXT_RADIO_CAP_BLE_SCAN) != 0;
+    bool ext_wifi_available = (ext_caps & EXT_RADIO_CAP_WIFI_SCAN) != 0;
+
+    bool use_internal_subghz = should_use_internal(
+        scheduler->config.radio_sources.subghz_source, ext_subghz_available);
+    bool use_external_subghz = should_use_external(
+        scheduler->config.radio_sources.subghz_source, ext_subghz_available);
+    bool use_internal_ble = should_use_internal(
+        scheduler->config.radio_sources.ble_source, ext_ble_available);
+    bool use_external_ble = should_use_external(
+        scheduler->config.radio_sources.ble_source, ext_ble_available);
+    bool use_wifi = ext_wifi_available &&
+        (scheduler->config.radio_sources.wifi_source != RadioSourceInternal);
+
+    // Update stats with active sources
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    scheduler->stats.using_internal_subghz = use_internal_subghz;
+    scheduler->stats.using_external_subghz = use_external_subghz;
+    scheduler->stats.using_internal_ble = use_internal_ble;
+    scheduler->stats.using_external_ble = use_external_ble;
+    scheduler->stats.using_external_wifi = use_wifi;
+    furi_mutex_release(scheduler->mutex);
+
+    FURI_LOG_I(TAG, "Radio sources: SubGHz(int:%d,ext:%d) BLE(int:%d,ext:%d) WiFi(ext:%d)",
+        use_internal_subghz, use_external_subghz,
+        use_internal_ble, use_external_ble, use_wifi);
+
+    // Start passive scanners (IR and NFC can run alongside everything)
     if (scheduler->config.enable_ir && scheduler->ir) {
         ir_scanner_start(scheduler->ir);
         FURI_LOG_I(TAG, "IR scanner started (passive)");
@@ -145,11 +276,31 @@ static int32_t scheduler_thread_func(void* context) {
         FURI_LOG_I(TAG, "NFC scanner started (passive)");
     }
 
-    // Start Sub-GHz at first frequency
-    if (scheduler->config.enable_subghz && scheduler->subghz) {
+    // Start internal Sub-GHz at first frequency
+    if (scheduler->config.enable_subghz && use_internal_subghz && scheduler->subghz_internal) {
         uint32_t freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
-        subghz_scanner_start(scheduler->subghz, freq);
-        FURI_LOG_I(TAG, "Sub-GHz scanner started at %lu Hz", freq);
+        subghz_scanner_start(scheduler->subghz_internal, freq);
+        scheduler->subghz_active = scheduler->subghz_internal;
+        FURI_LOG_I(TAG, "Internal Sub-GHz scanner started at %lu Hz", freq);
+    }
+
+    // Start WiFi scanner if available
+    if (scheduler->config.enable_wifi && use_wifi && scheduler->wifi) {
+        WifiScannerConfig wifi_config = {
+            .scan_mode = WifiScanModeActive,
+            .detect_hidden = true,
+            .monitor_probes = scheduler->config.wifi_monitor_probes,
+            .detect_deauths = scheduler->config.wifi_detect_deauths,
+            .channel = scheduler->config.wifi_channel,
+            .dwell_time_ms = 100,
+            .rssi_threshold = -90,
+            .network_callback = scheduler_wifi_callback,
+            .deauth_callback = scheduler_wifi_deauth_callback,
+            .callback_context = scheduler,
+        };
+        wifi_scanner_configure(scheduler->wifi, &wifi_config);
+        wifi_scanner_start(scheduler->wifi);
+        FURI_LOG_I(TAG, "WiFi scanner started (external ESP32)");
     }
 
     while (!scheduler->should_stop) {
@@ -159,7 +310,6 @@ static int32_t scheduler_thread_func(void* context) {
         // Sub-GHz Frequency Hopping (continuous background)
         // ====================================================================
         if (scheduler->config.enable_subghz &&
-            scheduler->subghz &&
             !scheduler->subghz_paused &&
             scheduler->config.subghz_continuous) {
 
@@ -169,7 +319,24 @@ static int32_t scheduler_thread_func(void* context) {
                     (scheduler->subghz_frequency_index + 1) % SUBGHZ_FREQUENCY_COUNT;
 
                 uint32_t new_freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
-                subghz_scanner_set_frequency(scheduler->subghz, new_freq);
+
+                // Hop on internal if active
+                if (use_internal_subghz && scheduler->subghz_internal) {
+                    subghz_scanner_set_frequency(scheduler->subghz_internal, new_freq);
+                }
+
+                // Hop on external if active
+                if (use_external_subghz && scheduler->external_radio) {
+                    uint8_t freq_cmd[4];
+                    freq_cmd[0] = (new_freq >> 24) & 0xFF;
+                    freq_cmd[1] = (new_freq >> 16) & 0xFF;
+                    freq_cmd[2] = (new_freq >> 8) & 0xFF;
+                    freq_cmd[3] = new_freq & 0xFF;
+                    external_radio_send_command(
+                        scheduler->external_radio,
+                        ExtRadioCmdSubGhzSetFreq,
+                        freq_cmd, 4);
+                }
 
                 furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
                 scheduler->stats.subghz_frequencies_scanned++;
@@ -184,32 +351,47 @@ static int32_t scheduler_thread_func(void* context) {
         // ====================================================================
         // BLE Burst Scanning (periodic)
         // ====================================================================
-        if (scheduler->config.enable_ble &&
-            scheduler->ble &&
-            !scheduler->ble_paused) {
-
-            // Check if it's time for a BLE scan
+        if (scheduler->config.enable_ble && !scheduler->ble_paused) {
             if ((now - last_ble_scan) >= scheduler->config.ble_scan_interval_ms) {
-                // BLE and BT Serial share the radio
-                // Need to pause BT Serial during BLE scan if using it
-
-                // For USB connection mode, we can scan freely
-                // For BT connection mode, we need to be careful
-
-                if (!ble_scanner_is_running(scheduler->ble)) {
-                    FURI_LOG_I(TAG, "Starting BLE burst scan");
-
-                    // Note: In practice, may need to temporarily stop Sub-GHz
-                    // during BLE scan if there's interference
-                    // For now, let them run concurrently
-
-                    ble_scanner_start(scheduler->ble);
-                    last_ble_scan = now;
-
-                    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
-                    scheduler->stats.ble_scans_completed++;
-                    furi_mutex_release(scheduler->mutex);
+                // Start internal BLE scan
+                if (use_internal_ble && scheduler->ble_internal &&
+                    !ble_scanner_is_running(scheduler->ble_internal)) {
+                    FURI_LOG_I(TAG, "Starting internal BLE burst scan");
+                    ble_scanner_start(scheduler->ble_internal);
                 }
+
+                // Start external BLE scan
+                if (use_external_ble && scheduler->external_radio) {
+                    FURI_LOG_I(TAG, "Starting external BLE burst scan");
+                    external_radio_send_command(
+                        scheduler->external_radio,
+                        ExtRadioCmdBleScanStart,
+                        NULL, 0);
+                }
+
+                last_ble_scan = now;
+
+                furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+                scheduler->stats.ble_scans_completed++;
+                furi_mutex_release(scheduler->mutex);
+            }
+        }
+
+        // ====================================================================
+        // WiFi Scanning (via external ESP32)
+        // ====================================================================
+        if (scheduler->config.enable_wifi &&
+            use_wifi &&
+            scheduler->wifi &&
+            !scheduler->wifi_paused) {
+
+            // WiFi runs continuously via ESP32, just track scan cycles
+            if ((now - last_wifi_scan) >= scheduler->config.wifi_scan_interval_ms) {
+                last_wifi_scan = now;
+
+                furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+                scheduler->stats.wifi_scans_completed++;
+                furi_mutex_release(scheduler->mutex);
             }
         }
 
@@ -229,17 +411,27 @@ static int32_t scheduler_thread_func(void* context) {
     // ========================================================================
     FURI_LOG_I(TAG, "Stopping all scanners");
 
-    if (scheduler->subghz && subghz_scanner_is_running(scheduler->subghz)) {
-        subghz_scanner_stop(scheduler->subghz);
+    if (scheduler->subghz_internal && subghz_scanner_is_running(scheduler->subghz_internal)) {
+        subghz_scanner_stop(scheduler->subghz_internal);
     }
-    if (scheduler->ble && ble_scanner_is_running(scheduler->ble)) {
-        ble_scanner_stop(scheduler->ble);
+    if (scheduler->ble_internal && ble_scanner_is_running(scheduler->ble_internal)) {
+        ble_scanner_stop(scheduler->ble_internal);
+    }
+    if (scheduler->wifi && wifi_scanner_is_running(scheduler->wifi)) {
+        wifi_scanner_stop(scheduler->wifi);
     }
     if (scheduler->ir && ir_scanner_is_running(scheduler->ir)) {
         ir_scanner_stop(scheduler->ir);
     }
     if (scheduler->nfc && nfc_scanner_is_running(scheduler->nfc)) {
         nfc_scanner_stop(scheduler->nfc);
+    }
+
+    // Stop external radio scans
+    if (scheduler->external_radio && external_radio_is_connected(scheduler->external_radio)) {
+        external_radio_send_command(scheduler->external_radio, ExtRadioCmdSubGhzRxStop, NULL, 0);
+        external_radio_send_command(scheduler->external_radio, ExtRadioCmdBleScanStop, NULL, 0);
+        external_radio_send_command(scheduler->external_radio, ExtRadioCmdWifiScanStop, NULL, 0);
     }
 
     FURI_LOG_I(TAG, "Detection scheduler stopped");
@@ -261,6 +453,7 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     // Default configuration
     scheduler->config.enable_subghz = true;
     scheduler->config.enable_ble = true;
+    scheduler->config.enable_wifi = true;
     scheduler->config.enable_ir = true;
     scheduler->config.enable_nfc = true;
     scheduler->config.subghz_hop_interval_ms = SUBGHZ_HOP_INTERVAL_MS;
@@ -268,15 +461,24 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->config.ble_scan_duration_ms = BLE_SCAN_DURATION_MS;
     scheduler->config.ble_scan_interval_ms = BLE_SCAN_INTERVAL_MS;
     scheduler->config.ble_detect_trackers = true;
+    scheduler->config.wifi_scan_interval_ms = 10000;
+    scheduler->config.wifi_channel = 0;  // Channel hop
+    scheduler->config.wifi_monitor_probes = true;
+    scheduler->config.wifi_detect_deauths = true;
 
-    // Allocate scanners
-    scheduler->subghz = subghz_scanner_alloc();
-    scheduler->ble = ble_scanner_alloc();
+    // Default radio sources: Auto (prefer external if available)
+    scheduler->config.radio_sources.subghz_source = RadioSourceAuto;
+    scheduler->config.radio_sources.ble_source = RadioSourceAuto;
+    scheduler->config.radio_sources.wifi_source = RadioSourceExternal;  // No internal WiFi
+
+    // Allocate internal scanners
+    scheduler->subghz_internal = subghz_scanner_alloc();
+    scheduler->ble_internal = ble_scanner_alloc();
     scheduler->ir = ir_scanner_alloc();
     scheduler->nfc = nfc_scanner_alloc();
 
-    // Configure scanner callbacks
-    if (scheduler->subghz) {
+    // Configure internal scanner callbacks
+    if (scheduler->subghz_internal) {
         SubGhzScannerConfig subghz_config = {
             .detect_replays = true,
             .detect_jamming = true,
@@ -284,10 +486,10 @@ DetectionScheduler* detection_scheduler_alloc(void) {
             .callback = scheduler_subghz_callback,
             .callback_context = scheduler,
         };
-        subghz_scanner_configure(scheduler->subghz, &subghz_config);
+        subghz_scanner_configure(scheduler->subghz_internal, &subghz_config);
     }
 
-    if (scheduler->ble) {
+    if (scheduler->ble_internal) {
         BleScannerConfig ble_config = {
             .detect_trackers = true,
             .detect_spam = true,
@@ -297,7 +499,7 @@ DetectionScheduler* detection_scheduler_alloc(void) {
             .callback = scheduler_ble_callback,
             .callback_context = scheduler,
         };
-        ble_scanner_configure(scheduler->ble, &ble_config);
+        ble_scanner_configure(scheduler->ble_internal, &ble_config);
     }
 
     if (scheduler->ir) {
@@ -333,11 +535,14 @@ void detection_scheduler_free(DetectionScheduler* scheduler) {
 
     detection_scheduler_stop(scheduler);
 
-    // Free scanners
-    if (scheduler->subghz) subghz_scanner_free(scheduler->subghz);
-    if (scheduler->ble) ble_scanner_free(scheduler->ble);
+    // Free internal scanners
+    if (scheduler->subghz_internal) subghz_scanner_free(scheduler->subghz_internal);
+    if (scheduler->ble_internal) ble_scanner_free(scheduler->ble_internal);
     if (scheduler->ir) ir_scanner_free(scheduler->ir);
     if (scheduler->nfc) nfc_scanner_free(scheduler->nfc);
+
+    // Free WiFi scanner (external radio manager is not owned by scheduler)
+    if (scheduler->wifi) wifi_scanner_free(scheduler->wifi);
 
     if (scheduler->mutex) furi_mutex_free(scheduler->mutex);
 
@@ -354,6 +559,38 @@ void detection_scheduler_configure(
     furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
     memcpy(&scheduler->config, config, sizeof(SchedulerConfig));
     furi_mutex_release(scheduler->mutex);
+}
+
+void detection_scheduler_set_external_radio(
+    DetectionScheduler* scheduler,
+    ExternalRadioManager* radio_manager) {
+
+    if (!scheduler) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+
+    scheduler->external_radio = radio_manager;
+
+    // Create WiFi scanner if radio supports it
+    if (radio_manager && external_radio_is_connected(radio_manager)) {
+        uint32_t caps = external_radio_get_capabilities(radio_manager);
+        if ((caps & EXT_RADIO_CAP_WIFI_SCAN) && !scheduler->wifi) {
+            scheduler->wifi = wifi_scanner_alloc(radio_manager);
+            FURI_LOG_I(TAG, "WiFi scanner created (external ESP32 detected)");
+        }
+    }
+
+    furi_mutex_release(scheduler->mutex);
+}
+
+bool detection_scheduler_has_external_radio(DetectionScheduler* scheduler) {
+    if (!scheduler || !scheduler->external_radio) return false;
+    return external_radio_is_connected(scheduler->external_radio);
+}
+
+uint32_t detection_scheduler_get_external_capabilities(DetectionScheduler* scheduler) {
+    if (!scheduler || !scheduler->external_radio) return 0;
+    return external_radio_get_capabilities(scheduler->external_radio);
 }
 
 bool detection_scheduler_start(DetectionScheduler* scheduler) {
@@ -421,17 +658,40 @@ ScanSlotType detection_scheduler_get_current_slot(DetectionScheduler* scheduler)
 }
 
 uint32_t detection_scheduler_get_current_frequency(DetectionScheduler* scheduler) {
-    if (!scheduler || !scheduler->subghz) return 0;
-    return subghz_scanner_get_frequency(scheduler->subghz);
+    if (!scheduler) return 0;
+
+    // Check internal first
+    if (scheduler->subghz_internal) {
+        return subghz_scanner_get_frequency(scheduler->subghz_internal);
+    }
+
+    // Fall back to frequency table
+    return SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
 }
 
 void detection_scheduler_set_frequency(
     DetectionScheduler* scheduler,
     uint32_t frequency) {
 
-    if (!scheduler || !scheduler->subghz) return;
+    if (!scheduler) return;
 
-    subghz_scanner_set_frequency(scheduler->subghz, frequency);
+    // Set on internal scanner
+    if (scheduler->subghz_internal) {
+        subghz_scanner_set_frequency(scheduler->subghz_internal, frequency);
+    }
+
+    // Set on external scanner
+    if (scheduler->external_radio && external_radio_is_connected(scheduler->external_radio)) {
+        uint8_t freq_cmd[4];
+        freq_cmd[0] = (frequency >> 24) & 0xFF;
+        freq_cmd[1] = (frequency >> 16) & 0xFF;
+        freq_cmd[2] = (frequency >> 8) & 0xFF;
+        freq_cmd[3] = frequency & 0xFF;
+        external_radio_send_command(
+            scheduler->external_radio,
+            ExtRadioCmdSubGhzSetFreq,
+            freq_cmd, 4);
+    }
 
     // Find index in frequency table
     for (size_t i = 0; i < SUBGHZ_FREQUENCY_COUNT; i++) {
@@ -448,11 +708,21 @@ void detection_scheduler_pause_subghz(DetectionScheduler* scheduler, bool pause)
     furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
     scheduler->subghz_paused = pause;
 
-    if (pause && scheduler->subghz && subghz_scanner_is_running(scheduler->subghz)) {
-        subghz_scanner_stop(scheduler->subghz);
-    } else if (!pause && scheduler->subghz && !subghz_scanner_is_running(scheduler->subghz)) {
-        uint32_t freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
-        subghz_scanner_start(scheduler->subghz, freq);
+    if (pause) {
+        if (scheduler->subghz_internal && subghz_scanner_is_running(scheduler->subghz_internal)) {
+            subghz_scanner_stop(scheduler->subghz_internal);
+        }
+        if (scheduler->external_radio && external_radio_is_connected(scheduler->external_radio)) {
+            external_radio_send_command(scheduler->external_radio, ExtRadioCmdSubGhzRxStop, NULL, 0);
+        }
+    } else {
+        if (scheduler->subghz_internal && !subghz_scanner_is_running(scheduler->subghz_internal)) {
+            uint32_t freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
+            subghz_scanner_start(scheduler->subghz_internal, freq);
+        }
+        if (scheduler->external_radio && external_radio_is_connected(scheduler->external_radio)) {
+            external_radio_send_command(scheduler->external_radio, ExtRadioCmdSubGhzRxStart, NULL, 0);
+        }
     }
 
     furi_mutex_release(scheduler->mutex);
@@ -464,9 +734,70 @@ void detection_scheduler_pause_ble(DetectionScheduler* scheduler, bool pause) {
     furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
     scheduler->ble_paused = pause;
 
-    if (pause && scheduler->ble && ble_scanner_is_running(scheduler->ble)) {
-        ble_scanner_stop(scheduler->ble);
+    if (pause) {
+        if (scheduler->ble_internal && ble_scanner_is_running(scheduler->ble_internal)) {
+            ble_scanner_stop(scheduler->ble_internal);
+        }
+        if (scheduler->external_radio && external_radio_is_connected(scheduler->external_radio)) {
+            external_radio_send_command(scheduler->external_radio, ExtRadioCmdBleScanStop, NULL, 0);
+        }
     }
 
     furi_mutex_release(scheduler->mutex);
+}
+
+void detection_scheduler_pause_wifi(DetectionScheduler* scheduler, bool pause) {
+    if (!scheduler) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    scheduler->wifi_paused = pause;
+
+    if (pause) {
+        if (scheduler->wifi && wifi_scanner_is_running(scheduler->wifi)) {
+            wifi_scanner_stop(scheduler->wifi);
+        }
+    } else {
+        if (scheduler->wifi && !wifi_scanner_is_running(scheduler->wifi)) {
+            wifi_scanner_start(scheduler->wifi);
+        }
+    }
+
+    furi_mutex_release(scheduler->mutex);
+}
+
+void detection_scheduler_set_radio_sources(
+    DetectionScheduler* scheduler,
+    const RadioSourceSettings* settings) {
+
+    if (!scheduler || !settings) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    memcpy(&scheduler->config.radio_sources, settings, sizeof(RadioSourceSettings));
+    furi_mutex_release(scheduler->mutex);
+
+    // If running, the changes will take effect on next iteration
+    // For immediate effect, would need to stop/restart scanners
+    FURI_LOG_I(TAG, "Radio sources updated: SubGHz=%d, BLE=%d, WiFi=%d",
+        settings->subghz_source, settings->ble_source, settings->wifi_source);
+}
+
+void detection_scheduler_get_radio_sources(
+    DetectionScheduler* scheduler,
+    RadioSourceSettings* settings) {
+
+    if (!scheduler || !settings) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    memcpy(settings, &scheduler->config.radio_sources, sizeof(RadioSourceSettings));
+    furi_mutex_release(scheduler->mutex);
+}
+
+const char* detection_scheduler_get_source_name(RadioSourceMode mode) {
+    switch (mode) {
+    case RadioSourceAuto: return "Auto";
+    case RadioSourceInternal: return "Internal";
+    case RadioSourceExternal: return "External";
+    case RadioSourceBoth: return "Both";
+    default: return "Unknown";
+    }
 }

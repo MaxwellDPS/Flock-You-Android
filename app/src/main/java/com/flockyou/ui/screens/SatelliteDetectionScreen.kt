@@ -104,12 +104,21 @@ fun SatelliteDetectionScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Tab row
-            TabRow(selectedTabIndex = selectedTab) {
+            // Scrollable tab row with swipe support (5 tabs)
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                edgePadding = 8.dp
+            ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            if (pagerState.currentPage != index && !pagerState.isScrollInProgress) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            }
+                        },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -171,27 +180,32 @@ fun SatelliteDetectionScreen(
                 }
             }
 
-            // Tab content
-            when (selectedTab) {
-                0 -> SatelliteStatusContent(
-                    satelliteState = satelliteState,
-                    satelliteStatus = satelliteStatus,
-                    isScanning = isScanning
-                )
-                1 -> GnssStatusContent(
-                    gnssStatus = gnssStatus,
-                    gnssSatellites = gnssSatellites,
-                    gnssAnomalies = gnssAnomalies,
-                    gnssEvents = gnssEvents,
-                    gnssMeasurements = gnssMeasurements,
-                    isScanning = isScanning
-                )
-                2 -> SatelliteAnomaliesContent(
-                    anomalies = satelliteAnomalies,
-                    onClear = { /* No clear function available */ }
-                )
-                3 -> SatelliteCoverageContent()
-                4 -> SatelliteRulesContent()
+            // Swipeable HorizontalPager for tab content
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (page) {
+                    0 -> SatelliteStatusContent(
+                        satelliteState = satelliteState,
+                        satelliteStatus = satelliteStatus,
+                        isScanning = isScanning
+                    )
+                    1 -> GnssStatusContent(
+                        gnssStatus = gnssStatus,
+                        gnssSatellites = gnssSatellites,
+                        gnssAnomalies = gnssAnomalies,
+                        gnssEvents = gnssEvents,
+                        gnssMeasurements = gnssMeasurements,
+                        isScanning = isScanning
+                    )
+                    2 -> SatelliteAnomaliesContent(
+                        anomalies = satelliteAnomalies,
+                        onClear = { /* No clear function available */ }
+                    )
+                    3 -> SatelliteCoverageContent()
+                    4 -> SatelliteRulesContent()
+                }
             }
         }
     }
