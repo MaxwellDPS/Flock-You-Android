@@ -203,20 +203,28 @@ class GeminiNanoClient @Inject constructor(
             // Build the prompt for surveillance device analysis
             val prompt = buildAnalysisPrompt(detection)
 
-            // In production with proper AICore integration:
-            // val response = generativeModel?.generateContent(prompt)
-            // val analysisText = response?.text
-
-            // For now, return a structured response indicating Gemini Nano mode
-            // This would be replaced with actual model inference
-            val analysisText = generateGeminiNanoResponse(detection)
+            // Try to use the actual GenerativeModel if available
+            val model = generativeModel
+            val analysisText = if (model != null) {
+                try {
+                    val response = model.generateContent(prompt)
+                    response.text ?: generateGeminiNanoResponse(detection)
+                } catch (e: Exception) {
+                    Log.w(TAG, "GenerativeModel inference failed, using fallback: ${e.message}")
+                    generateGeminiNanoResponse(detection)
+                }
+            } else {
+                // Fallback to rule-based structured response
+                // Note: True Gemini Nano requires ML Kit GenAI integration
+                generateGeminiNanoResponse(detection)
+            }
 
             AiAnalysisResult(
                 success = true,
                 analysis = analysisText,
-                confidence = 0.9f,
+                confidence = if (model != null) 0.9f else 0.85f,
                 processingTimeMs = System.currentTimeMillis() - startTime,
-                modelUsed = "gemini-nano",
+                modelUsed = if (model != null) "gemini-nano" else "gemini-nano-template",
                 wasOnDevice = true
             )
 

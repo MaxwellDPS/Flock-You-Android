@@ -73,18 +73,18 @@ enum class AiModel(
         id = "smollm-135m",
         displayName = "SmolLM 135M",
         description = "Ultra-lightweight model, fast inference. Good for basic analysis on any device.",
-        sizeMb = 90,
+        sizeMb = 95,
         capabilities = listOf("Basic text generation", "Classification"),
-        downloadUrl = "https://huggingface.co/HuggingFaceTB/SmolLM-135M-Instruct-GGUF/resolve/main/smollm-135m-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/QuantFactory/SmolLM-135M-Instruct-GGUF/resolve/main/SmolLM-135M-Instruct.Q4_K_M.gguf",
         quantization = "Q4_K_M"
     ),
     SMOLLM_360M(
         id = "smollm-360m",
         displayName = "SmolLM 360M",
         description = "Compact model with improved reasoning. Good balance of speed and capability.",
-        sizeMb = 230,
+        sizeMb = 271,
         capabilities = listOf("Text generation", "Reasoning", "Classification"),
-        downloadUrl = "https://huggingface.co/HuggingFaceTB/SmolLM-360M-Instruct-GGUF/resolve/main/smollm-360m-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/QuantFactory/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct.Q4_K_M.gguf",
         quantization = "Q4_K_M"
     ),
     QWEN2_0_5B(
@@ -109,11 +109,11 @@ enum class AiModel(
     GEMMA2_2B(
         id = "gemma2-2b",
         displayName = "Gemma 2 2B",
-        description = "Google's open model. Excellent quality, moderate size (~1.5GB RAM).",
-        sizeMb = 1500,
+        description = "Google's open model. Excellent quality, moderate size (~1.7GB download).",
+        sizeMb = 1710,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 28,
-        downloadUrl = "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
         quantization = "Q4_K_M"
     ),
     TINYLLAMA_1B(

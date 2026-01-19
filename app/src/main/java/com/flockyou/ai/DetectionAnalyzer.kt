@@ -221,6 +221,7 @@ class DetectionAnalyzer @Inject constructor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun tryInitializeGeminiNano(settings: AiSettings): Boolean {
         if (!deviceInfo.isPixel8OrNewer || !deviceInfo.hasNpu) {
             Log.d(TAG, "Device does not support Gemini Nano (requires Pixel 8+ with NPU)")
@@ -246,6 +247,7 @@ class DetectionAnalyzer @Inject constructor(
         return false
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun tryInitializeGgufModel(settings: AiSettings): Boolean {
         val modelDir = context.getDir("ai_models", Context.MODE_PRIVATE)
         val modelFile = File(modelDir, "${currentModel.id}.gguf")
@@ -425,10 +427,11 @@ class DetectionAnalyzer @Inject constructor(
         return r * c
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun generateAnalysis(
         detection: Detection,
         contextualInsights: ContextualInsights?,
-        settings: AiSettings
+        settings: AiSettings // Reserved for future use with inference configuration
     ): AiAnalysisResult {
         // Use Gemini Nano if available and selected
         if (currentModel == AiModel.GEMINI_NANO && geminiNanoInitialized) {
@@ -454,6 +457,13 @@ class DetectionAnalyzer @Inject constructor(
             }
             // Fall through to rule-based if Gemini fails
             Log.w(TAG, "Gemini Nano analysis failed, using rule-based fallback")
+        }
+
+        // For GGUF models: currently using enhanced rule-based analysis
+        // TODO: Integrate llama.cpp or MediaPipe LLM for actual GGUF inference
+        if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO && isModelLoaded) {
+            Log.d(TAG, "GGUF model ${currentModel.displayName} loaded but inference not yet implemented, using enhanced rule-based")
+            // Could integrate llama.android or MediaPipe LLM here for actual inference
         }
 
         // Use comprehensive rule-based analysis
