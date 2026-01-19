@@ -1,6 +1,7 @@
 package com.flockyou.ai
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.flockyou.data.AiAnalysisResult
 import com.flockyou.data.AiModel
@@ -37,6 +38,63 @@ class MediaPipeLlmClient @Inject constructor(
         private const val INIT_TIMEOUT_MS = 30_000L // 30 second timeout for initialization
         private const val PREFS_NAME = "mediapipe_llm_prefs"
         private const val KEY_GPU_FAILED = "gpu_backend_failed"
+
+        // Check if OpenCL is available on this device
+        // GPU backend requires OpenCL which may not be available on all devices
+        private val isOpenClAvailable: Boolean by lazy {
+            try {
+                // Try to load OpenCL library - if it fails, GPU won't work
+                System.loadLibrary("OpenCL")
+                Log.i(TAG, "OpenCL library loaded successfully - GPU backend available")
+                true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "OpenCL library not available: ${e.message}")
+                false
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check OpenCL availability: ${e.message}")
+                false
+            }
+        }
+
+        /**
+         * Check if GPU acceleration is supported on this device.
+         * Returns false if OpenCL is not available or device is known to have issues.
+         */
+        fun isGpuSupported(): Boolean {
+            // Check OpenCL availability
+            if (!isOpenClAvailable) {
+                Log.d(TAG, "GPU not supported: OpenCL not available")
+                return false
+            }
+
+            // Known problematic devices/chipsets can be added here
+            // Currently Google Tensor chips have OpenCL issues
+            val isTensorChip = Build.SOC_MODEL.contains("Tensor", ignoreCase = true) ||
+                    Build.HARDWARE.contains("oriole", ignoreCase = true) || // Pixel 6
+                    Build.HARDWARE.contains("raven", ignoreCase = true) ||  // Pixel 6 Pro
+                    Build.HARDWARE.contains("bluejay", ignoreCase = true) || // Pixel 6a
+                    Build.HARDWARE.contains("panther", ignoreCase = true) || // Pixel 7
+                    Build.HARDWARE.contains("cheetah", ignoreCase = true) || // Pixel 7 Pro
+                    Build.HARDWARE.contains("lynx", ignoreCase = true) ||   // Pixel 7a
+                    Build.HARDWARE.contains("tangorpro", ignoreCase = true) || // Pixel Tablet
+                    Build.HARDWARE.contains("felix", ignoreCase = true) ||  // Pixel Fold
+                    Build.HARDWARE.contains("shiba", ignoreCase = true) ||  // Pixel 8
+                    Build.HARDWARE.contains("husky", ignoreCase = true) ||  // Pixel 8 Pro
+                    Build.HARDWARE.contains("akita", ignoreCase = true) ||  // Pixel 8a
+                    Build.HARDWARE.contains("caiman", ignoreCase = true) || // Pixel 9
+                    Build.HARDWARE.contains("komodo", ignoreCase = true) || // Pixel 9 Pro
+                    Build.HARDWARE.contains("tokay", ignoreCase = true) ||  // Pixel 9 Pro XL
+                    Build.HARDWARE.contains("comet", ignoreCase = true)     // Pixel 9 Pro Fold
+
+            if (isTensorChip) {
+                Log.d(TAG, "GPU not supported: Google Tensor chip detected (${Build.HARDWARE}/${Build.SOC_MODEL})")
+                Log.d(TAG, "Tensor chips require Google's Tensor ML SDK for NPU acceleration (experimental)")
+                return false
+            }
+
+            Log.d(TAG, "GPU supported: Device ${Build.HARDWARE}/${Build.SOC_MODEL}")
+            return true
+        }
     }
 
     private var llmInference: LlmInference? = null
@@ -120,10 +178,15 @@ class MediaPipeLlmClient @Inject constructor(
                     // Determine which backends to try
                     // GPU is ~8x faster for prefill but can crash on some devices
                     // Must set PreferredBackend to GPU or CPU (not legacy) for models with input masks
+                    val gpuSupported = isGpuSupported()
                     val gpuPreviouslyFailed = hasGpuFailed()
                     val backendsToTry = when {
                         !config.useGpuAcceleration -> {
                             Log.d(TAG, "GPU disabled in config, using CPU only")
+                            listOf(LlmInference.Backend.CPU)
+                        }
+                        !gpuSupported -> {
+                            Log.d(TAG, "GPU not supported on this device, using CPU only")
                             listOf(LlmInference.Backend.CPU)
                         }
                         gpuPreviouslyFailed -> {

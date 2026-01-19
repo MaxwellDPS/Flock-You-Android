@@ -619,10 +619,13 @@ class ScanningService : Service() {
                 }
                 ScanningServiceIpc.MSG_CLEAR_SEEN_DEVICES -> {
                     clearSeenDevices()
+                    broadcastSeenBleDevices()
+                    broadcastSeenWifiNetworks()
                 }
                 ScanningServiceIpc.MSG_RESET_DETECTION_COUNT -> {
                     detectionCount.value = 0
                     lastDetection.value = null
+                    broadcastLastDetection()
                     broadcastStateToClients()
                 }
                 ScanningServiceIpc.MSG_CLEAR_CELLULAR_HISTORY -> {
@@ -635,6 +638,7 @@ class ScanningService : Service() {
                 }
                 ScanningServiceIpc.MSG_CLEAR_ERRORS -> {
                     clearErrors()
+                    broadcastErrorLog()
                 }
                 ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
                     clearLearnedSignatures()
@@ -1060,6 +1064,10 @@ class ScanningService : Service() {
 
         // Initialize GNSS Satellite Monitor with error callback
         gnssSatelliteMonitor = com.flockyou.monitoring.GnssSatelliteMonitor(applicationContext, detectorCallbackImpl)
+
+        // Initialize detector health data so it's available immediately when clients connect
+        // This ensures Service Health screen can display data even before scanning starts
+        initializeDetectorHealth()
 
         createNotificationChannel()
     }
@@ -1503,9 +1511,18 @@ class ScanningService : Service() {
     
     private fun cleanupSeenDevices(timeout: Long) {
         val cutoff = System.currentTimeMillis() - timeout
+        val bleCountBefore = seenBleDevices.value.size
+        val wifiCountBefore = seenWifiNetworks.value.size
         synchronized(seenDevicesLock) {
             seenBleDevices.value = seenBleDevices.value.filter { it.lastSeen > cutoff }
             seenWifiNetworks.value = seenWifiNetworks.value.filter { it.lastSeen > cutoff }
+        }
+        // Broadcast if devices were removed
+        if (seenBleDevices.value.size != bleCountBefore) {
+            broadcastSeenBleDevices()
+        }
+        if (seenWifiNetworks.value.size != wifiCountBefore) {
+            broadcastSeenWifiNetworks()
         }
     }
     
@@ -1682,6 +1699,8 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
@@ -1912,6 +1931,8 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
@@ -1997,6 +2018,8 @@ class ScanningService : Service() {
                                 alertUser(det)
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
                                 Log.w(TAG, "DRONE DETECTED: ${drone.manufacturer} at ${drone.estimatedDistance}")
                             } catch (e: Exception) {
@@ -2033,6 +2056,8 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
 
                                 if (BuildConfig.DEBUG) {
@@ -2145,6 +2170,8 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
 
                                 Log.w(TAG, "ULTRASONIC: ${anomaly.type.displayName} - ${anomaly.frequency}Hz")
@@ -2261,6 +2288,8 @@ class ScanningService : Service() {
 
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
+                                broadcastLastDetection()
+                                broadcastStateToClients()
                                 broadcastDetectionRefresh()
 
                                 Log.w(TAG, "GNSS: ${anomaly.type.displayName} - ${anomaly.description}")
