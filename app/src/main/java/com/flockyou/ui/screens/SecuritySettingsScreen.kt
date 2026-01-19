@@ -604,6 +604,7 @@ private fun ChangePinDialog(
     var newPin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var isVerifying by remember { mutableStateOf(false) }
     var step by remember { mutableStateOf(1) } // 1 = current, 2 = new, 3 = confirm
 
     AlertDialog(
@@ -650,12 +651,19 @@ private fun ChangePinDialog(
                 onClick = {
                     when (step) {
                         1 -> {
-                            scope.launch {
-                                if (!appLockManager.verifyPinAsync(currentPin)) {
-                                    error = "Incorrect PIN"
-                                    currentPin = ""
-                                } else {
-                                    step = 2
+                            if (!isVerifying) {
+                                isVerifying = true
+                                scope.launch {
+                                    try {
+                                        if (!appLockManager.verifyPinAsync(currentPin)) {
+                                            error = "Incorrect PIN"
+                                            currentPin = ""
+                                        } else {
+                                            step = 2
+                                        }
+                                    } finally {
+                                        isVerifying = false
+                                    }
                                 }
                             }
                         }
@@ -676,20 +684,31 @@ private fun ChangePinDialog(
                             }
                         }
                     }
-                }
+                },
+                enabled = !isVerifying
             ) {
-                Text(if (step == 3) "Change PIN" else "Next")
+                if (isVerifying) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(if (step == 3) "Change PIN" else "Next")
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = {
-                if (step > 1) {
-                    step--
-                    error = null
-                } else {
-                    onDismiss()
-                }
-            }) {
+            TextButton(
+                onClick = {
+                    if (step > 1) {
+                        step--
+                        error = null
+                    } else {
+                        onDismiss()
+                    }
+                },
+                enabled = !isVerifying
+            ) {
                 Text(if (step > 1) "Back" else "Cancel")
             }
         }
@@ -705,6 +724,7 @@ private fun RemovePinDialog(
     val scope = rememberCoroutineScope()
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var isVerifying by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -743,25 +763,44 @@ private fun RemovePinDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    scope.launch {
-                        if (appLockManager.verifyPinAsync(pin)) {
-                            appLockManager.removePin()
-                            onPinRemoved()
-                        } else {
-                            error = "Incorrect PIN"
-                            pin = ""
+                    if (!isVerifying) {
+                        isVerifying = true
+                        scope.launch {
+                            try {
+                                if (appLockManager.verifyPinAsync(pin)) {
+                                    appLockManager.removePin()
+                                    onPinRemoved()
+                                } else {
+                                    error = "Incorrect PIN"
+                                    pin = ""
+                                }
+                            } finally {
+                                isVerifying = false
+                            }
                         }
                     }
                 },
+                enabled = !isVerifying,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
                 )
             ) {
-                Text("Remove PIN")
+                if (isVerifying) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                } else {
+                    Text("Remove PIN")
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isVerifying
+            ) {
                 Text("Cancel")
             }
         }

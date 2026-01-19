@@ -10,7 +10,6 @@ import android.telephony.CellInfoGsm
 import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellInfoWcdma
-@Suppress("DEPRECATION")
 import android.telephony.PhoneStateListener
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyCallback

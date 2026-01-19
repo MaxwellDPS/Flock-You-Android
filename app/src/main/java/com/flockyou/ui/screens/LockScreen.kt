@@ -41,6 +41,7 @@ fun LockScreen(
     val scope = rememberCoroutineScope()
     var enteredPin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var isVerifying by remember { mutableStateOf(false) }
     var isLockedOut by remember { mutableStateOf(appLockManager.isLockedOut()) }
     var remainingLockoutTime by remember { mutableStateOf(0L) }
 
@@ -161,25 +162,30 @@ fun LockScreen(
                     // Number pad
                     NumberPad(
                         onNumberClick = { number ->
-                            if (enteredPin.length < 8) {
+                            if (!isVerifying && enteredPin.length < 8) {
                                 enteredPin += number
                                 error = null
 
                                 // Auto-verify when 4+ digits entered
                                 if (enteredPin.length >= 4) {
                                     val pinToVerify = enteredPin
+                                    isVerifying = true
                                     scope.launch {
-                                        if (appLockManager.verifyPinAsync(pinToVerify)) {
-                                            onUnlocked()
-                                        } else {
-                                            val attempts = appLockManager.getFailedAttempts()
-                                            error = if (attempts >= 5) {
-                                                "Too many attempts. Please wait."
+                                        try {
+                                            if (appLockManager.verifyPinAsync(pinToVerify)) {
+                                                onUnlocked()
                                             } else {
-                                                "Incorrect PIN (${5 - attempts} attempts remaining)"
+                                                val attempts = appLockManager.getFailedAttempts()
+                                                error = if (attempts >= 5) {
+                                                    "Too many attempts. Please wait."
+                                                } else {
+                                                    "Incorrect PIN (${5 - attempts} attempts remaining)"
+                                                }
+                                                enteredPin = ""
+                                                isLockedOut = appLockManager.isLockedOut()
                                             }
-                                            enteredPin = ""
-                                            isLockedOut = appLockManager.isLockedOut()
+                                        } finally {
+                                            isVerifying = false
                                         }
                                     }
                                 }
