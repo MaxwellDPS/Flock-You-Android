@@ -105,124 +105,132 @@ object ScanningServiceIpc {
      * Handler for incoming messages from the scanning service.
      * Uses a background HandlerThread to process messages and deserialize JSON
      * off the main thread, then updates StateFlows (which are thread-safe).
+     *
+     * All message handling is wrapped in try-catch to prevent the handler thread
+     * from dying due to unexpected exceptions (robust error handling).
      */
     class IncomingHandler(
         private val connection: ScanningServiceConnection,
         looper: Looper
     ) : Handler(looper) {
         override fun handleMessage(msg: Message) {
-            when (msg.what) {
-                MSG_STATE_UPDATE -> {
-                    val bundle = msg.data
-                    connection.updateState(
-                        isScanning = bundle.getBoolean(KEY_IS_SCANNING, false),
-                        detectionCount = bundle.getInt(KEY_DETECTION_COUNT, 0),
-                        scanStatus = bundle.getString(KEY_SCAN_STATUS, "Idle"),
-                        bleStatus = bundle.getString(KEY_BLE_STATUS, "Idle"),
-                        wifiStatus = bundle.getString(KEY_WIFI_STATUS, "Idle"),
-                        locationStatus = bundle.getString(KEY_LOCATION_STATUS, "Idle"),
-                        cellularStatus = bundle.getString(KEY_CELLULAR_STATUS, "Idle"),
-                        satelliteStatus = bundle.getString(KEY_SATELLITE_STATUS, "Idle")
-                    )
+            try {
+                when (msg.what) {
+                    MSG_STATE_UPDATE -> {
+                        val bundle = msg.data
+                        connection.updateState(
+                            isScanning = bundle.getBoolean(KEY_IS_SCANNING, false),
+                            detectionCount = bundle.getInt(KEY_DETECTION_COUNT, 0),
+                            scanStatus = bundle.getString(KEY_SCAN_STATUS, "Idle"),
+                            bleStatus = bundle.getString(KEY_BLE_STATUS, "Idle"),
+                            wifiStatus = bundle.getString(KEY_WIFI_STATUS, "Idle"),
+                            locationStatus = bundle.getString(KEY_LOCATION_STATUS, "Idle"),
+                            cellularStatus = bundle.getString(KEY_CELLULAR_STATUS, "Idle"),
+                            satelliteStatus = bundle.getString(KEY_SATELLITE_STATUS, "Idle")
+                        )
+                    }
+                    MSG_SCANNING_STARTED -> {
+                        connection.updateScanning(true)
+                    }
+                    MSG_SCANNING_STOPPED -> {
+                        connection.updateScanning(false)
+                    }
+                    MSG_DETECTION_COUNT -> {
+                        connection.updateDetectionCount(msg.arg1)
+                    }
+                    MSG_ERROR -> {
+                        val errorMsg = msg.data?.getString(KEY_ERROR_MESSAGE) ?: "Unknown error"
+                        Log.e(TAG, "Service error: $errorMsg")
+                    }
+                    MSG_SUBSYSTEM_STATUS -> {
+                        val bundle = msg.data
+                        connection.updateSubsystemStatus(
+                            bleStatus = bundle.getString(KEY_BLE_STATUS),
+                            wifiStatus = bundle.getString(KEY_WIFI_STATUS),
+                            locationStatus = bundle.getString(KEY_LOCATION_STATUS),
+                            cellularStatus = bundle.getString(KEY_CELLULAR_STATUS),
+                            satelliteStatus = bundle.getString(KEY_SATELLITE_STATUS)
+                        )
+                    }
+                    MSG_SEEN_BLE_DEVICES -> {
+                        val json = msg.data?.getString(KEY_JSON_DATA)
+                        connection.updateSeenBleDevices(json)
+                    }
+                    MSG_SEEN_WIFI_NETWORKS -> {
+                        val json = msg.data?.getString(KEY_JSON_DATA)
+                        connection.updateSeenWifiNetworks(json)
+                    }
+                    MSG_CELLULAR_DATA -> {
+                        val bundle = msg.data
+                        connection.updateCellularData(
+                            cellStatusJson = bundle?.getString(KEY_CELL_STATUS_JSON),
+                            seenTowersJson = bundle?.getString(KEY_SEEN_TOWERS_JSON),
+                            anomaliesJson = bundle?.getString(KEY_CELLULAR_ANOMALIES_JSON),
+                            eventsJson = bundle?.getString(KEY_CELLULAR_EVENTS_JSON)
+                        )
+                    }
+                    MSG_SATELLITE_DATA -> {
+                        val bundle = msg.data
+                        connection.updateSatelliteData(
+                            stateJson = bundle?.getString(KEY_SATELLITE_STATE_JSON),
+                            anomaliesJson = bundle?.getString(KEY_SATELLITE_ANOMALIES_JSON),
+                            historyJson = bundle?.getString(KEY_SATELLITE_HISTORY_JSON)
+                        )
+                    }
+                    MSG_ROGUE_WIFI_DATA -> {
+                        val bundle = msg.data
+                        connection.updateRogueWifiData(
+                            statusJson = bundle?.getString(KEY_ROGUE_WIFI_STATUS_JSON),
+                            anomaliesJson = bundle?.getString(KEY_ROGUE_WIFI_ANOMALIES_JSON),
+                            suspiciousJson = bundle?.getString(KEY_SUSPICIOUS_NETWORKS_JSON)
+                        )
+                    }
+                    MSG_RF_DATA -> {
+                        val bundle = msg.data
+                        connection.updateRfData(
+                            statusJson = bundle?.getString(KEY_RF_STATUS_JSON),
+                            anomaliesJson = bundle?.getString(KEY_RF_ANOMALIES_JSON),
+                            dronesJson = bundle?.getString(KEY_DETECTED_DRONES_JSON)
+                        )
+                    }
+                    MSG_ULTRASONIC_DATA -> {
+                        val bundle = msg.data
+                        connection.updateUltrasonicData(
+                            statusJson = bundle?.getString(KEY_ULTRASONIC_STATUS_JSON),
+                            anomaliesJson = bundle?.getString(KEY_ULTRASONIC_ANOMALIES_JSON),
+                            beaconsJson = bundle?.getString(KEY_ULTRASONIC_BEACONS_JSON)
+                        )
+                    }
+                    MSG_LAST_DETECTION -> {
+                        val json = msg.data?.getString(KEY_LAST_DETECTION_JSON)
+                        connection.updateLastDetection(json)
+                    }
+                    MSG_GNSS_DATA -> {
+                        val bundle = msg.data
+                        connection.updateGnssData(
+                            statusJson = bundle?.getString(KEY_GNSS_STATUS_JSON),
+                            satellitesJson = bundle?.getString(KEY_GNSS_SATELLITES_JSON),
+                            anomaliesJson = bundle?.getString(KEY_GNSS_ANOMALIES_JSON),
+                            eventsJson = bundle?.getString(KEY_GNSS_EVENTS_JSON),
+                            measurementsJson = bundle?.getString(KEY_GNSS_MEASUREMENTS_JSON)
+                        )
+                    }
+                    MSG_DETECTOR_HEALTH -> {
+                        val json = msg.data?.getString(KEY_DETECTOR_HEALTH_JSON)
+                        connection.updateDetectorHealth(json)
+                    }
+                    MSG_ERROR_LOG -> {
+                        val json = msg.data?.getString(KEY_ERROR_LOG_JSON)
+                        connection.updateErrorLog(json)
+                    }
+                    MSG_DETECTION_REFRESH -> {
+                        connection.notifyDetectionRefresh()
+                    }
+                    else -> super.handleMessage(msg)
                 }
-                MSG_SCANNING_STARTED -> {
-                    connection.updateScanning(true)
-                }
-                MSG_SCANNING_STOPPED -> {
-                    connection.updateScanning(false)
-                }
-                MSG_DETECTION_COUNT -> {
-                    connection.updateDetectionCount(msg.arg1)
-                }
-                MSG_ERROR -> {
-                    val errorMsg = msg.data?.getString(KEY_ERROR_MESSAGE) ?: "Unknown error"
-                    Log.e(TAG, "Service error: $errorMsg")
-                }
-                MSG_SUBSYSTEM_STATUS -> {
-                    val bundle = msg.data
-                    connection.updateSubsystemStatus(
-                        bleStatus = bundle.getString(KEY_BLE_STATUS),
-                        wifiStatus = bundle.getString(KEY_WIFI_STATUS),
-                        locationStatus = bundle.getString(KEY_LOCATION_STATUS),
-                        cellularStatus = bundle.getString(KEY_CELLULAR_STATUS),
-                        satelliteStatus = bundle.getString(KEY_SATELLITE_STATUS)
-                    )
-                }
-                MSG_SEEN_BLE_DEVICES -> {
-                    val json = msg.data?.getString(KEY_JSON_DATA)
-                    connection.updateSeenBleDevices(json)
-                }
-                MSG_SEEN_WIFI_NETWORKS -> {
-                    val json = msg.data?.getString(KEY_JSON_DATA)
-                    connection.updateSeenWifiNetworks(json)
-                }
-                MSG_CELLULAR_DATA -> {
-                    val bundle = msg.data
-                    connection.updateCellularData(
-                        cellStatusJson = bundle?.getString(KEY_CELL_STATUS_JSON),
-                        seenTowersJson = bundle?.getString(KEY_SEEN_TOWERS_JSON),
-                        anomaliesJson = bundle?.getString(KEY_CELLULAR_ANOMALIES_JSON),
-                        eventsJson = bundle?.getString(KEY_CELLULAR_EVENTS_JSON)
-                    )
-                }
-                MSG_SATELLITE_DATA -> {
-                    val bundle = msg.data
-                    connection.updateSatelliteData(
-                        stateJson = bundle?.getString(KEY_SATELLITE_STATE_JSON),
-                        anomaliesJson = bundle?.getString(KEY_SATELLITE_ANOMALIES_JSON),
-                        historyJson = bundle?.getString(KEY_SATELLITE_HISTORY_JSON)
-                    )
-                }
-                MSG_ROGUE_WIFI_DATA -> {
-                    val bundle = msg.data
-                    connection.updateRogueWifiData(
-                        statusJson = bundle?.getString(KEY_ROGUE_WIFI_STATUS_JSON),
-                        anomaliesJson = bundle?.getString(KEY_ROGUE_WIFI_ANOMALIES_JSON),
-                        suspiciousJson = bundle?.getString(KEY_SUSPICIOUS_NETWORKS_JSON)
-                    )
-                }
-                MSG_RF_DATA -> {
-                    val bundle = msg.data
-                    connection.updateRfData(
-                        statusJson = bundle?.getString(KEY_RF_STATUS_JSON),
-                        anomaliesJson = bundle?.getString(KEY_RF_ANOMALIES_JSON),
-                        dronesJson = bundle?.getString(KEY_DETECTED_DRONES_JSON)
-                    )
-                }
-                MSG_ULTRASONIC_DATA -> {
-                    val bundle = msg.data
-                    connection.updateUltrasonicData(
-                        statusJson = bundle?.getString(KEY_ULTRASONIC_STATUS_JSON),
-                        anomaliesJson = bundle?.getString(KEY_ULTRASONIC_ANOMALIES_JSON),
-                        beaconsJson = bundle?.getString(KEY_ULTRASONIC_BEACONS_JSON)
-                    )
-                }
-                MSG_LAST_DETECTION -> {
-                    val json = msg.data?.getString(KEY_LAST_DETECTION_JSON)
-                    connection.updateLastDetection(json)
-                }
-                MSG_GNSS_DATA -> {
-                    val bundle = msg.data
-                    connection.updateGnssData(
-                        statusJson = bundle?.getString(KEY_GNSS_STATUS_JSON),
-                        satellitesJson = bundle?.getString(KEY_GNSS_SATELLITES_JSON),
-                        anomaliesJson = bundle?.getString(KEY_GNSS_ANOMALIES_JSON),
-                        eventsJson = bundle?.getString(KEY_GNSS_EVENTS_JSON),
-                        measurementsJson = bundle?.getString(KEY_GNSS_MEASUREMENTS_JSON)
-                    )
-                }
-                MSG_DETECTOR_HEALTH -> {
-                    val json = msg.data?.getString(KEY_DETECTOR_HEALTH_JSON)
-                    connection.updateDetectorHealth(json)
-                }
-                MSG_ERROR_LOG -> {
-                    val json = msg.data?.getString(KEY_ERROR_LOG_JSON)
-                    connection.updateErrorLog(json)
-                }
-                MSG_DETECTION_REFRESH -> {
-                    connection.notifyDetectionRefresh()
-                }
-                else -> super.handleMessage(msg)
+            } catch (e: Exception) {
+                // Log the error but don't let it crash the handler thread
+                Log.e(TAG, "Error handling IPC message ${msg.what}: ${e.message}", e)
             }
         }
     }

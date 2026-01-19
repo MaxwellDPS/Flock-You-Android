@@ -151,6 +151,11 @@
         android:theme="@style/Theme.FlockYou"
         android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="34">
+
+        <!-- Native libraries for MediaPipe GPU acceleration -->
+        <!-- Required for LLM inference with GPU backend on Android 12+ -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
         
         <activity
             android:name=".MainActivity"

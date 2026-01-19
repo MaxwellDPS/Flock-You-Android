@@ -584,66 +584,72 @@ class ScanningService : Service() {
     private val ipcClients = java.util.concurrent.CopyOnWriteArrayList<Messenger>()
 
     // Background HandlerThread for IPC processing to avoid blocking main thread
+    // All message handling is wrapped in try-catch to prevent the handler thread from dying
     private val ipcHandlerThread = HandlerThread("ScanningServiceIpc").apply { start() }
     private val ipcHandler = object : Handler(ipcHandlerThread.looper) {
         override fun handleMessage(msg: Message) {
-            when (msg.what) {
-                ScanningServiceIpc.MSG_REGISTER_CLIENT -> {
-                    msg.replyTo?.let { client ->
-                        if (!ipcClients.contains(client)) {
-                            ipcClients.add(client)
-                            Log.d(TAG, "IPC client registered (total: ${ipcClients.size})")
+            try {
+                when (msg.what) {
+                    ScanningServiceIpc.MSG_REGISTER_CLIENT -> {
+                        msg.replyTo?.let { client ->
+                            if (!ipcClients.contains(client)) {
+                                ipcClients.add(client)
+                                Log.d(TAG, "IPC client registered (total: ${ipcClients.size})")
+                            }
                         }
                     }
-                }
-                ScanningServiceIpc.MSG_UNREGISTER_CLIENT -> {
-                    msg.replyTo?.let { client ->
-                        ipcClients.remove(client)
-                        Log.d(TAG, "IPC client unregistered (total: ${ipcClients.size})")
+                    ScanningServiceIpc.MSG_UNREGISTER_CLIENT -> {
+                        msg.replyTo?.let { client ->
+                            ipcClients.remove(client)
+                            Log.d(TAG, "IPC client unregistered (total: ${ipcClients.size})")
+                        }
                     }
-                }
-                ScanningServiceIpc.MSG_REQUEST_STATE -> {
-                    msg.replyTo?.let { client ->
-                        sendStateToClient(client)
+                    ScanningServiceIpc.MSG_REQUEST_STATE -> {
+                        msg.replyTo?.let { client ->
+                            sendStateToClient(client)
+                        }
                     }
-                }
-                ScanningServiceIpc.MSG_START_SCANNING -> {
-                    if (!isScanning.value) {
-                        startScanning()
+                    ScanningServiceIpc.MSG_START_SCANNING -> {
+                        if (!isScanning.value) {
+                            startScanning()
+                        }
                     }
-                }
-                ScanningServiceIpc.MSG_STOP_SCANNING -> {
-                    if (isScanning.value) {
-                        stopScanning()
+                    ScanningServiceIpc.MSG_STOP_SCANNING -> {
+                        if (isScanning.value) {
+                            stopScanning()
+                        }
                     }
+                    ScanningServiceIpc.MSG_CLEAR_SEEN_DEVICES -> {
+                        clearSeenDevices()
+                        broadcastSeenBleDevices()
+                        broadcastSeenWifiNetworks()
+                    }
+                    ScanningServiceIpc.MSG_RESET_DETECTION_COUNT -> {
+                        detectionCount.value = 0
+                        lastDetection.value = null
+                        broadcastLastDetection()
+                        broadcastStateToClients()
+                    }
+                    ScanningServiceIpc.MSG_CLEAR_CELLULAR_HISTORY -> {
+                        clearCellularHistory()
+                        broadcastCellularData()
+                    }
+                    ScanningServiceIpc.MSG_CLEAR_SATELLITE_HISTORY -> {
+                        clearSatelliteHistory()
+                        broadcastSatelliteData()
+                    }
+                    ScanningServiceIpc.MSG_CLEAR_ERRORS -> {
+                        clearErrors()
+                        broadcastErrorLog()
+                    }
+                    ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
+                        clearLearnedSignatures()
+                    }
+                    else -> super.handleMessage(msg)
                 }
-                ScanningServiceIpc.MSG_CLEAR_SEEN_DEVICES -> {
-                    clearSeenDevices()
-                    broadcastSeenBleDevices()
-                    broadcastSeenWifiNetworks()
-                }
-                ScanningServiceIpc.MSG_RESET_DETECTION_COUNT -> {
-                    detectionCount.value = 0
-                    lastDetection.value = null
-                    broadcastLastDetection()
-                    broadcastStateToClients()
-                }
-                ScanningServiceIpc.MSG_CLEAR_CELLULAR_HISTORY -> {
-                    clearCellularHistory()
-                    broadcastCellularData()
-                }
-                ScanningServiceIpc.MSG_CLEAR_SATELLITE_HISTORY -> {
-                    clearSatelliteHistory()
-                    broadcastSatelliteData()
-                }
-                ScanningServiceIpc.MSG_CLEAR_ERRORS -> {
-                    clearErrors()
-                    broadcastErrorLog()
-                }
-                ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
-                    clearLearnedSignatures()
-                }
-                else -> super.handleMessage(msg)
+            } catch (e: Exception) {
+                // Log the error but don't let it crash the handler thread
+                Log.e(TAG, "Error handling IPC message ${msg.what}: ${e.message}", e)
             }
         }
     }

@@ -58,41 +58,22 @@ class MediaPipeLlmClient @Inject constructor(
 
         /**
          * Check if GPU acceleration is supported on this device.
-         * Returns false if OpenCL is not available or device is known to have issues.
+         * Returns false if OpenCL is not available.
+         *
+         * Note: For GPU to work on Android 12+, ensure AndroidManifest.xml includes:
+         *   <uses-native-library android:name="libvndksupport.so" android:required="false" />
+         *   <uses-native-library android:name="libOpenCL.so" android:required="false" />
          */
         fun isGpuSupported(): Boolean {
+            Log.d(TAG, "Checking GPU support on device: ${Build.HARDWARE}/${Build.SOC_MODEL}")
+
             // Check OpenCL availability
             if (!isOpenClAvailable) {
-                Log.d(TAG, "GPU not supported: OpenCL not available")
+                Log.d(TAG, "GPU not supported: OpenCL library not available")
                 return false
             }
 
-            // Known problematic devices/chipsets can be added here
-            // Currently Google Tensor chips have OpenCL issues
-            val isTensorChip = Build.SOC_MODEL.contains("Tensor", ignoreCase = true) ||
-                    Build.HARDWARE.contains("oriole", ignoreCase = true) || // Pixel 6
-                    Build.HARDWARE.contains("raven", ignoreCase = true) ||  // Pixel 6 Pro
-                    Build.HARDWARE.contains("bluejay", ignoreCase = true) || // Pixel 6a
-                    Build.HARDWARE.contains("panther", ignoreCase = true) || // Pixel 7
-                    Build.HARDWARE.contains("cheetah", ignoreCase = true) || // Pixel 7 Pro
-                    Build.HARDWARE.contains("lynx", ignoreCase = true) ||   // Pixel 7a
-                    Build.HARDWARE.contains("tangorpro", ignoreCase = true) || // Pixel Tablet
-                    Build.HARDWARE.contains("felix", ignoreCase = true) ||  // Pixel Fold
-                    Build.HARDWARE.contains("shiba", ignoreCase = true) ||  // Pixel 8
-                    Build.HARDWARE.contains("husky", ignoreCase = true) ||  // Pixel 8 Pro
-                    Build.HARDWARE.contains("akita", ignoreCase = true) ||  // Pixel 8a
-                    Build.HARDWARE.contains("caiman", ignoreCase = true) || // Pixel 9
-                    Build.HARDWARE.contains("komodo", ignoreCase = true) || // Pixel 9 Pro
-                    Build.HARDWARE.contains("tokay", ignoreCase = true) ||  // Pixel 9 Pro XL
-                    Build.HARDWARE.contains("comet", ignoreCase = true)     // Pixel 9 Pro Fold
-
-            if (isTensorChip) {
-                Log.d(TAG, "GPU not supported: Google Tensor chip detected (${Build.HARDWARE}/${Build.SOC_MODEL})")
-                Log.d(TAG, "Tensor chips require Google's Tensor ML SDK for NPU acceleration (experimental)")
-                return false
-            }
-
-            Log.d(TAG, "GPU supported: Device ${Build.HARDWARE}/${Build.SOC_MODEL}")
+            Log.d(TAG, "GPU supported: OpenCL available on ${Build.HARDWARE}/${Build.SOC_MODEL}")
             return true
         }
     }
