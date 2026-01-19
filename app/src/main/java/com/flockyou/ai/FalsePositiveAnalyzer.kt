@@ -16,13 +16,14 @@ import javax.inject.Singleton
  * False positives are filtered out by default but users can view them with explanations
  * of why the system believes they are not genuine surveillance devices.
  *
- * The analyzer uses MediaPipe LLM for enhanced analysis when available. If MediaPipe
- * is not ready, it can attempt lazy initialization via a provided callback, or fall
- * back to comprehensive rule-based detection.
+ * The analyzer uses the LlmEngineManager for enhanced analysis when available, which
+ * automatically handles fallback between ML Kit GenAI (Gemini Nano) and MediaPipe LLM.
+ * If no LLM engine is ready, it falls back to comprehensive rule-based detection.
  */
 @Singleton
 class FalsePositiveAnalyzer @Inject constructor(
-    private val mediaPipeLlmClient: MediaPipeLlmClient
+    private val mediaPipeLlmClient: MediaPipeLlmClient,
+    private val llmEngineManager: LlmEngineManager
 ) {
     companion object {
         private const val TAG = "FalsePositiveAnalyzer"
@@ -73,16 +74,19 @@ class FalsePositiveAnalyzer @Inject constructor(
             )
         }
 
-        // Try LLM analysis for more nuanced detection
-        var mediaPipeReady = mediaPipeLlmClient.isReady()
+        // Try LLM analysis for more nuanced detection using the LlmEngineManager
+        // This automatically handles fallback between Gemini Nano and MediaPipe
+        val activeEngine = llmEngineManager.activeEngine.value
+        val isLlmReady = activeEngine != LlmEngine.RULE_BASED &&
+                         llmEngineManager.isEngineReady(activeEngine)
 
-        // If MediaPipe not ready but we have a lazy init callback, try to initialize
-        if (!mediaPipeReady && tryLazyInit && lazyInitCallback != null) {
-            Log.d(TAG, "MediaPipe not ready, attempting lazy initialization for FP analysis")
+        // If no LLM engine ready but we have a lazy init callback, try to initialize
+        if (!isLlmReady && tryLazyInit && lazyInitCallback != null) {
+            Log.d(TAG, "LLM not ready, attempting lazy initialization for FP analysis")
             try {
-                mediaPipeReady = lazyInitCallback?.invoke() ?: false
-                if (mediaPipeReady) {
-                    Log.i(TAG, "Lazy initialization successful, MediaPipe now ready for FP analysis")
+                val initialized = lazyInitCallback?.invoke() ?: false
+                if (initialized) {
+                    Log.i(TAG, "Lazy initialization successful, LLM now ready for FP analysis")
                 } else {
                     Log.w(TAG, "Lazy initialization failed, falling back to rule-based FP analysis")
                 }
@@ -91,7 +95,13 @@ class FalsePositiveAnalyzer @Inject constructor(
             }
         }
 
-        if (mediaPipeReady) {
+        // Check again after potential lazy init
+        val finalEngine = llmEngineManager.activeEngine.value
+        val canUseLlm = finalEngine != LlmEngine.RULE_BASED &&
+                        llmEngineManager.isEngineReady(finalEngine)
+
+        if (canUseLlm) {
+            Log.d(TAG, "Using LLM engine ($finalEngine) for FP analysis")
             val llmResult = analyzeFpWithLlm(detection, contextInfo, ruleBasedResult)
             if (llmResult != null) {
                 return@withContext llmResult.copy(
@@ -429,10 +439,18 @@ class FalsePositiveAnalyzer @Inject constructor(
         val prompt = buildFpAnalysisPrompt(detection, contextInfo, ruleBasedResult)
 
         return try {
-            val response = mediaPipeLlmClient.generateResponse(prompt)
+            // Use the LlmEngineManager to generate response with automatic fallback
+            val response = llmEngineManager.generateResponse(prompt)
             if (response != null) {
                 parseLlmFpResponse(response, detection, ruleBasedResult)
-            } else null
+            } else {
+                // Fallback to MediaPipe directly if engine manager fails
+                Log.d(TAG, "Engine manager generateResponse returned null, trying MediaPipe directly")
+                val mediaPipeResponse = mediaPipeLlmClient.generateResponse(prompt)
+                if (mediaPipeResponse != null) {
+                    parseLlmFpResponse(mediaPipeResponse, detection, ruleBasedResult)
+                } else null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "LLM FP analysis failed: ${e.message}")
             null

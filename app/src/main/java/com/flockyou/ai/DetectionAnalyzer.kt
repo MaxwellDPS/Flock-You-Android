@@ -58,7 +58,8 @@ class DetectionAnalyzer @Inject constructor(
     private val detectionRepository: DetectionRepository,
     private val geminiNanoClient: GeminiNanoClient,
     private val mediaPipeLlmClient: MediaPipeLlmClient,
-    private val falsePositiveAnalyzer: FalsePositiveAnalyzer
+    private val falsePositiveAnalyzer: FalsePositiveAnalyzer,
+    private val llmEngineManager: LlmEngineManager
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -192,6 +193,11 @@ class DetectionAnalyzer @Inject constructor(
     /**
      * Initialize the selected AI model for inference.
      * Uses mutex to prevent race conditions during concurrent initialization attempts.
+     *
+     * The initialization follows a smart fallback chain:
+     * 1. ML Kit GenAI (Gemini Nano) - Alpha API, Pixel 8+ only, best quality
+     * 2. MediaPipe LLM (Gemma models) - Stable API, works on most devices
+     * 3. Rule-based analysis - Always available fallback
      */
     suspend fun initializeModel(): Boolean = modelStateMutex.withLock {
         Log.i(TAG, "=== initializeModel START ===")
@@ -227,30 +233,40 @@ class DetectionAnalyzer @Inject constructor(
                     "gpu=${currentInferenceConfig.useGpuAcceleration}, " +
                     "npu=${currentInferenceConfig.useNpuAcceleration}")
 
-                val initialized = when (currentModel.modelFormat) {
-                    ModelFormat.NONE -> {
-                        Log.d(TAG, "Using rule-based analysis (no model initialization needed)")
-                        isModelLoaded = true
-                        true
-                    }
-                    ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
-                        Log.d(TAG, "Attempting to initialize Gemini Nano via ML Kit GenAI (Alpha API)...")
-                        tryInitializeGeminiNano(settings)
-                    }
-                    ModelFormat.TASK -> {
-                        Log.d(TAG, "Attempting to initialize MediaPipe model: ${currentModel.id}")
-                        tryInitializeMediaPipeModel(settings)
-                    }
-                }
+                // Use LlmEngineManager for smart fallback chain initialization
+                val initialized = llmEngineManager.initialize(modelFromSettings, settings)
 
                 if (initialized) {
+                    // Update local state based on engine manager result
+                    val activeEngine = llmEngineManager.activeEngine.value
+                    Log.d(TAG, "LlmEngineManager initialized with engine: $activeEngine")
+
+                    when (activeEngine) {
+                        LlmEngine.GEMINI_NANO -> {
+                            geminiNanoInitialized = true
+                            isModelLoaded = true
+                            currentModel = AiModel.GEMINI_NANO
+                        }
+                        LlmEngine.MEDIAPIPE -> {
+                            isModelLoaded = true
+                            // Keep the model from settings if it's a MediaPipe model
+                            if (currentModel.modelFormat != ModelFormat.TASK) {
+                                currentModel = AiModel.GEMMA3_1B // Default to smallest
+                            }
+                        }
+                        LlmEngine.RULE_BASED -> {
+                            isModelLoaded = true
+                            currentModel = AiModel.RULE_BASED
+                        }
+                    }
+
                     _modelStatus.value = AiModelStatus.Ready
-                    Log.i(TAG, "Model initialized successfully: ${currentModel.displayName}, isModelLoaded=$isModelLoaded")
+                    Log.i(TAG, "Model initialized successfully via LlmEngineManager: $activeEngine, model=${currentModel.displayName}")
                     return@withContext true
                 }
 
-                // Fall back to rule-based only if initialization failed
-                Log.w(TAG, "Model initialization failed for ${currentModel.displayName}, falling back to rule-based")
+                // Fall back to rule-based only if initialization failed (should not happen)
+                Log.w(TAG, "LlmEngineManager initialization failed, falling back to rule-based")
                 currentModel = AiModel.RULE_BASED
                 isModelLoaded = true
                 _modelStatus.value = AiModelStatus.Ready
@@ -801,54 +817,21 @@ class DetectionAnalyzer @Inject constructor(
         Log.i(TAG, "=== generateAnalysis START ===")
         Log.d(TAG, "State at generateAnalysis:")
         Log.d(TAG, "  - currentModel: ${currentModel.id} (${currentModel.displayName})")
+        Log.d(TAG, "  - activeEngine: ${llmEngineManager.activeEngine.value}")
         Log.d(TAG, "  - isModelLoaded: $isModelLoaded")
         Log.d(TAG, "  - geminiNanoClient.isReady(): ${geminiNanoClient.isReady()}")
-        Log.d(TAG, "  - geminiNanoClient.getStatus(): ${geminiNanoClient.getStatus()}")
         Log.d(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
-        Log.d(TAG, "  - mediaPipeLlmClient.getStatus(): ${mediaPipeLlmClient.getStatus()}")
 
-        // Use Gemini Nano if available and selected (via ML Kit GenAI)
-        if (currentModel == AiModel.GEMINI_NANO && geminiNanoClient.isReady()) {
-            val geminiResult = geminiNanoClient.analyzeDetection(detection)
-            if (geminiResult.success) {
-                // Enhance with contextual insights if available
-                return if (contextualInsights != null) {
-                    geminiResult.copy(
-                        analysis = buildString {
-                            append(geminiResult.analysis ?: "")
-                            appendLine()
-                            appendLine("### Contextual Analysis")
-                            contextualInsights.locationPattern?.let { appendLine("- Location: $it") }
-                            contextualInsights.timePattern?.let { appendLine("- Time Pattern: $it") }
-                            contextualInsights.clusterInfo?.let { appendLine("- Cluster: $it") }
-                            contextualInsights.historicalContext?.let { appendLine("- History: $it") }
-                        },
-                        structuredData = buildStructuredData(detection, contextualInsights)
-                    )
-                } else {
-                    geminiResult.copy(structuredData = buildStructuredData(detection, null))
-                }
-            }
-            // Fall through to rule-based if Gemini fails
-            Log.w(TAG, "Gemini Nano analysis failed, using rule-based fallback")
-        }
+        // Use LlmEngineManager for analysis with automatic fallback
+        val activeEngine = llmEngineManager.activeEngine.value
+        Log.d(TAG, "Using LlmEngineManager with active engine: $activeEngine")
 
-        // Use MediaPipe LLM if loaded and ready
-        val canUseMediaPipe = currentModel != AiModel.RULE_BASED &&
-                              currentModel != AiModel.GEMINI_NANO &&
-                              isModelLoaded &&
-                              mediaPipeLlmClient.isReady()
-
-        Log.d(TAG, "LLM check: model=${currentModel.id}, isModelLoaded=$isModelLoaded, " +
-              "mediaPipeReady=${mediaPipeLlmClient.isReady()}, canUseMediaPipe=$canUseMediaPipe")
-
-        if (canUseMediaPipe) {
-            Log.i(TAG, "Using MediaPipe LLM for inference: ${currentModel.displayName}")
-            val llmResult = mediaPipeLlmClient.analyzeDetection(detection, currentModel)
-            Log.d(TAG, "MediaPipe LLM result: success=${llmResult.success}, error=${llmResult.error}")
+        // Only use LLM engines if not rule-based
+        if (activeEngine != LlmEngine.RULE_BASED && currentModel != AiModel.RULE_BASED) {
+            val llmResult = llmEngineManager.analyzeDetection(detection)
 
             if (llmResult.success) {
-                Log.i(TAG, "MediaPipe LLM analysis succeeded! Response length: ${llmResult.analysis?.length ?: 0}")
+                Log.i(TAG, "LLM analysis succeeded via $activeEngine! Response length: ${llmResult.analysis?.length ?: 0}")
                 // Enhance with contextual insights if available
                 return if (contextualInsights != null) {
                     llmResult.copy(
@@ -867,15 +850,11 @@ class DetectionAnalyzer @Inject constructor(
                     llmResult.copy(structuredData = buildStructuredData(detection, null))
                 }
             }
-            // Fall through to rule-based if LLM fails
-            Log.w(TAG, "MediaPipe LLM analysis failed, using rule-based fallback: ${llmResult.error}")
-        } else if (currentModel != AiModel.RULE_BASED && currentModel != AiModel.GEMINI_NANO) {
-            // Log detailed reasons why LLM is not being used
-            Log.w(TAG, "MediaPipe LLM not ready for use:")
-            Log.w(TAG, "  - currentModel: ${currentModel.id}")
-            Log.w(TAG, "  - isModelLoaded: $isModelLoaded")
-            Log.w(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
-            Log.w(TAG, "  - mediaPipeLlmClient status: ${mediaPipeLlmClient.getStatus()}")
+
+            // Log fallback reason
+            Log.w(TAG, "LLM analysis failed (${llmResult.error}), using rule-based fallback")
+        } else {
+            Log.d(TAG, "Using rule-based analysis (activeEngine=$activeEngine, currentModel=${currentModel.id})")
         }
 
         // Use comprehensive rule-based analysis as fallback

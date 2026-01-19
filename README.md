@@ -17,6 +17,7 @@
 
 <p align="center">
   <h3 align="center">Watch the Watchers 🥰</h3>
+  <h6>//APPROVED FOR RELEASE / DE-CONTROLED CHAOS//</h6>
   
   <p align="center"><b style="color: #eb2a2a;">CHAOS ANTI-ICE-ING TOOL</b></p>
   <p align="center">WE SEE YOU TOO, <b>WE WONT FORGET <b style="color: #eb2a2a;">YOUR ACTIONS</b></b></p>

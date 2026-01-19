@@ -422,12 +422,53 @@ class GeminiNanoClient @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error during Gemini Nano inference", e)
+
+            // Handle ML Kit GenAI specific error codes
+            val errorMessage = parseMLKitError(e)
+
             AiAnalysisResult(
                 success = false,
-                error = "Inference failed: ${e.message}",
+                error = errorMessage,
                 processingTimeMs = System.currentTimeMillis() - startTime,
                 modelUsed = "gemini-nano"
             )
+        }
+    }
+
+    /**
+     * Parse ML Kit GenAI error codes and return user-friendly messages.
+     * Based on the ML Kit GenAI documentation error codes.
+     */
+    private fun parseMLKitError(e: Exception): String {
+        val message = e.message ?: return "Unknown inference error"
+
+        return when {
+            // ErrorCode 601 - CONNECTION_ERROR: AICore binding failed
+            message.contains("601") || message.contains("CONNECTION_ERROR") ->
+                "Connection to AICore failed. Try updating or reinstalling Google Play Services, then reinstall the app."
+
+            // ErrorCode 606 - PREPARATION_ERROR: Config not downloaded
+            message.contains("606") || message.contains("PREPARATION_ERROR") ->
+                "Model configuration not ready. Please wait for the model to sync (may take minutes to hours with internet connection)."
+
+            // ErrorCode 0 - DOWNLOAD_ERROR: Network unavailable
+            message.contains("DOWNLOAD_ERROR") ->
+                "Network unavailable for model download. Please check your internet connection and try again."
+
+            // BACKGROUND_USE_BLOCKED: App not in foreground
+            message.contains("BACKGROUND_USE_BLOCKED") ->
+                "Gemini Nano can only run when the app is in the foreground. Please open the app and try again."
+
+            // BUSY: Per-app inference quota exceeded
+            message.contains("BUSY") ->
+                "Inference quota exceeded. Please wait a moment before trying again (exponential backoff recommended)."
+
+            // PER_APP_BATTERY_USE_QUOTA_EXCEEDED: Long-duration battery quota
+            message.contains("BATTERY_USE_QUOTA") ->
+                "Battery usage quota exceeded. Please try again later (daily limits apply)."
+
+            // Generic fallback
+            else -> "Inference failed: $message"
         }
     }
 
