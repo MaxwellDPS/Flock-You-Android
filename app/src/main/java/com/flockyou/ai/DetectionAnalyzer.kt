@@ -976,6 +976,8 @@ class DetectionAnalyzer @Inject constructor(
                     PromptTemplates.buildUltrasonicEnrichedPrompt(detection, enrichedData.analysis)
                 is EnrichedDetectorData.WifiFollowing ->
                     PromptTemplates.buildWifiFollowingEnrichedPrompt(detection, enrichedData.analysis)
+                is EnrichedDetectorData.Satellite ->
+                    PromptTemplates.buildSatelliteEnrichedPrompt(detection, enrichedData)
             }
         }
 

@@ -711,10 +711,10 @@ data class RfDetectionContext(
     val suspiciousPatterns: List<String> = emptyList(),
 
     /** Current location latitude */
-    override val latitude: Double? = null,
+    val latitude: Double? = null,
 
     /** Current location longitude */
-    override val longitude: Double? = null,
+    val longitude: Double? = null,
 
     /** Raw WiFi scan results for detailed analysis */
     val wifiScanResults: List<ScanResult>? = null,
@@ -726,5 +726,5 @@ data class RfDetectionContext(
     val hiddenNetworkAnalysis: HiddenNetworkAnalysis? = null,
 
     /** Timestamp of the scan */
-    override val timestamp: Long = System.currentTimeMillis()
-) : DetectionContext
+    val timestamp: Long = System.currentTimeMillis()
+)

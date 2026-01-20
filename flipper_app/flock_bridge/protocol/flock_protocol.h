@@ -29,6 +29,31 @@ typedef enum {
     FlockMsgTypeIrScanResult = 0x0B,
     FlockMsgTypeNfcScanRequest = 0x0C,
     FlockMsgTypeNfcScanResult = 0x0D,
+
+    // Active Probe TX Commands - Public Safety & Fleet
+    FlockMsgTypeLfProbeTx = 0x0E,        // Tire Kicker - 125kHz TPMS wake
+    FlockMsgTypeIrStrobeTx = 0x0F,       // Opticom Verifier - Traffic preemption
+    FlockMsgTypeWifiProbeTx = 0x10,      // Honey-Potter - Fleet SSID probing
+    FlockMsgTypeBleActiveScan = 0x11,    // BlueForce Handshake - Force SCAN_RSP
+
+    // Active Probe TX Commands - Infrastructure
+    FlockMsgTypeZigbeeBeaconTx = 0x12,   // Zigbee Knocker - Mesh mapping
+    FlockMsgTypeGpioPulseTx = 0x13,      // Ghost Car - Inductive loop spoof
+
+    // Active Probe TX Commands - Physical Access
+    FlockMsgTypeSubGhzReplayTx = 0x14,   // Sleep Denial - Alarm fatigue
+    FlockMsgTypeWiegandReplayTx = 0x15,  // Replay Injector - Card bypass
+    FlockMsgTypeMagSpoofTx = 0x16,       // MagSpoof - Magstripe emulation
+    FlockMsgTypeIButtonEmulate = 0x17,   // Master Key - 1-Wire emulation
+
+    // Active Probe TX Commands - Digital
+    FlockMsgTypeNrf24InjectTx = 0x18,    // MouseJacker - Keystroke injection
+
+    // Passive Scan Configuration
+    FlockMsgTypeSubGhzConfig = 0x20,     // Configure Sub-GHz listener params
+    FlockMsgTypeIrConfig = 0x21,         // Configure IR listener
+    FlockMsgTypeNrf24Config = 0x22,      // Configure NRF24 scanner
+
     FlockMsgTypeError = 0xFF,
 } FlockMessageType;
 
@@ -225,6 +250,99 @@ typedef struct __attribute__((packed)) {
 } FlockStatusResponse;
 
 // ============================================================================
+// Active Probe Payload Structures
+// ============================================================================
+
+// LF Probe (Tire Kicker) - 125kHz TPMS wake
+typedef struct __attribute__((packed)) {
+    uint16_t duration_ms;    // Duration to hold 125kHz carrier (100-5000ms)
+} FlockLfProbePayload;
+
+// IR Strobe (Opticom Verifier) - Traffic preemption test
+typedef struct __attribute__((packed)) {
+    uint16_t frequency_hz;   // Strobe frequency (14=High Prio, 10=Low Prio)
+    uint8_t duty_cycle;      // PWM duty cycle 0-100
+    uint16_t duration_ms;    // How long to strobe (100-10000ms)
+} FlockIrStrobePayload;
+
+// Wi-Fi Probe (Honey-Potter) - Fleet SSID probing
+typedef struct __attribute__((packed)) {
+    uint8_t ssid_len;        // Length of target SSID (1-32)
+    char ssid[32];           // Target SSID (not null terminated, use ssid_len)
+} FlockWifiProbePayload;
+
+// BLE Active Scan (BlueForce Handshake) - Force SCAN_RSP
+typedef struct __attribute__((packed)) {
+    uint8_t active_mode;     // 1=active (send SCAN_REQ), 0=passive
+} FlockBleActiveScanPayload;
+
+// Zigbee Beacon (Zigbee Knocker) - Mesh mapping
+typedef struct __attribute__((packed)) {
+    uint8_t channel;         // Zigbee channel 11-26, 0=hop
+} FlockZigbeeBeaconPayload;
+
+// GPIO Pulse (Ghost Car) - Inductive loop spoof
+typedef struct __attribute__((packed)) {
+    uint32_t frequency_hz;   // Resonant frequency (20000-150000 Hz typical)
+    uint16_t duration_ms;    // Pulse duration (50-5000ms)
+    uint16_t pulse_count;    // Number of pulses (1-20)
+} FlockGpioPulsePayload;
+
+// Sub-GHz Replay (Sleep Denial) - Alarm fatigue
+#define MAX_REPLAY_DATA_SIZE 256
+typedef struct __attribute__((packed)) {
+    uint32_t frequency;      // Target frequency in Hz
+    uint16_t data_len;       // Length of raw signal data
+    uint8_t repeat_count;    // Number of replays (1-100)
+    uint8_t data[MAX_REPLAY_DATA_SIZE]; // Captured signal data
+} FlockSubGhzReplayPayload;
+
+// Wiegand Replay (Replay Injector) - Card bypass
+typedef struct __attribute__((packed)) {
+    uint32_t facility_code;  // Facility code from captured card
+    uint32_t card_number;    // Card number from captured card
+    uint8_t bit_length;      // Wiegand format (26, 34, 37, etc.)
+} FlockWiegandReplayPayload;
+
+// MagSpoof - Magstripe emulation
+typedef struct __attribute__((packed)) {
+    uint8_t track1_len;      // Length of track 1 data (0-79)
+    char track1[80];         // Track 1 alphanumeric data
+    uint8_t track2_len;      // Length of track 2 data (0-40)
+    char track2[41];         // Track 2 numeric data
+} FlockMagSpoofPayload;
+
+// iButton Emulate (Master Key) - 1-Wire emulation
+typedef struct __attribute__((packed)) {
+    uint8_t key_id[8];       // DS1990A 8-byte key ID
+} FlockIButtonPayload;
+
+// NRF24 Inject (MouseJacker) - Keystroke injection
+#define MAX_KEYSTROKE_SIZE 64
+typedef struct __attribute__((packed)) {
+    uint8_t address[5];      // NRF24 5-byte address
+    uint8_t keystroke_len;   // Number of keycodes
+    uint8_t keystrokes[MAX_KEYSTROKE_SIZE]; // HID keycodes
+} FlockNrf24InjectPayload;
+
+// Sub-GHz Configuration - Passive scan params
+typedef struct __attribute__((packed)) {
+    uint8_t probe_type;      // 0=TPMS, 1=P25, 2=LoJack, 3=Pager, 4=PowerGrid, 5=Crane, 6=ESL, 7=Thermal
+    uint32_t frequency;      // Target frequency (0=default for probe type)
+    uint8_t modulation;      // 0=ASK, 1=FSK, 2=GFSK
+} FlockSubGhzConfigPayload;
+
+// IR Configuration - Passive detection params
+typedef struct __attribute__((packed)) {
+    uint8_t detect_opticom;  // 1=detect 14/10Hz emergency strobes
+} FlockIrConfigPayload;
+
+// NRF24 Configuration - Promiscuous scan params
+typedef struct __attribute__((packed)) {
+    uint8_t promiscuous;     // 1=scan all channels for vulnerable devices
+} FlockNrf24ConfigPayload;
+
+// ============================================================================
 // Function Prototypes - Serialization
 // ============================================================================
 
@@ -318,3 +436,96 @@ bool flock_protocol_parse_subghz_scan_request(
     size_t length,
     uint32_t* frequency_start,
     uint32_t* frequency_end);
+
+// ============================================================================
+// Active Probe Parsing Functions
+// ============================================================================
+
+/**
+ * Parse LF probe (Tire Kicker) request.
+ * Returns true if valid, false otherwise.
+ */
+bool flock_protocol_parse_lf_probe(
+    const uint8_t* buffer,
+    size_t length,
+    FlockLfProbePayload* payload);
+
+/**
+ * Parse IR strobe (Opticom Verifier) request.
+ */
+bool flock_protocol_parse_ir_strobe(
+    const uint8_t* buffer,
+    size_t length,
+    FlockIrStrobePayload* payload);
+
+/**
+ * Parse Wi-Fi probe (Honey-Potter) request.
+ */
+bool flock_protocol_parse_wifi_probe(
+    const uint8_t* buffer,
+    size_t length,
+    FlockWifiProbePayload* payload);
+
+/**
+ * Parse BLE active scan (BlueForce Handshake) request.
+ */
+bool flock_protocol_parse_ble_active_scan(
+    const uint8_t* buffer,
+    size_t length,
+    FlockBleActiveScanPayload* payload);
+
+/**
+ * Parse GPIO pulse (Ghost Car) request.
+ */
+bool flock_protocol_parse_gpio_pulse(
+    const uint8_t* buffer,
+    size_t length,
+    FlockGpioPulsePayload* payload);
+
+/**
+ * Parse Sub-GHz replay (Sleep Denial) request.
+ */
+bool flock_protocol_parse_subghz_replay(
+    const uint8_t* buffer,
+    size_t length,
+    FlockSubGhzReplayPayload* payload);
+
+/**
+ * Parse Wiegand replay (Replay Injector) request.
+ */
+bool flock_protocol_parse_wiegand_replay(
+    const uint8_t* buffer,
+    size_t length,
+    FlockWiegandReplayPayload* payload);
+
+/**
+ * Parse MagSpoof request.
+ */
+bool flock_protocol_parse_magspoof(
+    const uint8_t* buffer,
+    size_t length,
+    FlockMagSpoofPayload* payload);
+
+/**
+ * Parse iButton emulate (Master Key) request.
+ */
+bool flock_protocol_parse_ibutton(
+    const uint8_t* buffer,
+    size_t length,
+    FlockIButtonPayload* payload);
+
+/**
+ * Parse NRF24 inject (MouseJacker) request.
+ */
+bool flock_protocol_parse_nrf24_inject(
+    const uint8_t* buffer,
+    size_t length,
+    FlockNrf24InjectPayload* payload);
+
+/**
+ * Parse Sub-GHz configuration request.
+ */
+bool flock_protocol_parse_subghz_config(
+    const uint8_t* buffer,
+    size_t length,
+    FlockSubGhzConfigPayload* payload);

@@ -758,7 +758,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
 
     override suspend fun importConfig(jsonString: String): Boolean {
         return try {
-            val importedConfig = json.decodeFromString<DetectionConfig>(jsonString)
+            val importedConfig = gson.fromJson(jsonString, DetectionConfig::class.java)
             context.detectionConfigDataStore.edit { prefs ->
                 prefs[Keys.CONFIG_JSON] = gson.toJson(importedConfig)
             }

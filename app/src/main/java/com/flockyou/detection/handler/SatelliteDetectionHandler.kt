@@ -439,7 +439,7 @@ class SatelliteDetectionHandler @Inject constructor(
             riskIndicators.add("Rapid satellite switching detected (${context.recentHandoffCount} handoffs)")
         }
 
-        return EnrichedDetectorData(
+        return EnrichedDetectorData.Satellite(
             detectorType = "Satellite/NTN",
             metadata = metadata,
             signalCharacteristics = mapOf(

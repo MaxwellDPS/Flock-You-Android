@@ -50,10 +50,16 @@ import javax.inject.Singleton
  *
  * @author Flock You Android Team
  */
+/**
+ * BLE Detection Handler - Standalone implementation for BLE detection logic.
+ *
+ * This class provides the actual detection logic while [BleRegistryHandler]
+ * provides the [DetectionHandler] interface implementation for the registry.
+ */
 @Singleton
 class BleDetectionHandler @Inject constructor(
     @ApplicationContext private val context: Context
-) : DetectionHandler<BleDetectionContext> {
+) {
 
     companion object {
         private const val TAG = "BleDetectionHandler"
@@ -109,9 +115,9 @@ class BleDetectionHandler @Inject constructor(
 
     // ==================== DetectionHandler Implementation ====================
 
-    override val protocol: DetectionProtocol = DetectionProtocol.BLUETOOTH_LE
+    val protocol: DetectionProtocol = DetectionProtocol.BLUETOOTH_LE
 
-    override val supportedDeviceTypes: Set<DeviceType> = setOf(
+    val supportedDeviceTypes: Set<DeviceType> = setOf(
         // Trackers
         DeviceType.AIRTAG,
         DeviceType.TILE_TRACKER,
@@ -147,13 +153,13 @@ class BleDetectionHandler @Inject constructor(
         DeviceType.PIGVISION_SYSTEM
     )
 
-    override val displayName: String = "BLE Detection Handler"
+    val displayName: String = "BLE Detection Handler"
 
     private var _isActive: Boolean = false
-    override val isActive: Boolean get() = _isActive
+    val isActive: Boolean get() = _isActive
 
     private val _detections = MutableSharedFlow<Detection>(replay = 100)
-    override val detections: Flow<Detection> = _detections.asSharedFlow()
+    val detections: Flow<Detection> = _detections.asSharedFlow()
 
     // ==================== State ====================
 
@@ -206,22 +212,22 @@ class BleDetectionHandler @Inject constructor(
 
     // ==================== Lifecycle ====================
 
-    override fun startMonitoring() {
+    fun startMonitoring() {
         _isActive = true
         Log.d(TAG, "BLE detection monitoring started")
     }
 
-    override fun stopMonitoring() {
+    fun stopMonitoring() {
         _isActive = false
         Log.d(TAG, "BLE detection monitoring stopped")
     }
 
-    override fun updateLocation(latitude: Double, longitude: Double) {
+    fun updateLocation(latitude: Double, longitude: Double) {
         currentLatitude = latitude
         currentLongitude = longitude
     }
 
-    override fun clearHistory() {
+    fun clearHistory() {
         lastDetectionTime.clear()
         synchronized(packetTimestampsLock) {
             packetTimestamps.clear()
@@ -229,7 +235,7 @@ class BleDetectionHandler @Inject constructor(
         Log.d(TAG, "BLE detection history cleared")
     }
 
-    override fun destroy() {
+    fun destroy() {
         stopMonitoring()
         clearHistory()
     }
@@ -245,7 +251,7 @@ class BleDetectionHandler @Inject constructor(
      * @param data The BLE detection context from scan result
      * @return List of detections found (typically 0 or 1)
      */
-    override suspend fun processData(data: BleDetectionContext): List<Detection> {
+    suspend fun processData(data: BleDetectionContext): List<Detection> {
         val result = handleDetection(data) ?: return emptyList()
 
         // Emit to the detections flow

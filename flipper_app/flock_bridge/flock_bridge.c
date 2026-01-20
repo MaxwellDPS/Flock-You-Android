@@ -253,6 +253,163 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         case FlockMsgTypeNfcScanRequest:
             FURI_LOG_I(TAG, "NFC scan requested");
             break;
+
+        // ================================================================
+        // Active Probe Commands - Public Safety & Fleet
+        // ================================================================
+        case FlockMsgTypeLfProbeTx: {
+            // Tire Kicker - 125kHz LF burst for TPMS wake
+            FlockLfProbePayload lf_payload;
+            if (flock_protocol_parse_lf_probe(app->rx_buffer, app->rx_buffer_len, &lf_payload)) {
+                FURI_LOG_I(TAG, "LF Probe TX: %u ms", lf_payload.duration_ms);
+                // TODO: Implement via furi_hal_rfid_tim_read_start()
+                // furi_hal_rfid_tim_read_start();
+                // furi_delay_ms(lf_payload.duration_ms);
+                // furi_hal_rfid_tim_read_stop();
+            }
+            break;
+        }
+        case FlockMsgTypeIrStrobeTx: {
+            // Opticom Verifier - IR strobe for traffic preemption
+            FlockIrStrobePayload ir_payload;
+            if (flock_protocol_parse_ir_strobe(app->rx_buffer, app->rx_buffer_len, &ir_payload)) {
+                FURI_LOG_I(TAG, "IR Strobe TX: %u Hz, %u%% duty, %u ms",
+                    ir_payload.frequency_hz, ir_payload.duty_cycle, ir_payload.duration_ms);
+                // TODO: Implement via furi_hal_infrared_async_tx_start()
+            }
+            break;
+        }
+        case FlockMsgTypeWifiProbeTx: {
+            // Honey-Potter - Wi-Fi probe request to ESP32
+            FlockWifiProbePayload wifi_payload;
+            if (flock_protocol_parse_wifi_probe(app->rx_buffer, app->rx_buffer_len, &wifi_payload)) {
+                FURI_LOG_I(TAG, "WiFi Probe TX: SSID '%.*s'",
+                    wifi_payload.ssid_len, wifi_payload.ssid);
+                // Forward to ESP32 via UART
+                if (app->external_radio) {
+                    // external_radio_send_wifi_probe(app->external_radio, &wifi_payload);
+                }
+            }
+            break;
+        }
+        case FlockMsgTypeBleActiveScan: {
+            // BlueForce Handshake - Active BLE scanning
+            FlockBleActiveScanPayload ble_payload;
+            if (flock_protocol_parse_ble_active_scan(app->rx_buffer, app->rx_buffer_len, &ble_payload)) {
+                FURI_LOG_I(TAG, "BLE Active Scan: %s",
+                    ble_payload.active_mode ? "enabled" : "disabled");
+                // TODO: Configure BLE scanner active mode
+            }
+            break;
+        }
+
+        // ================================================================
+        // Active Probe Commands - Infrastructure
+        // ================================================================
+        case FlockMsgTypeZigbeeBeaconTx: {
+            // Zigbee Knocker - Forward to ESP32
+            FlockZigbeeBeaconPayload zb_payload;
+            // Note: parsing function would need to be added
+            FURI_LOG_I(TAG, "Zigbee Beacon TX requested");
+            // Forward to ESP32 via UART
+            break;
+        }
+        case FlockMsgTypeGpioPulseTx: {
+            // Ghost Car - GPIO coil pulse for inductive loop
+            FlockGpioPulsePayload gpio_payload;
+            if (flock_protocol_parse_gpio_pulse(app->rx_buffer, app->rx_buffer_len, &gpio_payload)) {
+                FURI_LOG_I(TAG, "GPIO Pulse TX: %lu Hz, %u ms, %u pulses",
+                    gpio_payload.frequency_hz, gpio_payload.duration_ms, gpio_payload.pulse_count);
+                // TODO: Implement via furi_hal_gpio
+            }
+            break;
+        }
+
+        // ================================================================
+        // Active Probe Commands - Physical Access
+        // ================================================================
+        case FlockMsgTypeSubGhzReplayTx: {
+            // Sleep Denial - Sub-GHz signal replay
+            FlockSubGhzReplayPayload replay_payload;
+            if (flock_protocol_parse_subghz_replay(app->rx_buffer, app->rx_buffer_len, &replay_payload)) {
+                FURI_LOG_I(TAG, "SubGHz Replay TX: %lu Hz, %u bytes, %u repeats",
+                    replay_payload.frequency, replay_payload.data_len, replay_payload.repeat_count);
+                // TODO: Implement via subghz_tx
+            }
+            break;
+        }
+        case FlockMsgTypeWiegandReplayTx: {
+            // Replay Injector - Wiegand card replay
+            FlockWiegandReplayPayload wiegand_payload;
+            if (flock_protocol_parse_wiegand_replay(app->rx_buffer, app->rx_buffer_len, &wiegand_payload)) {
+                FURI_LOG_I(TAG, "Wiegand Replay TX: FC=%lu, CN=%lu, %u-bit",
+                    wiegand_payload.facility_code, wiegand_payload.card_number, wiegand_payload.bit_length);
+                // TODO: Implement via GPIO D0/D1 pulses
+            }
+            break;
+        }
+        case FlockMsgTypeMagSpoofTx: {
+            // MagSpoof - Magstripe emulation
+            FlockMagSpoofPayload mag_payload;
+            if (flock_protocol_parse_magspoof(app->rx_buffer, app->rx_buffer_len, &mag_payload)) {
+                FURI_LOG_I(TAG, "MagSpoof TX: T1=%u bytes, T2=%u bytes",
+                    mag_payload.track1_len, mag_payload.track2_len);
+                // TODO: Implement via GPIO coil pulses
+            }
+            break;
+        }
+        case FlockMsgTypeIButtonEmulate: {
+            // Master Key - iButton emulation
+            FlockIButtonPayload ibutton_payload;
+            if (flock_protocol_parse_ibutton(app->rx_buffer, app->rx_buffer_len, &ibutton_payload)) {
+                FURI_LOG_I(TAG, "iButton Emulate: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+                    ibutton_payload.key_id[0], ibutton_payload.key_id[1],
+                    ibutton_payload.key_id[2], ibutton_payload.key_id[3],
+                    ibutton_payload.key_id[4], ibutton_payload.key_id[5],
+                    ibutton_payload.key_id[6], ibutton_payload.key_id[7]);
+                // TODO: Implement via furi_hal_ibutton
+            }
+            break;
+        }
+
+        // ================================================================
+        // Active Probe Commands - Digital
+        // ================================================================
+        case FlockMsgTypeNrf24InjectTx: {
+            // MouseJacker - NRF24 keystroke injection
+            FlockNrf24InjectPayload nrf_payload;
+            if (flock_protocol_parse_nrf24_inject(app->rx_buffer, app->rx_buffer_len, &nrf_payload)) {
+                FURI_LOG_I(TAG, "NRF24 Inject TX: addr=%02X:%02X:%02X:%02X:%02X, %u keystrokes",
+                    nrf_payload.address[0], nrf_payload.address[1], nrf_payload.address[2],
+                    nrf_payload.address[3], nrf_payload.address[4], nrf_payload.keystroke_len);
+                // TODO: Implement via NRF24 module on GPIO
+            }
+            break;
+        }
+
+        // ================================================================
+        // Passive Scan Configuration
+        // ================================================================
+        case FlockMsgTypeSubGhzConfig: {
+            FlockSubGhzConfigPayload config_payload;
+            if (flock_protocol_parse_subghz_config(app->rx_buffer, app->rx_buffer_len, &config_payload)) {
+                FURI_LOG_I(TAG, "SubGHz Config: type=%u, freq=%lu, mod=%u",
+                    config_payload.probe_type, config_payload.frequency, config_payload.modulation);
+                // TODO: Configure detection scheduler
+            }
+            break;
+        }
+        case FlockMsgTypeIrConfig: {
+            FURI_LOG_I(TAG, "IR Config requested");
+            // TODO: Configure IR scanner
+            break;
+        }
+        case FlockMsgTypeNrf24Config: {
+            FURI_LOG_I(TAG, "NRF24 Config requested");
+            // TODO: Configure NRF24 scanner
+            break;
+        }
+
         default:
             FURI_LOG_W(TAG, "Unknown message type: 0x%02X", header.type);
             break;

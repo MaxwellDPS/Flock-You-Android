@@ -740,4 +740,11 @@ sealed class EnrichedDetectorData {
     data class Gnss(val analysis: GnssAnomalyAnalysis) : EnrichedDetectorData()
     data class Ultrasonic(val analysis: BeaconAnalysis) : EnrichedDetectorData()
     data class WifiFollowing(val analysis: FollowingNetworkAnalysis) : EnrichedDetectorData()
+    data class Satellite(
+        val detectorType: String,
+        val metadata: Map<String, String>,
+        val signalCharacteristics: Map<String, String>,
+        val riskIndicators: List<String>,
+        val timestamp: Long
+    ) : EnrichedDetectorData()
 }
