@@ -353,9 +353,12 @@ class AutoMainScreen(carContext: CarContext) : Screen(carContext) {
         highCount: Int,
         totalThreats: Int
     ): StatusInfo {
+        // Append boost mode indicator when active for faster scanning feedback
+        val boostSuffix = if (isBoostModeActive) " \u2022 Fast Scan" else ""
+
         return when {
             criticalCount > 0 -> StatusInfo(
-                text = carContext.getString(R.string.auto_status_critical, criticalCount),
+                text = carContext.getString(R.string.auto_status_critical, criticalCount) + boostSuffix,
                 icon = CarIcon.Builder(
                     IconCompat.createWithResource(carContext, R.drawable.ic_warning)
                 ).setTint(CarColor.RED).build(),
@@ -363,7 +366,7 @@ class AutoMainScreen(carContext: CarContext) : Screen(carContext) {
                 isCritical = true
             )
             highCount > 0 -> StatusInfo(
-                text = carContext.getString(R.string.auto_status_threats, highCount),
+                text = carContext.getString(R.string.auto_status_threats, highCount) + boostSuffix,
                 icon = CarIcon.Builder(
                     IconCompat.createWithResource(carContext, R.drawable.ic_warning)
                 ).setTint(CarColor.YELLOW).build(),
@@ -371,7 +374,7 @@ class AutoMainScreen(carContext: CarContext) : Screen(carContext) {
                 isCritical = false
             )
             totalThreats > 0 -> StatusInfo(
-                text = carContext.getString(R.string.auto_status_devices, totalThreats),
+                text = carContext.getString(R.string.auto_status_devices, totalThreats) + boostSuffix,
                 icon = CarIcon.Builder(
                     IconCompat.createWithResource(carContext, R.drawable.ic_radar)
                 ).setTint(CarColor.YELLOW).build(),
@@ -379,7 +382,7 @@ class AutoMainScreen(carContext: CarContext) : Screen(carContext) {
                 isCritical = false
             )
             else -> StatusInfo(
-                text = carContext.getString(R.string.auto_status_safe),
+                text = carContext.getString(R.string.auto_status_safe) + boostSuffix,
                 icon = CarIcon.Builder(
                     IconCompat.createWithResource(carContext, R.drawable.ic_shield)
                 ).setTint(CarColor.GREEN).build(),

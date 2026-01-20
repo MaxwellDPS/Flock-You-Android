@@ -1574,6 +1574,21 @@ class ScanningService : Service() {
             while (isActive) {
                 val scanConfig = currentSettings.value // Re-read in case settings changed
 
+                // Boost mode reduces intervals by ~40% for faster detection on Android Auto
+                val boostMultiplier = if (isBoostModeActive) 0.6f else 1.0f
+
+                // Apply boost to BLE scan duration
+                val effectiveBleScanDuration = (scanConfig.bleScanDuration * boostMultiplier).toLong()
+                    .coerceAtLeast(10_000L) // Minimum 10 seconds
+
+                // Apply boost to BLE cooldown
+                val effectiveBleCooldown = (scanConfig.bleCooldown * boostMultiplier).toLong()
+                    .coerceAtLeast(2_000L) // Minimum 2 seconds
+
+                if (isBoostModeActive) {
+                    Log.d(TAG, "Boost mode active - using ${effectiveBleScanDuration}ms scan, ${effectiveBleCooldown}ms cooldown")
+                }
+
                 // Refresh wake lock to prevent timeout
                 acquireWakeLock()
 
@@ -1585,16 +1600,17 @@ class ScanningService : Service() {
                     // === BLE BURST SCAN ===
                     // Scan for 25 seconds in low-latency mode, then 5s cooldown
                     // This prevents Android thermal throttling while maximizing detection
+                    // (Boost mode reduces these timings for faster Android Auto detection)
                     if (scanConfig.enableBle) {
                         try {
                             startBleScan(scanConfig.aggressiveBleMode)
-                            delay(scanConfig.bleScanDuration)
+                            delay(effectiveBleScanDuration)
                             stopBleScan()
                             consecutiveBleErrors = 0 // Reset on success
 
                             // Thermal cooldown period - prevents Android from force-stopping scans
-                            Log.d(TAG, "BLE cooldown: ${scanConfig.bleCooldown}ms")
-                            delay(scanConfig.bleCooldown)
+                            Log.d(TAG, "BLE cooldown: ${effectiveBleCooldown}ms")
+                            delay(effectiveBleCooldown)
                         } catch (e: Exception) {
                             consecutiveBleErrors++
                             Log.e(TAG, "BLE scan error (consecutive: $consecutiveBleErrors)", e)
@@ -1604,7 +1620,7 @@ class ScanningService : Service() {
                             if (consecutiveBleErrors >= 3) {
                                 Log.w(TAG, "Too many BLE errors, pausing BLE for this cycle")
                                 bleStatus.value = SubsystemStatus.Error(-1, "Paused due to errors")
-                                delay(scanConfig.bleCooldown * 2) // Extended cooldown
+                                delay(effectiveBleCooldown * 2) // Extended cooldown
                             }
                         }
                     }
