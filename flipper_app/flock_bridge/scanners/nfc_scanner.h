@@ -102,51 +102,51 @@ typedef struct {
 /**
  * Allocate NFC scanner.
  */
-NfcScanner* nfc_scanner_alloc(void);
+NfcScanner* flock_nfc_scanner_alloc(void);
 
 /**
  * Free NFC scanner.
  */
-void nfc_scanner_free(NfcScanner* scanner);
+void flock_nfc_scanner_free(NfcScanner* scanner);
 
 /**
  * Configure the scanner.
  */
-void nfc_scanner_configure(
+void flock_nfc_scanner_configure(
     NfcScanner* scanner,
     const NfcScannerConfig* config);
 
 /**
  * Start NFC polling.
  */
-bool nfc_scanner_start(NfcScanner* scanner);
+bool flock_nfc_scanner_start(NfcScanner* scanner);
 
 /**
  * Stop NFC polling.
  */
-void nfc_scanner_stop(NfcScanner* scanner);
+void flock_nfc_scanner_stop(NfcScanner* scanner);
 
 /**
  * Check if scanner is running.
  */
-bool nfc_scanner_is_running(NfcScanner* scanner);
+bool flock_nfc_scanner_is_running(NfcScanner* scanner);
 
 /**
  * Get scanner statistics.
  */
-void nfc_scanner_get_stats(NfcScanner* scanner, NfcScannerStats* stats);
+void flock_nfc_scanner_get_stats(NfcScanner* scanner, NfcScannerStats* stats);
 
 /**
  * Identify card type from SAK and ATQA.
  */
-NfcCardType nfc_scanner_identify_card(uint8_t sak, const uint8_t* atqa, uint8_t uid_len);
+NfcCardType flock_nfc_scanner_identify_card(uint8_t sak, const uint8_t* atqa, uint8_t uid_len);
 
 /**
  * Get card type name.
  */
-const char* nfc_scanner_get_card_name(NfcCardType type);
+const char* flock_nfc_scanner_get_card_name(NfcCardType type);
 
 /**
  * Get NFC type name.
  */
-const char* nfc_scanner_get_type_name(NfcType type);
+const char* flock_nfc_scanner_get_type_name(NfcType type);

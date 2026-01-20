@@ -227,7 +227,7 @@ static int32_t wifi_scanner_worker(void* context) {
         sizeof(scan_params));
 
     // Monitor and manage channel hopping
-    uint32_t last_channel_change = furi_get_tick();
+    UNUSED(furi_get_tick()); // Reserved for future channel hopping implementation
     scanner->current_channel = scanner->config.channel;
 
     while (!scanner->should_stop) {
@@ -351,11 +351,12 @@ bool wifi_scanner_start(WifiScanner* scanner) {
     scanner->should_stop = false;
 
     // Register our callback with external radio
+    // Note: This is simplified - in practice, would need to chain callbacks
+    // or use a different mechanism to not overwrite other callbacks
     ExternalRadioConfig radio_config;
     radio_config.on_data = wifi_scanner_radio_callback;
     radio_config.callback_context = scanner;
-    // Note: This is simplified - in practice, would need to chain callbacks
-    // or use a different mechanism to not overwrite other callbacks
+    UNUSED(radio_config); // Callback registration handled elsewhere
 
     furi_mutex_release(scanner->mutex);
 
@@ -441,13 +442,13 @@ void wifi_scanner_clear_networks(WifiScanner* scanner) {
 
 const char* wifi_scanner_get_security_name(WifiSecurityType type) {
     switch (type) {
-    case WifiSecTypeOpen: return "Open";
-    case WifiSecTypeWEP: return "WEP";
-    case WifiSecTypeWPA: return "WPA";
-    case WifiSecTypeWPA2: return "WPA2";
-    case WifiSecTypeWPA3: return "WPA3";
-    case WifiSecTypeWPA2Enterprise: return "WPA2-Enterprise";
-    case WifiSecTypeWPA3Enterprise: return "WPA3-Enterprise";
+    case WifiSecurityOpen: return "Open";
+    case WifiSecurityWEP: return "WEP";
+    case WifiSecurityWPA: return "WPA";
+    case WifiSecurityWPA2: return "WPA2";
+    case WifiSecurityWPA3: return "WPA3";
+    case WifiSecurityWPA2Enterprise: return "WPA2-Enterprise";
+    case WifiSecurityWPA3Enterprise: return "WPA3-Enterprise";
     default: return "Unknown";
     }
 }
@@ -455,14 +456,14 @@ const char* wifi_scanner_get_security_name(WifiSecurityType type) {
 WifiSecurityType wifi_scanner_parse_security(uint8_t auth_mode) {
     // ESP32 wifi_auth_mode_t values
     switch (auth_mode) {
-    case 0: return WifiSecTypeOpen;
-    case 1: return WifiSecTypeWEP;
-    case 2: return WifiSecTypeWPA;
-    case 3: return WifiSecTypeWPA2;
-    case 4: return WifiSecTypeWPA2Enterprise;
-    case 5: return WifiSecTypeWPA3;
-    case 6: return WifiSecTypeWPA2;  // WPA2_WPA3_PSK
-    case 7: return WifiSecTypeWPA3Enterprise;
-    default: return WifiSecTypeUnknown;
+    case 0: return WifiSecurityOpen;
+    case 1: return WifiSecurityWEP;
+    case 2: return WifiSecurityWPA;
+    case 3: return WifiSecurityWPA2;
+    case 4: return WifiSecurityWPA2Enterprise;
+    case 5: return WifiSecurityWPA3;
+    case 6: return WifiSecurityWPA2;  // WPA2_WPA3_PSK
+    case 7: return WifiSecurityWPA3Enterprise;
+    default: return WifiSecurityUnknown;
     }
 }

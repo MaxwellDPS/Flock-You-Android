@@ -67,6 +67,8 @@ typedef enum {
     WifiSecurityWPA = 2,
     WifiSecurityWPA2 = 3,
     WifiSecurityWPA3 = 4,
+    WifiSecurityWPA2Enterprise = 5,
+    WifiSecurityWPA3Enterprise = 6,
     WifiSecurityUnknown = 255,
 } WifiSecurityType;
 

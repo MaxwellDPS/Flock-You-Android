@@ -9,27 +9,18 @@
 // USB CDC Callbacks
 // ============================================================================
 
-static void usb_cdc_ctrl_line_state_callback(void* context, uint8_t state) {
+// Note: CDC callback structure changed in newer firmware
+// These callbacks are adapted to the new CdcCallbacks structure
+static void usb_cdc_ctrl_line_callback(void* context, CdcCtrlLine ctrl_line) {
     FlockUsbCdc* usb = context;
-    FURI_LOG_D(TAG, "USB CDC ctrl line state: %d", state);
 
     // DTR (Data Terminal Ready) indicates connection state
-    bool connected = (state & (1 << 0)) != 0;
+    bool connected = (ctrl_line & CdcCtrlLineDTR) != 0;
 
     if (connected != usb->connected) {
         usb->connected = connected;
         FURI_LOG_I(TAG, "USB CDC %s", connected ? "connected" : "disconnected");
     }
-}
-
-static void usb_cdc_config_callback(void* context, uint8_t if_num) {
-    UNUSED(context);
-    FURI_LOG_D(TAG, "USB CDC config callback, interface: %d", if_num);
-}
-
-static void usb_cdc_line_coding_callback(void* context, struct usb_cdc_line_coding* coding) {
-    UNUSED(context);
-    FURI_LOG_D(TAG, "USB CDC line coding: %lu baud", coding->dwDTERate);
 }
 
 // ============================================================================
@@ -135,11 +126,12 @@ bool flock_usb_cdc_start(FlockUsbCdc* usb) {
     // Save current USB interface
     usb->usb_if_prev = furi_hal_usb_get_config();
 
-    // Configure CDC callbacks
-    static const CdcCallbacks cdc_callbacks = {
-        .ctrl_line_state = usb_cdc_ctrl_line_state_callback,
-        .config = usb_cdc_config_callback,
-        .line_coding = usb_cdc_line_coding_callback,
+    // Configure CDC callbacks - newer firmware has different callback structure
+    static CdcCallbacks cdc_callbacks = {
+        .tx_ep_callback = NULL,
+        .rx_ep_callback = NULL,
+        .state_callback = NULL,
+        .ctrl_line_callback = usb_cdc_ctrl_line_callback,
     };
 
     // Set USB mode to CDC
@@ -195,18 +187,17 @@ bool flock_usb_cdc_send(FlockUsbCdc* usb, const uint8_t* data, size_t length) {
     }
 
     // Send data via CDC
+    // Note: furi_hal_cdc_send returns void in newer firmware
+    // We need to copy to non-const buffer as the API requires non-const
     size_t sent = 0;
+    uint8_t tx_buf[64];
     while (sent < length) {
         size_t to_send = length - sent;
         if (to_send > 64) to_send = 64; // CDC max packet size
 
-        size_t result = furi_hal_cdc_send(0, data + sent, to_send);
-        if (result == 0) {
-            // Send failed
-            FURI_LOG_W(TAG, "USB CDC send failed at offset %zu", sent);
-            return false;
-        }
-        sent += result;
+        memcpy(tx_buf, data + sent, to_send);
+        furi_hal_cdc_send(0, tx_buf, to_send);
+        sent += to_send;
     }
 
     return true;
@@ -236,19 +227,19 @@ bool flock_bridge_send_data(FlockBridgeApp* app, const uint8_t* data, size_t len
 
     bool result = false;
 
+    // BT serial send function (implemented in bt_serial.c)
+    extern bool flock_bt_serial_send(FlockBtSerial* bt, const uint8_t* data, size_t length);
+
     // Try to send via the active connection
     if (app->connection_mode == FlockConnectionUsb && app->usb_connected) {
         result = flock_usb_cdc_send(app->usb_cdc, data, length);
     } else if (app->connection_mode == FlockConnectionBluetooth && app->bt_connected) {
-        // BT serial send function (implemented in bt_serial.c)
-        extern bool flock_bt_serial_send(FlockBtSerial* bt, const uint8_t* data, size_t length);
         result = flock_bt_serial_send(app->bt_serial, data, length);
     } else {
         // Try USB first, then BT
         if (app->usb_connected) {
             result = flock_usb_cdc_send(app->usb_cdc, data, length);
         } else if (app->bt_connected) {
-            extern bool flock_bt_serial_send(FlockBtSerial* bt, const uint8_t* data, size_t length);
             result = flock_bt_serial_send(app->bt_serial, data, length);
         }
     }

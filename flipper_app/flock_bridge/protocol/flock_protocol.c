@@ -370,7 +370,7 @@ bool flock_protocol_parse_wifi_probe(
         payload->ssid_len = 32;
     }
 
-    if (length < HEADER_SIZE + 1 + payload->ssid_len) {
+    if (length < (size_t)(HEADER_SIZE + 1 + payload->ssid_len)) {
         return false;
     }
 
@@ -465,7 +465,7 @@ bool flock_protocol_parse_subghz_replay(
         payload->repeat_count = 100;
     }
 
-    if (length < HEADER_SIZE + 7 + payload->data_len) {
+    if (length < (size_t)(HEADER_SIZE + 7 + payload->data_len)) {
         return false;
     }
 
@@ -598,7 +598,7 @@ bool flock_protocol_parse_nrf24_inject(
         payload->keystroke_len = MAX_KEYSTROKE_SIZE;
     }
 
-    if (length < HEADER_SIZE + 6 + payload->keystroke_len) {
+    if (length < (size_t)(HEADER_SIZE + 6 + payload->keystroke_len)) {
         return false;
     }
 

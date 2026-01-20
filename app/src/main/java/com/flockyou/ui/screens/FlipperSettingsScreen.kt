@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun FlipperSettingsScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToActiveProbes: () -> Unit = {},
     viewModel: FlipperSettingsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -137,6 +138,18 @@ fun FlipperSettingsScreen(
                     onDeauthChange = { scope.launch { viewModel.setWipsDeauthDetection(it) } },
                     onKarmaChange = { scope.launch { viewModel.setWipsKarmaDetection(it) } },
                     onRogueApChange = { scope.launch { viewModel.setWipsRogueApDetection(it) } }
+                )
+            }
+
+            // Active Probes Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                SectionHeader(title = "Active Probes")
+            }
+
+            item {
+                ActiveProbesEntryCard(
+                    onNavigateToActiveProbes = onNavigateToActiveProbes
                 )
             }
 
@@ -675,6 +688,68 @@ private fun WipsToggle(
             checked = checked,
             onCheckedChange = onCheckedChange
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActiveProbesEntryCard(
+    onNavigateToActiveProbes: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onNavigateToActiveProbes,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.RadioButtonChecked,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Active Probes",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Transmit RF signals for authorized penetration testing",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    FeatureRow(icon = Icons.Default.Security, text = "TPMS wake-up (125kHz LF)")
+                    FeatureRow(icon = Icons.Default.Traffic, text = "Traffic preemption testing (IR)")
+                    FeatureRow(icon = Icons.Default.Wifi, text = "Fleet SSID probing")
+                    FeatureRow(icon = Icons.Default.Key, text = "Access control testing")
+                    FeatureRow(icon = Icons.Default.Keyboard, text = "HID injection testing")
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Requires explicit authorization for each probe category",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
     }
 }
 

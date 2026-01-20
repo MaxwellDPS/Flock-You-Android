@@ -5,6 +5,7 @@ import com.flockyou.data.model.DetectionMethod
 import com.flockyou.data.model.DetectionProtocol
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.ThreatLevel
+import java.util.concurrent.ConcurrentHashMap
 
 // ============================================================================
 // Detection Context Hierarchy
@@ -594,12 +595,14 @@ interface DetectionHandler<T : DetectionContext> {
      * @return true if this handler can process the context, false otherwise
      */
     fun canHandle(context: DetectionContext): Boolean {
-        @Suppress("UNCHECKED_CAST")
-        return try {
-            context as T
-            true
-        } catch (e: ClassCastException) {
-            false
+        return when (context) {
+            is DetectionContext.BluetoothLe -> protocol == DetectionProtocol.BLUETOOTH_LE
+            is DetectionContext.WiFi -> protocol == DetectionProtocol.WIFI
+            is DetectionContext.Cellular -> protocol == DetectionProtocol.CELLULAR
+            is DetectionContext.Gnss -> protocol == DetectionProtocol.GNSS
+            is DetectionContext.Audio -> protocol == DetectionProtocol.AUDIO
+            is DetectionContext.RfSpectrum -> protocol == DetectionProtocol.RF
+            is DetectionContext.Satellite -> protocol == DetectionProtocol.SATELLITE
         }
     }
 
@@ -654,12 +657,13 @@ interface DetectionHandler<T : DetectionContext> {
 abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> {
 
     /** Configurable thresholds, can be overridden by subclasses */
-    protected open var thresholds: DetectionThresholds = DefaultDetectionThresholds()
+    @Volatile
+    private var _thresholds: DetectionThresholds = DefaultDetectionThresholds()
 
     /** Device type profiles registered with this handler */
-    protected val deviceProfiles = mutableMapOf<DeviceType, DeviceTypeProfile>()
+    protected val deviceProfiles: MutableMap<DeviceType, DeviceTypeProfile> = ConcurrentHashMap()
 
-    override fun getThresholds(): DetectionThresholds = thresholds
+    override fun getThresholds(): DetectionThresholds = _thresholds
 
     /**
      * Updates the detection thresholds.
@@ -667,7 +671,7 @@ abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> 
      * @param newThresholds The new thresholds to use
      */
     fun updateThresholds(newThresholds: DetectionThresholds) {
-        thresholds = newThresholds
+        _thresholds = newThresholds
     }
 
     override fun getDeviceProfile(deviceType: DeviceType): DeviceTypeProfile? {
@@ -806,7 +810,7 @@ abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> 
      * @return true if RSSI is above the minimum threshold
      */
     protected fun meetsRssiThreshold(rssi: Int): Boolean {
-        return rssi >= thresholds.minRssi
+        return rssi >= getThresholds().minRssi
     }
 
     /**
@@ -816,7 +820,7 @@ abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> 
      * @return true if confidence is above the minimum threshold
      */
     protected fun meetsConfidenceThreshold(confidence: Float): Boolean {
-        return confidence >= thresholds.minConfidence
+        return confidence >= getThresholds().minConfidence
     }
 
     /**
@@ -826,6 +830,6 @@ abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> 
      * @return true if score is above the minimum threshold
      */
     protected fun meetsThreatScoreThreshold(score: Int): Boolean {
-        return score >= thresholds.minThreatScore
+        return score >= getThresholds().minThreatScore
     }
 }

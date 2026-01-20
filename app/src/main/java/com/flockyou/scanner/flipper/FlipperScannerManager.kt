@@ -283,6 +283,13 @@ class FlipperScannerManager @Inject constructor(
     fun isConnected(): Boolean = flipperClient?.isConnected() ?: false
 
     /**
+     * Get the FlipperClient for direct probe execution.
+     * Returns null if not initialized.
+     */
+    val client: FlipperClient?
+        get() = flipperClient
+
+    /**
      * Start scanning with current settings
      */
     fun startScanning(patterns: List<SurveillancePattern> = emptyList()) {

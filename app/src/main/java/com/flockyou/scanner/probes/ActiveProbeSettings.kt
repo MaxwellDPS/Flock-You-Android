@@ -14,7 +14,8 @@ private val Context.activeProbeDataStore: DataStore<Preferences> by preferencesD
 
 /**
  * Settings for Active Probe features.
- * All active probes are disabled by default and require explicit user consent.
+ * All active probes are disabled by default and require explicit global consent.
+ * Once consent is given via authorization note, all probes in enabled categories are allowed.
  */
 data class ActiveProbeSettings(
     // Master toggle - must be enabled before any active probe can fire
@@ -27,9 +28,6 @@ data class ActiveProbeSettings(
     val physicalAccessProbesEnabled: Boolean = false,
     val digitalProbesEnabled: Boolean = false,
 
-    // Consent tracking - which dangerous probes has user explicitly acknowledged
-    val consentedProbes: Set<String> = emptySet(),
-
     // Safety limits
     val maxLfDurationMs: Int = 5000,        // Max TPMS wake duration
     val maxIrStrobeDurationMs: Int = 10000, // Max Opticom strobe duration
@@ -38,10 +36,18 @@ data class ActiveProbeSettings(
     // Audit logging
     val logActiveProbeUsage: Boolean = true,
 
-    // Authorization context (for pentesting engagements)
+    // Global authorization/consent (for pentesting engagements)
+    // Setting this note serves as consent for ALL active probes
     val authorizationNote: String = "",
-    val authorizationTimestamp: Long = 0
-)
+    val authorizationTimestamp: Long = 0,
+
+    // Per-probe consent tracking
+    val consentedProbes: Set<String> = emptySet()
+) {
+    /** Returns true if global consent has been given */
+    val hasGlobalConsent: Boolean
+        get() = authorizationNote.isNotBlank() && authorizationTimestamp > 0
+}
 
 @Singleton
 class ActiveProbeSettingsRepository @Inject constructor(
@@ -54,13 +60,13 @@ class ActiveProbeSettingsRepository @Inject constructor(
         val INDUSTRIAL_ENABLED = booleanPreferencesKey("industrial_probes_enabled")
         val PHYSICAL_ACCESS_ENABLED = booleanPreferencesKey("physical_access_probes_enabled")
         val DIGITAL_ENABLED = booleanPreferencesKey("digital_probes_enabled")
-        val CONSENTED_PROBES = stringSetPreferencesKey("consented_probes")
         val MAX_LF_DURATION_MS = intPreferencesKey("max_lf_duration_ms")
         val MAX_IR_STROBE_DURATION_MS = intPreferencesKey("max_ir_strobe_duration_ms")
         val MAX_REPLAY_COUNT = intPreferencesKey("max_replay_count")
         val LOG_ACTIVE_PROBE_USAGE = booleanPreferencesKey("log_active_probe_usage")
         val AUTHORIZATION_NOTE = stringPreferencesKey("authorization_note")
         val AUTHORIZATION_TIMESTAMP = longPreferencesKey("authorization_timestamp")
+        val CONSENTED_PROBES = stringSetPreferencesKey("consented_probes")
     }
 
     val settings: Flow<ActiveProbeSettings> = context.activeProbeDataStore.data.map { preferences ->
@@ -71,13 +77,13 @@ class ActiveProbeSettingsRepository @Inject constructor(
             industrialProbesEnabled = preferences[PreferencesKeys.INDUSTRIAL_ENABLED] ?: false,
             physicalAccessProbesEnabled = preferences[PreferencesKeys.PHYSICAL_ACCESS_ENABLED] ?: false,
             digitalProbesEnabled = preferences[PreferencesKeys.DIGITAL_ENABLED] ?: false,
-            consentedProbes = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet(),
             maxLfDurationMs = preferences[PreferencesKeys.MAX_LF_DURATION_MS] ?: 5000,
             maxIrStrobeDurationMs = preferences[PreferencesKeys.MAX_IR_STROBE_DURATION_MS] ?: 10000,
             maxReplayCount = preferences[PreferencesKeys.MAX_REPLAY_COUNT] ?: 10,
             logActiveProbeUsage = preferences[PreferencesKeys.LOG_ACTIVE_PROBE_USAGE] ?: true,
             authorizationNote = preferences[PreferencesKeys.AUTHORIZATION_NOTE] ?: "",
-            authorizationTimestamp = preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] ?: 0
+            authorizationTimestamp = preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] ?: 0,
+            consentedProbes = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
         )
     }
 
@@ -107,36 +113,8 @@ class ActiveProbeSettingsRepository @Inject constructor(
     }
 
     /**
-     * Record user consent for a specific probe after showing warning dialog.
-     */
-    suspend fun recordProbeConsent(probeId: String) {
-        context.activeProbeDataStore.edit { preferences ->
-            val current = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
-            preferences[PreferencesKeys.CONSENTED_PROBES] = current + probeId
-        }
-    }
-
-    /**
-     * Revoke consent for a specific probe.
-     */
-    suspend fun revokeProbeConsent(probeId: String) {
-        context.activeProbeDataStore.edit { preferences ->
-            val current = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
-            preferences[PreferencesKeys.CONSENTED_PROBES] = current - probeId
-        }
-    }
-
-    /**
-     * Check if user has consented to a specific probe.
-     */
-    fun hasConsent(settings: ActiveProbeSettings, probeId: String): Boolean {
-        val probe = ProbeCatalog.getById(probeId) ?: return false
-        if (!probe.requiresConsent) return true
-        return probeId in settings.consentedProbes
-    }
-
-    /**
      * Check if a probe is allowed to execute based on current settings.
+     * With global consent model, once authorization is given all probes in enabled categories are allowed.
      */
     fun isProbeAllowed(settings: ActiveProbeSettings, probeId: String): ProbeAllowedResult {
         val probe = ProbeCatalog.getById(probeId)
@@ -145,6 +123,11 @@ class ActiveProbeSettingsRepository @Inject constructor(
         // Master toggle check
         if (!settings.activeProbesEnabled && probe.type != ProbeType.PASSIVE) {
             return ProbeAllowedResult.Denied("Active probes are disabled. Enable in settings first.")
+        }
+
+        // Global consent check - authorization note serves as consent for all probes
+        if (!settings.hasGlobalConsent && probe.type != ProbeType.PASSIVE) {
+            return ProbeAllowedResult.Denied("Global authorization required. Enable Active Probes to provide consent.")
         }
 
         // Category toggle check
@@ -157,11 +140,6 @@ class ActiveProbeSettingsRepository @Inject constructor(
         }
         if (!categoryEnabled && probe.type != ProbeType.PASSIVE) {
             return ProbeAllowedResult.Denied("${probe.category.displayName} probes are disabled.")
-        }
-
-        // Consent check for dangerous probes
-        if (probe.requiresConsent && probeId !in settings.consentedProbes) {
-            return ProbeAllowedResult.RequiresConsent(probe.consentWarning ?: "This probe requires consent.")
         }
 
         return ProbeAllowedResult.Allowed
@@ -178,13 +156,34 @@ class ActiveProbeSettingsRepository @Inject constructor(
     }
 
     /**
-     * Clear all consent and authorization data.
+     * Clear authorization/consent and disable active probes.
      */
-    suspend fun clearAllConsent() {
+    suspend fun clearAuthorization() {
         context.activeProbeDataStore.edit { preferences ->
-            preferences[PreferencesKeys.CONSENTED_PROBES] = emptySet()
             preferences[PreferencesKeys.AUTHORIZATION_NOTE] = ""
             preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] = 0
+            preferences[PreferencesKeys.ACTIVE_PROBES_ENABLED] = false
+            preferences[PreferencesKeys.CONSENTED_PROBES] = emptySet()
+        }
+    }
+
+    /**
+     * Grant consent for a specific probe.
+     */
+    suspend fun grantProbeConsent(probeId: String) {
+        context.activeProbeDataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
+            preferences[PreferencesKeys.CONSENTED_PROBES] = current + probeId
+        }
+    }
+
+    /**
+     * Revoke consent for a specific probe.
+     */
+    suspend fun revokeProbeConsent(probeId: String) {
+        context.activeProbeDataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
+            preferences[PreferencesKeys.CONSENTED_PROBES] = current - probeId
         }
     }
 
@@ -215,6 +214,5 @@ class ActiveProbeSettingsRepository @Inject constructor(
  */
 sealed class ProbeAllowedResult {
     object Allowed : ProbeAllowedResult()
-    data class RequiresConsent(val warning: String) : ProbeAllowedResult()
     data class Denied(val reason: String) : ProbeAllowedResult()
 }

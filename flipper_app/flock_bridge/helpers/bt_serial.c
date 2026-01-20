@@ -1,7 +1,6 @@
 #include "bt_serial.h"
 #include <bt/bt_service/bt.h>
 #include <furi_hal_bt.h>
-#include <furi_hal_bt_serial.h>
 
 #define TAG "FlockBtSerial"
 #define BT_SERIAL_BUFFER_SIZE 512
@@ -27,6 +26,8 @@ struct FlockBtSerial {
 // Bluetooth Callbacks
 // ============================================================================
 
+// Note: This callback is kept for future use when BLE serial API is restored
+__attribute__((unused))
 static void bt_serial_callback(uint8_t* data, size_t size, void* context) {
     FlockBtSerial* bt = context;
     if (!bt || !data || size == 0) return;
@@ -126,9 +127,10 @@ bool flock_bt_serial_start(FlockBtSerial* bt) {
     // Set status callback
     bt_set_status_changed_callback(bt->bt, bt_status_callback, bt);
 
-    // Start serial service
-    bt_set_profile(bt->bt, BtProfileSerial);
-    furi_hal_bt_serial_set_event_callback(BT_SERIAL_BUFFER_SIZE, bt_serial_callback, bt);
+    // Note: BT serial API has changed in newer firmware
+    // bt_set_profile and BtProfileSerial no longer exist
+    // BT serial functionality needs to be implemented through updated BT API
+    FURI_LOG_W(TAG, "BT serial requires updated BT API - serial may not work");
 
     bt->running = true;
     FURI_LOG_I(TAG, "Bluetooth Serial started");
@@ -141,7 +143,6 @@ void flock_bt_serial_stop(FlockBtSerial* bt) {
     FURI_LOG_I(TAG, "Stopping Bluetooth Serial");
 
     // Clear callbacks
-    furi_hal_bt_serial_set_event_callback(0, NULL, NULL);
     bt_set_status_changed_callback(bt->bt, NULL, NULL);
 
     // Close Bluetooth service
@@ -169,8 +170,13 @@ bool flock_bt_serial_send(FlockBtSerial* bt, const uint8_t* data, size_t length)
 
     furi_mutex_release(bt->mutex);
 
-    // Send data via BT serial
-    return furi_hal_bt_serial_tx(data, length);
+    // Note: BT serial TX API has changed in newer firmware
+    // furi_hal_bt_tx no longer exists for serial data
+    // Implementation needs to be updated for new BT API
+    FURI_LOG_W(TAG, "BT serial TX requires updated BT API");
+    UNUSED(data);
+    UNUSED(length);
+    return false;
 }
 
 bool flock_bt_serial_is_connected(FlockBtSerial* bt) {

@@ -459,6 +459,56 @@ Format as:
         return wrapGemmaPrompt(content)
     }
 
+    /**
+     * Build a prompt for satellite/NTN detection analysis with enriched data.
+     */
+    fun buildSatelliteEnrichedPrompt(
+        detection: Detection,
+        enrichedData: EnrichedDetectorData.Satellite
+    ): String {
+        val content = """Analyze this satellite/NTN (Non-Terrestrial Network) detection for potential surveillance.
+
+=== DETECTION INFO ===
+Device Type: ${detection.deviceType.displayName}
+Threat Level: ${detection.threatLevel.displayName}
+Threat Score: ${detection.threatScore}
+First Detected: ${formatTimestamp(detection.timestamp)}
+${if (detection.latitude != null && detection.longitude != null) "Location: ${String.format("%.4f", detection.latitude)}, ${String.format("%.4f", detection.longitude)}" else "Location: Unknown"}
+
+=== SATELLITE/NTN CHARACTERISTICS ===
+Detector Type: ${enrichedData.detectorType}
+${enrichedData.signalCharacteristics.entries.joinToString("\n") { "${it.key}: ${it.value}" }}
+
+=== METADATA ===
+${enrichedData.metadata.entries.joinToString("\n") { "${it.key}: ${it.value}" }}
+
+=== RISK INDICATORS ===
+${enrichedData.riskIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None identified" }}
+
+Based on this enriched satellite/NTN data, provide:
+1. Assessment of whether this indicates unauthorized satellite tracking
+2. The likely origin and purpose of this satellite signal
+3. Risk level for the user
+4. Recommended actions
+
+Format as:
+## Assessment
+[Is this satellite signal indicative of surveillance?]
+
+## Signal Analysis
+[Technical analysis of the satellite characteristics]
+
+## Risk Level
+[Overall risk assessment]
+
+## Recommended Actions
+1. [Action 1]
+2. [Action 2]
+3. [Action 3]"""
+
+        return wrapGemmaPrompt(content)
+    }
+
     // ==================== USER-FRIENDLY EXPLANATION PROMPTS ====================
 
     /**
@@ -592,6 +642,15 @@ ${if (a.vehicleMounted) "⚠️ VEHICLE MOUNTED DEVICE" else ""}
 ${if (a.possibleFootSurveillance) "⚠️ POSSIBLE FOOT SURVEILLANCE" else ""}
 ${if (a.leadsUser) "⚠️ NETWORK LEADS USER (arrives before you)" else ""}"""
             }
+            is EnrichedDetectorData.Satellite -> {
+                """
+=== ENRICHED SATELLITE/NTN DATA ===
+Detector Type: ${data.detectorType}
+Timestamp: ${formatTimestamp(data.timestamp)}
+${data.signalCharacteristics.entries.joinToString("\n") { "${it.key}: ${it.value}" }}
+${if (data.riskIndicators.isNotEmpty()) "⚠️ RISK INDICATORS: ${data.riskIndicators.joinToString(", ")}" else ""}
+${data.metadata.entries.joinToString("\n") { "${it.key}: ${it.value}" }}"""
+            }
         }
     }
 
@@ -619,7 +678,7 @@ ${if (a.leadsUser) "⚠️ NETWORK LEADS USER (arrives before you)" else ""}"""
    - Time: ${formatTimestamp(d.timestamp)}
    - Protocol: ${d.protocol.displayName}
    - Threat: ${d.threatLevel.displayName} (${d.threatScore})
-   - Location: ${d.latitude?.let { "${String.format("%.4f", it)}, ${String.format("%.4f", d.longitude)}" } ?: "Unknown"}
+   - Location: ${if (d.latitude != null && d.longitude != null) "${String.format("%.4f", d.latitude)}, ${String.format("%.4f", d.longitude)}" else "Unknown"}
    - Signal: ${d.rssi} dBm"""
         }.joinToString("\n\n")
 

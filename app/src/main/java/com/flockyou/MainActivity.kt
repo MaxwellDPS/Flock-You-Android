@@ -62,6 +62,7 @@ import com.flockyou.ui.screens.WifiSecurityScreen
 import com.flockyou.ui.screens.AiSettingsScreen
 import com.flockyou.ui.screens.ServiceHealthStatusScreen
 import com.flockyou.ui.screens.FlipperSettingsScreen
+import com.flockyou.ui.screens.ActiveProbesScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -390,6 +391,12 @@ fun AppNavigation(
         }
         composable("flipper_settings") {
             FlipperSettingsScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToActiveProbes = { navController.navigate("active_probes") }
+            )
+        }
+        composable("active_probes") {
+            ActiveProbesScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

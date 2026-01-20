@@ -2643,6 +2643,8 @@ class ScanningService : Service() {
             // Update total BLE scan count
             scanStats.value = scanStats.value.copy(totalBleScans = scanStats.value.totalBleScans + 1)
             broadcastScanStats()
+            // Update detector health status
+            detectorCallbackImpl.onDetectorStarted(DetectorHealthStatus.DETECTOR_BLE)
             Log.d(TAG, "BLE scan started (aggressive=$aggressiveMode)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start BLE scan", e)
@@ -2654,10 +2656,12 @@ class ScanningService : Service() {
     @SuppressLint("MissingPermission")
     private fun stopBleScan() {
         if (!isBleScanningActive) return
-        
+
         try {
             bleScanner?.stopScan(bleScanCallback)
             isBleScanningActive = false
+            // Update detector health status
+            detectorCallbackImpl.onDetectorStopped(DetectorHealthStatus.DETECTOR_BLE)
             Log.d(TAG, "BLE scan stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop BLE scan", e)
@@ -2922,7 +2926,7 @@ class ScanningService : Service() {
     
     private fun registerWifiReceiver() {
         if (wifiScanReceiver != null) return
-        
+
         wifiScanReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
@@ -2952,9 +2956,11 @@ class ScanningService : Service() {
                 }
             }
         }
-        
+
         val intentFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
         registerReceiver(wifiScanReceiver, intentFilter)
+        // Update detector health status - WiFi is now actively scanning
+        detectorCallbackImpl.onDetectorStarted(DetectorHealthStatus.DETECTOR_WIFI)
     }
     
     private var lastWifiThrottleLogTime: Long? = null
@@ -2963,6 +2969,8 @@ class ScanningService : Service() {
         wifiScanReceiver?.let {
             try {
                 unregisterReceiver(it)
+                // Update detector health status - WiFi scanning stopped
+                detectorCallbackImpl.onDetectorStopped(DetectorHealthStatus.DETECTOR_WIFI)
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering WiFi receiver", e)
             }

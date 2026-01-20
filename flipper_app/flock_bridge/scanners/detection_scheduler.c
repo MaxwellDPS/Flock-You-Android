@@ -272,7 +272,7 @@ static int32_t scheduler_thread_func(void* context) {
     }
 
     if (scheduler->config.enable_nfc && scheduler->nfc) {
-        nfc_scanner_start(scheduler->nfc);
+        flock_nfc_scanner_start(scheduler->nfc);
         FURI_LOG_I(TAG, "NFC scanner started (passive)");
     }
 
@@ -423,8 +423,8 @@ static int32_t scheduler_thread_func(void* context) {
     if (scheduler->ir && ir_scanner_is_running(scheduler->ir)) {
         ir_scanner_stop(scheduler->ir);
     }
-    if (scheduler->nfc && nfc_scanner_is_running(scheduler->nfc)) {
-        nfc_scanner_stop(scheduler->nfc);
+    if (scheduler->nfc && flock_nfc_scanner_is_running(scheduler->nfc)) {
+        flock_nfc_scanner_stop(scheduler->nfc);
     }
 
     // Stop external radio scans
@@ -475,7 +475,7 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->subghz_internal = subghz_scanner_alloc();
     scheduler->ble_internal = ble_scanner_alloc();
     scheduler->ir = ir_scanner_alloc();
-    scheduler->nfc = nfc_scanner_alloc();
+    scheduler->nfc = flock_nfc_scanner_alloc();
 
     // Configure internal scanner callbacks
     if (scheduler->subghz_internal) {
@@ -523,7 +523,7 @@ DetectionScheduler* detection_scheduler_alloc(void) {
             .callback = scheduler_nfc_callback,
             .callback_context = scheduler,
         };
-        nfc_scanner_configure(scheduler->nfc, &nfc_config);
+        flock_nfc_scanner_configure(scheduler->nfc, &nfc_config);
     }
 
     FURI_LOG_I(TAG, "Detection scheduler allocated");
@@ -539,7 +539,7 @@ void detection_scheduler_free(DetectionScheduler* scheduler) {
     if (scheduler->subghz_internal) subghz_scanner_free(scheduler->subghz_internal);
     if (scheduler->ble_internal) ble_scanner_free(scheduler->ble_internal);
     if (scheduler->ir) ir_scanner_free(scheduler->ir);
-    if (scheduler->nfc) nfc_scanner_free(scheduler->nfc);
+    if (scheduler->nfc) flock_nfc_scanner_free(scheduler->nfc);
 
     // Free WiFi scanner (external radio manager is not owned by scheduler)
     if (scheduler->wifi) wifi_scanner_free(scheduler->wifi);

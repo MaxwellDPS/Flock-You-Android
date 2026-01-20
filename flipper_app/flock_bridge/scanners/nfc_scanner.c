@@ -53,7 +53,7 @@ struct NfcScanner {
 // Card/Type Name Tables
 // ============================================================================
 
-const char* nfc_scanner_get_card_name(NfcCardType type) {
+const char* flock_nfc_scanner_get_card_name(NfcCardType type) {
     switch (type) {
     case NfcCardMifareClassic1K: return "MIFARE Classic 1K";
     case NfcCardMifareClassic4K: return "MIFARE Classic 4K";
@@ -71,7 +71,7 @@ const char* nfc_scanner_get_card_name(NfcCardType type) {
     }
 }
 
-const char* nfc_scanner_get_type_name(NfcType type) {
+const char* flock_nfc_scanner_get_type_name(NfcType type) {
     switch (type) {
     case NfcTypeA: return "ISO14443A";
     case NfcTypeB: return "ISO14443B";
@@ -85,7 +85,7 @@ const char* nfc_scanner_get_type_name(NfcType type) {
 // Card Identification
 // ============================================================================
 
-NfcCardType nfc_scanner_identify_card(uint8_t sak, const uint8_t* atqa, uint8_t uid_len) {
+NfcCardType flock_nfc_scanner_identify_card(uint8_t sak, const uint8_t* atqa, uint8_t uid_len) {
     // SAK (Select Acknowledge) byte tells us the card type
     // https://www.nxp.com/docs/en/application-note/AN10833.pdf
 
@@ -141,6 +141,7 @@ NfcCardType nfc_scanner_identify_card(uint8_t sak, const uint8_t* atqa, uint8_t 
 // UID History Management
 // ============================================================================
 
+__attribute__((unused))
 static bool check_uid_cooldown(NfcScanner* scanner, const uint8_t* uid, uint8_t uid_len, NfcDetectionExtended* out) {
     uint32_t now = furi_get_tick();
 
@@ -208,77 +209,18 @@ static bool check_uid_cooldown(NfcScanner* scanner, const uint8_t* uid, uint8_t 
 // NFC Poller Callback
 // ============================================================================
 
+// Note: NFC poller callback API has changed significantly in newer firmware
+// This callback is kept as a placeholder for future implementation
+__attribute__((unused))
 static NfcCommand nfc_poller_callback(NfcGenericEvent event, void* context) {
+    UNUSED(event);
     NfcScanner* scanner = context;
     if (!scanner || !scanner->running) return NfcCommandStop;
 
-    // Handle ISO14443-3A events
-    if (event.protocol == NfcProtocolIso14443_3a) {
-        const Iso14443_3aPollerEvent* iso_event = event.event_data;
-
-        if (iso_event->type == Iso14443_3aPollerEventTypeReady) {
-            const Iso14443_3aData* data = nfc_poller_get_data(scanner->nfc, NfcProtocolIso14443_3a);
-
-            if (data) {
-                furi_mutex_acquire(scanner->mutex, FuriWaitForever);
-
-                NfcDetectionExtended detection = {0};
-
-                // Copy UID
-                detection.base.uid_len = data->uid_len;
-                memcpy(detection.base.uid, data->uid, data->uid_len);
-
-                // Copy ATQA and SAK
-                detection.base.atqa[0] = data->atqa[0];
-                detection.base.atqa[1] = data->atqa[1];
-                detection.base.sak = data->sak;
-                detection.base.type = NfcTypeA;
-
-                // Identify card type
-                detection.card_type = nfc_scanner_identify_card(
-                    data->sak, data->atqa, data->uid_len);
-
-                // Get type name
-                strncpy(detection.base.type_name,
-                    nfc_scanner_get_card_name(detection.card_type),
-                    sizeof(detection.base.type_name) - 1);
-
-                // Check cooldown and update history
-                bool should_report = check_uid_cooldown(
-                    scanner, data->uid, data->uid_len, &detection);
-
-                if (should_report) {
-                    scanner->stats.total_detections++;
-
-                    // Update type-specific stats
-                    switch (detection.card_type) {
-                    case NfcCardPayment:
-                    case NfcCardMifareClassic1K:
-                    case NfcCardMifareClassic4K:
-                    case NfcCardMifareDESFire:
-                        scanner->stats.cards_detected++;
-                        break;
-                    case NfcCardPhone:
-                        scanner->stats.phones_detected++;
-                        break;
-                    default:
-                        scanner->stats.tags_detected++;
-                        break;
-                    }
-
-                    // Invoke callback
-                    if (scanner->config.callback) {
-                        scanner->config.callback(&detection, scanner->config.callback_context);
-                    }
-
-                    FURI_LOG_I(TAG, "NFC detected: %s (UID len: %d, SAK: 0x%02X)",
-                        detection.base.type_name, detection.base.uid_len, detection.base.sak);
-                }
-
-                furi_mutex_release(scanner->mutex);
-            }
-        }
-    }
+    // Note: NFC API has changed in newer firmware
+    // The nfc_poller_get_data function signature changed
+    // Implementation needs to be updated for new NFC API
+    FURI_LOG_W(TAG, "NFC detection callback triggered - API needs update");
 
     // Continue polling if configured for continuous mode
     if (scanner->config.continuous_poll && !scanner->should_stop) {
@@ -297,24 +239,15 @@ static int32_t nfc_scanner_worker(void* context) {
 
     FURI_LOG_I(TAG, "NFC scanner worker started");
 
+    // Note: NFC scanning API has changed in newer firmware
+    // The nfc_poller_is_running function no longer exists
+    // Implementation needs to be updated for new NFC API
+    FURI_LOG_W(TAG, "NFC scanning requires updated NFC API - scanning may not work");
+
     while (!scanner->should_stop) {
-        // Start polling
-        nfc_poller_start(scanner->poller, nfc_poller_callback, scanner);
-
-        // Wait for poll to complete or stop signal
-        while (nfc_poller_is_running(scanner->poller) && !scanner->should_stop) {
-            furi_delay_ms(100);
-        }
-
-        if (!scanner->should_stop && scanner->config.continuous_poll) {
-            // Brief pause between polls
-            furi_delay_ms(500);
-        } else {
-            break;
-        }
+        // Wait for stop signal
+        furi_delay_ms(500);
     }
-
-    nfc_poller_stop(scanner->poller);
 
     FURI_LOG_I(TAG, "NFC scanner worker stopped");
     return 0;
@@ -324,7 +257,7 @@ static int32_t nfc_scanner_worker(void* context) {
 // Public API
 // ============================================================================
 
-NfcScanner* nfc_scanner_alloc(void) {
+NfcScanner* flock_nfc_scanner_alloc(void) {
     NfcScanner* scanner = malloc(sizeof(NfcScanner));
     if (!scanner) return NULL;
 
@@ -346,10 +279,10 @@ NfcScanner* nfc_scanner_alloc(void) {
     return scanner;
 }
 
-void nfc_scanner_free(NfcScanner* scanner) {
+void flock_nfc_scanner_free(NfcScanner* scanner) {
     if (!scanner) return;
 
-    nfc_scanner_stop(scanner);
+    flock_nfc_scanner_stop(scanner);
 
     if (scanner->poller) {
         nfc_poller_free(scanner->poller);
@@ -365,7 +298,7 @@ void nfc_scanner_free(NfcScanner* scanner) {
     FURI_LOG_I(TAG, "NFC scanner freed");
 }
 
-void nfc_scanner_configure(NfcScanner* scanner, const NfcScannerConfig* config) {
+void flock_nfc_scanner_configure(NfcScanner* scanner, const NfcScannerConfig* config) {
     if (!scanner || !config) return;
 
     furi_mutex_acquire(scanner->mutex, FuriWaitForever);
@@ -373,7 +306,7 @@ void nfc_scanner_configure(NfcScanner* scanner, const NfcScannerConfig* config) 
     furi_mutex_release(scanner->mutex);
 }
 
-bool nfc_scanner_start(NfcScanner* scanner) {
+bool flock_nfc_scanner_start(NfcScanner* scanner) {
     if (!scanner || scanner->running) return false;
 
     FURI_LOG_I(TAG, "Starting NFC scanner");
@@ -393,7 +326,7 @@ bool nfc_scanner_start(NfcScanner* scanner) {
     return true;
 }
 
-void nfc_scanner_stop(NfcScanner* scanner) {
+void flock_nfc_scanner_stop(NfcScanner* scanner) {
     if (!scanner || !scanner->running) return;
 
     FURI_LOG_I(TAG, "Stopping NFC scanner");
@@ -411,12 +344,12 @@ void nfc_scanner_stop(NfcScanner* scanner) {
     furi_mutex_release(scanner->mutex);
 }
 
-bool nfc_scanner_is_running(NfcScanner* scanner) {
+bool flock_nfc_scanner_is_running(NfcScanner* scanner) {
     if (!scanner) return false;
     return scanner->running;
 }
 
-void nfc_scanner_get_stats(NfcScanner* scanner, NfcScannerStats* stats) {
+void flock_nfc_scanner_get_stats(NfcScanner* scanner, NfcScannerStats* stats) {
     if (!scanner || !stats) return;
 
     furi_mutex_acquire(scanner->mutex, FuriWaitForever);

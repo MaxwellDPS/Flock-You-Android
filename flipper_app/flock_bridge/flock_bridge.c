@@ -308,7 +308,6 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // ================================================================
         case FlockMsgTypeZigbeeBeaconTx: {
             // Zigbee Knocker - Forward to ESP32
-            FlockZigbeeBeaconPayload zb_payload;
             // Note: parsing function would need to be added
             FURI_LOG_I(TAG, "Zigbee Beacon TX requested");
             // Forward to ESP32 via UART
@@ -442,7 +441,6 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
 
     // View Dispatcher
     app->view_dispatcher = view_dispatcher_alloc();
-    view_dispatcher_enable_queue(app->view_dispatcher);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
     // Scene Manager

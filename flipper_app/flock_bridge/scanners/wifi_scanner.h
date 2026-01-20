@@ -38,17 +38,8 @@ typedef enum {
 // ============================================================================
 // WiFi Security Detection
 // ============================================================================
-
-typedef enum {
-    WifiSecTypeOpen = 0,
-    WifiSecTypeWEP,
-    WifiSecTypeWPA,
-    WifiSecTypeWPA2,
-    WifiSecTypeWPA3,
-    WifiSecTypeWPA2Enterprise,
-    WifiSecTypeWPA3Enterprise,
-    WifiSecTypeUnknown = 0xFF,
-} WifiSecurityType;
+// Note: WifiSecurityType is defined in flock_protocol.h to avoid conflicts
+// Use WifiSecurityOpen, WifiSecurityWEP, etc. from there
 
 // ============================================================================
 // Extended Network Info
@@ -103,7 +94,7 @@ typedef void (*WifiProbeCallback)(
     const WifiProbeRequest* probe,
     void* context);
 
-typedef void (*WifiDeauthCallback)(
+typedef void (*WifiDeauthDetectionCallback)(
     const WifiDeauthDetection* deauth,
     void* context);
 
@@ -126,7 +117,7 @@ typedef struct {
 
     WifiNetworkCallback network_callback;
     WifiProbeCallback probe_callback;
-    WifiDeauthCallback deauth_callback;
+    WifiDeauthDetectionCallback deauth_callback;
     WifiScanCompleteCallback complete_callback;
     void* callback_context;
 } WifiScannerConfig;
