@@ -471,4 +471,105 @@ class AiSettingsViewModel @Inject constructor(
     fun getModelsDirectoryPath(): String {
         return detectionAnalyzer.getModelsDirectory().absolutePath
     }
+
+    // ==================== GEMINI NANO DIAGNOSTICS ====================
+
+    private val _geminiNanoDiagnostics = MutableStateFlow<com.flockyou.ai.GeminiNanoDiagnostics?>(null)
+    val geminiNanoDiagnostics: StateFlow<com.flockyou.ai.GeminiNanoDiagnostics?> = _geminiNanoDiagnostics.asStateFlow()
+
+    val geminiNanoStatus: StateFlow<com.flockyou.ai.GeminiNanoStatus> = detectionAnalyzer.geminiNanoModelStatus
+    val geminiNanoDownloadProgress: StateFlow<Int> = detectionAnalyzer.geminiNanoDownloadProgress
+
+    /**
+     * Load detailed Gemini Nano diagnostics for troubleshooting.
+     */
+    fun loadGeminiNanoDiagnostics() {
+        viewModelScope.launch {
+            val diagnostics = detectionAnalyzer.getGeminiNanoDiagnostics()
+            _geminiNanoDiagnostics.value = diagnostics
+            Log.d(TAG, "Gemini Nano diagnostics loaded:\n${diagnostics.toDetailedReport()}")
+        }
+    }
+
+    /**
+     * Get user-friendly status message for Gemini Nano.
+     */
+    fun getGeminiNanoStatusMessage(): String {
+        return detectionAnalyzer.getGeminiNanoStatusMessage()
+    }
+
+    /**
+     * Force retry Gemini Nano download and initialization.
+     * Use this when the user wants to retry after a failure.
+     */
+    fun forceRetryGeminiNano() {
+        viewModelScope.launch {
+            if (_isDownloading.value) {
+                Toast.makeText(
+                    application,
+                    "Download already in progress",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
+            _isDownloading.value = true
+            _downloadProgress.value = 0
+            _downloadError.value = null
+
+            try {
+                Log.i(TAG, "Starting Gemini Nano force retry...")
+                val success = detectionAnalyzer.forceRetryGeminiNano { progress ->
+                    _downloadProgress.value = progress
+                }
+
+                if (success) {
+                    Log.i(TAG, "Gemini Nano force retry succeeded!")
+                    Toast.makeText(
+                        application,
+                        "Gemini Nano is ready!",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    // Refresh diagnostics
+                    loadGeminiNanoDiagnostics()
+                } else {
+                    val diagnostics = detectionAnalyzer.getGeminiNanoDiagnostics()
+                    val errorMsg = diagnostics.lastError ?: diagnostics.getSummary()
+                    _downloadError.value = errorMsg
+                    Log.w(TAG, "Gemini Nano force retry failed: $errorMsg")
+                    Toast.makeText(
+                        application,
+                        errorMsg,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } finally {
+                _isDownloading.value = false
+            }
+        }
+    }
+
+    /**
+     * Check if Gemini Nano is supported on this device.
+     */
+    fun isGeminiNanoSupported(): Boolean {
+        return detectionAnalyzer.isGeminiNanoSupported()
+    }
+
+    /**
+     * Check if AICore is available on this device.
+     */
+    fun checkAiCoreAvailability() {
+        viewModelScope.launch {
+            val available = detectionAnalyzer.isAiCoreAvailable()
+            Log.d(TAG, "AICore available: $available")
+            if (!available) {
+                Toast.makeText(
+                    application,
+                    "AICore not available - update Google Play Services",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 }

@@ -838,12 +838,21 @@ class DetectionAnalyzer @Inject constructor(
         val activeEngine = llmEngineManager.activeEngine.value
         Log.d(TAG, "Using LlmEngineManager with active engine: $activeEngine")
 
-        // Only use LLM engines if not rule-based
-        if (activeEngine != LlmEngine.RULE_BASED && currentModel != AiModel.RULE_BASED) {
+        // Check if any LLM engine is ready (not just the active one)
+        // This allows fallback to work even if the primary engine is rule-based
+        val anyLlmReady = llmEngineManager.isEngineReady(LlmEngine.GEMINI_NANO) ||
+                          llmEngineManager.isEngineReady(LlmEngine.MEDIAPIPE)
+
+        // Try LLM if active engine is LLM OR if any LLM engine is ready
+        // The LlmEngineManager will handle the fallback chain internally
+        val shouldTryLlm = (activeEngine != LlmEngine.RULE_BASED) || anyLlmReady
+
+        if (shouldTryLlm) {
+            Log.d(TAG, "Attempting LLM analysis (activeEngine=$activeEngine, anyLlmReady=$anyLlmReady)")
             val llmResult = llmEngineManager.analyzeDetection(detection)
 
             if (llmResult.success) {
-                Log.i(TAG, "LLM analysis succeeded via $activeEngine! Response length: ${llmResult.analysis?.length ?: 0}")
+                Log.i(TAG, "LLM analysis succeeded! Model: ${llmResult.modelUsed}, Response length: ${llmResult.analysis?.length ?: 0}")
                 // Enhance with contextual insights if available
                 return if (contextualInsights != null) {
                     llmResult.copy(
@@ -866,7 +875,7 @@ class DetectionAnalyzer @Inject constructor(
             // Log fallback reason
             Log.w(TAG, "LLM analysis failed (${llmResult.error}), using rule-based fallback")
         } else {
-            Log.d(TAG, "Using rule-based analysis (activeEngine=$activeEngine, currentModel=${currentModel.id})")
+            Log.d(TAG, "No LLM engines available, using rule-based analysis")
         }
 
         // Use comprehensive rule-based analysis as fallback
@@ -2915,4 +2924,83 @@ What is an IMSI catcher? Reply in one sentence.
         geminiNanoInitialized = false
         Log.d(TAG, "DetectionAnalyzer sync cleanup completed")
     }
+
+    // ==================== GEMINI NANO DIAGNOSTICS ====================
+
+    /**
+     * Get detailed diagnostics for Gemini Nano / AICore troubleshooting.
+     * Returns comprehensive information about device support, AICore status, and model availability.
+     */
+    suspend fun getGeminiNanoDiagnostics(): GeminiNanoDiagnostics {
+        return geminiNanoClient.getDiagnostics()
+    }
+
+    /**
+     * Get the current Gemini Nano status.
+     */
+    fun getGeminiNanoStatus(): GeminiNanoStatus {
+        return geminiNanoClient.getStatus()
+    }
+
+    /**
+     * Get a user-friendly status message for Gemini Nano.
+     */
+    fun getGeminiNanoStatusMessage(): String {
+        return geminiNanoClient.getStatusMessage()
+    }
+
+    /**
+     * Force retry Gemini Nano model download and initialization.
+     * Use this when the user wants to retry after a failed download/initialization.
+     *
+     * @param onProgress Callback for download progress updates (0-100)
+     * @return true if Gemini Nano is ready for inference after this call
+     */
+    suspend fun forceRetryGeminiNano(onProgress: (Int) -> Unit = {}): Boolean {
+        Log.i(TAG, "Force retry Gemini Nano requested")
+
+        val result = geminiNanoClient.forceRetryDownload(onProgress)
+
+        if (result) {
+            // Update local state
+            geminiNanoInitialized = true
+            isModelLoaded = true
+            currentModel = AiModel.GEMINI_NANO
+            _modelStatus.value = AiModelStatus.Ready
+
+            // Save the model selection
+            aiSettingsRepository.setSelectedModel(AiModel.GEMINI_NANO.id)
+            aiSettingsRepository.setEnabled(true)
+
+            Log.i(TAG, "Gemini Nano force retry succeeded!")
+        } else {
+            Log.w(TAG, "Gemini Nano force retry failed")
+        }
+
+        return result
+    }
+
+    /**
+     * Check if Gemini Nano is supported on this device.
+     */
+    fun isGeminiNanoSupported(): Boolean {
+        return geminiNanoClient.isDeviceSupported()
+    }
+
+    /**
+     * Check if AICore service is available on this device.
+     */
+    suspend fun isAiCoreAvailable(): Boolean {
+        return geminiNanoClient.isAiCoreAvailable()
+    }
+
+    /**
+     * Expose Gemini Nano model status flow for UI observation.
+     */
+    val geminiNanoModelStatus: StateFlow<GeminiNanoStatus> = geminiNanoClient.modelStatus
+
+    /**
+     * Expose Gemini Nano download progress flow for UI observation.
+     */
+    val geminiNanoDownloadProgress: StateFlow<Int> = geminiNanoClient.downloadProgress
 }

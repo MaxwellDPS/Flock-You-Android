@@ -65,6 +65,19 @@ object ScanningServiceIpc {
     const val MSG_DETECTION_REFRESH = 117
     const val MSG_SCAN_STATS = 118
     const val MSG_THREADING_DATA = 119
+    const val MSG_ACTIVE_DETECTIONS = 120
+
+    /** Message to notify service that Android Auto is connected - enables boost mode */
+    const val MSG_ANDROID_AUTO_CONNECTED = 130
+
+    /** Message to notify service that Android Auto is disconnected - disables boost mode */
+    const val MSG_ANDROID_AUTO_DISCONNECTED = 131
+
+    /** Message to request current boost mode status */
+    const val MSG_REQUEST_BOOST_STATUS = 132
+
+    /** Message sent from service with boost mode status */
+    const val MSG_BOOST_STATUS = 133
 
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
@@ -108,6 +121,8 @@ object ScanningServiceIpc {
     const val KEY_THREADING_SYSTEM_STATE_JSON = "threading_system_state_json"
     const val KEY_THREADING_SCANNER_STATES_JSON = "threading_scanner_states_json"
     const val KEY_THREADING_ALERTS_JSON = "threading_alerts_json"
+    const val KEY_ACTIVE_DETECTIONS_JSON = "active_detections_json"
+    const val KEY_BOOST_MODE_ACTIVE = "boost_mode_active"
 
     /**
      * Handler for incoming messages from the scanning service.
@@ -253,6 +268,15 @@ object ScanningServiceIpc {
                             alertsJson = bundle?.getString(KEY_THREADING_ALERTS_JSON)
                         )
                     }
+                    MSG_ACTIVE_DETECTIONS -> {
+                        val json = msg.data?.getString(KEY_ACTIVE_DETECTIONS_JSON)
+                        connection.updateActiveDetections(json)
+                    }
+                    MSG_BOOST_STATUS -> {
+                        val isActive = msg.data?.getBoolean(KEY_BOOST_MODE_ACTIVE, false) ?: false
+                        connection._isBoostModeActive.value = isActive
+                        Log.d(TAG, "Boost mode status: $isActive")
+                    }
                     else -> super.handleMessage(msg)
                 }
             } catch (e: Exception) {
@@ -391,6 +415,10 @@ class ScanningServiceConnection(private val context: Context) {
     private val _lastDetection = MutableStateFlow<com.flockyou.data.model.Detection?>(null)
     val lastDetection: StateFlow<com.flockyou.data.model.Detection?> = _lastDetection.asStateFlow()
 
+    // Active detections list (mirrored from service process for cross-process clients like Android Auto)
+    private val _activeDetections = MutableStateFlow<List<com.flockyou.data.model.Detection>>(emptyList())
+    val activeDetections: StateFlow<List<com.flockyou.data.model.Detection>> = _activeDetections.asStateFlow()
+
     // GNSS satellite monitoring data (mirrored from service process)
     private val _gnssStatus = MutableStateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?>(null)
     val gnssStatus: StateFlow<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus?> = _gnssStatus.asStateFlow()
@@ -432,6 +460,10 @@ class ScanningServiceConnection(private val context: Context) {
 
     private val _threadingAlerts = MutableStateFlow<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>>(emptyList())
     val threadingAlerts: StateFlow<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>> = _threadingAlerts.asStateFlow()
+
+    /** Whether Android Auto boost mode is currently active */
+    internal val _isBoostModeActive = MutableStateFlow(false)
+    val isBoostModeActive: StateFlow<Boolean> = _isBoostModeActive.asStateFlow()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -786,6 +818,28 @@ class ScanningServiceConnection(private val context: Context) {
         }
     }
 
+    /** Notify service that Android Auto has connected - enables faster scanning */
+    fun notifyAndroidAutoConnected() {
+        try {
+            val msg = Message.obtain(null, ScanningServiceIpc.MSG_ANDROID_AUTO_CONNECTED)
+            serviceMessenger?.send(msg)
+            Log.d(tag, "Notified service: Android Auto connected")
+        } catch (e: RemoteException) {
+            Log.e(tag, "Failed to send Android Auto connected notification", e)
+        }
+    }
+
+    /** Notify service that Android Auto has disconnected - returns to normal scanning */
+    fun notifyAndroidAutoDisconnected() {
+        try {
+            val msg = Message.obtain(null, ScanningServiceIpc.MSG_ANDROID_AUTO_DISCONNECTED)
+            serviceMessenger?.send(msg)
+            Log.d(tag, "Notified service: Android Auto disconnected")
+        } catch (e: RemoteException) {
+            Log.e(tag, "Failed to send Android Auto disconnected notification", e)
+        }
+    }
+
     // Internal state update methods called by the handler
     internal fun updateState(
         isScanning: Boolean,
@@ -975,6 +1029,20 @@ class ScanningServiceConnection(private val context: Context) {
             _lastDetection.value = ScanningServiceIpc.gson.fromJson(json, com.flockyou.data.model.Detection::class.java)
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse last detection JSON", e)
+        }
+    }
+
+    internal fun updateActiveDetections(json: String?) {
+        if (json == null) {
+            _activeDetections.value = emptyList()
+            return
+        }
+        try {
+            val type = object : TypeToken<List<com.flockyou.data.model.Detection>>() {}.type
+            val detections: List<com.flockyou.data.model.Detection> = ScanningServiceIpc.gson.fromJson(json, type)
+            _activeDetections.value = detections
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to parse active detections JSON", e)
         }
     }
 

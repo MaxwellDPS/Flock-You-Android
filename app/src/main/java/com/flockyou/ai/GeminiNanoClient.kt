@@ -709,6 +709,188 @@ Keep the response concise and actionable.
      * Check if the model is ready for inference
      */
     fun isReady(): Boolean = isInitialized && generativeModel != null
+
+    /**
+     * Get detailed diagnostics for troubleshooting AICore/Gemini Nano issues.
+     * This method gathers comprehensive information about the device, AICore, and model status.
+     */
+    suspend fun getDiagnostics(): GeminiNanoDiagnostics = withContext(Dispatchers.IO) {
+        val model = Build.MODEL
+        val isPixel = model.lowercase().contains("pixel")
+        val isPixel8OrNewer = model.lowercase().let {
+            it.contains("pixel 8") || it.contains("pixel 9") ||
+            it.contains("pixel 10") || it.contains("pixel 11") ||
+            it.contains("pixel fold") || it.contains("pixel tablet")
+        }
+
+        // Check AICore installation
+        var aiCoreInstalled = false
+        var aiCoreVersion: String? = null
+        for (packageName in AICORE_PACKAGES) {
+            try {
+                val packageInfo = context.packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
+                aiCoreInstalled = true
+                aiCoreVersion = packageInfo.versionName
+                break
+            } catch (e: PackageManager.NameNotFoundException) {
+                // Package not found, continue checking
+            }
+        }
+
+        // Check feature status
+        val featureStatus = try {
+            Generation.getClient().checkStatus()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to check feature status: ${e.message}")
+            FeatureStatus.UNAVAILABLE
+        }
+
+        val featureStatusName = when (featureStatus) {
+            FeatureStatus.AVAILABLE -> "AVAILABLE"
+            FeatureStatus.DOWNLOADABLE -> "DOWNLOADABLE"
+            FeatureStatus.DOWNLOADING -> "DOWNLOADING"
+            FeatureStatus.UNAVAILABLE -> "UNAVAILABLE"
+            else -> "UNKNOWN ($featureStatus)"
+        }
+
+        GeminiNanoDiagnostics(
+            deviceModel = model,
+            androidVersion = Build.VERSION.SDK_INT,
+            isPixelDevice = isPixel,
+            isPixel8OrNewer = isPixel8OrNewer,
+            isDeviceSupported = isDeviceSupported(),
+            isAiCoreInstalled = aiCoreInstalled,
+            aiCorePackageVersion = aiCoreVersion,
+            featureStatus = featureStatus,
+            featureStatusName = featureStatusName,
+            isModelAvailable = featureStatus == FeatureStatus.AVAILABLE,
+            isModelDownloadable = featureStatus == FeatureStatus.DOWNLOADABLE,
+            isModelDownloading = featureStatus == FeatureStatus.DOWNLOADING,
+            isInitialized = isInitialized,
+            isReady = isReady(),
+            lastError = initializationError,
+            currentStatus = _modelStatus.value
+        )
+    }
+
+    /**
+     * Force retry initialization, clearing any cached error state.
+     * Use this when the user wants to retry after a failed initialization.
+     */
+    suspend fun forceRetryInitialize(): Boolean = initMutex.withLock {
+        Log.i(TAG, "Force retry initialization requested")
+
+        // Reset all state
+        isInitialized = false
+        initializationError = null
+        generativeModel?.close()
+        generativeModel = null
+        _modelStatus.value = GeminiNanoStatus.NotInitialized
+
+        // Re-attempt initialization without holding the lock
+        // (initialize() will acquire its own lock)
+        return@withLock false // Release lock, then call initialize
+    }.let {
+        // Now call initialize() after releasing the lock
+        initialize()
+    }
+
+    /**
+     * Force retry/trigger model download, even if a download was previously attempted.
+     * This resets any error state and attempts fresh download.
+     *
+     * @param onProgress Callback for download progress updates
+     * @return true if the model is ready to use after this call
+     */
+    suspend fun forceRetryDownload(onProgress: (Int) -> Unit = {}): Boolean = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Force retry download requested")
+
+        // Reset error state
+        initializationError = null
+        isDownloadCancelled.set(false)
+        _modelStatus.value = GeminiNanoStatus.NotInitialized
+        _downloadProgress.value = 0
+
+        try {
+            val client = Generation.getClient()
+            val status = client.checkStatus()
+            Log.d(TAG, "Force retry: Current model status = $status")
+
+            when (status) {
+                FeatureStatus.AVAILABLE -> {
+                    Log.i(TAG, "Model is already available")
+                    updateProgress(100, onProgress)
+                    updateStatus(GeminiNanoStatus.Ready)
+
+                    // Also initialize the client
+                    val initResult = initialize()
+                    Log.d(TAG, "Force retry: Initialize result = $initResult")
+                    return@withContext initResult
+                }
+                FeatureStatus.DOWNLOADING -> {
+                    Log.i(TAG, "Model is already downloading, waiting for completion")
+                    updateStatus(GeminiNanoStatus.Downloading(0))
+                    val downloadResult = waitForExistingDownload(client, onProgress)
+                    if (downloadResult) {
+                        return@withContext initialize()
+                    }
+                    return@withContext false
+                }
+                FeatureStatus.DOWNLOADABLE -> {
+                    Log.i(TAG, "Starting fresh model download")
+                    updateStatus(GeminiNanoStatus.Downloading(0))
+                    val downloadResult = startDownload(client, onProgress)
+                    if (downloadResult) {
+                        Log.i(TAG, "Download succeeded, initializing...")
+                        return@withContext initialize()
+                    }
+                    return@withContext false
+                }
+                FeatureStatus.UNAVAILABLE -> {
+                    val errMsg = "Gemini Nano is unavailable. This may be due to:\n" +
+                            "• Unsupported device (requires Pixel 8+)\n" +
+                            "• Unlocked bootloader\n" +
+                            "• Missing or outdated AICore\n" +
+                            "• Region restrictions\n\n" +
+                            "Try updating Google Play Services and restarting your device."
+                    Log.w(TAG, errMsg)
+                    initializationError = errMsg
+                    updateStatus(GeminiNanoStatus.Error(errMsg))
+                    return@withContext false
+                }
+                else -> {
+                    val errMsg = "Unknown model status: $status"
+                    Log.w(TAG, errMsg)
+                    initializationError = errMsg
+                    updateStatus(GeminiNanoStatus.Error(errMsg))
+                    return@withContext false
+                }
+            }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Force retry was cancelled")
+            updateStatus(GeminiNanoStatus.NotInitialized)
+            throw e
+        } catch (e: Exception) {
+            val errMsg = "Force retry failed: ${e.message}"
+            Log.e(TAG, errMsg, e)
+            initializationError = errMsg
+            updateStatus(GeminiNanoStatus.Error(errMsg))
+            return@withContext false
+        }
+    }
+
+    /**
+     * Get a user-friendly status message for the current state.
+     */
+    fun getStatusMessage(): String = when (val status = _modelStatus.value) {
+        GeminiNanoStatus.NotSupported -> "Your device doesn't support Gemini Nano (requires Pixel 8+ with Android 14+)"
+        GeminiNanoStatus.NotInitialized -> "Gemini Nano is not initialized. Tap to initialize."
+        GeminiNanoStatus.Initializing -> "Initializing Gemini Nano..."
+        GeminiNanoStatus.NeedsDownload -> "Gemini Nano model needs to be downloaded (~500MB)"
+        is GeminiNanoStatus.Downloading -> "Downloading Gemini Nano model... ${status.progress}%"
+        GeminiNanoStatus.Ready -> "Gemini Nano is ready for on-device AI analysis"
+        is GeminiNanoStatus.Error -> "Error: ${status.message}"
+    }
 }
 
 sealed class GeminiNanoStatus {
@@ -719,4 +901,77 @@ sealed class GeminiNanoStatus {
     data class Downloading(val progress: Int) : GeminiNanoStatus()
     object Ready : GeminiNanoStatus()
     data class Error(val message: String) : GeminiNanoStatus()
+
+    fun toDisplayString(): String = when (this) {
+        NotSupported -> "Not Supported"
+        NotInitialized -> "Not Initialized"
+        Initializing -> "Initializing..."
+        NeedsDownload -> "Needs Download"
+        is Downloading -> "Downloading ($progress%)"
+        Ready -> "Ready"
+        is Error -> "Error: $message"
+    }
+}
+
+/**
+ * Detailed diagnostic information for Gemini Nano / AICore status.
+ * Use this for troubleshooting when the model isn't working.
+ */
+data class GeminiNanoDiagnostics(
+    val deviceModel: String,
+    val androidVersion: Int,
+    val isPixelDevice: Boolean,
+    val isPixel8OrNewer: Boolean,
+    val isDeviceSupported: Boolean,
+    val isAiCoreInstalled: Boolean,
+    val aiCorePackageVersion: String?,
+    val featureStatus: Int, // FeatureStatus value
+    val featureStatusName: String,
+    val isModelAvailable: Boolean,
+    val isModelDownloadable: Boolean,
+    val isModelDownloading: Boolean,
+    val isInitialized: Boolean,
+    val isReady: Boolean,
+    val lastError: String?,
+    val currentStatus: GeminiNanoStatus
+) {
+    fun toDetailedReport(): String = buildString {
+        appendLine("=== Gemini Nano Diagnostics ===")
+        appendLine()
+        appendLine("Device Info:")
+        appendLine("  Model: $deviceModel")
+        appendLine("  Android Version: $androidVersion (API)")
+        appendLine("  Is Pixel: $isPixelDevice")
+        appendLine("  Is Pixel 8+: $isPixel8OrNewer")
+        appendLine("  Device Supported: $isDeviceSupported")
+        appendLine()
+        appendLine("AICore Status:")
+        appendLine("  Installed: $isAiCoreInstalled")
+        appendLine("  Package Version: ${aiCorePackageVersion ?: "N/A"}")
+        appendLine()
+        appendLine("Model Status:")
+        appendLine("  Feature Status: $featureStatusName ($featureStatus)")
+        appendLine("  Available: $isModelAvailable")
+        appendLine("  Downloadable: $isModelDownloadable")
+        appendLine("  Downloading: $isModelDownloading")
+        appendLine()
+        appendLine("Client Status:")
+        appendLine("  Initialized: $isInitialized")
+        appendLine("  Ready: $isReady")
+        appendLine("  Current Status: ${currentStatus.toDisplayString()}")
+        lastError?.let {
+            appendLine("  Last Error: $it")
+        }
+    }
+
+    fun getSummary(): String = when {
+        !isDeviceSupported -> "Device not supported (requires Pixel 8+ with Android 14+)"
+        !isAiCoreInstalled -> "AICore not installed - update Google Play Services"
+        featureStatus == FeatureStatus.UNAVAILABLE -> "Model unavailable on this device"
+        featureStatus == FeatureStatus.DOWNLOADABLE -> "Model ready to download"
+        featureStatus == FeatureStatus.DOWNLOADING -> "Model downloading..."
+        featureStatus == FeatureStatus.AVAILABLE && !isReady -> "Model available but not initialized"
+        isReady -> "Ready for inference"
+        else -> "Unknown state: ${currentStatus.toDisplayString()}"
+    }
 }

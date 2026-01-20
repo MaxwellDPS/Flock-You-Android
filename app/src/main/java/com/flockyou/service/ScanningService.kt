@@ -34,7 +34,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 private const val WAKE_LOCK_TAG = "FlockYou:ScanningWakeLock"
@@ -588,6 +590,14 @@ class ScanningService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var powerManager: PowerManager
 
+    // Android Auto boost mode tracking
+    /** Number of Android Auto clients currently connected */
+    private val androidAutoClientCount = AtomicInteger(0)
+
+    /** Whether boost mode is active (faster scanning for Android Auto) */
+    private val isBoostModeActive: Boolean
+        get() = androidAutoClientCount.get() > 0
+
     // IPC: Messenger for cross-process communication
     // Using CopyOnWriteArrayList for thread-safe iteration and modification
     private val ipcClients = java.util.concurrent.CopyOnWriteArrayList<Messenger>()
@@ -663,6 +673,22 @@ class ScanningService : Service() {
                         msg.replyTo?.let { client ->
                             sendThreadingDataToClient(client)
                         }
+                    }
+                    ScanningServiceIpc.MSG_ANDROID_AUTO_CONNECTED -> {
+                        val count = androidAutoClientCount.incrementAndGet()
+                        Log.i(TAG, "Android Auto connected (total: $count) - boost mode ${if (isBoostModeActive) "ACTIVE" else "inactive"}")
+                        broadcastBoostStatus()
+                    }
+                    ScanningServiceIpc.MSG_ANDROID_AUTO_DISCONNECTED -> {
+                        val count = androidAutoClientCount.decrementAndGet().coerceAtLeast(0)
+                        if (count == 0) {
+                            androidAutoClientCount.set(0) // Ensure non-negative
+                        }
+                        Log.i(TAG, "Android Auto disconnected (remaining: $count) - boost mode ${if (isBoostModeActive) "ACTIVE" else "inactive"}")
+                        broadcastBoostStatus()
+                    }
+                    ScanningServiceIpc.MSG_REQUEST_BOOST_STATUS -> {
+                        broadcastBoostStatus()
                     }
                     else -> super.handleMessage(msg)
                 }
@@ -1079,10 +1105,51 @@ class ScanningService : Service() {
     /**
      * Broadcast detection refresh event to all IPC clients.
      * Notifies UI to reload detections from database.
+     * Also broadcasts active detections list for cross-process clients like Android Auto.
      */
     private fun broadcastDetectionRefresh() {
         broadcastToClients {
             Message.obtain(null, ScanningServiceIpc.MSG_DETECTION_REFRESH)
+        }
+        // Also broadcast active detections for cross-process clients (e.g., Android Auto)
+        // that cannot access the database directly
+        broadcastActiveDetections()
+    }
+
+    /**
+     * Broadcast boost mode status to all IPC clients.
+     * Used by Android Auto to know when boost mode is active.
+     */
+    private fun broadcastBoostStatus() {
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_BOOST_STATUS).apply {
+                data = Bundle().apply {
+                    putBoolean(ScanningServiceIpc.KEY_BOOST_MODE_ACTIVE, isBoostModeActive)
+                }
+            }
+        }
+    }
+
+    /**
+     * Broadcast active detections list to all IPC clients.
+     * Used by cross-process clients like Android Auto that cannot access the database directly.
+     */
+    private fun broadcastActiveDetections() {
+        if (ipcClients.isEmpty()) return
+        serviceScope.launch {
+            try {
+                val activeDetections = repository.activeDetections.first()
+                val json = ScanningServiceIpc.gson.toJson(activeDetections)
+                broadcastToClients {
+                    Message.obtain(null, ScanningServiceIpc.MSG_ACTIVE_DETECTIONS).apply {
+                        data = Bundle().apply {
+                            putString(ScanningServiceIpc.KEY_ACTIVE_DETECTIONS_JSON, json)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error broadcasting active detections", e)
+            }
         }
     }
 
@@ -1101,6 +1168,7 @@ class ScanningService : Service() {
         broadcastUltrasonicData()
         broadcastGnssData()
         broadcastLastDetection()
+        broadcastActiveDetections()
         broadcastDetectorHealth()
     }
 

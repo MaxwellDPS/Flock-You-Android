@@ -324,4 +324,23 @@
     <!-- Quick Settings -->
     <string name="quick_wipe_label">Quick Wipe</string>
     <string name="quick_wipe_description">Instantly wipe app data</string>
+
+    <!-- Android Auto -->
+    <string name="auto_app_name">Flock You</string>
+    <string name="auto_status_safe">All Clear</string>
+    <string name="auto_status_devices">%d Devices Detected</string>
+    <string name="auto_status_threats">%d Threats Nearby</string>
+    <string name="auto_status_critical">ALERT: %d Critical</string>
+    <string name="auto_status_high">HIGH: %d threats nearby</string>
+    <string name="auto_scanning_active">Scanning Active</string>
+    <string name="auto_scanning_status">Scanning…</string>
+    <string name="auto_background_scanning">Background scanning is active</string>
+    <string name="auto_threat_status">Threat Status</string>
+    <string name="auto_error_loading">Error Loading Data</string>
+    <string name="auto_error_title">Error</string>
+    <string name="auto_retry">Retry</string>
+    <string name="auto_view_details">View Details</string>
+    <string name="auto_pull_over">Pull Over to View</string>
+    <string name="auto_unknown_device">Unknown Device</string>
+    <string name="auto_unknown_type">Unknown</string>
 </resources>

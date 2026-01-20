@@ -117,20 +117,23 @@ class LlmEngineManager @Inject constructor(
                 EngineInitResult(LlmEngine.RULE_BASED, true)
             }
             LlmEnginePreference.AUTO -> {
-                // Auto mode: determine based on model format and device capabilities
-                Log.i(TAG, "Auto mode: determining best engine")
+                // Auto mode: try best available LLM engine regardless of selected model
+                // The selected model preference is only used when a specific engine is chosen
+                Log.i(TAG, "Auto mode: trying best available LLM engine")
                 when (preferredModel.modelFormat) {
                     ModelFormat.MLKIT_GENAI, ModelFormat.AICORE -> {
-                        // Try ML Kit GenAI first (Gemini Nano)
+                        // User selected Gemini Nano model - try that first
                         tryInitializeGeminiNano() ?: tryInitializeMediaPipe(settings)
                     }
                     ModelFormat.TASK -> {
-                        // User explicitly selected a MediaPipe model
-                        tryInitializeMediaPipe(settings, preferredModel)
+                        // User explicitly selected a MediaPipe model - try that first
+                        tryInitializeMediaPipe(settings, preferredModel) ?: tryInitializeGeminiNano()
                     }
                     ModelFormat.NONE -> {
-                        // Rule-based selected - no initialization needed
-                        EngineInitResult(LlmEngine.RULE_BASED, true)
+                        // No specific model selected - try all engines in preference order
+                        // This is the key fix: AUTO mode should try LLMs before rule-based
+                        Log.i(TAG, "Auto mode with no model preference - trying all LLM engines")
+                        tryInitializeGeminiNano() ?: tryInitializeMediaPipe(settings)
                     }
                 }
             }
@@ -144,11 +147,15 @@ class LlmEngineManager @Inject constructor(
             // AUTO mode - try the full fallback chain
             enginePreference == LlmEnginePreference.AUTO -> tryFallbackChain(settings)
 
-            // Specific engine requested but failed - log warning and allow fallback to rule-based
+            // Specific engine requested but failed - try other LLM engines before rule-based
             else -> {
-                Log.w(TAG, "Requested engine ${enginePreference.displayName} failed to initialize, falling back to rule-based")
-                // Don't try fallback chain for explicit engine preference, just use rule-based
-                null
+                Log.w(TAG, "Requested engine ${enginePreference.displayName} failed to initialize, trying other LLM engines")
+                // Try other LLM engines before giving up - user likely wants ANY LLM, not just rule-based
+                when (enginePreference) {
+                    LlmEnginePreference.GEMINI_NANO -> tryInitializeMediaPipe(settings)
+                    LlmEnginePreference.MEDIAPIPE -> tryInitializeGeminiNano()
+                    else -> null
+                }
             }
         }
 
