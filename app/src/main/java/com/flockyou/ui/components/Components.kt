@@ -21,10 +21,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
 import com.flockyou.service.ScanningService
@@ -426,7 +430,7 @@ fun SubsystemIndicator(
     status: ScanningService.SubsystemStatus,
     modifier: Modifier = Modifier
 ) {
-    val (color, icon, _) = when (status) {
+    val (color, icon, statusDescription) = when (status) {
         is ScanningService.SubsystemStatus.Active -> Triple(
             StatusActive,
             Icons.Default.CheckCircle,
@@ -453,9 +457,9 @@ fun SubsystemIndicator(
             "No Perm"
         )
     }
-    
+
     Surface(
-        modifier = modifier,
+        modifier = modifier.semantics { stateDescription = "$name subsystem: $statusDescription" },
         shape = RoundedCornerShape(8.dp),
         color = color.copy(alpha = 0.15f)
     ) {
@@ -466,7 +470,7 @@ fun SubsystemIndicator(
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = "$name: $statusDescription",
                 tint = color,
                 modifier = Modifier.size(14.dp)
             )
@@ -1017,13 +1021,58 @@ fun DetectionCard(
                 }
             }
 
-            // Inline AI Analysis - always show contextual insights
-            Spacer(modifier = Modifier.height(8.dp))
-            InlineAnalysisSection(
-                detection = detection,
-                isAnalyzing = isAnalyzing,
-                onAnalyzeClick = onAnalyzeClick
-            )
+                // Collapsible Analysis Section - collapsed by default to reduce density
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Toggle button to show/hide analysis
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAnalysis = !showAnalysis },
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lightbulb,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Analysis & Tips",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Icon(
+                            imageVector = if (showAnalysis) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (showAnalysis) "Collapse analysis" else "Expand analysis",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                // Expandable analysis content
+                AnimatedVisibility(
+                    visible = showAnalysis,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(modifier = Modifier.padding(top = 8.dp)) {
+                        InlineAnalysisSection(
+                            detection = detection,
+                            isAnalyzing = isAnalyzing,
+                            onAnalyzeClick = onAnalyzeClick
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1394,12 +1443,12 @@ fun SignalIndicator(
         SignalStrength.UNKNOWN -> "Unknown"
     }
 
-    // Simple icon based on signal strength
+    // Simple icon based on signal strength (using available material icons)
     val signalIcon = when (signalStrength) {
-        SignalStrength.EXCELLENT, SignalStrength.GOOD -> Icons.Default.SignalCellular4Bar
-        SignalStrength.MEDIUM -> Icons.Default.SignalCellular3Bar
-        SignalStrength.WEAK, SignalStrength.VERY_WEAK -> Icons.Default.SignalCellular1Bar
-        SignalStrength.UNKNOWN -> Icons.Default.SignalCellular0Bar
+        SignalStrength.EXCELLENT, SignalStrength.GOOD -> Icons.Default.NetworkWifi
+        SignalStrength.MEDIUM -> Icons.Default.SignalCellularAlt
+        SignalStrength.WEAK, SignalStrength.VERY_WEAK -> Icons.Default.SignalCellularAlt
+        SignalStrength.UNKNOWN -> Icons.Default.SignalCellularOff
     }
 
     Row(

@@ -1614,7 +1614,7 @@ private fun HuggingFaceTokenCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.Key,
-                    contentDescription = null,
+                    contentDescription = "Hugging Face Token",
                     tint = if (token.isNotBlank()) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1708,7 +1708,7 @@ private fun HuggingFaceTokenCard(
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Edit, contentDescription = "Edit token", modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(if (token.isBlank()) "Add Token" else "Edit")
                     }
@@ -1776,7 +1776,7 @@ private fun TestAnalysisCard(
                     enabled = modelStatus is AiModelStatus.Ready,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Run test analysis")
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Run Test Analysis")
                 }
@@ -1838,7 +1838,7 @@ private fun InfoCard(availableModels: List<AiModel>) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.Info,
-                    contentDescription = null,
+                    contentDescription = "About On-Device AI",
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
