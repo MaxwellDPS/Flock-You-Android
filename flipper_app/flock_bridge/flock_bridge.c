@@ -32,6 +32,9 @@ static void flock_bridge_scene_status_on_enter(void* context);
 static bool flock_bridge_scene_status_on_event(void* context, SceneManagerEvent event);
 static void flock_bridge_scene_status_on_exit(void* context);
 
+// Event callbacks
+static bool flock_bridge_custom_event_callback(void* context, uint32_t event);
+
 // ============================================================================
 // Scene Handler Arrays
 // ============================================================================
@@ -196,6 +199,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
 
     FURI_LOG_I(TAG, "Data callback: %zu bytes received", length);
 
+    // Single blink on data receive
+    notification_message(app->notifications, &sequence_blink_blue_10);
+
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
     // Append to rx_buffer with overflow protection
@@ -304,6 +310,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Active Probe Commands - Public Safety & Fleet
         // ================================================================
         case FlockMsgTypeLfProbeTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Tire Kicker - 125kHz LF burst for TPMS wake
             FlockLfProbePayload lf_payload;
             if (flock_protocol_parse_lf_probe(app->rx_buffer, app->rx_buffer_len, &lf_payload)) {
@@ -324,6 +333,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeIrStrobeTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Opticom Verifier - IR strobe for traffic preemption
             FlockIrStrobePayload ir_payload;
             if (flock_protocol_parse_ir_strobe(app->rx_buffer, app->rx_buffer_len, &ir_payload)) {
@@ -341,6 +353,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeWifiProbeTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Honey-Potter - Wi-Fi probe request to ESP32
             FlockWifiProbePayload wifi_payload;
             if (flock_protocol_parse_wifi_probe(app->rx_buffer, app->rx_buffer_len, &wifi_payload)) {
@@ -354,6 +369,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeBleActiveScan: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // BlueForce Handshake - Active BLE scanning
             FlockBleActiveScanPayload ble_payload;
             if (flock_protocol_parse_ble_active_scan(app->rx_buffer, app->rx_buffer_len, &ble_payload)) {
@@ -368,6 +386,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Active Probe Commands - Infrastructure
         // ================================================================
         case FlockMsgTypeZigbeeBeaconTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Zigbee Knocker - Forward to ESP32
             // Note: parsing function would need to be added
             FURI_LOG_I(TAG, "Zigbee Beacon TX requested");
@@ -375,6 +396,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeGpioPulseTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Ghost Car - GPIO coil pulse for inductive loop
             FlockGpioPulsePayload gpio_payload;
             if (flock_protocol_parse_gpio_pulse(app->rx_buffer, app->rx_buffer_len, &gpio_payload)) {
@@ -389,6 +413,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Active Probe Commands - Physical Access
         // ================================================================
         case FlockMsgTypeSubGhzReplayTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Sleep Denial - Sub-GHz signal replay
             FlockSubGhzReplayPayload replay_payload;
             if (flock_protocol_parse_subghz_replay(app->rx_buffer, app->rx_buffer_len, &replay_payload)) {
@@ -399,6 +426,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeWiegandReplayTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Replay Injector - Wiegand card replay
             FlockWiegandReplayPayload wiegand_payload;
             if (flock_protocol_parse_wiegand_replay(app->rx_buffer, app->rx_buffer_len, &wiegand_payload)) {
@@ -409,6 +439,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeMagSpoofTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // MagSpoof - Magstripe emulation
             FlockMagSpoofPayload mag_payload;
             if (flock_protocol_parse_magspoof(app->rx_buffer, app->rx_buffer_len, &mag_payload)) {
@@ -419,6 +452,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             break;
         }
         case FlockMsgTypeIButtonEmulate: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // Master Key - iButton emulation
             FlockIButtonPayload ibutton_payload;
             if (flock_protocol_parse_ibutton(app->rx_buffer, app->rx_buffer_len, &ibutton_payload)) {
@@ -436,6 +472,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Active Probe Commands - Digital
         // ================================================================
         case FlockMsgTypeNrf24InjectTx: {
+            // Double blink for probe command
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            notification_message(app->notifications, &sequence_blink_magenta_10);
             // MouseJacker - NRF24 keystroke injection
             FlockNrf24InjectPayload nrf_payload;
             if (flock_protocol_parse_nrf24_inject(app->rx_buffer, app->rx_buffer_len, &nrf_payload)) {
@@ -517,8 +556,9 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewMain, widget_get_view(app->widget_main));
     view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewStatus, widget_get_view(app->widget_status));
 
-    // Set navigation callback
+    // Set navigation and custom event callbacks
     view_dispatcher_set_navigation_event_callback(app->view_dispatcher, flock_bridge_navigation_event_callback);
+    view_dispatcher_set_custom_event_callback(app->view_dispatcher, flock_bridge_custom_event_callback);
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
 
     // Allocate USB CDC
@@ -676,6 +716,12 @@ bool flock_bridge_navigation_event_callback(void* context) {
     return scene_manager_handle_back_event(app->scene_manager);
 }
 
+// Custom event callback - forwards custom events to scene manager
+static bool flock_bridge_custom_event_callback(void* context, uint32_t event) {
+    FlockBridgeApp* app = context;
+    return scene_manager_handle_custom_event(app->scene_manager, event);
+}
+
 // ============================================================================
 // Main Scene
 // ============================================================================
@@ -710,28 +756,60 @@ static bool flock_bridge_scene_main_on_event(void* context, SceneManagerEvent ev
 
     if (event.type == SceneManagerEventTypeCustom) {
         switch (event.event) {
+        // Connection events - green blink
         case FlockBridgeEventUsbConnected:
             app->usb_connected = true;
             flock_bridge_set_connection_mode(app, FlockConnectionUsb);
-            notification_message(app->notifications, &sequence_success);
+            notification_message(app->notifications, &sequence_blink_green_100);
             consumed = true;
             break;
         case FlockBridgeEventUsbDisconnected:
             app->usb_connected = false;
             flock_bridge_set_connection_mode(app, FlockConnectionNone);
+            notification_message(app->notifications, &sequence_blink_red_100);
             consumed = true;
             break;
         case FlockBridgeEventBtConnected:
             app->bt_connected = true;
             flock_bridge_set_connection_mode(app, FlockConnectionBluetooth);
-            notification_message(app->notifications, &sequence_success);
+            notification_message(app->notifications, &sequence_blink_green_100);
             consumed = true;
             break;
         case FlockBridgeEventBtDisconnected:
             app->bt_connected = false;
             flock_bridge_set_connection_mode(app, FlockConnectionNone);
+            notification_message(app->notifications, &sequence_blink_red_100);
             consumed = true;
             break;
+
+        // Detection events - yellow blink
+        case FlockBridgeEventSubGhzDetection:
+            notification_message(app->notifications, &sequence_blink_yellow_10);
+            consumed = true;
+            break;
+        case FlockBridgeEventBleScanComplete:
+            notification_message(app->notifications, &sequence_blink_yellow_10);
+            consumed = true;
+            break;
+        case FlockBridgeEventNfcDetection:
+            notification_message(app->notifications, &sequence_blink_yellow_10);
+            consumed = true;
+            break;
+        case FlockBridgeEventIrDetection:
+            notification_message(app->notifications, &sequence_blink_yellow_10);
+            consumed = true;
+            break;
+        case FlockBridgeEventWifiScanComplete:
+            notification_message(app->notifications, &sequence_blink_magenta_10);
+            consumed = true;
+            break;
+
+        // WIPS alert - red blink with longer duration
+        case FlockBridgeEventWipsAlert:
+            notification_message(app->notifications, &sequence_blink_red_100);
+            consumed = true;
+            break;
+
         default:
             break;
         }

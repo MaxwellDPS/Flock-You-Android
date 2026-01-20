@@ -311,6 +311,7 @@ bool flock_bridge_send_data(FlockBridgeApp* app, const uint8_t* data, size_t len
 
     if (result) {
         app->messages_sent++;
+        // Note: LED blink removed from routine data send to avoid overwhelming LED during sustained comms
     }
 
     furi_mutex_release(app->mutex);
