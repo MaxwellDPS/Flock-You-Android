@@ -330,7 +330,7 @@ fun StatusCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Warning,
-                            contentDescription = null,
+                            contentDescription = "Warning: ${recentErrors.size} recent error${if (recentErrors.size > 1) "s" else ""}",
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
@@ -411,7 +411,7 @@ fun StatusCard(
             ) {
                 Icon(
                     imageVector = if (isScanning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = null,
+                    contentDescription = if (isScanning) "Stop scanning" else "Start scanning",
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -767,7 +767,7 @@ fun DetectionCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.LocationOn,
-                                contentDescription = null,
+                                contentDescription = "Location: %.4f, %.4f".format(detection.latitude, detection.longitude),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -788,7 +788,7 @@ fun DetectionCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Visibility,
-                                contentDescription = null,
+                                contentDescription = "Seen ${detection.seenCount} times",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -924,7 +924,7 @@ fun DetectionCard(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Code,
-                                            contentDescription = null,
+                                            contentDescription = "Raw data frame",
                                             tint = MaterialTheme.colorScheme.tertiary,
                                             modifier = Modifier.size(14.dp)
                                         )
@@ -1038,7 +1038,7 @@ fun DetectionCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Lightbulb,
-                            contentDescription = null,
+                            contentDescription = "Analysis and Tips",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
@@ -1102,12 +1102,13 @@ private fun InlineAnalysisSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                    .clickable { expanded = !expanded }
+                    .semantics { stateDescription = if (expanded) "Insight expanded" else "Insight collapsed" },
                 verticalAlignment = Alignment.Top
             ) {
                 Icon(
                     imageVector = insight.icon,
-                    contentDescription = null,
+                    contentDescription = insight.headline,
                     tint = insight.iconColor,
                     modifier = Modifier.size(18.dp)
                 )
@@ -1181,8 +1182,8 @@ private fun InlineAnalysisSection(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = insight.textColor.copy(alpha = 0.5f),
+                                contentDescription = "Analysis reason",
+                                tint = insight.textColor.copy(alpha = 0.7f),
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -1406,7 +1407,7 @@ fun ThreatBadge(
     val isCriticalOrHigh = threatLevel == ThreatLevel.CRITICAL || threatLevel == ThreatLevel.HIGH
 
     Surface(
-        modifier = modifier,
+        modifier = modifier.semantics { stateDescription = "Threat level: ${threatLevel.name}" },
         shape = RoundedCornerShape(6.dp),
         color = color.copy(alpha = if (isCriticalOrHigh) 0.3f else 0.2f),
         shadowElevation = if (isCriticalOrHigh) 2.dp else 0.dp
@@ -1452,7 +1453,9 @@ fun SignalIndicator(
     }
 
     Row(
-        modifier = modifier,
+        modifier = modifier.semantics {
+            stateDescription = "Signal strength: $signalLabel, $rssi dBm"
+        },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -1474,13 +1477,17 @@ fun SignalIndicator(
 }
 
 /**
- * Empty state when no detections
+ * Empty state when no detections with optional action button and last scan time
  */
 @Composable
 fun EmptyState(
     isScanning: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onStartScanning: (() -> Unit)? = null,
+    lastScanTime: Long? = null
 ) {
+    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1489,9 +1496,9 @@ fun EmptyState(
     ) {
         Icon(
             imageVector = if (isScanning) Icons.Outlined.RadarOutlined else Icons.Outlined.SearchOff,
-            contentDescription = null,
+            contentDescription = if (isScanning) "Scanning for surveillance devices" else "No detections found",
             modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
@@ -1500,13 +1507,44 @@ fun EmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = if (isScanning) 
-                "Surveillance devices will appear here when detected" 
-            else 
+            text = if (isScanning)
+                "Surveillance devices will appear here when detected"
+            else
                 "Start scanning to detect surveillance devices",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
+
+        // Show last scan time if available
+        lastScanTime?.let { timestamp ->
+            if (timestamp > 0 && !isScanning) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Last scan: ${dateFormat.format(Date(timestamp))}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
+            }
+        }
+
+        // Show start scanning button if not scanning and callback provided
+        if (!isScanning && onStartScanning != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onStartScanning,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Start Scanning")
+            }
+        }
     }
 }
 
@@ -1527,6 +1565,8 @@ fun SectionHeader(
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.Bold,
-        modifier = modifier.padding(vertical = 8.dp)
+        modifier = modifier
+            .padding(vertical = 8.dp)
+            .semantics { heading() }
     )
 }

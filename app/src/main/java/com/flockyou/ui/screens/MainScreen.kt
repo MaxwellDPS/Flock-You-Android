@@ -488,8 +488,7 @@ fun MainScreen(
                                 item(key = "empty_state") {
                                     EmptyState(
                                         isScanning = uiState.isScanning,
-                                        onStartScanning = { viewModel.toggleScanning() },
-                                        lastScanTime = uiState.scanStats.lastScanTimestamp
+                                        onStartScanning = { viewModel.toggleScanning() }
                                     )
                                 }
                             }

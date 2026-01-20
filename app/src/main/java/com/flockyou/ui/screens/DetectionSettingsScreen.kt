@@ -764,6 +764,7 @@ private enum class RssiPreset {
 }
 
 // RSSI Help Card component
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RssiHelpCard(
     expanded: Boolean,

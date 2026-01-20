@@ -203,6 +203,11 @@ bool flock_usb_cdc_start(FlockUsbCdc* usb) {
     usb->rx_thread = furi_thread_alloc_ex("FlockUsbCdcRx", 1024, usb_cdc_rx_thread, usb);
     furi_thread_start(usb->rx_thread);
 
+    // Send a startup beacon to verify TX path works
+    uint8_t beacon[] = {0x01, 0x00, 0x00, 0x00}; // Heartbeat message
+    furi_hal_cdc_send(0, beacon, sizeof(beacon));
+    FURI_LOG_I(TAG, "Sent startup beacon");
+
     FURI_LOG_I(TAG, "USB CDC started successfully");
     return true;
 }
