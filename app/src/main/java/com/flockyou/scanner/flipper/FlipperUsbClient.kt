@@ -16,9 +16,7 @@ import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.hoho.android.usbserial.util.SerialInputOutputManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import java.lang.ref.Cleaner
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * USB Serial Client for communicating with Flipper Zero via USB CDC.
@@ -32,9 +30,6 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         private const val FLIPPER_PRODUCT_ID = 0x5740 // Flipper Zero CDC
         private const val ACTION_USB_PERMISSION = "com.flockyou.USB_PERMISSION"
         private const val BAUD_RATE = 115200
-
-        /** Cleaner instance for proper resource management (replaces deprecated finalize()) */
-        private val cleaner: Cleaner = Cleaner.create()
     }
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -186,7 +181,12 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
 
                 usbConnection = connection
 
-                val port = driver.ports[0]
+                // Select the correct port:
+                // - In dual CDC mode (FAP running): use port 1 (Flock protocol)
+                // - In single CDC mode: use port 0 (CLI, but FAP not running)
+                val portIndex = if (driver.ports.size > 1) 1 else 0
+                Log.i(TAG, "Found ${driver.ports.size} CDC port(s), using port $portIndex")
+                val port = driver.ports[portIndex]
                 port.open(connection)
                 port.setParameters(BAUD_RATE, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
                 port.dtr = true
@@ -263,7 +263,16 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     private fun processBuffer() {
         while (receiveBufferPosition >= 4) {
             val expectedSize = FlipperProtocol.getExpectedMessageSize(receiveBuffer.copyOf(receiveBufferPosition))
-            if (expectedSize <= 0 || receiveBufferPosition < expectedSize) break
+
+            // Invalid header (wrong version, garbage data) - skip one byte and try again
+            if (expectedSize < 0) {
+                System.arraycopy(receiveBuffer, 1, receiveBuffer, 0, receiveBufferPosition - 1)
+                receiveBufferPosition--
+                continue
+            }
+
+            // Not enough data for complete message - wait for more
+            if (receiveBufferPosition < expectedSize) break
 
             val messageData = receiveBuffer.copyOf(expectedSize)
             val message = FlipperProtocol.parseMessage(messageData)
@@ -335,62 +344,4 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     override fun close() {
         destroy()
     }
-
-    // ==================== Cleaner-based Resource Management ====================
-
-    /**
-     * State holder for Cleaner that doesn't reference the outer class.
-     * This allows proper GC while ensuring resources are freed if close() is not called.
-     */
-    private class CleanupState(
-        private val tag: String,
-        private val contextRef: java.lang.ref.WeakReference<Context>,
-        private val usbPermissionReceiver: BroadcastReceiver,
-        private val usbStateReceiver: BroadcastReceiver,
-        private val receiversRegisteredFlag: AtomicBoolean,
-        private val executor: java.util.concurrent.ExecutorService,
-        private val scope: CoroutineScope,
-        private val cleanedUp: AtomicBoolean
-    ) : Runnable {
-        override fun run() {
-            // Only run cleanup once
-            if (!cleanedUp.compareAndSet(false, true)) return
-
-            Log.w(tag, "FlipperUsbClient cleaned up via Cleaner - close()/destroy() was not called")
-
-            // Unregister receivers if still registered
-            if (receiversRegisteredFlag.get()) {
-                contextRef.get()?.let { ctx ->
-                    try {
-                        ctx.unregisterReceiver(usbPermissionReceiver)
-                        ctx.unregisterReceiver(usbStateReceiver)
-                    } catch (_: Exception) {}
-                }
-                receiversRegisteredFlag.set(false)
-            }
-
-            // Shutdown executor and coroutine scope
-            scope.cancel()
-            executor.shutdown()
-        }
-    }
-
-    // Atomic flags for Cleaner state tracking
-    private val receiversRegisteredAtomic = AtomicBoolean(false)
-    private val cleanedUpAtomic = AtomicBoolean(false)
-
-    // Register cleanup action with Cleaner (replaces finalize())
-    private val cleanable: Cleaner.Cleanable = cleaner.register(
-        this,
-        CleanupState(
-            tag = TAG,
-            contextRef = java.lang.ref.WeakReference(context),
-            usbPermissionReceiver = usbPermissionReceiver,
-            usbStateReceiver = usbStateReceiver,
-            receiversRegisteredFlag = receiversRegisteredAtomic,
-            executor = executor,
-            scope = scope,
-            cleanedUp = cleanedUpAtomic
-        )
-    )
 }

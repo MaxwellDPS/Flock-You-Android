@@ -705,8 +705,22 @@ object FlipperProtocol {
     fun getExpectedMessageSize(header: ByteArray): Int {
         if (header.size < HEADER_SIZE) return -1
         val buffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+
+        // Validate version byte - if not our protocol version, this isn't a valid message
+        val version = buffer.get().toInt() and 0xFF
+        if (version != VERSION) {
+            // Invalid header - return -1 to signal the caller to skip this byte
+            return -1
+        }
+
         buffer.position(2)
         val payloadLength = buffer.short.toInt() and 0xFFFF
+
+        // Sanity check: reject impossibly large payloads (max 16KB should be plenty)
+        if (payloadLength > 16384) {
+            return -1
+        }
+
         return HEADER_SIZE + payloadLength
     }
 
