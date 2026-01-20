@@ -736,7 +736,7 @@ class SatelliteMonitor(
     private fun checkCurrentState() {
         val operatorName = telephonyManager.networkOperatorName ?: ""
         val connectionType = detectSatelliteConnectionType(operatorName, "")
-        
+
         if (connectionType != SatelliteConnectionType.NONE && !_satelliteState.value.isConnected) {
             // Satellite detected but not tracked - update state
             _satelliteState.value = SatelliteConnectionState(
@@ -747,6 +747,9 @@ class SatelliteMonitor(
                 capabilities = getCapabilitiesForProvider(connectionType)
             )
         }
+
+        // Report successful check for health monitoring
+        errorCallback?.onScanSuccess(com.flockyou.service.ScanningService.DetectorHealthStatus.DETECTOR_SATELLITE)
     }
     
     /**
