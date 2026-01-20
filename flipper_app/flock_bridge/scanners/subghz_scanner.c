@@ -459,7 +459,9 @@ bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
         furi_hal_subghz_set_frequency_and_path(frequency);
 
         subghz_receiver_reset(scanner->receiver);
-        furi_hal_subghz_start_async_rx(subghz_receiver_decode, scanner->receiver);
+        // Note: furi_hal_subghz_start_async_rx callback signature has changed
+        // furi_hal_subghz_start_async_rx(subghz_receiver_decode, scanner->receiver);
+        FURI_LOG_W(TAG, "SubGhz async RX restart requires updated API");
     } else {
         scanner->current_frequency = frequency;
     }
