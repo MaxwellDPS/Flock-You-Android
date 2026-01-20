@@ -315,6 +315,37 @@ class LlmEngineManager @Inject constructor(
     }
 
     /**
+     * Sync the active engine to the best available one.
+     * Call this before analysis to ensure we use the best engine that's ready.
+     * This handles the case where an engine becomes ready after initial initialization.
+     */
+    fun syncActiveEngine() {
+        val geminiReady = geminiNanoClient.isReady()
+        val mediaPipeReady = mediaPipeLlmClient.isReady()
+        val currentActive = _activeEngine.value
+
+        Log.d(TAG, "syncActiveEngine: geminiReady=$geminiReady, mediaPipeReady=$mediaPipeReady, current=$currentActive")
+
+        // Upgrade to better engine if available
+        when {
+            geminiReady && currentActive != LlmEngine.GEMINI_NANO -> {
+                Log.i(TAG, "Upgrading active engine from $currentActive to GEMINI_NANO")
+                _activeEngine.value = LlmEngine.GEMINI_NANO
+                _currentModel = AiModel.GEMINI_NANO
+                _engineStatus.value = EngineStatus.Ready(LlmEngine.GEMINI_NANO)
+            }
+            mediaPipeReady && currentActive == LlmEngine.RULE_BASED -> {
+                Log.i(TAG, "Upgrading active engine from RULE_BASED to MEDIAPIPE")
+                _activeEngine.value = LlmEngine.MEDIAPIPE
+                if (_currentModel == AiModel.RULE_BASED) {
+                    _currentModel = AiModel.GEMMA3_1B
+                }
+                _engineStatus.value = EngineStatus.Ready(LlmEngine.MEDIAPIPE)
+            }
+        }
+    }
+
+    /**
      * Analyze a detection using the best available engine with automatic fallback.
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
@@ -331,17 +362,33 @@ class LlmEngineManager @Inject constructor(
             )
         }
 
+        // Sync active engine to best available before analysis
+        syncActiveEngine()
+
+        val currentEngine = _activeEngine.value
+        Log.d(TAG, "analyzeDetection: starting with active engine = $currentEngine")
+        Log.d(TAG, "  geminiNanoClient.isReady() = ${geminiNanoClient.isReady()}")
+        Log.d(TAG, "  mediaPipeLlmClient.isReady() = ${mediaPipeLlmClient.isReady()}")
+
         // Try current active engine first
-        var result = tryAnalyzeWithEngine(_activeEngine.value, detection)
+        var result = tryAnalyzeWithEngine(currentEngine, detection)
+        Log.d(TAG, "  tryAnalyzeWithEngine($currentEngine) returned: success=${result?.success}, error=${result?.error}")
 
         // If failed, try fallback chain
         if (result == null || !result.success) {
-            Log.w(TAG, "Primary engine failed, trying fallback chain")
+            Log.w(TAG, "Primary engine $currentEngine failed, trying fallback chain")
 
-            for (engine in getFallbackOrder(_activeEngine.value)) {
+            for (engine in getFallbackOrder(currentEngine)) {
+                Log.d(TAG, "  Trying fallback engine: $engine")
                 result = tryAnalyzeWithEngine(engine, detection)
+                Log.d(TAG, "    Result: success=${result?.success}, error=${result?.error}")
                 if (result != null && result.success) {
-                    Log.i(TAG, "Fallback to $engine succeeded")
+                    Log.i(TAG, "Fallback to $engine succeeded!")
+                    // Update active engine if fallback succeeded with a better engine
+                    if (engine != LlmEngine.RULE_BASED && engine != currentEngine) {
+                        Log.i(TAG, "Updating active engine to $engine after successful fallback")
+                        _activeEngine.value = engine
+                    }
                     break
                 }
             }
@@ -366,15 +413,24 @@ class LlmEngineManager @Inject constructor(
         return try {
             when (engine) {
                 LlmEngine.GEMINI_NANO -> {
-                    if (geminiNanoClient.isReady()) {
+                    val isReady = geminiNanoClient.isReady()
+                    Log.d(TAG, "tryAnalyzeWithEngine(GEMINI_NANO): isReady=$isReady")
+                    if (isReady) {
+                        Log.d(TAG, "Calling geminiNanoClient.analyzeDetection()...")
                         val result = geminiNanoClient.analyzeDetection(detection)
+                        Log.d(TAG, "geminiNanoClient.analyzeDetection() returned: success=${result.success}, modelUsed=${result.modelUsed}, error=${result.error}")
                         if (result.success) {
                             recordSuccess(LlmEngine.GEMINI_NANO)
+                            Log.i(TAG, "GEMINI_NANO analysis succeeded!")
                         } else {
                             recordFailure(LlmEngine.GEMINI_NANO, result.error ?: "Unknown error")
+                            Log.w(TAG, "GEMINI_NANO analysis failed: ${result.error}")
                         }
                         result
-                    } else null
+                    } else {
+                        Log.d(TAG, "GEMINI_NANO not ready, skipping")
+                        null
+                    }
                 }
                 LlmEngine.MEDIAPIPE -> {
                     if (mediaPipeLlmClient.isReady()) {

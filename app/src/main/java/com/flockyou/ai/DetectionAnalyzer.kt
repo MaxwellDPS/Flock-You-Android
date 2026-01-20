@@ -261,7 +261,33 @@ class DetectionAnalyzer @Inject constructor(
                         }
                     }
 
-                    _modelStatus.value = AiModelStatus.Ready
+                    // Check if user wanted a specific model but got rule-based fallback
+                    val wantedGeminiNano = modelFromSettings == AiModel.GEMINI_NANO
+                    val gotRuleBasedFallback = activeEngine == LlmEngine.RULE_BASED
+
+                    if (wantedGeminiNano && gotRuleBasedFallback) {
+                        // User wanted Gemini Nano but it's not available - check why
+                        val nanoStatus = geminiNanoClient.getStatus()
+                        Log.w(TAG, "User wanted Gemini Nano but got rule-based fallback. Nano status: $nanoStatus")
+                        when (nanoStatus) {
+                            is GeminiNanoStatus.NeedsDownload -> {
+                                _modelStatus.value = AiModelStatus.NotDownloaded
+                                Log.i(TAG, "Gemini Nano needs download - showing NotDownloaded status")
+                            }
+                            is GeminiNanoStatus.Downloading -> {
+                                _modelStatus.value = AiModelStatus.Downloading((nanoStatus as GeminiNanoStatus.Downloading).progress)
+                            }
+                            is GeminiNanoStatus.Error -> {
+                                _modelStatus.value = AiModelStatus.Error((nanoStatus as GeminiNanoStatus.Error).message)
+                            }
+                            else -> {
+                                // Nano might be initializing or in some other state
+                                _modelStatus.value = AiModelStatus.Ready
+                            }
+                        }
+                    } else {
+                        _modelStatus.value = AiModelStatus.Ready
+                    }
                     Log.i(TAG, "Model initialized successfully via LlmEngineManager: $activeEngine, model=${currentModel.displayName}")
                     return@withContext true
                 }
@@ -834,14 +860,19 @@ class DetectionAnalyzer @Inject constructor(
         Log.d(TAG, "  - geminiNanoClient.isReady(): ${geminiNanoClient.isReady()}")
         Log.d(TAG, "  - mediaPipeLlmClient.isReady(): ${mediaPipeLlmClient.isReady()}")
 
+        // Sync active engine to best available before analysis
+        llmEngineManager.syncActiveEngine()
+
         // Use LlmEngineManager for analysis with automatic fallback
         val activeEngine = llmEngineManager.activeEngine.value
         Log.d(TAG, "Using LlmEngineManager with active engine: $activeEngine")
 
         // Check if any LLM engine is ready (not just the active one)
         // This allows fallback to work even if the primary engine is rule-based
-        val anyLlmReady = llmEngineManager.isEngineReady(LlmEngine.GEMINI_NANO) ||
-                          llmEngineManager.isEngineReady(LlmEngine.MEDIAPIPE)
+        val geminiReady = llmEngineManager.isEngineReady(LlmEngine.GEMINI_NANO)
+        val mediaPipeReady = llmEngineManager.isEngineReady(LlmEngine.MEDIAPIPE)
+        val anyLlmReady = geminiReady || mediaPipeReady
+        Log.d(TAG, "  geminiReady=$geminiReady, mediaPipeReady=$mediaPipeReady, anyLlmReady=$anyLlmReady")
 
         // Try LLM if active engine is LLM OR if any LLM engine is ready
         // The LlmEngineManager will handle the fallback chain internally
