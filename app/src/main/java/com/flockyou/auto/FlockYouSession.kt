@@ -50,8 +50,13 @@ class FlockYouSession : Session() {
         Log.d(TAG, "Intent action: ${intent.action}, data: ${intent.data}")
 
         // Check for deep link data in the initial intent
+        // If a detection ID is provided, navigate directly to that detection's detail screen
         intent.getStringExtra(EXTRA_DETECTION_ID)?.let { detectionId ->
-            Log.d(TAG, "Initial intent contains detection ID: $detectionId")
+            Log.d(TAG, "Initial intent contains detection ID: $detectionId, creating detail screen")
+            // Push the main screen first, then the detail screen on top
+            // This ensures proper back navigation (detail -> main)
+            val screenManager = carContext.getCarService(ScreenManager::class.java)
+            screenManager.push(DetectionDetailScreen(carContext, detectionId))
         }
 
         return AutoMainScreen(carContext)
@@ -77,10 +82,9 @@ class FlockYouSession : Session() {
         try {
             intent.getStringExtra(EXTRA_DETECTION_ID)?.let { detectionId ->
                 Log.i(TAG, "Navigating to detection detail: $detectionId")
-                // TODO: Navigate to a detail screen or highlight the detection
-                // For now, we just log it. A DetectionDetailScreen can be implemented later.
-                // val screenManager = carContext.getCarService(ScreenManager::class.java)
-                // screenManager.push(DetectionDetailScreen(carContext, detectionId))
+                // Push the detection detail screen onto the screen stack
+                val screenManager = carContext.getCarService(ScreenManager::class.java)
+                screenManager.push(DetectionDetailScreen(carContext, detectionId))
             }
 
             intent.getStringExtra(EXTRA_THREAT_LEVEL)?.let { level ->

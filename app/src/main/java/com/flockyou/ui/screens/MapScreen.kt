@@ -1,10 +1,15 @@
 package com.flockyou.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -23,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import com.flockyou.service.ScanningService
 import com.flockyou.ui.components.ThreatBadge
 import com.flockyou.ui.components.toIcon
 import com.flockyou.ui.theme.*
@@ -78,6 +84,36 @@ fun MapScreen(
     var gpsStatus by remember { mutableStateOf(GpsStatus.SEARCHING) }
     var gpsAccuracyMeters by remember { mutableStateOf<Float?>(null) }
     var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
+
+    // Location permission launcher for requesting location permissions
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        // Permissions result received - the map will update automatically when
+        // new detections with location data are received
+    }
+
+    // Function to request location permissions
+    val requestLocationPermissions: () -> Unit = {
+        val permissionsToRequest = buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+        }
+        locationPermissionLauncher.launch(permissionsToRequest.toTypedArray())
+    }
+
+    // Function to start scanning service
+    val startScanning: () -> Unit = {
+        val intent = Intent(context, ScanningService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    }
 
     // Update GPS status based on detections with location
     LaunchedEffect(uiState.detectionsWithLocation) {
@@ -307,13 +343,13 @@ fun MapScreen(
                 // Empty state - detections exist but no location data
                 MapEmptyState(
                     hasDetections = true,
-                    onRequestPermissions = { /* TODO: Request location permissions */ }
+                    onRequestPermissions = requestLocationPermissions
                 )
             } else if (uiState.detectionsWithLocation.isEmpty()) {
                 // Empty state - no detections at all
                 MapEmptyState(
                     hasDetections = false,
-                    onRequestPermissions = { /* TODO: Start scanning */ }
+                    onRequestPermissions = startScanning
                 )
             } else {
                 // OpenStreetMap View with HTTPS tile source

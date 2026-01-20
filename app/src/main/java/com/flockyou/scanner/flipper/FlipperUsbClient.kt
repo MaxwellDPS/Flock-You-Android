@@ -32,7 +32,7 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         private const val BAUD_RATE = 115200
     }
 
-    private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val usbManager: UsbManager? = context.getSystemService(Context.USB_SERVICE) as? UsbManager
 
     private var usbConnection: UsbDeviceConnection? = null
     private var serialPort: UsbSerialPort? = null
@@ -107,8 +107,20 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     private var receiversRegistered = false
+    @Volatile private var isInitialized = false
 
     init {
+        // Delay receiver registration to avoid race conditions
+        // Receivers will be registered on first use
+        isInitialized = true
+    }
+
+    /**
+     * Ensures receivers are registered. Safe to call multiple times.
+     * Must be called before any USB operations.
+     */
+    fun ensureReceiversRegistered() {
+        if (!isInitialized) return
         registerReceivers()
     }
 
@@ -135,7 +147,18 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     fun findFlipperDevices(): List<UsbDevice> {
-        return usbManager.deviceList.values.filter { isFlipperDevice(it) }
+        Log.i(TAG, "findFlipperDevices called")
+        ensureReceiversRegistered()
+        return try {
+            val deviceList = usbManager?.deviceList
+            Log.i(TAG, "USB device count: ${deviceList?.size ?: 0}")
+            val flippers = deviceList?.values?.filter { isFlipperDevice(it) } ?: emptyList()
+            Log.i(TAG, "Found ${flippers.size} Flipper device(s)")
+            flippers
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding Flipper devices: ${e.message}", e)
+            emptyList()
+        }
     }
 
     private fun isFlipperDevice(device: UsbDevice?): Boolean {
@@ -144,27 +167,51 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     fun connect(device: UsbDevice) {
-        Log.i(TAG, "Connecting to Flipper Zero: ${device.deviceName}")
-        _connectionState.value = FlipperConnectionState.CONNECTING
-
-        if (!usbManager.hasPermission(device)) {
-            Log.i(TAG, "Requesting USB permission")
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_MUTABLE
-            } else {
-                0
+        ensureReceiversRegistered()
+        try {
+            val manager = usbManager
+            if (manager == null) {
+                Log.e(TAG, "USB Manager not available")
+                _connectionState.value = FlipperConnectionState.ERROR
+                return
             }
-            val permissionIntent = PendingIntent.getBroadcast(context, 0, Intent(ACTION_USB_PERMISSION), flags)
-            usbManager.requestPermission(device, permissionIntent)
-            return
-        }
 
-        connectToDevice(device)
+            Log.i(TAG, "Connecting to Flipper Zero: ${device.deviceName}")
+            _connectionState.value = FlipperConnectionState.CONNECTING
+
+            if (!manager.hasPermission(device)) {
+                Log.i(TAG, "Requesting USB permission")
+                // Create explicit intent with package to satisfy Android 14+ requirements
+                val intent = Intent(ACTION_USB_PERMISSION).apply {
+                    setPackage(context.packageName)
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_MUTABLE
+                } else {
+                    0
+                }
+                val permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
+                manager.requestPermission(device, permissionIntent)
+                return
+            }
+
+            connectToDevice(device)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error connecting to device", e)
+            _connectionState.value = FlipperConnectionState.ERROR
+        }
     }
 
     private fun connectToDevice(device: UsbDevice) {
         scope.launch {
             try {
+                val manager = usbManager
+                if (manager == null) {
+                    Log.e(TAG, "USB Manager not available")
+                    _connectionState.value = FlipperConnectionState.ERROR
+                    return@launch
+                }
+
                 val driver = findDriver(device)
                 if (driver == null) {
                     Log.e(TAG, "No driver found for device")
@@ -172,7 +219,7 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
                     return@launch
                 }
 
-                val connection = usbManager.openDevice(device)
+                val connection = manager.openDevice(device)
                 if (connection == null) {
                     Log.e(TAG, "Failed to open USB connection")
                     _connectionState.value = FlipperConnectionState.ERROR
@@ -180,6 +227,13 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
                 }
 
                 usbConnection = connection
+
+                // Check if driver has any ports
+                if (driver.ports.isEmpty()) {
+                    Log.e(TAG, "No serial ports found for device")
+                    _connectionState.value = FlipperConnectionState.ERROR
+                    return@launch
+                }
 
                 // Select the correct port:
                 // - In dual CDC mode (FAP running): use port 1 (Flock protocol)
@@ -223,9 +277,35 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     private fun findDriver(device: UsbDevice): com.hoho.android.usbserial.driver.UsbSerialDriver? {
-        val defaultDrivers = UsbSerialProber.getDefaultProber().probeDevice(device)
-        if (defaultDrivers != null) return defaultDrivers
-        return try { CdcAcmSerialDriver(device) } catch (_: Exception) { null }
+        Log.i(TAG, "findDriver: device=${device.deviceName}, vendor=${device.vendorId}, product=${device.productId}")
+        Log.i(TAG, "findDriver: interfaceCount=${device.interfaceCount}")
+
+        return try {
+            // For Flipper Zero, prefer CdcAcmSerialDriver directly
+            // The default prober might select wrong driver for STM devices
+            if (isFlipperDevice(device)) {
+                Log.i(TAG, "Creating CdcAcmSerialDriver for Flipper Zero")
+                val driver = CdcAcmSerialDriver(device)
+                Log.i(TAG, "CdcAcmSerialDriver created, ports=${driver.ports.size}")
+                return driver
+            }
+
+            // For other devices, try default prober first
+            Log.i(TAG, "Trying default prober")
+            val defaultDrivers = UsbSerialProber.getDefaultProber().probeDevice(device)
+            if (defaultDrivers != null) {
+                Log.i(TAG, "Default prober found driver: ${defaultDrivers.javaClass.simpleName}")
+                return defaultDrivers
+            }
+            Log.i(TAG, "Default prober returned null, creating CdcAcmSerialDriver")
+            CdcAcmSerialDriver(device)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding driver for device: ${e.message}", e)
+            null
+        } catch (e: Error) {
+            Log.e(TAG, "Fatal error finding driver for device: ${e.message}", e)
+            null
+        }
     }
 
     private fun handleReceivedData(data: ByteArray) {

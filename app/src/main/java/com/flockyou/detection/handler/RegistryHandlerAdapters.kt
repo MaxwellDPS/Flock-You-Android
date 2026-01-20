@@ -90,41 +90,113 @@ class BleRegistryHandler @Inject constructor(
 
 /**
  * Registry adapter for WiFi detection.
+ *
+ * This adapter wraps [WifiDetectionHandler] to provide the unified
+ * [DetectionHandler] interface for the DetectionRegistry.
  */
 @Singleton
 class WifiRegistryHandler @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val wifiDetectionHandler: WifiDetectionHandler
 ) : BaseDetectionHandler<DetectionContext.WiFi>() {
 
     override val protocol: DetectionProtocol = DetectionProtocol.WIFI
 
-    override val supportedDeviceTypes: Set<DeviceType> = setOf(
-        DeviceType.ROGUE_AP,
-        DeviceType.HIDDEN_CAMERA,
-        DeviceType.SURVEILLANCE_VAN,
-        DeviceType.TRACKING_DEVICE,
-        DeviceType.WIFI_PINEAPPLE,
-        DeviceType.FLOCK_SAFETY_CAMERA,
-        DeviceType.PENGUIN_SURVEILLANCE
-    )
+    override val supportedDeviceTypes: Set<DeviceType> = wifiDetectionHandler.supportedDeviceTypes
 
-    override val supportedMethods: Set<DetectionMethod> = setOf(
-        DetectionMethod.SSID_PATTERN,
-        DetectionMethod.MAC_PREFIX,
-        DetectionMethod.WIFI_EVIL_TWIN,
-        DetectionMethod.WIFI_ROGUE_AP,
-        DetectionMethod.WIFI_HIDDEN_CAMERA
-    )
+    override val supportedMethods: Set<DetectionMethod> = wifiDetectionHandler.supportedMethods
 
-    override val displayName: String = "WiFi Detection Handler"
+    override val displayName: String = wifiDetectionHandler.displayName
+
+    init {
+        // Register device profiles for WiFi surveillance devices
+        registerProfiles(
+            DeviceTypeProfile(
+                deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
+                manufacturer = "Flock Safety",
+                description = "Automated License Plate Reader (ALPR) camera",
+                capabilities = listOf("License plate capture", "Vehicle identification", "24/7 recording", "Network sharing"),
+                typicalThreatLevel = ThreatLevel.CRITICAL
+            ),
+            DeviceTypeProfile(
+                deviceType = DeviceType.ROGUE_AP,
+                manufacturer = "Unknown",
+                description = "Potentially malicious access point",
+                capabilities = listOf("Traffic interception", "Credential capture", "Man-in-the-middle"),
+                typicalThreatLevel = ThreatLevel.HIGH
+            ),
+            DeviceTypeProfile(
+                deviceType = DeviceType.HIDDEN_CAMERA,
+                manufacturer = "Unknown",
+                description = "Covert surveillance camera",
+                capabilities = listOf("Video recording", "WiFi streaming", "Remote access"),
+                typicalThreatLevel = ThreatLevel.HIGH
+            ),
+            DeviceTypeProfile(
+                deviceType = DeviceType.SURVEILLANCE_VAN,
+                manufacturer = "Unknown",
+                description = "Mobile surveillance vehicle hotspot",
+                capabilities = listOf("Mobile monitoring", "Electronic surveillance", "Data collection"),
+                typicalThreatLevel = ThreatLevel.CRITICAL
+            )
+        )
+    }
+
+    /**
+     * Get the underlying WifiDetectionHandler for direct access.
+     */
+    fun getHandler(): WifiDetectionHandler = wifiDetectionHandler
 
     override fun analyze(context: DetectionContext.WiFi): DetectionResult? {
-        // WiFi analysis is handled by ScanningService
-        return null
+        // Convert generic DetectionContext.WiFi to WifiDetectionContext
+        val wifiContext = WifiDetectionContext(
+            ssid = context.ssid,
+            bssid = context.bssid,
+            rssi = context.rssi,
+            frequency = context.frequency,
+            channel = context.channel,
+            capabilities = context.capabilities,
+            isHidden = context.isHidden,
+            timestamp = context.timestamp,
+            latitude = context.latitude,
+            longitude = context.longitude
+        )
+
+        // Process through the handler
+        val result = wifiDetectionHandler.handlePatternMatching(wifiContext)
+
+        return result?.let { wifiResult ->
+            DetectionResult(
+                detection = wifiResult.detection,
+                confidence = wifiResult.confidence,
+                rawScore = wifiResult.detection.threatScore,
+                metadata = mapOf("aiPrompt" to wifiResult.aiPrompt),
+                matchedPatterns = emptyList(), // Patterns are in the detection
+                analysisTimeMs = 0,
+                handlerId = handlerId
+            )
+        }
     }
 
     override fun matchesPattern(scanResult: Any): PatternMatch? {
+        // Pattern matching is delegated to DetectionPatterns via WifiDetectionHandler
         return null
+    }
+
+    override fun startMonitoring() {
+        wifiDetectionHandler.startMonitoring()
+    }
+
+    override fun stopMonitoring() {
+        wifiDetectionHandler.stopMonitoring()
+    }
+
+    override fun updateLocation(latitude: Double, longitude: Double) {
+        wifiDetectionHandler.updateLocation(latitude, longitude)
+    }
+
+    override fun destroy() {
+        wifiDetectionHandler.destroy()
     }
 }
 

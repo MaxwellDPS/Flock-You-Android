@@ -84,7 +84,8 @@ class FlipperScannerManager @Inject constructor(
     fun initialize() {
         if (flipperClient != null) return
 
-        flipperClient = FlipperClient(context).also { client ->
+        try {
+            flipperClient = FlipperClient(context).also { client ->
             // Observe connection state
             scope.launch {
                 client.connectionState.collect { state ->
@@ -124,7 +125,16 @@ class FlipperScannerManager @Inject constructor(
             }
         }
 
-        Log.i(TAG, "FlipperScannerManager initialized")
+            Log.i(TAG, "FlipperScannerManager initialized")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing FlipperClient", e)
+            _lastError.value = "Failed to initialize: ${e.message}"
+            _connectionState.value = FlipperConnectionState.ERROR
+        } catch (e: Error) {
+            Log.e(TAG, "Fatal error initializing FlipperClient", e)
+            _lastError.value = "Fatal error: ${e.message}"
+            _connectionState.value = FlipperConnectionState.ERROR
+        }
     }
 
     /**

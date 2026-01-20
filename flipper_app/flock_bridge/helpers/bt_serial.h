@@ -49,3 +49,11 @@ void flock_bt_serial_set_callback(
     FlockBtSerial* bt,
     void (*callback)(void* context, uint8_t* data, size_t length),
     void* context);
+
+/**
+ * Set connection state change callback.
+ */
+void flock_bt_serial_set_state_callback(
+    FlockBtSerial* bt,
+    void (*callback)(void* context, bool connected),
+    void* context);

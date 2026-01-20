@@ -23,6 +23,10 @@ struct FlockBtSerial {
     // Callback for received data
     void (*data_callback)(void* context, uint8_t* data, size_t length);
     void* callback_context;
+
+    // Callback for connection state changes
+    void (*state_callback)(void* context, bool connected);
+    void* state_callback_context;
 };
 
 // ============================================================================
@@ -65,6 +69,8 @@ static void bt_status_callback(BtStatus status, void* context) {
 
     furi_mutex_acquire(bt->mutex, FuriWaitForever);
 
+    bool was_connected = bt->connected;
+
     switch (status) {
     case BtStatusAdvertising:
         FURI_LOG_I(TAG, "Bluetooth advertising");
@@ -86,7 +92,17 @@ static void bt_status_callback(BtStatus status, void* context) {
         break;
     }
 
+    // Notify state change callback
+    bool is_connected = bt->connected;
+    void (*callback)(void*, bool) = bt->state_callback;
+    void* ctx = bt->state_callback_context;
+
     furi_mutex_release(bt->mutex);
+
+    // Call callback outside mutex to prevent deadlocks
+    if (callback && was_connected != is_connected) {
+        callback(ctx, is_connected);
+    }
 }
 
 // ============================================================================
@@ -258,5 +274,18 @@ void flock_bt_serial_set_callback(
     furi_mutex_acquire(bt->mutex, FuriWaitForever);
     bt->data_callback = callback;
     bt->callback_context = context;
+    furi_mutex_release(bt->mutex);
+}
+
+void flock_bt_serial_set_state_callback(
+    FlockBtSerial* bt,
+    void (*callback)(void* context, bool connected),
+    void* context) {
+
+    if (!bt) return;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+    bt->state_callback = callback;
+    bt->state_callback_context = context;
     furi_mutex_release(bt->mutex);
 }

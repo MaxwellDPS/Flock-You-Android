@@ -44,48 +44,56 @@ class FlipperClient(private val context: Context) {
     }
 
     private fun initializeClients() {
-        bleClient = FlipperBluetoothClient(context).also { client ->
-            scope.launch {
-                client.connectionState.collect { state ->
-                    if (_connectionType.value == ConnectionType.BLUETOOTH) {
-                        _connectionState.value = state
+        try {
+            bleClient = FlipperBluetoothClient(context).also { client ->
+                scope.launch {
+                    client.connectionState.collect { state ->
+                        if (_connectionType.value == ConnectionType.BLUETOOTH) {
+                            _connectionState.value = state
+                        }
+                    }
+                }
+                scope.launch {
+                    client.messages.collect { message ->
+                        if (_connectionType.value == ConnectionType.BLUETOOTH) {
+                            handleMessage(message)
+                        }
+                    }
+                }
+                scope.launch {
+                    client.wipsEvents.collect { event ->
+                        _wipsEvents.emit(event)
                     }
                 }
             }
-            scope.launch {
-                client.messages.collect { message ->
-                    if (_connectionType.value == ConnectionType.BLUETOOTH) {
-                        handleMessage(message)
-                    }
-                }
-            }
-            scope.launch {
-                client.wipsEvents.collect { event ->
-                    _wipsEvents.emit(event)
-                }
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing Bluetooth client", e)
         }
 
-        usbClient = FlipperUsbClient(context).also { client ->
-            scope.launch {
-                client.connectionState.collect { state ->
-                    if (_connectionType.value == ConnectionType.USB) {
-                        _connectionState.value = state
+        try {
+            usbClient = FlipperUsbClient(context).also { client ->
+                scope.launch {
+                    client.connectionState.collect { state ->
+                        if (_connectionType.value == ConnectionType.USB) {
+                            _connectionState.value = state
+                        }
+                        if (state == FlipperConnectionState.READY && _connectionType.value != ConnectionType.USB) {
+                            Log.i(TAG, "USB connected, switching to USB mode")
+                            _connectionType.value = ConnectionType.USB
+                            _connectionState.value = state
+                        }
                     }
-                    if (state == FlipperConnectionState.READY && _connectionType.value != ConnectionType.USB) {
-                        Log.i(TAG, "USB connected, switching to USB mode")
-                        _connectionType.value = ConnectionType.USB
-                        _connectionState.value = state
+                }
+                scope.launch {
+                    client.messages.collect { message ->
+                        if (_connectionType.value == ConnectionType.USB) {
+                            handleMessage(message)
+                        }
                     }
                 }
             }
-            scope.launch {
-                client.messages.collect { message ->
-                    if (_connectionType.value == ConnectionType.USB) {
-                        handleMessage(message)
-                    }
-                }
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing USB client", e)
         }
     }
 

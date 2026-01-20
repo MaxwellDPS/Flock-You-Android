@@ -343,4 +343,14 @@
     <string name="auto_pull_over">Pull Over to View</string>
     <string name="auto_unknown_device">Unknown Device</string>
     <string name="auto_unknown_type">Unknown</string>
+    <!-- Android Auto Detection Detail Screen -->
+    <string name="auto_detail_title">Detection Detail</string>
+    <string name="auto_detail_title_critical">CRITICAL ALERT</string>
+    <string name="auto_detail_title_high">HIGH THREAT</string>
+    <string name="auto_detail_loading">Loading detection…</string>
+    <string name="auto_detail_not_found">Detection no longer active</string>
+    <string name="auto_detail_signal">Signal</string>
+    <string name="auto_detail_method">Detected Via</string>
+    <string name="auto_detail_time">Detected At</string>
+    <string name="auto_back">Back</string>
 </resources>

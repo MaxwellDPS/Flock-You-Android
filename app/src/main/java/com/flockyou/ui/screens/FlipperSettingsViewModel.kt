@@ -1,5 +1,11 @@
 package com.flockyou.ui.screens
 
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
@@ -7,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.flockyou.scanner.flipper.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -18,7 +25,8 @@ import javax.inject.Inject
 @HiltViewModel
 class FlipperSettingsViewModel @Inject constructor(
     private val settingsRepository: FlipperSettingsRepository,
-    private val flipperScannerManager: FlipperScannerManager
+    private val flipperScannerManager: FlipperScannerManager,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     companion object {
@@ -27,8 +35,61 @@ class FlipperSettingsViewModel @Inject constructor(
         private const val FAP_DEST_PATH = "/ext/apps/Tools/flock_bridge.fap"
     }
 
+    private val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
+
     val settings: StateFlow<FlipperSettings> = settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, FlipperSettings())
+
+    // BLE scanning state
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _discoveredDevices = MutableStateFlow<List<DiscoveredFlipperDevice>>(emptyList())
+    val discoveredDevices: StateFlow<List<DiscoveredFlipperDevice>> = _discoveredDevices.asStateFlow()
+
+    private val _showDevicePicker = MutableStateFlow(false)
+    val showDevicePicker: StateFlow<Boolean> = _showDevicePicker.asStateFlow()
+
+    data class DiscoveredFlipperDevice(
+        val name: String,
+        val address: String,
+        val rssi: Int
+    )
+
+    @SuppressLint("MissingPermission")
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val device = result.device
+            val name = device.name ?: return
+
+            // Only include Flipper devices
+            if (!name.startsWith("Flipper", ignoreCase = true)) return
+
+            val newDevice = DiscoveredFlipperDevice(
+                name = name,
+                address = device.address,
+                rssi = result.rssi
+            )
+
+            _discoveredDevices.update { currentList ->
+                val existingIndex = currentList.indexOfFirst { it.address == newDevice.address }
+                if (existingIndex >= 0) {
+                    // Update RSSI for existing device
+                    currentList.toMutableList().apply {
+                        this[existingIndex] = newDevice
+                    }
+                } else {
+                    currentList + newDevice
+                }
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.e(TAG, "BLE scan failed with error code: $errorCode")
+            _isScanning.value = false
+        }
+    }
 
     // Map the existing enum to our UI-friendly sealed class
     val connectionState: StateFlow<ConnectionState> = flipperScannerManager.connectionState
@@ -75,6 +136,96 @@ class FlipperSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             flipperScannerManager.disconnect()
         }
+    }
+
+    // Bluetooth device discovery
+    fun showBluetoothDevicePicker() {
+        _showDevicePicker.value = true
+        startBleScan()
+    }
+
+    fun hideBluetoothDevicePicker() {
+        _showDevicePicker.value = false
+        stopBleScan()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startBleScan() {
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            Log.w(TAG, "Bluetooth not available or not enabled")
+            return
+        }
+
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            Log.w(TAG, "BLE Scanner not available")
+            return
+        }
+
+        _discoveredDevices.value = emptyList()
+        _isScanning.value = true
+
+        val scanSettings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+            .build()
+
+        // Scan for all BLE devices, filter by name in callback
+        scanner.startScan(null, scanSettings, scanCallback)
+        Log.i(TAG, "Started BLE scan for Flipper devices")
+
+        // Auto-stop after 30 seconds
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(30_000)
+            if (_isScanning.value) {
+                stopBleScan()
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopBleScan() {
+        if (!_isScanning.value) return
+
+        try {
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping scan", e)
+        }
+        _isScanning.value = false
+        Log.i(TAG, "Stopped BLE scan")
+    }
+
+    fun selectBluetoothDevice(device: DiscoveredFlipperDevice) {
+        viewModelScope.launch {
+            stopBleScan()
+            _showDevicePicker.value = false
+
+            // Save the device address
+            settingsRepository.setSavedBluetoothAddress(device.address)
+            Log.i(TAG, "Saved Flipper Bluetooth address: ${device.address}")
+
+            // Connect to the selected device
+            flipperScannerManager.connectBluetooth(device.address)
+        }
+    }
+
+    fun connectViaBluetooth() {
+        viewModelScope.launch {
+            val savedAddress = settings.value.savedBluetoothAddress
+            if (savedAddress != null) {
+                flipperScannerManager.connectBluetooth(savedAddress)
+            } else {
+                // No saved device, show picker
+                showBluetoothDevicePicker()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopBleScan()
     }
 
     // Settings methods

@@ -15,6 +15,7 @@ import com.flockyou.detection.handler.SatelliteDetectionHandler
 import com.flockyou.detection.handler.SatelliteRegistryHandler
 import com.flockyou.detection.handler.UltrasonicDetectionHandler
 import com.flockyou.detection.handler.UltrasonicRegistryHandler
+import com.flockyou.detection.handler.WifiDetectionHandler
 import com.flockyou.detection.handler.WifiRegistryHandler
 import dagger.Module
 import dagger.Provides
@@ -77,9 +78,10 @@ object DetectionModule {
     @Singleton
     @IntoSet
     fun provideWifiHandler(
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        wifiDetectionHandler: WifiDetectionHandler
     ): DetectionHandler<*> {
-        return WifiRegistryHandler(context)
+        return WifiRegistryHandler(context, wifiDetectionHandler)
     }
 
     /**

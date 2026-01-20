@@ -511,16 +511,20 @@ class ScanningService : Service() {
     //
     // Migration Status:
     // - BLE Detection: MIGRATED - processBleScanResult() delegates to BleDetectionHandler
-    // - WiFi Detection: PARTIAL - RogueWifiMonitor used via WifiDetectionHandler,
-    //                   but SSID/MAC pattern matching still inline (see TODO in processWifiScanResults)
+    // - WiFi Detection: MIGRATED - processWifiScanResults() delegates to WifiDetectionHandler
+    //                   which includes SSID/MAC pattern matching and RogueWifiMonitor integration
     // - Cellular Detection: MIGRATED - cellular anomalies use CellularDetectionHandler
     // - Satellite Detection: MIGRATED - satellite anomalies use SatelliteDetectionHandler
     //
+    // All handlers are registered with DetectionRegistry for dynamic lookup via:
+    // val handler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
+    //
+    // Additional Handlers:
+    // - LearnedSignatureHandler: User-learned device signatures for custom tracking
+    //
     // TODO: Future improvements:
-    // 1. Create unified WifiDetectionHandler with SSID/MAC pattern matching
-    // 2. Move learned signature detection to a dedicated handler
-    // 3. Register all handlers with DetectionRegistry for dynamic lookup
-    // 4. Use detectionRegistry.getHandler(protocol) for handler resolution
+    // 1. Add cross-protocol correlation handler
+    // 2. Register LearnedSignatureHandler with DetectionRegistry
 
     @Inject
     lateinit var detectionRegistry: DetectionRegistry
@@ -533,6 +537,12 @@ class ScanningService : Service() {
 
     @Inject
     lateinit var satelliteDetectionHandler: SatelliteDetectionHandler
+
+    @Inject
+    lateinit var wifiDetectionHandler: com.flockyou.detection.handler.WifiDetectionHandler
+
+    @Inject
+    lateinit var learnedSignatureHandler: com.flockyou.detection.handler.LearnedSignatureHandler
 
     @Inject
     lateinit var falsePositiveAnalyzer: com.flockyou.ai.FalsePositiveAnalyzer
@@ -733,6 +743,8 @@ class ScanningService : Service() {
                         broadcastErrorLog()
                     }
                     ScanningServiceIpc.MSG_CLEAR_LEARNED_SIGNATURES -> {
+                        learnedSignatureHandler.clearSignatures()
+                        // Keep companion object in sync for backward compatibility
                         clearLearnedSignatures()
                     }
                     ScanningServiceIpc.MSG_REQUEST_THREADING_DATA -> {
@@ -2843,62 +2855,37 @@ class ScanningService : Service() {
             trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids, manufacturerData, advertisingRate)
         }
 
-        // In learning mode, check if this device matches any learned signatures
-        // Note: Learned signatures are user-confirmed suspicious devices that don't
-        // match standard patterns. This logic remains here as it's service-specific
-        // and depends on user-learned data stored in the service.
-        //
-        // TODO: Consider moving learned signature matching to a dedicated handler
-        // that can be registered with the DetectionRegistry for consistency.
-        if (learningModeEnabled.value) {
-            checkLearnedSignatures(macAddress, deviceName, rssi, serviceUuids, manufacturerData)
+        // ==================== Learned Signature Detection ====================
+        // Check if this device matches any user-learned signatures.
+        // This uses the LearnedSignatureHandler which encapsulates the matching logic.
+        // Learned signatures are user-confirmed suspicious devices that don't
+        // match standard patterns but the user wants to track.
+        if (learnedSignatureHandler.learningModeEnabled.value) {
+            checkLearnedSignaturesViaHandler(macAddress, deviceName, rssi, serviceUuids, manufacturerData)
         }
     }
 
-    private suspend fun checkLearnedSignatures(
+    /**
+     * Check a BLE device against learned signatures using LearnedSignatureHandler.
+     */
+    private suspend fun checkLearnedSignaturesViaHandler(
         macAddress: String,
         deviceName: String?,
         rssi: Int,
         serviceUuids: List<java.util.UUID>,
         manufacturerData: Map<Int, String>
     ) {
-        val macPrefix = macAddress.take(8).uppercase()
-        val uuidStrings = serviceUuids.map { it.toString() }
+        val context = com.flockyou.detection.handler.LearnedSignatureContext.Ble(
+            macAddress = macAddress,
+            deviceName = deviceName,
+            rssi = rssi,
+            serviceUuids = serviceUuids,
+            manufacturerIds = manufacturerData.keys.toList()
+        )
 
-        for (signature in learnedSignatures.value) {
-            val matchesPrefix = signature.macPrefix == macPrefix
-            val matchesUuids = signature.serviceUuids.isNotEmpty() &&
-                    signature.serviceUuids.any { it in uuidStrings }
-            val matchesMfg = signature.manufacturerIds.isNotEmpty() &&
-                    signature.manufacturerIds.any { manufacturerData.containsKey(it) }
-
-            if (matchesPrefix || matchesUuids || matchesMfg) {
-                Log.w(TAG, "LEARNED SIGNATURE MATCH: $macAddress matches ${signature.id}")
-
-                val detection = Detection(
-                    protocol = DetectionProtocol.BLUETOOTH_LE,
-                    detectionMethod = DetectionMethod.BLE_DEVICE_NAME,
-                    deviceType = DeviceType.UNKNOWN_SURVEILLANCE,
-                    deviceName = deviceName ?: signature.name,
-                    macAddress = macAddress,
-                    rssi = rssi,
-                    signalStrength = rssiToSignalStrength(rssi),
-                    latitude = currentLocation?.latitude,
-                    longitude = currentLocation?.longitude,
-                    threatLevel = ThreatLevel.HIGH,
-                    threatScore = 85,
-                    manufacturer = "Learned Signature",
-                    serviceUuids = serviceUuids.joinToString(",") { it.toString() },
-                    matchedPatterns = gson.toJson(listOf(
-                        "Matches learned signature: ${signature.id}",
-                        signature.notes ?: "User-confirmed suspicious device"
-                    )),
-                    rawData = formatRawBleDataFromMap(manufacturerData)
-                )
-
-                handleDetection(detection)
-                break
-            }
+        val detection = learnedSignatureHandler.processBleDevice(context)
+        if (detection != null) {
+            handleDetection(detection)
         }
     }
 
@@ -3331,94 +3318,56 @@ class ScanningService : Service() {
         broadcastScanStats()
 
         // ==================== Handler-Based WiFi Processing ====================
-        // Delegate advanced WiFi detection to the handler infrastructure:
-        // - RogueWifiMonitor: Evil twin detection, deauth attacks, hidden cameras
-        // - RfSignalAnalyzer: Spectrum analysis for surveillance detection
-        //
-        // TODO: Create a unified WifiDetectionHandler that encapsulates:
-        // 1. SSID pattern matching (currently inline below)
-        // 2. MAC prefix matching (currently inline below)
-        // 3. RogueWifiMonitor integration (evil twins, deauth)
+        // All WiFi detection is now delegated to WifiDetectionHandler which encapsulates:
+        // 1. SSID pattern matching (Flock Safety, police tech, surveillance patterns)
+        // 2. MAC prefix matching (OUI-based manufacturer identification)
+        // 3. RogueWifiMonitor integration (evil twins, deauth, hidden cameras)
         // 4. AI prompt generation for WiFi detections
+        //
+        // The handler is registered with DetectionRegistry and can be retrieved via:
+        // val wifiHandler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
         processWifiWithHandler(results)
 
-        // ==================== SSID/MAC Pattern Matching ====================
-        // This inline pattern matching will eventually migrate to WifiDetectionHandler.
-        // Keeping it here for backward compatibility until the handler is complete.
-        //
-        // TODO: Migrate this logic to WifiDetectionHandler.processData()
-        // and use: val wifiHandler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
+        // ==================== SSID/MAC Pattern Matching via WifiDetectionHandler ====================
+        // Pattern matching is now handled by WifiDetectionHandler.processData()
+        // which processes all scan results and returns detections
 
-        for (result in results) {
-            val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                result.wifiSsid?.toString()?.removeSurrounding("\"") ?: ""
-            } else {
-                @Suppress("DEPRECATION")
-                result.SSID ?: ""
-            }
+        // Update location on the handler before processing
+        currentLocation?.let { location ->
+            wifiDetectionHandler.updateLocation(location.latitude, location.longitude)
+        }
 
-            val bssid = result.BSSID ?: continue
-            val rssi = result.level
+        // Process all scan results through WifiDetectionHandler
+        serviceScope.launch {
+            try {
+                val detections = wifiDetectionHandler.processData(results)
 
-            var matched = false
-
-            // Check for SSID pattern match
-            val pattern = DetectionPatterns.matchSsidPattern(ssid)
-            if (pattern != null) {
-                val detection = Detection(
-                    protocol = DetectionProtocol.WIFI,
-                    detectionMethod = DetectionMethod.SSID_PATTERN,
-                    deviceType = pattern.deviceType,
-                    deviceName = null,
-                    macAddress = bssid,
-                    ssid = ssid,
-                    rssi = rssi,
-                    signalStrength = rssiToSignalStrength(rssi),
-                    latitude = currentLocation?.latitude,
-                    longitude = currentLocation?.longitude,
-                    threatLevel = scoreToThreatLevel(pattern.threatScore),
-                    threatScore = pattern.threatScore,
-                    manufacturer = pattern.manufacturer,
-                    firmwareVersion = null,
-                    serviceUuids = null,
-                    matchedPatterns = gson.toJson(listOf(pattern.description))
-                )
-
-                handleDetection(detection)
-                matched = true
-            }
-
-            // Check for MAC prefix match
-            if (!matched) {
-                val macPrefix = DetectionPatterns.matchMacPrefix(bssid)
-                if (macPrefix != null) {
-                    val detection = Detection(
-                        protocol = DetectionProtocol.WIFI,
-                        detectionMethod = DetectionMethod.MAC_PREFIX,
-                        deviceType = macPrefix.deviceType,
-                        deviceName = null,
-                        macAddress = bssid,
-                        ssid = ssid,
-                        rssi = rssi,
-                        signalStrength = rssiToSignalStrength(rssi),
-                        latitude = currentLocation?.latitude,
-                        longitude = currentLocation?.longitude,
-                        threatLevel = scoreToThreatLevel(macPrefix.threatScore),
-                        threatScore = macPrefix.threatScore,
-                        manufacturer = macPrefix.manufacturer,
-                        firmwareVersion = null,
-                        serviceUuids = null,
-                        matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
-                    )
-
+                // Handle each detection
+                for (detection in detections) {
                     handleDetection(detection)
-                    matched = true
                 }
-            }
 
-            // Track unmatched networks if enabled
-            if (!matched && ssid.isNotEmpty() && currentSettings.value.trackSeenDevices) {
-                trackSeenWifiNetwork(bssid, ssid, rssi)
+                // Track unmatched networks if enabled
+                if (currentSettings.value.trackSeenDevices) {
+                    val matchedBssids = detections.mapNotNull { it.macAddress }.toSet()
+
+                    for (result in results) {
+                        val bssid = result.BSSID ?: continue
+                        if (bssid !in matchedBssids) {
+                            val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                result.wifiSsid?.toString()?.removeSurrounding("\"") ?: ""
+                            } else {
+                                @Suppress("DEPRECATION")
+                                result.SSID ?: ""
+                            }
+                            if (ssid.isNotEmpty()) {
+                                trackSeenWifiNetwork(bssid, ssid, result.level)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing WiFi scan results with handler", e)
             }
         }
     }
@@ -3683,32 +3632,23 @@ class ScanningService : Service() {
     }
 
     /**
-     * Process WiFi scan results using the WifiDetectionHandler via RogueWifiMonitor.
+     * Process WiFi scan results using the RogueWifiMonitor and RfSignalAnalyzer.
      *
-     * Note: WiFi detection is primarily handled by the RogueWifiMonitor which
-     * processes scan results for evil twin detection, deauth attacks, etc.
-     * This method integrates with that existing infrastructure.
-     *
-     * TODO: Consider creating a unified WifiDetectionHandler that encapsulates
-     * both the RogueWifiMonitor logic and SSID/MAC pattern matching.
+     * This method handles the legacy RogueWifiMonitor integration for advanced
+     * detection (evil twins, deauth attacks, following networks). The primary
+     * SSID/MAC pattern matching is now handled by WifiDetectionHandler.processData()
+     * which is called separately in processWifiScanResults().
      *
      * @param scanResults The list of WiFi scan results
      */
     private fun processWifiWithHandler(scanResults: List<android.net.wifi.ScanResult>) {
         // Feed results to Rogue WiFi Monitor for evil twin/rogue AP detection
-        // This is the primary WiFi detection mechanism
+        // Note: WifiDetectionHandler now also integrates with RogueWifiMonitor
+        // but we keep this for backward compatibility with existing rogueWifiMonitor instance
         rogueWifiMonitor?.processScanResults(scanResults)
 
         // Feed results to RF Signal Analyzer for spectrum analysis
         rfSignalAnalyzer?.analyzeWifiScan(scanResults)
-
-        // TODO: When WifiDetectionHandler is fully implemented with pattern matching,
-        // delegate SSID/MAC detection logic here similar to BLE:
-        // val wifiHandler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
-        // for (result in scanResults) {
-        //     val context = WifiDetectionContext(...)
-        //     wifiHandler?.analyze(context)?.let { handleDetection(it.detection) }
-        // }
     }
 
     /**

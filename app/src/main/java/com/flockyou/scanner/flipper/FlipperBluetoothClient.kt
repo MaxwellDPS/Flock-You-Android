@@ -20,17 +20,18 @@ class FlipperBluetoothClient(private val context: Context) {
         private const val TAG = "FlipperBleClient"
 
         // Flipper Zero BLE Serial Service UUIDs
-        private val SERVICE_UUID = UUID.fromString("0000FE01-0000-1000-8000-00805f9b34fb")
-        private val TX_CHAR_UUID = UUID.fromString("0000FE02-0000-1000-8000-00805f9b34fb")
-        private val RX_CHAR_UUID = UUID.fromString("0000FE03-0000-1000-8000-00805f9b34fb")
+        // See: https://github.com/EstebanFuentealba/flipper-zero-bluetooth-serial-poc
+        val SERVICE_UUID = UUID.fromString("8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000")
+        private val TX_CHAR_UUID = UUID.fromString("19ed82ae-ed21-4c9d-4145-228e62fe0000")
+        private val RX_CHAR_UUID = UUID.fromString("19ed82ae-ed21-4c9d-4145-228e61fe0000")
         private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private const val MAX_MTU = 244
         private const val CONNECTION_TIMEOUT_MS = 15_000L
     }
 
-    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    private val bluetoothManager: BluetoothManager? = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
 
     private var gatt: BluetoothGatt? = null
     private var txCharacteristic: BluetoothGattCharacteristic? = null

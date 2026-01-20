@@ -184,7 +184,7 @@ enum class RuleType(val displayName: String, val scannerType: ScannerType, val p
 
     // Bluetooth rules
     BLE_NAME_REGEX("BLE Device Name", ScannerType.BLUETOOTH, "(?i)^tracker[_-]?.*"),
-    BLE_SERVICE_UUID("BLE Service UUID", ScannerType.BLUETOOTH, "0000xxxx-0000-1000-8000-00805f9b34fb"),
+    BLE_SERVICE_UUID("BLE Service UUID", ScannerType.BLUETOOTH, "0000XXXX-0000-1000-8000-00805f9b34fb (replace XXXX with 16-bit UUID)"),
 
     // Cellular rules
     CELLULAR_MCC_MNC("Cell MCC-MNC", ScannerType.CELLULAR, "001-01"),

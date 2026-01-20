@@ -38,6 +38,20 @@ fun FlipperSettingsScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val isInstalling by viewModel.isInstalling.collectAsState()
     val installProgress by viewModel.installProgress.collectAsState()
+    val showDevicePicker by viewModel.showDevicePicker.collectAsState()
+    val discoveredDevices by viewModel.discoveredDevices.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
+
+    // Bluetooth device picker dialog
+    if (showDevicePicker) {
+        BluetoothDevicePickerDialog(
+            devices = discoveredDevices,
+            isScanning = isScanning,
+            onDeviceSelected = { device -> viewModel.selectBluetoothDevice(device) },
+            onDismiss = { viewModel.hideBluetoothDevicePicker() },
+            onRescan = { viewModel.startBleScan() }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -69,7 +83,8 @@ fun FlipperSettingsScreen(
                     settings = settings,
                     onToggleEnabled = { scope.launch { viewModel.setFlipperEnabled(it) } },
                     onConnect = { viewModel.connect() },
-                    onDisconnect = { viewModel.disconnect() }
+                    onDisconnect = { viewModel.disconnect() },
+                    onScanBluetooth = { viewModel.showBluetoothDevicePicker() }
                 )
             }
 
@@ -176,7 +191,8 @@ private fun FlipperConnectionCard(
     settings: FlipperSettings,
     onToggleEnabled: (Boolean) -> Unit,
     onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onScanBluetooth: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -236,6 +252,17 @@ private fun FlipperConnectionCard(
 
             if (settings.flipperEnabled) {
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // Show saved Bluetooth address if available
+                settings.savedBluetoothAddress?.let { address ->
+                    Text(
+                        text = "Saved Flipper: $address",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -273,6 +300,13 @@ private fun FlipperConnectionCard(
                                 Icon(Icons.Default.Link, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Connect")
+                            }
+                            OutlinedButton(
+                                onClick = onScanBluetooth
+                            ) {
+                                Icon(Icons.Default.Bluetooth, contentDescription = null)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Scan")
                             }
                         }
                     }
@@ -806,4 +840,123 @@ private fun FlipperAboutCard() {
             }
         }
     }
+}
+
+@Composable
+private fun BluetoothDevicePickerDialog(
+    devices: List<FlipperSettingsViewModel.DiscoveredFlipperDevice>,
+    isScanning: Boolean,
+    onDeviceSelected: (FlipperSettingsViewModel.DiscoveredFlipperDevice) -> Unit,
+    onDismiss: () -> Unit,
+    onRescan: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Bluetooth,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Select Flipper Zero")
+            }
+        },
+        text = {
+            Column {
+                if (isScanning) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Scanning for Flipper devices...",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                if (devices.isEmpty() && !isScanning) {
+                    Text(
+                        text = "No Flipper Zero devices found.\n\nMake sure your Flipper's Bluetooth is enabled and the device is in range.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    devices.sortedByDescending { it.rssi }.forEach { device ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { onDeviceSelected(device) },
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DevicesOther,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = device.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = device.address,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                // Signal strength indicator
+                                val signalStrength = when {
+                                    device.rssi >= -50 -> "Strong"
+                                    device.rssi >= -70 -> "Good"
+                                    device.rssi >= -85 -> "Fair"
+                                    else -> "Weak"
+                                }
+                                Text(
+                                    text = "$signalStrength (${device.rssi} dBm)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (!isScanning) {
+                TextButton(onClick = onRescan) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Rescan")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
