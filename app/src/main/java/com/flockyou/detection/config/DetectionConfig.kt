@@ -12,9 +12,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,7 +31,7 @@ private val Context.detectionConfigDataStore: DataStore<Preferences> by preferen
  *
  * This is the single source of truth for all detection-related settings.
  */
-@Serializable
+// Data class for Gson serialization
 data class DetectionConfig(
     val globalSettings: GlobalDetectionSettings = GlobalDetectionSettings(),
     val protocolConfigs: Map<String, ProtocolConfigWrapper> = defaultProtocolConfigs(),
@@ -157,7 +156,7 @@ data class DetectionConfig(
 /**
  * Global settings that apply across all detection protocols
  */
-@Serializable
+// Data class for Gson serialization
 data class GlobalDetectionSettings(
     /** Master switch for all detection */
     val enableDetection: Boolean = true,
@@ -197,13 +196,13 @@ data class GlobalDetectionSettings(
 /**
  * Wrapper to handle polymorphic serialization of protocol configs
  */
-@Serializable
+// Data class for Gson serialization
 data class ProtocolConfigWrapper(
     val type: ProtocolConfigType,
     val config: ProtocolConfig
 )
 
-@Serializable
+// Data class for Gson serialization
 enum class ProtocolConfigType {
     BLE, WIFI, CELLULAR, SATELLITE, ULTRASONIC, GNSS, RF
 }
@@ -211,7 +210,7 @@ enum class ProtocolConfigType {
 /**
  * Base sealed class for all protocol-specific configurations
  */
-@Serializable
+// Data class for Gson serialization
 sealed class ProtocolConfig {
     abstract val enabled: Boolean
 }
@@ -219,7 +218,7 @@ sealed class ProtocolConfig {
 /**
  * Bluetooth Low Energy protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class BleProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -257,7 +256,7 @@ data class BleProtocolConfig(
 /**
  * WiFi protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class WifiProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -301,7 +300,7 @@ data class WifiProtocolConfig(
 /**
  * Cellular protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class CellularProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -342,7 +341,7 @@ data class CellularProtocolConfig(
 /**
  * Satellite protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class SatelliteProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -377,7 +376,7 @@ data class SatelliteProtocolConfig(
 /**
  * Ultrasonic/Audio protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class UltrasonicProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -415,7 +414,7 @@ data class UltrasonicProtocolConfig(
 /**
  * GNSS/GPS protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class GnssProtocolConfig(
     override val enabled: Boolean = true,
 
@@ -450,7 +449,7 @@ data class GnssProtocolConfig(
 /**
  * RF analysis protocol configuration
  */
-@Serializable
+// Data class for Gson serialization
 data class RfProtocolConfig(
     override val enabled: Boolean = false, // Disabled by default - requires Flipper or system privileges
 
@@ -483,7 +482,7 @@ data class RfProtocolConfig(
 /**
  * Per-device-type configuration overrides
  */
-@Serializable
+// Data class for Gson serialization
 data class DeviceTypeOverride(
     /** Whether this device type is enabled for detection */
     val enabled: Boolean = true,
@@ -507,7 +506,7 @@ data class DeviceTypeOverride(
     val autoDismissNotification: Boolean? = null
 )
 
-@Serializable
+// Data class for Gson serialization
 enum class NotificationPriorityLevel {
     LOW, DEFAULT, HIGH, URGENT
 }
@@ -580,11 +579,9 @@ class DetectionConfigRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context
 ) : DetectionConfigRepository {
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        prettyPrint = true
-    }
+    private val gson: Gson = GsonBuilder()
+        .setPrettyPrinting()
+        .create()
 
     private object Keys {
         val CONFIG_JSON = stringPreferencesKey("detection_config_json")
@@ -600,7 +597,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
         val configJson = prefs[Keys.CONFIG_JSON]
         if (configJson != null) {
             try {
-                json.decodeFromString<DetectionConfig>(configJson)
+                gson.fromJson(configJson, DetectionConfig::class.java)
             } catch (e: Exception) {
                 DetectionConfig()
             }
@@ -613,7 +610,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
         context.detectionConfigDataStore.edit { prefs ->
             val currentConfig = getCurrentConfigFromPrefs(prefs)
             val updatedConfig = currentConfig.copy(globalSettings = settings)
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(updatedConfig)
+            prefs[Keys.CONFIG_JSON] = gson.toJson(updatedConfig)
         }
     }
 
@@ -632,7 +629,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
             val updatedConfigs = currentConfig.protocolConfigs.toMutableMap()
             updatedConfigs[protocol.name] = ProtocolConfigWrapper(type, config)
             val updatedConfig = currentConfig.copy(protocolConfigs = updatedConfigs)
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(updatedConfig)
+            prefs[Keys.CONFIG_JSON] = gson.toJson(updatedConfig)
         }
     }
 
@@ -642,7 +639,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
             val updatedOverrides = currentConfig.deviceTypeOverrides.toMutableMap()
             updatedOverrides[deviceType.name] = override
             val updatedConfig = currentConfig.copy(deviceTypeOverrides = updatedOverrides)
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(updatedConfig)
+            prefs[Keys.CONFIG_JSON] = gson.toJson(updatedConfig)
         }
     }
 
@@ -652,13 +649,13 @@ class DetectionConfigRepositoryImpl @Inject constructor(
             val updatedOverrides = currentConfig.deviceTypeOverrides.toMutableMap()
             updatedOverrides.remove(deviceType.name)
             val updatedConfig = currentConfig.copy(deviceTypeOverrides = updatedOverrides)
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(updatedConfig)
+            prefs[Keys.CONFIG_JSON] = gson.toJson(updatedConfig)
         }
     }
 
     override suspend fun resetToDefaults() {
         context.detectionConfigDataStore.edit { prefs ->
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(DetectionConfig())
+            prefs[Keys.CONFIG_JSON] = gson.toJson(DetectionConfig())
             prefs[Keys.CONFIG_VERSION] = CURRENT_CONFIG_VERSION
         }
     }
@@ -744,7 +741,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
                 deviceTypeOverrides = emptyMap()
             )
 
-            prefs[Keys.CONFIG_JSON] = json.encodeToString(migratedConfig)
+            prefs[Keys.CONFIG_JSON] = gson.toJson(migratedConfig)
             prefs[Keys.MIGRATION_COMPLETED] = true
             prefs[Keys.CONFIG_VERSION] = CURRENT_CONFIG_VERSION
         }
@@ -756,14 +753,14 @@ class DetectionConfigRepositoryImpl @Inject constructor(
 
     override suspend fun exportConfig(): String {
         val config = getCurrentConfig()
-        return json.encodeToString(config)
+        return gson.toJson(config)
     }
 
     override suspend fun importConfig(jsonString: String): Boolean {
         return try {
             val importedConfig = json.decodeFromString<DetectionConfig>(jsonString)
             context.detectionConfigDataStore.edit { prefs ->
-                prefs[Keys.CONFIG_JSON] = json.encodeToString(importedConfig)
+                prefs[Keys.CONFIG_JSON] = gson.toJson(importedConfig)
             }
             true
         } catch (e: Exception) {
@@ -775,7 +772,7 @@ class DetectionConfigRepositoryImpl @Inject constructor(
         val configJson = prefs[Keys.CONFIG_JSON]
         return if (configJson != null) {
             try {
-                json.decodeFromString<DetectionConfig>(configJson)
+                gson.fromJson(configJson, DetectionConfig::class.java)
             } catch (e: Exception) {
                 DetectionConfig()
             }

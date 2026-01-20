@@ -607,6 +607,32 @@ interface DetectionHandler<T : DetectionContext> {
      * Performs any necessary cleanup when the handler is no longer needed.
      */
     fun cleanup() {}
+
+    /**
+     * Starts monitoring for detections (optional lifecycle method).
+     */
+    fun startMonitoring() {}
+
+    /**
+     * Stops monitoring for detections (optional lifecycle method).
+     */
+    fun stopMonitoring() {}
+
+    /**
+     * Updates the current location for location-aware detection.
+     */
+    fun updateLocation(latitude: Double, longitude: Double) {}
+
+    /**
+     * Destroys the handler and releases all resources.
+     */
+    fun destroy() {}
+
+    /**
+     * Retrieves the profile for a device type using the simpler getProfile name.
+     * Delegates to getDeviceProfile for compatibility.
+     */
+    fun getProfile(deviceType: DeviceType): DeviceTypeProfile? = getDeviceProfile(deviceType)
 }
 
 // ============================================================================

@@ -25,6 +25,13 @@ import com.flockyou.ui.EmergencyAlertActivity
 import com.flockyou.data.model.*
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.FlockYouDatabase
+import com.flockyou.detection.DetectionRegistry
+import com.flockyou.detection.handler.BleDetectionContext
+import com.flockyou.detection.handler.BleDetectionHandler
+import com.flockyou.detection.handler.BleDetectionResult
+import com.flockyou.detection.handler.CellularDetectionHandler
+import com.flockyou.detection.handler.SatelliteDetectionContext
+import com.flockyou.detection.handler.SatelliteDetectionHandler
 import com.google.android.gms.location.*
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
@@ -488,6 +495,38 @@ class ScanningService : Service() {
 
     @Inject
     lateinit var threadingMonitor: com.flockyou.monitoring.ScannerThreadingMonitor
+
+    // ==================== Detection Handler System ====================
+    //
+    // These handlers implement the standardized DetectionHandler interface for
+    // protocol-specific detection logic. They replace inline detection logic
+    // scattered throughout this service for better separation of concerns,
+    // testability, and AI prompt generation.
+    //
+    // Migration Status:
+    // - BLE Detection: MIGRATED - processBleScanResult() delegates to BleDetectionHandler
+    // - WiFi Detection: PARTIAL - RogueWifiMonitor used via WifiDetectionHandler,
+    //                   but SSID/MAC pattern matching still inline (see TODO in processWifiScanResults)
+    // - Cellular Detection: MIGRATED - cellular anomalies use CellularDetectionHandler
+    // - Satellite Detection: MIGRATED - satellite anomalies use SatelliteDetectionHandler
+    //
+    // TODO: Future improvements:
+    // 1. Create unified WifiDetectionHandler with SSID/MAC pattern matching
+    // 2. Move learned signature detection to a dedicated handler
+    // 3. Register all handlers with DetectionRegistry for dynamic lookup
+    // 4. Use detectionRegistry.getHandler(protocol) for handler resolution
+
+    @Inject
+    lateinit var detectionRegistry: DetectionRegistry
+
+    @Inject
+    lateinit var bleDetectionHandler: BleDetectionHandler
+
+    @Inject
+    lateinit var cellularDetectionHandler: CellularDetectionHandler
+
+    @Inject
+    lateinit var satelliteDetectionHandler: SatelliteDetectionHandler
 
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
@@ -1877,6 +1916,11 @@ class ScanningService : Service() {
         }
         
         // Collect cellular anomalies and convert to detections
+        // ==================== Handler-Based Cellular Detection ====================
+        // Delegate anomaly-to-detection conversion to CellularDetectionHandler for:
+        // - Settings-based filtering (enabled patterns, thresholds)
+        // - IMSI catcher score calculation
+        // - AI prompt generation for cellular anomalies
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
                 cellularAnomalies.value = anomalies
@@ -1886,8 +1930,9 @@ class ScanningService : Service() {
                     // Send broadcast for automation apps
                     sendCellularAnomalyBroadcast(anomaly)
 
-                    // Convert anomaly to detection
-                    val detection = cellularMonitor?.anomalyToDetection(anomaly)
+                    // Convert anomaly to detection using the handler
+                    // The handler implements settings-based filtering and IMSI score calculation
+                    val detection = processCellularWithHandler(anomaly)
                     detection?.let { det ->
                         // Check if we already have this detection (use unique SSID)
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
@@ -1896,8 +1941,8 @@ class ScanningService : Service() {
                                 repository.insertDetection(det)
 
                                 // Alert and vibrate for high-severity anomalies
-                                if (anomaly.severity == ThreatLevel.CRITICAL ||
-                                    anomaly.severity == ThreatLevel.HIGH) {
+                                if (det.threatLevel == ThreatLevel.CRITICAL ||
+                                    det.threatLevel == ThreatLevel.HIGH) {
                                     alertUser(det)
                                 }
 
@@ -1973,6 +2018,12 @@ class ScanningService : Service() {
         }
 
         // Collect satellite anomalies
+        // ==================== Handler-Based Satellite Detection ====================
+        // Delegate anomaly-to-detection conversion to SatelliteDetectionHandler for:
+        // - Settings-based filtering (enabled patterns, thresholds)
+        // - NTN parameter analysis and timing validation
+        // - Device type classification (SATELLITE_NTN vs STINGRAY_IMSI)
+        // - AI prompt generation for satellite anomalies
         satelliteAnomalyJob = serviceScope.launch {
             satelliteMonitor?.anomalies?.collect { anomaly ->
                 Log.d(TAG, "Satellite anomaly detected: ${anomaly.type} - ${anomaly.severity}")
@@ -1988,18 +2039,16 @@ class ScanningService : Service() {
                 }
                 satelliteAnomalies.value = currentAnomalies
                 broadcastSatelliteData()
-                
-                // Convert high severity anomalies to detections
-                if (anomaly.severity in listOf(
-                    com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.HIGH,
-                    com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL
-                )) {
-                    val detection = satelliteAnomalyToDetection(anomaly)
-                    if (detection != null) {
-                        serviceScope.launch {
-                            handleDetection(detection)
-                        }
-                    }
+
+                // Convert anomaly to detection using the handler
+                // The handler implements settings-based filtering, NTN analysis,
+                // and proper device type classification (SATELLITE_NTN vs STINGRAY_IMSI)
+                val connectionState = satelliteMonitor?.satelliteState?.value
+                    ?: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState()
+
+                val detection = processSatelliteWithHandler(anomaly, connectionState)
+                if (detection != null) {
+                    handleDetection(detection)
                 }
             }
         }
@@ -2014,6 +2063,22 @@ class ScanningService : Service() {
         Log.d(TAG, "Satellite monitoring stopped")
     }
     
+    /**
+     * Legacy method for converting satellite anomalies to detections.
+     *
+     * @deprecated Use [processSatelliteWithHandler] instead, which delegates to
+     * [SatelliteDetectionHandler] for more comprehensive analysis including:
+     * - Settings-based pattern filtering
+     * - NTN parameter validation
+     * - Proper device type classification (SATELLITE_NTN vs STINGRAY_IMSI)
+     * - AI prompt generation
+     *
+     * TODO: Remove this method once all callers are migrated to the handler.
+     */
+    @Deprecated(
+        message = "Use processSatelliteWithHandler for handler-based detection",
+        replaceWith = ReplaceWith("processSatelliteWithHandler(anomaly, connectionState)")
+    )
     private fun satelliteAnomalyToDetection(anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly): Detection? {
         val threatLevel = when (anomaly.severity) {
             com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.CRITICAL -> ThreatLevel.CRITICAL
@@ -2022,7 +2087,7 @@ class ScanningService : Service() {
             com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.LOW -> ThreatLevel.LOW
             com.flockyou.monitoring.SatelliteMonitor.AnomalySeverity.INFO -> ThreatLevel.LOW
         }
-        
+
         val detectionMethod = when (anomaly.type) {
             com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
             com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
@@ -2034,7 +2099,7 @@ class ScanningService : Service() {
             com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomalyType.EPHEMERIS_MISMATCH -> DetectionMethod.SAT_TIMING_ANOMALY
             else -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
         }
-        
+
         return Detection(
             id = UUID.randomUUID().toString(),
             timestamp = anomaly.timestamp,
@@ -2648,9 +2713,7 @@ class ScanningService : Service() {
         val rssi = result.rssi
         val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
 
-        // Extract manufacturer data for Axon Signal trigger detection
-        // Manufacturer ID 0x004C = Apple (often used as wrapper)
-        // Manufacturer ID 0x0059 = Nordic Semiconductor (used in Axon devices)
+        // Extract manufacturer data for detection handlers
         val manufacturerData = mutableMapOf<Int, String>()
         result.scanRecord?.manufacturerSpecificData?.let { data ->
             for (i in 0 until data.size()) {
@@ -2663,43 +2726,6 @@ class ScanningService : Service() {
         // Track packet rate for Signal trigger spike detection
         val advertisingRate = trackPacket(macAddress)
 
-        // Check for advertising rate spike (Signal trigger activation)
-        // Axon Signal devices advertise every ~1000ms normally, but spike to ~20-50ms when activated
-        if (advertisingRate >= HIGH_ACTIVITY_THRESHOLD) {
-            // Check if this is a Nordic Semiconductor device (common in Axon equipment)
-            val isNordic = manufacturerData.containsKey(0x0059)
-            val isAppleWrapper = manufacturerData.containsKey(0x004C)
-
-            if (isNordic || isAppleWrapper) {
-                if (BuildConfig.DEBUG) {
-                    Log.w(TAG, "HIGH ADVERTISING RATE DETECTED: $macAddress ($advertisingRate pps) - possible Signal trigger activation!")
-                }
-
-                // Create a detection for this event
-                val detection = Detection(
-                    protocol = DetectionProtocol.BLUETOOTH_LE,
-                    detectionMethod = DetectionMethod.BLE_SERVICE_UUID,
-                    deviceType = DeviceType.AXON_POLICE_TECH,
-                    deviceName = deviceName ?: "Signal Trigger (Active)",
-                    macAddress = macAddress,
-                    rssi = rssi,
-                    signalStrength = rssiToSignalStrength(rssi),
-                    latitude = currentLocation?.latitude,
-                    longitude = currentLocation?.longitude,
-                    threatLevel = ThreatLevel.CRITICAL,
-                    threatScore = 95,
-                    manufacturer = if (isNordic) "Nordic Semiconductor (Axon)" else "Apple BLE Wrapper",
-                    matchedPatterns = gson.toJson(listOf(
-                        "Advertising spike: ${advertisingRate.toInt()} packets/sec",
-                        "Possible siren/gun draw activation"
-                    )),
-                    rawData = formatRawBleData(result.scanRecord, manufacturerData)
-                )
-
-                handleDetection(detection)
-            }
-        }
-
         // Update scan stats
         scanStats.value = scanStats.value.copy(
             bleDevicesSeen = scanStats.value.bleDevicesSeen + 1,
@@ -2707,97 +2733,48 @@ class ScanningService : Service() {
         )
         broadcastScanStats()
 
-        // Check for Raven device (by service UUIDs)
-        if (DetectionPatterns.isRavenDevice(serviceUuids)) {
-            val matchedServices = DetectionPatterns.matchRavenServices(serviceUuids)
-            val firmwareVersion = DetectionPatterns.estimateRavenFirmwareVersion(serviceUuids)
+        // ==================== Handler-Based Detection ====================
+        // Delegate detection logic to the BleDetectionHandler for:
+        // - Consistent detection patterns across all BLE scans
+        // - Centralized AI prompt generation
+        // - Better testability and separation of concerns
+        //
+        // The handler implements all detection methods:
+        // 1. Advertising rate spike (Axon Signal trigger activation)
+        // 2. Raven service UUID matching
+        // 3. BLE device name pattern matching
+        // 4. BLE service UUID matching (AirTag, Tile, SmartTag)
+        // 5. MAC prefix matching
+        // 6. Consumer tracker detection
 
-            val detection = Detection(
-                protocol = DetectionProtocol.BLUETOOTH_LE,
-                detectionMethod = DetectionMethod.RAVEN_SERVICE_UUID,
-                deviceType = DeviceType.RAVEN_GUNSHOT_DETECTOR,
-                deviceName = deviceName,
-                macAddress = macAddress,
-                ssid = null,
-                rssi = rssi,
-                signalStrength = rssiToSignalStrength(rssi),
-                latitude = currentLocation?.latitude,
-                longitude = currentLocation?.longitude,
-                threatLevel = ThreatLevel.CRITICAL,
-                threatScore = 100,
-                manufacturer = "SoundThinking/ShotSpotter",
-                firmwareVersion = firmwareVersion,
-                serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                matchedPatterns = gson.toJson(matchedServices.map { it.description }),
-                rawData = formatRawBleData(result.scanRecord, manufacturerData)
-            )
-            
-            handleDetection(detection)
-            return
-        }
-        
-        // Check for device name pattern match
-        if (deviceName != null) {
-            val pattern = DetectionPatterns.matchBleNamePattern(deviceName)
-            if (pattern != null) {
-                val detection = Detection(
-                    protocol = DetectionProtocol.BLUETOOTH_LE,
-                    detectionMethod = DetectionMethod.BLE_DEVICE_NAME,
-                    deviceType = pattern.deviceType,
-                    deviceName = deviceName,
-                    macAddress = macAddress,
-                    ssid = null,
-                    rssi = rssi,
-                    signalStrength = rssiToSignalStrength(rssi),
-                    latitude = currentLocation?.latitude,
-                    longitude = currentLocation?.longitude,
-                    threatLevel = scoreToThreatLevel(pattern.threatScore),
-                    threatScore = pattern.threatScore,
-                    manufacturer = pattern.manufacturer,
-                    firmwareVersion = null,
-                    serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                    matchedPatterns = gson.toJson(listOf(pattern.description)),
-                    rawData = formatRawBleData(result.scanRecord, manufacturerData)
-                )
-                
-                handleDetection(detection)
-                return
+        val handlerResult = processBleWithHandler(result)
+        if (handlerResult != null) {
+            // Handler found a detection - process it
+            handleDetection(handlerResult.detection)
+
+            // Log AI prompt availability for debugging
+            if (BuildConfig.DEBUG && handlerResult.aiPrompt.isNotEmpty()) {
+                Log.d(TAG, "BLE detection has AI prompt available (${handlerResult.aiPrompt.length} chars)")
             }
-        }
-        
-        // Check for MAC prefix match
-        val macPrefix = DetectionPatterns.matchMacPrefix(macAddress)
-        if (macPrefix != null) {
-            val detection = Detection(
-                protocol = DetectionProtocol.BLUETOOTH_LE,
-                detectionMethod = DetectionMethod.MAC_PREFIX,
-                deviceType = macPrefix.deviceType,
-                deviceName = deviceName,
-                macAddress = macAddress,
-                ssid = null,
-                rssi = rssi,
-                signalStrength = rssiToSignalStrength(rssi),
-                latitude = currentLocation?.latitude,
-                longitude = currentLocation?.longitude,
-                threatLevel = scoreToThreatLevel(macPrefix.threatScore),
-                threatScore = macPrefix.threatScore,
-                manufacturer = macPrefix.manufacturer,
-                firmwareVersion = null,
-                serviceUuids = gson.toJson(serviceUuids.map { it.toString() }),
-                matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" })),
-                rawData = formatRawBleData(result.scanRecord, manufacturerData)
-            )
-            
-            handleDetection(detection)
+
             return
         }
-        
-        // No match - track as seen device if enabled
+
+        // ==================== No Detection - Fallback Logic ====================
+        // No surveillance pattern matched - handle seen devices and learning mode
+
+        // Track as seen device if enabled
         if (currentSettings.value.trackSeenDevices) {
             trackSeenBleDevice(macAddress, deviceName, rssi, serviceUuids, manufacturerData, advertisingRate)
         }
 
         // In learning mode, check if this device matches any learned signatures
+        // Note: Learned signatures are user-confirmed suspicious devices that don't
+        // match standard patterns. This logic remains here as it's service-specific
+        // and depends on user-learned data stored in the service.
+        //
+        // TODO: Consider moving learned signature matching to a dedicated handler
+        // that can be registered with the DetectionRegistry for consistency.
         if (learningModeEnabled.value) {
             checkLearnedSignatures(macAddress, deviceName, rssi, serviceUuids, manufacturerData)
         }
@@ -3105,12 +3082,25 @@ class ScanningService : Service() {
         )
         broadcastScanStats()
 
-        // Feed results to Rogue WiFi Monitor for evil twin/rogue AP detection
-        rogueWifiMonitor?.processScanResults(results)
+        // ==================== Handler-Based WiFi Processing ====================
+        // Delegate advanced WiFi detection to the handler infrastructure:
+        // - RogueWifiMonitor: Evil twin detection, deauth attacks, hidden cameras
+        // - RfSignalAnalyzer: Spectrum analysis for surveillance detection
+        //
+        // TODO: Create a unified WifiDetectionHandler that encapsulates:
+        // 1. SSID pattern matching (currently inline below)
+        // 2. MAC prefix matching (currently inline below)
+        // 3. RogueWifiMonitor integration (evil twins, deauth)
+        // 4. AI prompt generation for WiFi detections
+        processWifiWithHandler(results)
 
-        // Feed results to RF Signal Analyzer for spectrum analysis
-        rfSignalAnalyzer?.analyzeWifiScan(results)
-        
+        // ==================== SSID/MAC Pattern Matching ====================
+        // This inline pattern matching will eventually migrate to WifiDetectionHandler.
+        // Keeping it here for backward compatibility until the handler is complete.
+        //
+        // TODO: Migrate this logic to WifiDetectionHandler.processData()
+        // and use: val wifiHandler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
+
         for (result in results) {
             val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 result.wifiSsid?.toString()?.removeSurrounding("\"") ?: ""
@@ -3118,12 +3108,12 @@ class ScanningService : Service() {
                 @Suppress("DEPRECATION")
                 result.SSID ?: ""
             }
-            
+
             val bssid = result.BSSID ?: continue
             val rssi = result.level
-            
+
             var matched = false
-            
+
             // Check for SSID pattern match
             val pattern = DetectionPatterns.matchSsidPattern(ssid)
             if (pattern != null) {
@@ -3145,11 +3135,11 @@ class ScanningService : Service() {
                     serviceUuids = null,
                     matchedPatterns = gson.toJson(listOf(pattern.description))
                 )
-                
+
                 handleDetection(detection)
                 matched = true
             }
-            
+
             // Check for MAC prefix match
             if (!matched) {
                 val macPrefix = DetectionPatterns.matchMacPrefix(bssid)
@@ -3172,12 +3162,12 @@ class ScanningService : Service() {
                         serviceUuids = null,
                         matchedPatterns = gson.toJson(listOf(macPrefix.description.ifEmpty { "MAC prefix: ${macPrefix.prefix}" }))
                     )
-                    
+
                     handleDetection(detection)
                     matched = true
                 }
             }
-            
+
             // Track unmatched networks if enabled
             if (!matched && ssid.isNotEmpty() && currentSettings.value.trackSeenDevices) {
                 trackSeenWifiNetwork(bssid, ssid, rssi)
@@ -3321,7 +3311,131 @@ class ScanningService : Service() {
         // Update scan status to indicate degraded operation
         scanStatus.value = ScanStatus.Error("Database unavailable - using memory storage", recoverable = true)
     }
-    
+
+    // ==================== Detection Handler Delegation ====================
+    //
+    // These helper methods delegate detection analysis to the standardized
+    // DetectionHandler system. This allows:
+    // - Consistent detection logic across all protocols
+    // - Better testability and separation of concerns
+    // - Extensibility through the DetectionRegistry
+    // - AI prompt generation for detected devices
+
+    /**
+     * Process a BLE scan result using the BleDetectionHandler.
+     *
+     * Converts the ScanResult to a BleDetectionContext and delegates to the
+     * handler for pattern matching and detection generation.
+     *
+     * @param scanResult The raw BLE scan result from Android
+     * @return BleDetectionResult if a detection was made, null otherwise
+     */
+    @SuppressLint("MissingPermission")
+    private fun processBleWithHandler(scanResult: android.bluetooth.le.ScanResult): BleDetectionResult? {
+        val device = scanResult.device
+        val macAddress = device.address ?: return null
+        val deviceName = device.name
+        val rssi = scanResult.rssi
+
+        // Extract service UUIDs
+        val serviceUuids = scanResult.scanRecord?.serviceUuids?.map { it.uuid } ?: emptyList()
+
+        // Extract manufacturer data
+        val manufacturerData = mutableMapOf<Int, String>()
+        scanResult.scanRecord?.manufacturerSpecificData?.let { data ->
+            for (i in 0 until data.size()) {
+                val key = data.keyAt(i)
+                val value = data.valueAt(i)
+                manufacturerData[key] = value.joinToString("") { "%02X".format(it) }
+            }
+        }
+
+        // Track packet rate for Signal trigger spike detection
+        val advertisingRate = trackPacket(macAddress)
+
+        // Build the detection context
+        val context = BleDetectionContext(
+            macAddress = macAddress,
+            deviceName = deviceName,
+            rssi = rssi,
+            serviceUuids = serviceUuids,
+            manufacturerData = manufacturerData,
+            advertisingRate = advertisingRate,
+            timestamp = System.currentTimeMillis(),
+            latitude = currentLocation?.latitude,
+            longitude = currentLocation?.longitude
+        )
+
+        // Delegate to the handler
+        return bleDetectionHandler.handleDetection(context)
+    }
+
+    /**
+     * Process WiFi scan results using the WifiDetectionHandler via RogueWifiMonitor.
+     *
+     * Note: WiFi detection is primarily handled by the RogueWifiMonitor which
+     * processes scan results for evil twin detection, deauth attacks, etc.
+     * This method integrates with that existing infrastructure.
+     *
+     * TODO: Consider creating a unified WifiDetectionHandler that encapsulates
+     * both the RogueWifiMonitor logic and SSID/MAC pattern matching.
+     *
+     * @param scanResults The list of WiFi scan results
+     */
+    private fun processWifiWithHandler(scanResults: List<android.net.wifi.ScanResult>) {
+        // Feed results to Rogue WiFi Monitor for evil twin/rogue AP detection
+        // This is the primary WiFi detection mechanism
+        rogueWifiMonitor?.processScanResults(scanResults)
+
+        // Feed results to RF Signal Analyzer for spectrum analysis
+        rfSignalAnalyzer?.analyzeWifiScan(scanResults)
+
+        // TODO: When WifiDetectionHandler is fully implemented with pattern matching,
+        // delegate SSID/MAC detection logic here similar to BLE:
+        // val wifiHandler = detectionRegistry.getHandler(DetectionProtocol.WIFI)
+        // for (result in scanResults) {
+        //     val context = WifiDetectionContext(...)
+        //     wifiHandler?.analyze(context)?.let { handleDetection(it.detection) }
+        // }
+    }
+
+    /**
+     * Process a cellular anomaly using the CellularDetectionHandler.
+     *
+     * Converts the CellularAnomaly to a detection using the handler's
+     * analysis logic and settings-based filtering.
+     *
+     * @param anomaly The cellular anomaly from CellularMonitor
+     * @return Detection if the anomaly warrants a detection, null otherwise
+     */
+    private suspend fun processCellularWithHandler(
+        anomaly: CellularMonitor.CellularAnomaly
+    ): Detection? {
+        return cellularDetectionHandler.convertAnomalyToDetection(anomaly)
+    }
+
+    /**
+     * Process a satellite anomaly using the SatelliteDetectionHandler.
+     *
+     * Converts the SatelliteAnomaly to a detection with appropriate threat
+     * levels and NTN-specific analysis.
+     *
+     * @param anomaly The satellite anomaly from SatelliteMonitor
+     * @param connectionState Current satellite connection state
+     * @return Detection if the anomaly meets severity thresholds, null otherwise
+     */
+    private suspend fun processSatelliteWithHandler(
+        anomaly: com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly,
+        connectionState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState
+    ): Detection? {
+        return satelliteDetectionHandler.handleAnomaly(
+            anomaly = anomaly,
+            connectionState = connectionState,
+            latitude = currentLocation?.latitude,
+            longitude = currentLocation?.longitude
+        )
+    }
+
     private fun alertUser(detection: Detection) {
         val notifSettings = currentNotificationSettings
 

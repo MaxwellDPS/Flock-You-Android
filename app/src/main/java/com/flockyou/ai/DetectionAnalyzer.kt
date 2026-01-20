@@ -37,6 +37,13 @@ import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 import kotlin.math.*
 import com.flockyou.data.model.DetectionMethod
+import com.flockyou.detection.DetectionRegistry
+import com.flockyou.detection.profile.DeviceTypeProfile as CentralizedProfile
+import com.flockyou.detection.profile.DeviceTypeProfileRegistry
+import com.flockyou.detection.profile.PrivacyImpact
+import com.flockyou.detection.profile.Recommendation
+import com.flockyou.detection.profile.RecommendationUrgency
+import com.flockyou.detection.handler.DeviceTypeProfile as HandlerProfile
 
 /**
  * AI-powered detection analyzer using LOCAL ON-DEVICE LLM inference only.
@@ -59,7 +66,8 @@ class DetectionAnalyzer @Inject constructor(
     private val geminiNanoClient: GeminiNanoClient,
     private val mediaPipeLlmClient: MediaPipeLlmClient,
     private val falsePositiveAnalyzer: FalsePositiveAnalyzer,
-    private val llmEngineManager: LlmEngineManager
+    private val llmEngineManager: LlmEngineManager,
+    private val detectionRegistry: DetectionRegistry
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -946,8 +954,11 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Select the best prompt template based on detection type and available enriched data.
-     * Uses enriched prompts when detector-specific analysis data is available,
-     * falls back to chain-of-thought for complex detections or few-shot for standard cases.
+     * Priority order:
+     * 1. Enriched detector-specific prompts (when enriched data is available)
+     * 2. Profile AI prompt template (device-type specific templates from DeviceTypeProfile)
+     * 3. Chain-of-thought reasoning (for high-threat or complex detections)
+     * 4. Few-shot prompting (for standard detections)
      */
     private fun selectPromptForDetection(
         detection: Detection,
@@ -968,6 +979,12 @@ class DetectionAnalyzer @Inject constructor(
             }
         }
 
+        // Check for profile-based AI prompt template
+        val profilePrompt = getProfileAiPromptTemplate(detection.deviceType)
+        if (profilePrompt != null) {
+            return buildProfileBasedPrompt(detection, profilePrompt, contextualInsights)
+        }
+
         // For high-threat or complex detections, use chain-of-thought reasoning
         if (detection.threatLevel == ThreatLevel.CRITICAL ||
             detection.threatLevel == ThreatLevel.HIGH ||
@@ -977,6 +994,59 @@ class DetectionAnalyzer @Inject constructor(
 
         // For standard detections, use few-shot prompting
         return PromptTemplates.buildFewShotPrompt(detection, enrichedData)
+    }
+
+    /**
+     * Get AI prompt template from profile system.
+     * Only DeviceTypeProfileRegistry (centralized profile) has aiPromptTemplate.
+     */
+    private fun getProfileAiPromptTemplate(deviceType: DeviceType): String? {
+        // Use DeviceTypeProfileRegistry for AI prompt templates
+        val profile = DeviceTypeProfileRegistry.getProfile(deviceType)
+        return profile.aiPromptTemplate
+    }
+
+    /**
+     * Build a prompt using the profile's AI prompt template.
+     * Wraps the template with detection context for comprehensive analysis.
+     */
+    private fun buildProfileBasedPrompt(
+        detection: Detection,
+        profileTemplate: String,
+        contextualInsights: ContextualInsights?
+    ): String {
+        val contextSection = contextualInsights?.let {
+            buildString {
+                appendLine("\n=== CONTEXTUAL DATA ===")
+                it.locationPattern?.let { appendLine("Location: $it") }
+                it.timePattern?.let { appendLine("Time Pattern: $it") }
+                it.clusterInfo?.let { appendLine("Cluster: $it") }
+                it.historicalContext?.let { appendLine("History: $it") }
+            }
+        } ?: ""
+
+        return """<start_of_turn>user
+You are a privacy security expert analyzing a detected surveillance device.
+
+$profileTemplate
+
+=== DETECTION DATA ===
+Device Type: ${detection.deviceType.displayName}
+Protocol: ${detection.protocol.displayName}
+Detection Method: ${detection.detectionMethod.displayName}
+Signal: ${detection.signalStrength.displayName} (${detection.rssi} dBm)
+Threat Level: ${detection.threatLevel.displayName}
+Threat Score: ${detection.threatScore}/100
+${detection.manufacturer?.let { "Manufacturer: $it" } ?: ""}
+${detection.deviceName?.let { "Device Name: $it" } ?: ""}
+${detection.ssid?.let { "Network SSID: $it" } ?: ""}
+${detection.matchedPatterns?.let { "Matched Patterns: $it" } ?: ""}
+$contextSection
+
+Provide your analysis with specific recommendations for this detection.
+<end_of_turn>
+<start_of_turn>model
+"""
     }
 
     /**
@@ -1394,9 +1464,71 @@ class DetectionAnalyzer @Inject constructor(
     )
 
     /**
-     * Comprehensive device information for all 50+ device types.
+     * Extension function to convert CentralizedProfile to local DeviceInfo.
+     */
+    private fun CentralizedProfile.toDeviceInfo(): DeviceInfo {
+        return DeviceInfo(
+            description = this.description,
+            category = this.category,
+            surveillanceType = this.surveillanceType,
+            typicalOperator = this.typicalOperator,
+            legalFramework = this.legalFramework,
+            simpleDescription = this.simpleDescription,
+            simplePrivacyImpact = this.simplePrivacyImpact,
+            privacyImpact = this.privacyImpact.description
+        )
+    }
+
+    /**
+     * Extension function to convert HandlerProfile to local DeviceInfo.
+     * HandlerProfile has fewer fields, so we use what's available.
+     */
+    private fun HandlerProfile.toDeviceInfo(): DeviceInfo {
+        return DeviceInfo(
+            description = this.description,
+            category = this.manufacturer, // Use manufacturer as category approximation
+            surveillanceType = "Detection via ${this.typicalThreatLevel.displayName} threat patterns",
+            typicalOperator = null,
+            legalFramework = this.legalConsiderations.ifEmpty { null },
+            simpleDescription = null,
+            simplePrivacyImpact = null,
+            privacyImpact = null
+        )
+    }
+
+    /**
+     * Create a default DeviceInfo for unknown device types.
+     */
+    private fun createDefaultDeviceInfo(deviceType: DeviceType): DeviceInfo {
+        return DeviceInfo(
+            description = "Unknown surveillance device detected based on wireless signature patterns. Unable to determine specific type, but characteristics suggest surveillance capability.",
+            category = "Unknown",
+            surveillanceType = "Unknown",
+            typicalOperator = null,
+            legalFramework = null,
+            simpleDescription = "Unknown device with potential surveillance capability",
+            simplePrivacyImpact = "Privacy implications unknown - treat with caution"
+        )
+    }
+
+    /**
+     * Get device information from the profile registry.
+     * Uses DeviceTypeProfileRegistry (centralized profiles) as the primary source,
+     * with fallback to DetectionRegistry handler profiles for additional data.
      */
     private fun getComprehensiveDeviceInfo(deviceType: DeviceType): DeviceInfo {
+        // Primary: Use DeviceTypeProfileRegistry (comprehensive profile system)
+        val centralizedProfile = DeviceTypeProfileRegistry.getProfile(deviceType)
+
+        // The centralized profile always returns a valid profile (with defaults for unknown types)
+        return centralizedProfile.toDeviceInfo()
+    }
+
+    // ==================== LEGACY DEVICE INFO (kept for reference during migration) ====================
+    // The following when block has been replaced by profile lookups above.
+    // Keeping as private function for backward compatibility during testing.
+    @Suppress("unused")
+    private fun getComprehensiveDeviceInfoLegacy(deviceType: DeviceType): DeviceInfo {
         return when (deviceType) {
             // ALPR & Traffic Cameras
             DeviceType.FLOCK_SAFETY_CAMERA -> DeviceInfo(
@@ -1824,123 +1956,30 @@ class DetectionAnalyzer @Inject constructor(
 
     /**
      * Get data collection capabilities for each device type.
+     * Uses DeviceTypeProfileRegistry (centralized profile system) as primary source.
+     * HandlerProfile has 'capabilities' which is more generic; we prefer the detailed
+     * 'dataCollected' from the centralized profile.
      */
     private fun getDataCollectionCapabilities(deviceType: DeviceType): List<String> {
-        return when (deviceType) {
-            DeviceType.FLOCK_SAFETY_CAMERA, DeviceType.LICENSE_PLATE_READER -> listOf(
-                "License plate numbers and images",
-                "Vehicle make, model, and color",
-                "Timestamps and GPS coordinates",
-                "Direction of travel",
-                "Potentially visible occupant images",
-                "Historical travel pattern analysis"
-            )
-            DeviceType.RAVEN_GUNSHOT_DETECTOR, DeviceType.SHOTSPOTTER -> listOf(
-                "Continuous ambient audio monitoring",
-                "Acoustic signatures and sound patterns",
-                "Precise location via triangulation",
-                "Audio snippets around detected events",
-                "Timestamps of all acoustic events"
-            )
-            DeviceType.STINGRAY_IMSI -> listOf(
-                "IMSI (unique phone identifier)",
-                "IMEI (device hardware ID)",
-                "Phone calls (content and metadata)",
-                "SMS/text messages",
-                "Real-time precise location via triangulation",
-                "Device model and capabilities",
-                "All nearby device identifiers within range",
-                "Encryption capability downgrades forced on devices",
-                "Movement patterns via cell handoff analysis",
-                "Network attachment timestamps and duration"
-            )
-            DeviceType.CELLEBRITE_FORENSICS, DeviceType.GRAYKEY_DEVICE -> listOf(
-                "All phone contents including deleted data",
-                "Messages from all apps",
-                "Photos and videos",
-                "Location history",
-                "Contacts and call logs",
-                "App data and credentials",
-                "Encrypted content (when bypassed)"
-            )
-            DeviceType.RING_DOORBELL, DeviceType.NEST_CAMERA, DeviceType.ARLO_CAMERA,
-            DeviceType.WYZE_CAMERA, DeviceType.EUFY_CAMERA, DeviceType.BLINK_CAMERA -> listOf(
-                "Video footage (24/7 or motion-triggered)",
-                "Audio recordings",
-                "Motion detection events with timestamps",
-                "Person/package detection (AI-enabled)",
-                "Facial recognition data (some models)",
-                "Visitor patterns and frequency"
-            )
-            DeviceType.AIRTAG, DeviceType.TILE_TRACKER, DeviceType.SAMSUNG_SMARTTAG -> listOf(
-                "Real-time location via network",
-                "Location history and movement patterns",
-                "Timestamps of all location updates",
-                "Proximity to tracker owner's devices"
-            )
-            DeviceType.WIFI_PINEAPPLE, DeviceType.ROGUE_AP, DeviceType.MAN_IN_MIDDLE -> listOf(
-                "Network credentials (if captured)",
-                "Unencrypted network traffic",
-                "Website visits and DNS queries",
-                "Device identifiers (MAC addresses)",
-                "Potentially sensitive data in transit"
-            )
-            DeviceType.FACIAL_RECOGNITION, DeviceType.CLEARVIEW_AI -> listOf(
-                "Facial biometric data",
-                "Identity matches against databases",
-                "Timestamps and locations of sightings",
-                "Associated profile information",
-                "Movement patterns across cameras"
-            )
-            DeviceType.DRONE -> listOf(
-                "Aerial video and photography",
-                "Thermal/infrared imagery (equipped)",
-                "Real-time streaming capability",
-                "GPS coordinates of targets",
-                "License plate capture (equipped)"
-            )
-            DeviceType.ULTRASONIC_BEACON -> listOf(
-                "Cross-device tracking identifiers",
-                "Physical location association with retail/venue presence",
-                "Advertising/content attribution across devices",
-                "App usage correlation and engagement patterns",
-                "Precise indoor positioning via beacon triangulation",
-                "Dwell time at specific locations/displays",
-                "Multi-device identity linking (phone + tablet + laptop)",
-                "Temporal patterns of user presence"
-            )
-            DeviceType.BLUETOOTH_BEACON, DeviceType.RETAIL_TRACKER -> listOf(
-                "Device presence and proximity",
-                "Dwell time at locations",
-                "Movement patterns within space",
-                "Return visit frequency",
-                "Device identifiers"
-            )
-            DeviceType.RF_ANOMALY -> listOf(
-                "Presence detection via WiFi probe requests",
-                "Device MAC addresses and identifiers",
-                "Signal strength for proximity estimation",
-                "Movement patterns through coverage area",
-                "Behavioral profiling via connection patterns",
-                "Potential audio/video if hidden cameras present",
-                "Network traffic metadata if rogue AP involved"
-            )
-            DeviceType.GNSS_SPOOFER, DeviceType.GNSS_JAMMER -> listOf(
-                "Target device's reliance on GPS for location",
-                "Effectiveness of location manipulation on target",
-                "Time synchronization disruption capability",
-                "Navigation system confusion/misdirection",
-                "Geofencing bypass for location-restricted apps",
-                "False alibi generation through location spoofing",
-                "Disruption of location-based emergency services"
-            )
-            else -> listOf(
-                "Device-specific data collection varies",
-                "May include location and identifiers",
-                "Behavioral patterns possible",
-                "Check device documentation"
-            )
+        // Primary: Use DeviceTypeProfileRegistry for detailed data collection info
+        val centralizedProfile = DeviceTypeProfileRegistry.getProfile(deviceType)
+        if (centralizedProfile.dataCollected.isNotEmpty()) {
+            return centralizedProfile.dataCollected
         }
+
+        // Fallback: Try handler profile's capabilities as approximation
+        val handlerProfile = detectionRegistry.getProfile(deviceType)
+        if (handlerProfile != null && handlerProfile.capabilities.isNotEmpty()) {
+            return handlerProfile.capabilities
+        }
+
+        // Default fallback for unknown device types
+        return listOf(
+            "Device-specific data collection varies",
+            "May include location and identifiers",
+            "Behavioral patterns possible",
+            "Check device documentation"
+        )
     }
 
     private fun getRiskAssessment(detection: Detection): String {
@@ -1996,7 +2035,7 @@ class DetectionAnalyzer @Inject constructor(
     private fun getSmartRecommendations(detection: Detection, context: ContextualInsights?): List<String> {
         val recommendations = mutableListOf<String>()
 
-        // Threat-level based recommendations
+        // Threat-level based recommendations (dynamic based on detection context)
         when (detection.threatLevel) {
             ThreatLevel.CRITICAL -> {
                 recommendations.add("Consider leaving the area immediately if safety allows")
@@ -2018,49 +2057,9 @@ class DetectionAnalyzer @Inject constructor(
             }
         }
 
-        // Device-specific recommendations
-        when (detection.deviceType) {
-            DeviceType.AIRTAG, DeviceType.TILE_TRACKER, DeviceType.SAMSUNG_SMARTTAG,
-            DeviceType.GENERIC_BLE_TRACKER -> {
-                recommendations.add("Check your belongings, vehicle, and clothing for hidden trackers")
-                recommendations.add("If tracker persists, contact local authorities")
-            }
-            DeviceType.STINGRAY_IMSI -> {
-                recommendations.add("Switch to airplane mode if you need complete privacy")
-                recommendations.add("Signal-based encryption apps (Signal, WhatsApp) still provide some protection")
-                recommendations.add("Check technical details for IMSI catcher score and encryption downgrade evidence")
-                recommendations.add("If movement analysis shows 'impossible speed', your location may be manipulated")
-                recommendations.add("Consider using WiFi calling if available and trusted network exists")
-            }
-            DeviceType.WIFI_PINEAPPLE, DeviceType.ROGUE_AP -> {
-                recommendations.add("Do NOT connect to unknown WiFi networks")
-                recommendations.add("Use cellular data instead of WiFi in this area")
-                recommendations.add("Verify network names before connecting")
-            }
-            DeviceType.GNSS_SPOOFER -> {
-                recommendations.add("Your GPS location may be inaccurate - verify with visual landmarks")
-                recommendations.add("Use alternative navigation (WiFi positioning, cell triangulation, maps offline)")
-                recommendations.add("Be cautious of location-dependent apps (banking, delivery, rideshare)")
-                recommendations.add("Check technical details for constellation analysis and spoofing likelihood")
-                recommendations.add("If C/N0 deviation is high or clock drift erratic, spoofing is very likely")
-                recommendations.add("Navigation-critical activities should be postponed until GPS normalizes")
-            }
-            DeviceType.RF_ANOMALY -> {
-                recommendations.add("Note this location - high hidden network density detected")
-                recommendations.add("Disable WiFi auto-connect to prevent rogue AP attacks")
-                recommendations.add("Consider using VPN if connecting to any network here")
-                recommendations.add("Check detection details for surveillance vendor indicators")
-                recommendations.add("If persistent across visits, this may be coordinated surveillance")
-            }
-            DeviceType.ULTRASONIC_BEACON -> {
-                recommendations.add("Close apps with microphone permissions when not needed")
-                recommendations.add("Check technical details for source attribution (SilverPush, Alphonso, etc.)")
-                recommendations.add("If 'following user' flag is set, beacon may be tracking you across locations")
-                recommendations.add("Consider disabling microphone access for advertising/shopping apps")
-                recommendations.add("High tracking likelihood indicates active cross-device surveillance")
-            }
-            else -> {}
-        }
+        // Device-specific recommendations from profile system
+        val profileRecommendations = getProfileRecommendations(detection.deviceType)
+        recommendations.addAll(profileRecommendations)
 
         // Context-based recommendations
         context?.let {
@@ -2070,6 +2069,34 @@ class DetectionAnalyzer @Inject constructor(
         }
 
         return recommendations.distinct().take(6)
+    }
+
+    /**
+     * Get device-specific recommendations from the profile system.
+     * Uses DeviceTypeProfileRegistry (centralized profile) as primary source.
+     * HandlerProfile has 'mitigationAdvice' (string) which we can use as fallback.
+     */
+    private fun getProfileRecommendations(deviceType: DeviceType): List<String> {
+        // Primary: Use DeviceTypeProfileRegistry for structured recommendations
+        val centralizedProfile = DeviceTypeProfileRegistry.getProfile(deviceType)
+        if (centralizedProfile.recommendations.isNotEmpty()) {
+            return centralizedProfile.recommendations
+                .sortedBy { it.priority }
+                .map { it.action }
+        }
+
+        // Fallback: Try handler profile's mitigationAdvice
+        val handlerProfile = detectionRegistry.getProfile(deviceType)
+        if (handlerProfile != null && handlerProfile.mitigationAdvice.isNotEmpty()) {
+            // Split mitigation advice into individual recommendations if it contains multiple sentences
+            return handlerProfile.mitigationAdvice
+                .split(". ")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
+
+        // Empty list if no recommendations found
+        return emptyList()
     }
 
     /**

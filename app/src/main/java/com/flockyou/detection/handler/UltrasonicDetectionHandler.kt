@@ -644,10 +644,3 @@ class UltrasonicDetectionHandler @Inject constructor() {
         return indicators
     }
 }
-
-/**
- * Interface for detection handlers with generic context type.
- */
-interface DetectionHandler<T> {
-    fun handle(context: T): Detection
-}

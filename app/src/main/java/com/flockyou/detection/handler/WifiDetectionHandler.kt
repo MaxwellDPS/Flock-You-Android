@@ -20,6 +20,10 @@ import javax.inject.Singleton
 /**
  * Detection handler for WiFi-based surveillance detection.
  *
+ * This is a standalone handler that wraps RogueWifiMonitor for WiFi-based
+ * surveillance detection. It does NOT implement the DetectionHandler interface
+ * as it uses a different data flow pattern (continuous monitoring vs. context-based analysis).
+ *
  * Detects:
  * - Evil twin access points
  * - Deauthentication attacks
@@ -32,11 +36,11 @@ import javax.inject.Singleton
 @Singleton
 class WifiDetectionHandler @Inject constructor(
     @ApplicationContext private val context: Context
-) : DetectionHandler<List<ScanResult>> {
+) {
 
-    override val protocol: DetectionProtocol = DetectionProtocol.WIFI
+    val protocol: DetectionProtocol = DetectionProtocol.WIFI
 
-    override val supportedDeviceTypes: Set<DeviceType> = setOf(
+    val supportedDeviceTypes: Set<DeviceType> = setOf(
         DeviceType.ROGUE_AP,
         DeviceType.HIDDEN_CAMERA,
         DeviceType.SURVEILLANCE_VAN,
@@ -46,20 +50,20 @@ class WifiDetectionHandler @Inject constructor(
         DeviceType.MAN_IN_MIDDLE
     )
 
-    override val displayName: String = "WiFi Detection Handler"
+    val displayName: String = "WiFi Detection Handler"
 
     private var _isActive: Boolean = false
-    override val isActive: Boolean get() = _isActive
+    val isActive: Boolean get() = _isActive
 
     private val _detections = MutableSharedFlow<Detection>(replay = 100)
-    override val detections: Flow<Detection> = _detections.asSharedFlow()
+    val detections: Flow<Detection> = _detections.asSharedFlow()
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Underlying monitor that does the actual detection
     private var rogueWifiMonitor: RogueWifiMonitor? = null
 
-    override fun startMonitoring() {
+    fun startMonitoring() {
         if (_isActive) return
         _isActive = true
 
@@ -80,26 +84,26 @@ class WifiDetectionHandler @Inject constructor(
         }
     }
 
-    override fun stopMonitoring() {
+    fun stopMonitoring() {
         _isActive = false
         rogueWifiMonitor?.stopMonitoring()
     }
 
-    override suspend fun processData(data: List<ScanResult>): List<Detection> {
+    suspend fun processData(data: List<ScanResult>): List<Detection> {
         rogueWifiMonitor?.processScanResults(data)
         // Detections are emitted asynchronously via the flow
         return emptyList()
     }
 
-    override fun updateLocation(latitude: Double, longitude: Double) {
+    fun updateLocation(latitude: Double, longitude: Double) {
         rogueWifiMonitor?.updateLocation(latitude, longitude)
     }
 
-    override fun clearHistory() {
+    fun clearHistory() {
         rogueWifiMonitor?.clearHistory()
     }
 
-    override fun destroy() {
+    fun destroy() {
         stopMonitoring()
         rogueWifiMonitor?.destroy()
         rogueWifiMonitor = null

@@ -29,6 +29,31 @@ object FlipperProtocol {
     const val MSG_IR_SCAN_RESULT = 0x0B
     const val MSG_NFC_SCAN_REQUEST = 0x0C
     const val MSG_NFC_SCAN_RESULT = 0x0D
+
+    // Active Probe TX Commands - Public Safety & Fleet
+    const val MSG_LF_PROBE_TX = 0x0E          // Tire Kicker - 125kHz TPMS wake
+    const val MSG_IR_STROBE_TX = 0x0F         // Opticom Verifier - Traffic preemption
+    const val MSG_WIFI_PROBE_TX = 0x10        // Honey-Potter - Fleet SSID probing
+    const val MSG_BLE_ACTIVE_SCAN = 0x11      // BlueForce Handshake - Force SCAN_RSP
+
+    // Active Probe TX Commands - Infrastructure
+    const val MSG_ZIGBEE_BEACON_TX = 0x12     // Zigbee Knocker - Mesh mapping
+    const val MSG_GPIO_PULSE_TX = 0x13        // Ghost Car - Inductive loop spoof
+
+    // Active Probe TX Commands - Physical Access
+    const val MSG_SUBGHZ_REPLAY_TX = 0x14     // Sleep Denial - Alarm fatigue
+    const val MSG_WIEGAND_REPLAY_TX = 0x15    // Replay Injector - Card bypass
+    const val MSG_MAGSPOOF_TX = 0x16          // MagSpoof - Magstripe emulation
+    const val MSG_IBUTTON_EMULATE = 0x17      // Master Key - 1-Wire emulation
+
+    // Active Probe TX Commands - Digital
+    const val MSG_NRF24_INJECT_TX = 0x18      // MouseJacker - Keystroke injection
+
+    // Passive Scan Configuration
+    const val MSG_SUBGHZ_CONFIG = 0x20        // Configure Sub-GHz listener params
+    const val MSG_IR_CONFIG = 0x21            // Configure IR listener
+    const val MSG_NRF24_CONFIG = 0x22         // Configure NRF24 scanner
+
     const val MSG_ERROR = 0xFF
 
     private const val HEADER_SIZE = 4
@@ -83,6 +108,200 @@ object FlipperProtocol {
     fun createIrScanRequest(): ByteArray = createHeader(MSG_IR_SCAN_REQUEST, 0)
 
     fun createNfcScanRequest(): ByteArray = createHeader(MSG_NFC_SCAN_REQUEST, 0)
+
+    // ========================================================================
+    // Active Probe Request Creation
+    // ========================================================================
+
+    // --- Public Safety & Fleet ---
+
+    /**
+     * Tire Kicker: 125kHz LF burst to wake TPMS sensors on parked vehicles.
+     * @param durationMs Duration to hold carrier (100-5000ms, firmware caps at 5s for battery)
+     */
+    fun createLfProbeRequest(durationMs: Int = 2500): ByteArray {
+        val payload = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putShort(durationMs.coerceIn(100, 5000).toShort())
+        return createHeader(MSG_LF_PROBE_TX, 2) + payload.array()
+    }
+
+    /**
+     * Opticom Verifier: Emit IR strobe to test traffic preemption infrastructure.
+     * @param freqHz 14 for High Priority (Emergency), 10 for Low Priority (Transit)
+     * @param durationMs Strobe duration (100-10000ms)
+     * @param dutyCycle PWM duty cycle 0-100
+     */
+    fun createIrStrobeRequest(freqHz: Int, durationMs: Int = 5000, dutyCycle: Int = 50): ByteArray {
+        val payload = ByteBuffer.allocate(5).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putShort(freqHz.coerceIn(1, 100).toShort())
+        payload.put(dutyCycle.coerceIn(0, 100).toByte())
+        payload.putShort(durationMs.coerceIn(100, 10000).toShort())
+        return createHeader(MSG_IR_STROBE_TX, 5) + payload.array()
+    }
+
+    /**
+     * Honey-Potter: Send directed Wi-Fi probe requests for fleet SSIDs.
+     * Forces hidden MDT networks to decloak.
+     * @param targetSsid Target SSID (max 32 chars)
+     */
+    fun createWifiProbeRequest(targetSsid: String): ByteArray {
+        val ssidBytes = targetSsid.take(32).toByteArray(Charsets.UTF_8)
+        val payload = ByteBuffer.allocate(1 + ssidBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(ssidBytes.size.toByte())
+        payload.put(ssidBytes)
+        return createHeader(MSG_WIFI_PROBE_TX, payload.position()) + payload.array()
+    }
+
+    /**
+     * BlueForce Handshake: Enable active BLE scanning to force SCAN_RSP.
+     * Reveals device model/unit ID from body cams and holsters.
+     * @param activeMode true to enable active scanning
+     */
+    fun createBleActiveScanRequest(activeMode: Boolean = true): ByteArray {
+        val payload = ByteBuffer.allocate(1).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(if (activeMode) 1.toByte() else 0.toByte())
+        return createHeader(MSG_BLE_ACTIVE_SCAN, 1) + payload.array()
+    }
+
+    // --- Infrastructure & Utilities ---
+
+    /**
+     * Zigbee Knocker: Send Zigbee beacon request to map smart meter mesh.
+     * @param channel Zigbee channel (11-26), 0 for channel hop
+     */
+    fun createZigbeeBeaconRequest(channel: Int = 0): ByteArray {
+        val payload = ByteBuffer.allocate(1).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(channel.coerceIn(0, 26).toByte())
+        return createHeader(MSG_ZIGBEE_BEACON_TX, 1) + payload.array()
+    }
+
+    /**
+     * Ghost Car: Pulse GPIO coil at resonant frequency to spoof inductive loop.
+     * @param frequencyHz Resonant frequency of target loop (typically 20000-150000 Hz)
+     * @param durationMs Pulse duration
+     * @param pulseCount Number of pulses to simulate vehicle presence
+     */
+    fun createGpioLoopPulseRequest(frequencyHz: Int, durationMs: Int = 500, pulseCount: Int = 3): ByteArray {
+        val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putInt(frequencyHz.coerceIn(1000, 200000))
+        payload.putShort(durationMs.coerceIn(50, 5000).toShort())
+        payload.putShort(pulseCount.coerceIn(1, 20).toShort())
+        return createHeader(MSG_GPIO_PULSE_TX, 8) + payload.array()
+    }
+
+    // --- Physical Access ---
+
+    /**
+     * Sleep Denial: Replay Sub-GHz signal to cause alarm fatigue.
+     * @param frequency Target frequency in Hz
+     * @param rawData Captured signal data to replay
+     * @param repeatCount Number of times to replay
+     */
+    fun createSubGhzReplayRequest(frequency: Long, rawData: ByteArray, repeatCount: Int = 5): ByteArray {
+        val dataLen = rawData.size.coerceAtMost(256)
+        val payload = ByteBuffer.allocate(7 + dataLen).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putInt((frequency and 0xFFFFFFFFL).toInt())
+        payload.putShort(dataLen.toShort())
+        payload.put(repeatCount.coerceIn(1, 100).toByte())
+        payload.put(rawData, 0, dataLen)
+        return createHeader(MSG_SUBGHZ_REPLAY_TX, payload.position()) + payload.array()
+    }
+
+    /**
+     * Replay Injector: Replay captured Wiegand signal to bypass card reader.
+     * @param facilityCode Facility code from captured card
+     * @param cardNumber Card number from captured card
+     * @param bitLength Wiegand format (26, 34, 37 bits)
+     */
+    fun createWiegandReplayRequest(facilityCode: Int, cardNumber: Int, bitLength: Int = 26): ByteArray {
+        val payload = ByteBuffer.allocate(9).order(ByteOrder.LITTLE_ENDIAN)
+        payload.putInt(facilityCode)
+        payload.putInt(cardNumber)
+        payload.put(bitLength.coerceIn(26, 48).toByte())
+        return createHeader(MSG_WIEGAND_REPLAY_TX, 9) + payload.array()
+    }
+
+    /**
+     * MagSpoof: Emulate magstripe via electromagnetic pulses.
+     * @param track1 Track 1 data (max 79 chars, alphanumeric)
+     * @param track2 Track 2 data (max 40 chars, numeric)
+     */
+    fun createMagSpoofRequest(track1: String?, track2: String?): ByteArray {
+        val t1Bytes = (track1?.take(79) ?: "").toByteArray(Charsets.US_ASCII)
+        val t2Bytes = (track2?.take(40) ?: "").toByteArray(Charsets.US_ASCII)
+        val payload = ByteBuffer.allocate(2 + t1Bytes.size + t2Bytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(t1Bytes.size.toByte())
+        payload.put(t1Bytes)
+        payload.put(t2Bytes.size.toByte())
+        payload.put(t2Bytes)
+        return createHeader(MSG_MAGSPOOF_TX, payload.position()) + payload.array()
+    }
+
+    /**
+     * Master Key: Emulate iButton/Dallas 1-Wire key.
+     * @param keyId 8-byte key ID (DS1990A format)
+     */
+    fun createIButtonEmulateRequest(keyId: ByteArray): ByteArray {
+        require(keyId.size == 8) { "iButton key ID must be 8 bytes" }
+        val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(keyId)
+        return createHeader(MSG_IBUTTON_EMULATE, 8) + payload.array()
+    }
+
+    // --- Digital Peripherals ---
+
+    /**
+     * MouseJacker: Inject keystrokes into vulnerable wireless HID dongle.
+     * @param address 5-byte NRF24 address of target dongle
+     * @param keystrokes HID keycodes to inject
+     */
+    fun createNrf24InjectRequest(address: ByteArray, keystrokes: ByteArray): ByteArray {
+        require(address.size == 5) { "NRF24 address must be 5 bytes" }
+        val ksLen = keystrokes.size.coerceAtMost(64)
+        val payload = ByteBuffer.allocate(6 + ksLen).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(address)
+        payload.put(ksLen.toByte())
+        payload.put(keystrokes, 0, ksLen)
+        return createHeader(MSG_NRF24_INJECT_TX, payload.position()) + payload.array()
+    }
+
+    // ========================================================================
+    // Passive Scan Configuration
+    // ========================================================================
+
+    /**
+     * Configure Sub-GHz scanner for specific probe type.
+     * @param probeType 0=TPMS, 1=P25, 2=LoJack, 3=Pager, 4=PowerGrid, 5=Crane, 6=ESL, 7=Thermal
+     * @param frequencyHz Target frequency (0 for default)
+     * @param modulation 0=ASK, 1=FSK, 2=GFSK
+     */
+    fun createSubGhzConfigRequest(probeType: Int, frequencyHz: Long = 0, modulation: Int = 0): ByteArray {
+        val payload = ByteBuffer.allocate(6).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(probeType.coerceIn(0, 15).toByte())
+        payload.putInt((frequencyHz and 0xFFFFFFFFL).toInt())
+        payload.put(modulation.coerceIn(0, 10).toByte())
+        return createHeader(MSG_SUBGHZ_CONFIG, 6) + payload.array()
+    }
+
+    /**
+     * Configure IR scanner for specific detection mode.
+     * @param detectOpticom true to detect 14/10Hz emergency strobes
+     */
+    fun createIrConfigRequest(detectOpticom: Boolean = true): ByteArray {
+        val payload = ByteBuffer.allocate(1).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(if (detectOpticom) 1.toByte() else 0.toByte())
+        return createHeader(MSG_IR_CONFIG, 1) + payload.array()
+    }
+
+    /**
+     * Configure NRF24 scanner for promiscuous mode.
+     * @param promiscuous true to scan all channels for vulnerable devices
+     */
+    fun createNrf24ConfigRequest(promiscuous: Boolean = true): ByteArray {
+        val payload = ByteBuffer.allocate(1).order(ByteOrder.LITTLE_ENDIAN)
+        payload.put(if (promiscuous) 1.toByte() else 0.toByte())
+        return createHeader(MSG_NRF24_CONFIG, 1) + payload.array()
+    }
 
     // ========================================================================
     // Storage Commands (for FAP installation)
