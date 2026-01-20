@@ -76,6 +76,16 @@ class FlipperScannerManager @Inject constructor(
                 }
             }
         }
+
+        // Auto-start scanning when connection becomes READY
+        scope.launch {
+            _connectionState.collect { state ->
+                if (state == FlipperConnectionState.READY && !_isRunning.value) {
+                    Log.i(TAG, "Connection ready, auto-starting Flipper scanning")
+                    startScanning(surveillancePatterns)
+                }
+            }
+        }
     }
 
     /**

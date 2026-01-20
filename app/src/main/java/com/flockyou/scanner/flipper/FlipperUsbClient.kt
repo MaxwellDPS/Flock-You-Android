@@ -267,7 +267,7 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
                 }
 
                 _connectionState.value = FlipperConnectionState.READY
-                Log.i(TAG, "Connected to Flipper Zero via USB")
+                Log.i(TAG, "Connected to Flipper Zero via USB on port $portIndex of ${driver.ports.size}")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed", e)
@@ -309,6 +309,7 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     private fun handleReceivedData(data: ByteArray) {
+        Log.d(TAG, "Received ${data.size} bytes: ${data.take(8).joinToString(" ") { "%02X".format(it) }}")
         synchronized(receiveBuffer) {
             // Check if we need to grow the buffer
             val requiredSize = receiveBufferPosition + data.size
@@ -377,12 +378,30 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         }
     }
 
-    fun requestWifiScan(): Boolean = send(FlipperProtocol.createWifiScanRequest())
-    fun requestSubGhzScan(freqStart: Long = 300_000_000L, freqEnd: Long = 928_000_000L): Boolean = send(FlipperProtocol.createSubGhzScanRequest(freqStart, freqEnd))
-    fun requestBleScan(): Boolean = send(FlipperProtocol.createBleScanRequest())
-    fun requestIrScan(): Boolean = send(FlipperProtocol.createIrScanRequest())
-    fun requestNfcScan(): Boolean = send(FlipperProtocol.createNfcScanRequest())
-    fun requestStatus(): Boolean = send(FlipperProtocol.createStatusRequest())
+    fun requestWifiScan(): Boolean {
+        Log.d(TAG, "Sending WiFi scan request")
+        return send(FlipperProtocol.createWifiScanRequest())
+    }
+    fun requestSubGhzScan(freqStart: Long = 300_000_000L, freqEnd: Long = 928_000_000L): Boolean {
+        Log.d(TAG, "Sending Sub-GHz scan request")
+        return send(FlipperProtocol.createSubGhzScanRequest(freqStart, freqEnd))
+    }
+    fun requestBleScan(): Boolean {
+        Log.d(TAG, "Sending BLE scan request")
+        return send(FlipperProtocol.createBleScanRequest())
+    }
+    fun requestIrScan(): Boolean {
+        Log.d(TAG, "Sending IR scan request")
+        return send(FlipperProtocol.createIrScanRequest())
+    }
+    fun requestNfcScan(): Boolean {
+        Log.d(TAG, "Sending NFC scan request")
+        return send(FlipperProtocol.createNfcScanRequest())
+    }
+    fun requestStatus(): Boolean {
+        Log.d(TAG, "Sending status request")
+        return send(FlipperProtocol.createStatusRequest())
+    }
     fun sendHeartbeat(): Boolean = send(FlipperProtocol.createHeartbeat())
 
     fun disconnect() {
