@@ -1,9 +1,16 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.flockyou.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.animation.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
@@ -19,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.graphics.Color
@@ -62,6 +70,9 @@ fun MainScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
 
+    // Snackbar host state for showing refresh completion toast
+    val snackbarHostState = remember { SnackbarHostState() }
+
     // Pager state for swipe navigation between tabs
     // Use pagerState as single source of truth for tab position
     val pagerState = rememberPagerState(
@@ -70,16 +81,28 @@ fun MainScreen(
     )
     val coroutineScope = rememberCoroutineScope()
 
+    // Track detection count before refresh for delta calculation
+    var preRefreshCount by remember { mutableStateOf(0) }
+
     // Pull-to-refresh state
     var isRefreshing by remember { mutableStateOf(false) }
     val pullRefreshState = rememberPullRefreshState(
         refreshing = isRefreshing,
         onRefresh = {
+            preRefreshCount = uiState.totalCount
             isRefreshing = true
             viewModel.requestRefresh()
             coroutineScope.launch {
-                delay(1000) // Give time for data to refresh
+                delay(1500) // Give time for data to refresh
                 isRefreshing = false
+                // Show completion snackbar with detection delta
+                val newDetections = uiState.totalCount - preRefreshCount
+                val message = when {
+                    newDetections > 0 -> "Updated - $newDetections new detection${if (newDetections > 1) "s" else ""}"
+                    newDetections < 0 -> "Updated - Removed ${-newDetections} detection${if (-newDetections > 1) "s" else ""}"
+                    else -> "Updated - No new detections"
+                }
+                snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
             }
         }
     )
@@ -102,6 +125,7 @@ fun MainScreen(
     }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -198,6 +222,17 @@ fun MainScreen(
                             badge = {
                                 if (uiState.cellularAnomalies.isNotEmpty()) {
                                     Badge { Text(uiState.cellularAnomalies.size.toString()) }
+                                } else {
+                                    // Show checkmark badge when no anomalies
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.tertiary
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                    }
                                 }
                             }
                         ) {
@@ -451,7 +486,11 @@ fun MainScreen(
                             }
                             filteredDetections.isEmpty() -> {
                                 item(key = "empty_state") {
-                                    EmptyState(isScanning = uiState.isScanning)
+                                    EmptyState(
+                                        isScanning = uiState.isScanning,
+                                        onStartScanning = { viewModel.toggleScanning() },
+                                        lastScanTime = uiState.scanStats.lastScanTimestamp
+                                    )
                                 }
                             }
                             else -> {
@@ -492,13 +531,36 @@ fun MainScreen(
                 }
             }
 
-            // Pull-to-refresh indicator
-            PullRefreshIndicator(
-                refreshing = isRefreshing,
-                state = pullRefreshState,
+            // Pull-to-refresh indicator with text
+            Column(
                 modifier = Modifier.align(Alignment.TopCenter),
-                contentColor = MaterialTheme.colorScheme.primary
-            )
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                PullRefreshIndicator(
+                    refreshing = isRefreshing,
+                    state = pullRefreshState,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+                // Show refreshing text below the indicator
+                AnimatedVisibility(
+                    visible = isRefreshing,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Surface(
+                        modifier = Modifier.padding(top = 4.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            text = "Refreshing detections...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
         }
     }
     
@@ -1029,7 +1091,155 @@ fun DetectionDetailSheet(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
-            
+
+            // AI Analysis Section (only show if LLM analysis was performed)
+            if (detection.llmAnalyzed) {
+                item {
+                    Text(
+                        text = "AI Analysis",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            // LLM badge
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = "On-device LLM",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            // FP verdict
+                            if (detection.fpScore != null) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                val fpPercent = (detection.fpScore * 100).toInt()
+                                val verdictText = when {
+                                    fpPercent >= 70 -> "Likely false positive"
+                                    fpPercent >= 40 -> "Possibly false positive"
+                                    else -> "Likely genuine threat"
+                                }
+                                val verdictColor = when {
+                                    fpPercent >= 70 -> MaterialTheme.colorScheme.tertiary
+                                    fpPercent >= 40 -> MaterialTheme.colorScheme.secondary
+                                    else -> MaterialTheme.colorScheme.error
+                                }
+                                val verdictIcon = when {
+                                    fpPercent >= 70 -> Icons.Default.CheckCircle
+                                    fpPercent >= 40 -> Icons.Default.Help
+                                    else -> Icons.Default.Warning
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = verdictIcon,
+                                        contentDescription = null,
+                                        tint = verdictColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = verdictText,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = verdictColor
+                                        )
+                                        Text(
+                                            text = "$fpPercent% confidence",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = verdictColor.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
+
+                                // Confidence bar
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = detection.fpScore,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
+                                    color = verdictColor,
+                                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
+                                )
+                            }
+
+                            // AI-generated reason
+                            detection.fpReason?.let { reason ->
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Analysis:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = reason,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+
+                            // Category
+                            detection.fpCategory?.let { category ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Label,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Category: ${category.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+
+                            // Analyzed timestamp
+                            detection.analyzedAt?.let { timestamp ->
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Analyzed: ${dateFormat.format(Date(timestamp))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+
             // Technical Details
             item {
                 Text(
@@ -1706,6 +1916,8 @@ private fun CellularTabContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        PermissionRecoveryButton()
                     }
                 }
             }
@@ -2333,11 +2545,39 @@ private fun DetectionModuleCard(
     iconTint: Color,
     onClick: () -> Unit
 ) {
+    val hasAnomalies = badgeCount > 0
+    // Animate scale for emphasis when there are anomalies
+    val scale by animateFloatAsState(
+        targetValue = if (hasAnomalies) 1.02f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f),
+        label = "module_scale"
+    )
+
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .then(
+                if (hasAnomalies) {
+                    Modifier.border(
+                        width = 2.dp,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                } else Modifier
+            ),
         onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = iconTint.copy(alpha = 0.1f)
+            containerColor = if (hasAnomalies) {
+                iconTint.copy(alpha = 0.2f)
+            } else {
+                iconTint.copy(alpha = 0.1f)
+            }
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (hasAnomalies) 4.dp else 0.dp
         )
     ) {
         Column(
@@ -2352,13 +2592,16 @@ private fun DetectionModuleCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(if (hasAnomalies) 32.dp else 28.dp)
                 )
-                if (badgeCount > 0) {
+                if (hasAnomalies) {
                     Badge(
-                        containerColor = if (badgeCount > 0) MaterialTheme.colorScheme.error else iconTint
+                        containerColor = MaterialTheme.colorScheme.error
                     ) {
-                        Text(badgeCount.toString())
+                        Text(
+                            text = badgeCount.toString(),
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -2368,16 +2611,52 @@ private fun DetectionModuleCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = if (hasAnomalies) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface
             )
 
             Text(
-                text = description,
+                text = if (hasAnomalies) "$badgeCount anomal${if (badgeCount > 1) "ies" else "y"} detected" else description,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (hasAnomalies) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (hasAnomalies) FontWeight.Medium else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
+    }
+}
+
+/**
+ * Permission recovery button that opens app settings
+ * Used when a permission is denied and needs to be granted manually
+ */
+@Composable
+fun PermissionRecoveryButton(
+    modifier: Modifier = Modifier,
+    text: String = "Grant Permission"
+) {
+    val context = LocalContext.current
+
+    OutlinedButton(
+        onClick = {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        },
+        modifier = modifier,
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.primary
+        )
+    ) {
+        Icon(
+            imageVector = Icons.Default.Settings,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text)
     }
 }

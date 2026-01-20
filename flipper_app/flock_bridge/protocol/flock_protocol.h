@@ -14,9 +14,9 @@
 // Message Size Limits
 // ============================================================================
 
-// Maximum payload size we accept (reasonable for Flipper's 256KB RAM)
+// Maximum payload size we accept (limited by Flipper's RAM constraints)
 // Must be less than UINT16_MAX (65535) since payload_length is uint16_t
-#define FLOCK_MAX_PAYLOAD_SIZE 2048
+#define FLOCK_MAX_PAYLOAD_SIZE 500
 
 // Maximum total message size (header + payload)
 #define FLOCK_MAX_MESSAGE_SIZE (4 + FLOCK_MAX_PAYLOAD_SIZE)

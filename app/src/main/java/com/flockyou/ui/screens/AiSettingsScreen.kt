@@ -379,7 +379,7 @@ private fun PrivacyNoticeCard() {
         ) {
             Icon(
                 imageVector = Icons.Default.Shield,
-                contentDescription = null,
+                contentDescription = "Privacy protection",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(32.dp)
             )
@@ -424,7 +424,7 @@ private fun AiEnableCard(
         ) {
             Icon(
                 imageVector = Icons.Default.Psychology,
-                contentDescription = null,
+                contentDescription = "AI Analysis",
                 modifier = Modifier.size(40.dp),
                 tint = if (enabled) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurfaceVariant
@@ -493,7 +493,13 @@ private fun ModelSelectionCard(
                         is AiModelStatus.Error -> Icons.Default.Error
                         else -> Icons.Default.Memory
                     },
-                    contentDescription = null,
+                    contentDescription = when (modelStatus) {
+                        is AiModelStatus.Ready -> "Model ready"
+                        is AiModelStatus.Downloading -> "Downloading model"
+                        is AiModelStatus.Initializing -> "Initializing model"
+                        is AiModelStatus.Error -> "Model error"
+                        else -> "Model not downloaded"
+                    },
                     tint = when (modelStatus) {
                         is AiModelStatus.Ready -> MaterialTheme.colorScheme.primary
                         is AiModelStatus.Error -> MaterialTheme.colorScheme.error
@@ -584,7 +590,7 @@ private fun ModelSelectionCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
+                            contentDescription = "Engine active",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
@@ -627,7 +633,7 @@ private fun ModelSelectionCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Memory,
-                                contentDescription = null,
+                                contentDescription = "Tensor NPU available",
                                 tint = MaterialTheme.colorScheme.tertiary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -647,7 +653,7 @@ private fun ModelSelectionCard(
                     ) {
                         Icon(
                             imageVector = if (caps.hasAiCore) Icons.Default.CheckCircle else Icons.Default.Info,
-                            contentDescription = null,
+                            contentDescription = if (caps.hasAiCore) "Google AICore ready" else "AICore not installed",
                             tint = if (caps.hasAiCore) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
@@ -678,7 +684,7 @@ private fun ModelSelectionCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Warning,
-                                contentDescription = null,
+                                contentDescription = "Download error",
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -723,12 +729,12 @@ private fun ModelSelectionCard(
                                 onClick = onSelectModel,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null)
+                                Icon(Icons.Default.Download, contentDescription = "Download LLM")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Download LLM")
                             }
                             OutlinedButton(onClick = onImport) {
-                                Icon(Icons.Default.FileOpen, contentDescription = null)
+                                Icon(Icons.Default.FileOpen, contentDescription = "Import model")
                             }
                         }
                         // Gemini Nano: show download button if not ready (managed by AICore, sizeMb=0)
@@ -737,7 +743,7 @@ private fun ModelSelectionCard(
                                 onClick = onDownload,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null)
+                                Icon(Icons.Default.Download, contentDescription = "Download Gemini Nano")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Download Gemini Nano")
                             }
@@ -748,7 +754,7 @@ private fun ModelSelectionCard(
                                 onClick = onInitialize,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Icon(Icons.Default.Refresh, contentDescription = "Reinitialize model")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Reinitialize")
                             }
@@ -758,7 +764,7 @@ private fun ModelSelectionCard(
                                 onClick = onInitialize,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Icon(Icons.Default.Refresh, contentDescription = "Reinitialize model")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Reinitialize")
                             }
@@ -768,7 +774,7 @@ private fun ModelSelectionCard(
                                     contentColor = MaterialTheme.colorScheme.error
                                 )
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Icon(Icons.Default.Delete, contentDescription = "Delete model")
                             }
                         }
                         modelStatus is AiModelStatus.NotDownloaded || modelStatus is AiModelStatus.Error -> {
@@ -776,7 +782,7 @@ private fun ModelSelectionCard(
                                 onClick = onDownload,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null)
+                                Icon(Icons.Default.Download, contentDescription = "Download model")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Download")
                             }
@@ -969,7 +975,7 @@ private fun EngineCategoryHeader(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = title,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp)
         )
@@ -1273,7 +1279,7 @@ private fun CapabilityToggle(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = title,
             tint = if (checked) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp)
@@ -1401,7 +1407,7 @@ private fun LlmEngineSelectionCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
+                            contentDescription = "Auto-select engine",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
@@ -1418,7 +1424,7 @@ private fun LlmEngineSelectionCard(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.Warning,
-                                contentDescription = null,
+                                contentDescription = "Gemini Nano not available",
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -1433,7 +1439,7 @@ private fun LlmEngineSelectionCard(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.Memory,
-                                contentDescription = null,
+                                contentDescription = "NPU acceleration available",
                                 tint = MaterialTheme.colorScheme.tertiary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -1450,7 +1456,7 @@ private fun LlmEngineSelectionCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Speed,
-                            contentDescription = null,
+                            contentDescription = "MediaPipe engine",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
@@ -1466,7 +1472,7 @@ private fun LlmEngineSelectionCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Rule,
-                            contentDescription = null,
+                            contentDescription = "Rule-based engine",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
@@ -1499,7 +1505,7 @@ private fun PerformanceCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.Speed,
-                    contentDescription = null,
+                    contentDescription = "GPU Acceleration",
                     tint = if (settings.useGpuAcceleration) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1531,7 +1537,7 @@ private fun PerformanceCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Memory,
-                        contentDescription = null,
+                        contentDescription = "NPU Acceleration",
                         tint = if (settings.useNpuAcceleration) MaterialTheme.colorScheme.tertiary
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1570,7 +1576,7 @@ private fun PerformanceCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Storage,
-                        contentDescription = null,
+                        contentDescription = "Available RAM",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(12.dp))

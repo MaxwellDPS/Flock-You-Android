@@ -576,9 +576,8 @@ fun DetectionCard(
     ouiLookupViewModel: OuiLookupViewModel = hiltViewModel()
 ) {
     val threatColor = detection.threatLevel.toColor()
-    val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val dateFormat = remember { SimpleDateFormat("MMM dd", Locale.getDefault()) }
-    
+
     // Calculate relative time
     val relativeTime = remember(detection.timestamp) {
         val now = System.currentTimeMillis()
@@ -590,7 +589,10 @@ fun DetectionCard(
             else -> dateFormat.format(Date(detection.timestamp))
         }
     }
-    
+
+    // State for expanding/collapsing the analysis section (collapsed by default)
+    var showAnalysis by remember { mutableStateOf(false) }
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -598,30 +600,39 @@ fun DetectionCard(
         ),
         onClick = onClick
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+        Row(modifier = Modifier.fillMaxWidth()) {
+            // Colored left border based on threat level (4dp width)
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(threatColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(12.dp)
             ) {
-                // Threat indicator
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(threatColor.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = detection.deviceType.toIcon(),
-                        contentDescription = null,
-                        tint = threatColor,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                    // Threat indicator
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(threatColor.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = detection.deviceType.toIcon(),
+                            contentDescription = "${detection.deviceType.displayName}, Threat level: ${detection.threatLevel.name}",
+                            tint = threatColor,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 
                 Spacer(modifier = Modifier.width(12.dp))
                 
@@ -642,66 +653,72 @@ fun DetectionCard(
                         ThreatBadge(threatLevel = detection.threatLevel)
                     }
                     
-                    Spacer(modifier = Modifier.height(2.dp))
-                    
-                    // Secondary info - different for cellular vs WiFi/BLE
-                    if (detection.protocol == DetectionProtocol.CELLULAR) {
-                        // For cellular: show detection method (anomaly type)
-                        Text(
-                            text = detection.detectionMethod.displayName,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    } else {
-                        // For WiFi/BLE: show manufacturer (from detection or OUI lookup)
-                        val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
-
-                        // Try to get manufacturer from detection first, otherwise lookup from OUI
-                        val resolvedManufacturer = detection.manufacturer
-                            ?: detection.macAddress?.let { mac ->
-                                // Trigger lookup on first composition
-                                LaunchedEffect(mac) {
-                                    ouiLookupViewModel.lookupManufacturer(mac)
-                                }
-                                ouiLookupViewModel.getCachedManufacturer(mac)
-                            }
-
-                        resolvedManufacturer?.let { mfr ->
-                            Text(
-                                text = mfr,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    
                     Spacer(modifier = Modifier.height(4.dp))
-                    
-                    // Identifier row - different for cellular vs WiFi/BLE
+
+                    // Standardized display: "Device Type / Category • Primary Identifier"
+                    // Format: Cellular: "Network Type • Cell ID"
+                    //         WiFi/BLE: "Manufacturer • MAC"
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = detection.protocol.toIcon(),
-                            contentDescription = null,
+                            contentDescription = "${detection.protocol.displayName} network",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = when (detection.protocol) {
-                                DetectionProtocol.CELLULAR -> {
-                                    // Show network type and cell ID
-                                    val networkType = detection.manufacturer ?: "Unknown"
-                                    val cellId = detection.firmwareVersion?.removePrefix("Cell ID: ") ?: "?"
-                                    "$networkType • Cell $cellId"
+
+                        // Standardized format for all protocols
+                        val displayText = when (detection.protocol) {
+                            DetectionProtocol.CELLULAR -> {
+                                // Cellular: "Network Type • Cell ID"
+                                val networkType = detection.manufacturer ?: "Unknown Network"
+                                val cellId = detection.firmwareVersion?.removePrefix("Cell ID: ") ?: "?"
+                                "$networkType • Cell $cellId"
+                            }
+                            DetectionProtocol.WIFI -> {
+                                // WiFi: "Manufacturer • MAC" or "SSID • MAC"
+                                val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+                                val resolvedManufacturer = detection.manufacturer
+                                    ?: detection.macAddress?.let { mac ->
+                                        LaunchedEffect(mac) {
+                                            ouiLookupViewModel.lookupManufacturer(mac)
+                                        }
+                                        ouiLookupViewModel.getCachedManufacturer(mac)
+                                    }
+                                val identifier = detection.macAddress ?: detection.ssid ?: "Unknown"
+                                if (resolvedManufacturer != null) {
+                                    "$resolvedManufacturer • $identifier"
+                                } else {
+                                    detection.ssid?.let { "$it • $identifier" } ?: identifier
                                 }
-                                else -> detection.macAddress ?: detection.ssid ?: "Unknown"
-                            },
+                            }
+                            DetectionProtocol.BLUETOOTH_LE -> {
+                                // BLE: "Manufacturer • MAC"
+                                val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+                                val resolvedManufacturer = detection.manufacturer
+                                    ?: detection.macAddress?.let { mac ->
+                                        LaunchedEffect(mac) {
+                                            ouiLookupViewModel.lookupManufacturer(mac)
+                                        }
+                                        ouiLookupViewModel.getCachedManufacturer(mac)
+                                    }
+                                val identifier = detection.macAddress ?: "Unknown"
+                                if (resolvedManufacturer != null) {
+                                    "$resolvedManufacturer • $identifier"
+                                } else {
+                                    identifier
+                                }
+                            }
+                            else -> {
+                                // Other protocols: show whatever identifier is available
+                                detection.macAddress ?: detection.ssid ?: detection.manufacturer ?: "Unknown"
+                            }
+                        }
+
+                        Text(
+                            text = displayText,
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -714,24 +731,16 @@ fun DetectionCard(
                 Column(
                     horizontalAlignment = Alignment.End
                 ) {
-                    // Relative time (more prominent)
+                    // Relative time only (removed exact timestamp to reduce clutter)
                     Text(
                         text = relativeTime,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
                         color = if (relativeTime == "Just now") threatColor else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
-                    // Exact time
-                    Text(
-                        text = timeFormat.format(Date(detection.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                    
+
                     Spacer(modifier = Modifier.height(4.dp))
-                    
+
                     SignalIndicator(
                         rssi = detection.rssi,
                         signalStrength = detection.signalStrength
@@ -1335,28 +1344,38 @@ private fun getHighThreatActions(detection: Detection): List<String> {
     }
 }
 
+/**
+ * Enhanced threat badge with more prominent styling for CRITICAL/HIGH threats.
+ * Uses 14sp font size with more padding for better visibility.
+ */
 @Composable
 fun ThreatBadge(
     threatLevel: ThreatLevel,
     modifier: Modifier = Modifier
 ) {
     val color = threatLevel.toColor()
-    
+    val isCriticalOrHigh = threatLevel == ThreatLevel.CRITICAL || threatLevel == ThreatLevel.HIGH
+
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(4.dp),
-        color = color.copy(alpha = 0.2f)
+        shape = RoundedCornerShape(6.dp),
+        color = color.copy(alpha = if (isCriticalOrHigh) 0.3f else 0.2f),
+        shadowElevation = if (isCriticalOrHigh) 2.dp else 0.dp
     ) {
         Text(
             text = threatLevel.name,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            fontWeight = if (isCriticalOrHigh) FontWeight.ExtraBold else FontWeight.Bold,
             color = color,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }
 }
 
+/**
+ * Intuitive signal indicator showing text label (Strong/Medium/Weak) with simple icon.
+ * More user-friendly than technical dBm values.
+ */
 @Composable
 fun SignalIndicator(
     rssi: Int,
@@ -1364,45 +1383,42 @@ fun SignalIndicator(
     modifier: Modifier = Modifier
 ) {
     val color = signalStrength.toColor()
-    
+
+    // Human-readable signal label
+    val signalLabel = when (signalStrength) {
+        SignalStrength.EXCELLENT -> "Strong"
+        SignalStrength.GOOD -> "Strong"
+        SignalStrength.MEDIUM -> "Medium"
+        SignalStrength.WEAK -> "Weak"
+        SignalStrength.VERY_WEAK -> "Weak"
+        SignalStrength.UNKNOWN -> "Unknown"
+    }
+
+    // Simple icon based on signal strength
+    val signalIcon = when (signalStrength) {
+        SignalStrength.EXCELLENT, SignalStrength.GOOD -> Icons.Default.SignalCellular4Bar
+        SignalStrength.MEDIUM -> Icons.Default.SignalCellular3Bar
+        SignalStrength.WEAK, SignalStrength.VERY_WEAK -> Icons.Default.SignalCellular1Bar
+        SignalStrength.UNKNOWN -> Icons.Default.SignalCellular0Bar
+    }
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Signal bars
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            val barCount = when (signalStrength) {
-                SignalStrength.EXCELLENT -> 4
-                SignalStrength.GOOD -> 3
-                SignalStrength.MEDIUM -> 2
-                SignalStrength.WEAK -> 1
-                SignalStrength.VERY_WEAK -> 1
-                SignalStrength.UNKNOWN -> 0
-            }
-            
-            repeat(4) { index ->
-                val height = (8 + index * 4).dp
-                Box(
-                    modifier = Modifier
-                        .width(4.dp)
-                        .height(height)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            if (index < barCount) color else color.copy(alpha = 0.2f)
-                        )
-                )
-            }
-        }
-        
+        Icon(
+            imageVector = signalIcon,
+            contentDescription = "$signalLabel signal",
+            tint = color,
+            modifier = Modifier.size(16.dp)
+        )
+
         Spacer(modifier = Modifier.width(4.dp))
-        
+
         Text(
-            text = "${rssi}dBm",
+            text = signalLabel,
             style = MaterialTheme.typography.labelSmall,
-            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
             color = color
         )
     }

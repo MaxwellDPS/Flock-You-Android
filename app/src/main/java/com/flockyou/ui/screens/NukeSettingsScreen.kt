@@ -80,7 +80,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setUsbTriggerEnabled(it) } },
                         expanded = expandedSection == "usb",
                         onExpandChange = { expandedSection = if (it) "usb" else null },
-                        description = "Trigger when forensic tools connect via USB"
+                        description = "Trigger when forensic tools connect via USB",
+                        whenEnabledText = "Data will be wiped if USB debugging or data connection is detected. Protects against forensic extraction tools.",
+                        whenDisabledText = "USB connections will not trigger any wipe. Device can be connected to computers without protection."
                     ) {
                         SwitchSetting(
                             label = "Trigger on data connection",
@@ -114,7 +116,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setFailedAuthTriggerEnabled(it) } },
                         expanded = expandedSection == "auth",
                         onExpandChange = { expandedSection = if (it) "auth" else null },
-                        description = "Trigger after multiple failed unlock attempts"
+                        description = "Trigger after multiple failed unlock attempts",
+                        whenEnabledText = "Data wiped after ${settings.failedAuthThreshold} failed PIN/password attempts. Protects against brute-force attacks.",
+                        whenDisabledText = "Unlimited unlock attempts allowed. No protection against someone guessing your PIN."
                     ) {
                         SliderSetting(
                             label = "Failed attempts threshold",
@@ -148,7 +152,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setDeadManSwitchEnabled(it) } },
                         expanded = expandedSection == "deadman",
                         onExpandChange = { expandedSection = if (it) "deadman" else null },
-                        description = "Wipe if not authenticated within time limit"
+                        description = "Wipe if not authenticated within time limit",
+                        whenEnabledText = "Data wiped after ${formatHours(settings.deadManSwitchHours)} without unlocking the app. Protects if you become incapacitated.",
+                        whenDisabledText = "No time-based protection. Data remains indefinitely even if you cannot access the device."
                     ) {
                         SliderSetting(
                             label = "Time until wipe",
@@ -188,7 +194,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setNetworkIsolationTriggerEnabled(it) } },
                         expanded = expandedSection == "network",
                         onExpandChange = { expandedSection = if (it) "network" else null },
-                        description = "Trigger when device is isolated from networks"
+                        description = "Trigger when device is isolated from networks",
+                        whenEnabledText = "Data wiped after ${settings.networkIsolationHours} hours of complete network isolation. Protects in Faraday cage scenarios.",
+                        whenDisabledText = "Airplane mode and network isolation will not trigger wipe. Device can be isolated indefinitely."
                     ) {
                         SliderSetting(
                             label = "Hours offline before wipe",
@@ -217,7 +225,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setSimRemovalTriggerEnabled(it) } },
                         expanded = expandedSection == "sim",
                         onExpandChange = { expandedSection = if (it) "sim" else null },
-                        description = "Trigger when SIM card is removed"
+                        description = "Trigger when SIM card is removed",
+                        whenEnabledText = "Data wiped ${formatSeconds(settings.simRemovalDelaySeconds)} after SIM removal. Protects if someone tries to prevent tracking.",
+                        whenDisabledText = "SIM card can be removed without consequence. Common forensic technique to disable tracking."
                     ) {
                         SliderSetting(
                             label = "Delay after SIM removal",
@@ -243,7 +253,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setRapidRebootTriggerEnabled(it) } },
                         expanded = expandedSection == "reboot",
                         onExpandChange = { expandedSection = if (it) "reboot" else null },
-                        description = "Trigger when device reboots suspiciously fast"
+                        description = "Trigger when device reboots suspiciously fast",
+                        whenEnabledText = "Data wiped if device reboots ${settings.rapidRebootCount} times in ${settings.rapidRebootWindowMinutes} minutes. Detects boot-loop forensic attacks.",
+                        whenDisabledText = "Multiple rapid reboots will not trigger wipe. Forensic tools may exploit boot sequences."
                     ) {
                         SliderSetting(
                             label = "Reboot count threshold",
@@ -264,6 +276,7 @@ fun NukeSettingsScreen(
 
                 // Geofence
                 item {
+                    val zoneCount = settings.getDangerZones().size
                     TriggerSection(
                         title = "Geofence (Danger Zones)",
                         icon = Icons.Default.LocationOn,
@@ -271,7 +284,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setGeofenceTriggerEnabled(it) } },
                         expanded = expandedSection == "geofence",
                         onExpandChange = { expandedSection = if (it) "geofence" else null },
-                        description = "Trigger when entering specific locations"
+                        description = "Trigger when entering specific locations",
+                        whenEnabledText = "Data wiped when entering ${if (zoneCount > 0) "$zoneCount configured danger zone${if (zoneCount > 1) "s" else ""}" else "configured danger zones"}. Protects at known hostile locations.",
+                        whenDisabledText = "Location-based triggers disabled. Device can be taken anywhere without automatic wipe."
                     ) {
                         val dangerZones = settings.getDangerZones()
 
@@ -320,7 +335,9 @@ fun NukeSettingsScreen(
                         onEnabledChange = { scope.launch { nukeSettingsRepository.setDuressPinEnabled(it) } },
                         expanded = expandedSection == "duress",
                         onExpandChange = { expandedSection = if (it) "duress" else null },
-                        description = "Secondary PIN that wipes data instead of unlocking"
+                        description = "Secondary PIN that wipes data instead of unlocking",
+                        whenEnabledText = "Entering duress PIN wipes all data and shows fake app. Use when forced to unlock under coercion.",
+                        whenDisabledText = "No duress mechanism available. No way to secretly wipe data when forced to unlock."
                     ) {
                         val isPinSet = settings.duressPinHash.isNotBlank()
 
@@ -547,6 +564,8 @@ private fun TriggerSection(
     expanded: Boolean,
     onExpandChange: (Boolean) -> Unit,
     description: String,
+    whenEnabledText: String = "",
+    whenDisabledText: String = "",
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -587,6 +606,92 @@ private fun TriggerSection(
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // State consequence descriptions
+            if (whenEnabledText.isNotEmpty() || whenDisabledText.isNotEmpty()) {
+                Divider()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    // When enabled description
+                    if (whenEnabledText.isNotEmpty()) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = if (enabled)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "When enabled:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (enabled)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = whenEnabledText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (enabled)
+                                        MaterialTheme.colorScheme.onSurface
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+
+                    // When disabled description
+                    if (whenDisabledText.isNotEmpty()) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Cancel,
+                                contentDescription = null,
+                                tint = if (!enabled)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "When disabled:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (!enabled)
+                                        MaterialTheme.colorScheme.error
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = whenDisabledText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (!enabled)
+                                        MaterialTheme.colorScheme.onSurface
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (expanded && enabled) {

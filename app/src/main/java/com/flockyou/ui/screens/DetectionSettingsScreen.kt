@@ -662,9 +662,52 @@ private fun BleThresholdsContent(
     var proximityRssi by remember(thresholds) { mutableStateOf(thresholds.proximityAlertRssi.toFloat()) }
     var trackingDuration by remember(thresholds) { mutableStateOf(thresholds.trackingDurationMs.toFloat() / 60000f) }
     var trackingCount by remember(thresholds) { mutableStateOf(thresholds.minSeenCountForTracking.toFloat()) }
-    
+    var showRssiHelp by remember { mutableStateOf(false) }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        ThresholdSlider(
+        // RSSI Help Card (expandable)
+        RssiHelpCard(
+            expanded = showRssiHelp,
+            onToggle = { showRssiHelp = !showRssiHelp }
+        )
+
+        // Preset buttons
+        RssiPresetButtons(
+            currentMinRssi = minRssi.toInt(),
+            currentProximityRssi = proximityRssi.toInt(),
+            onPresetSelected = { preset ->
+                when (preset) {
+                    RssiPreset.SENSITIVE -> {
+                        minRssi = -90f
+                        proximityRssi = -60f
+                        onUpdate(thresholds.copy(
+                            minRssiForAlert = -90,
+                            proximityAlertRssi = -60
+                        ))
+                    }
+                    RssiPreset.BALANCED -> {
+                        minRssi = -75f
+                        proximityRssi = -50f
+                        onUpdate(thresholds.copy(
+                            minRssiForAlert = -75,
+                            proximityAlertRssi = -50
+                        ))
+                    }
+                    RssiPreset.CONSERVATIVE -> {
+                        minRssi = -60f
+                        proximityRssi = -40f
+                        onUpdate(thresholds.copy(
+                            minRssiForAlert = -60,
+                            proximityAlertRssi = -40
+                        ))
+                    }
+                }
+            }
+        )
+
+        Divider()
+
+        ThresholdSliderWithRssiContext(
             label = "Minimum RSSI for Alert",
             value = minRssi,
             valueRange = -100f..-50f,
@@ -675,8 +718,8 @@ private fun BleThresholdsContent(
                 onUpdate(thresholds.copy(minRssiForAlert = minRssi.toInt()))
             }
         )
-        
-        ThresholdSlider(
+
+        ThresholdSliderWithRssiContext(
             label = "Proximity Alert RSSI",
             value = proximityRssi,
             valueRange = -70f..-30f,
@@ -687,7 +730,7 @@ private fun BleThresholdsContent(
                 onUpdate(thresholds.copy(proximityAlertRssi = proximityRssi.toInt()))
             }
         )
-        
+
         ThresholdSlider(
             label = "Tracking Duration",
             value = trackingDuration,
@@ -699,7 +742,7 @@ private fun BleThresholdsContent(
                 onUpdate(thresholds.copy(trackingDurationMs = (trackingDuration * 60000).toLong()))
             }
         )
-        
+
         ThresholdSlider(
             label = "Tracking Sighting Count",
             value = trackingCount,
@@ -712,6 +755,271 @@ private fun BleThresholdsContent(
                 onUpdate(thresholds.copy(minSeenCountForTracking = trackingCount.toInt()))
             }
         )
+    }
+}
+
+// RSSI Preset enum
+private enum class RssiPreset {
+    SENSITIVE, BALANCED, CONSERVATIVE
+}
+
+// RSSI Help Card component
+@Composable
+private fun RssiHelpCard(
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        ),
+        onClick = onToggle
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "What is RSSI?",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(
+                        text = "RSSI (Received Signal Strength Indicator) measures signal power in dBm (decibels-milliwatts).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Real-world meaning:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    RssiExampleRow("-30 dBm", "Very close (< 1 meter)", MaterialTheme.colorScheme.error)
+                    RssiExampleRow("-50 dBm", "Same room (1-5 meters)", MaterialTheme.colorScheme.tertiary)
+                    RssiExampleRow("-70 dBm", "Nearby (5-15 meters)", MaterialTheme.colorScheme.primary)
+                    RssiExampleRow("-80 dBm", "Far away (15-30 meters)", MaterialTheme.colorScheme.onSurfaceVariant)
+                    RssiExampleRow("-90 dBm", "Barely detectable", MaterialTheme.colorScheme.outline)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Lower values (more negative) = weaker signal = farther away",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RssiExampleRow(
+    rssi: String,
+    meaning: String,
+    color: Color
+) {
+    Row(
+        modifier = Modifier.padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = color.copy(alpha = 0.2f),
+            modifier = Modifier.width(70.dp)
+        ) {
+            Text(
+                text = rssi,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = meaning,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+// Preset buttons component
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RssiPresetButtons(
+    currentMinRssi: Int,
+    currentProximityRssi: Int,
+    onPresetSelected: (RssiPreset) -> Unit
+) {
+    val selectedPreset = when {
+        currentMinRssi <= -85 && currentProximityRssi <= -55 -> RssiPreset.SENSITIVE
+        currentMinRssi in -80..-65 && currentProximityRssi in -55..-45 -> RssiPreset.BALANCED
+        currentMinRssi >= -65 && currentProximityRssi >= -45 -> RssiPreset.CONSERVATIVE
+        else -> null
+    }
+
+    Column {
+        Text(
+            text = "Quick Presets",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedPreset == RssiPreset.SENSITIVE,
+                onClick = { onPresetSelected(RssiPreset.SENSITIVE) },
+                label = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Sensitive", style = MaterialTheme.typography.labelMedium)
+                        Text("More alerts", style = MaterialTheme.typography.labelSmall)
+                    }
+                },
+                leadingIcon = if (selectedPreset == RssiPreset.SENSITIVE) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null,
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = selectedPreset == RssiPreset.BALANCED,
+                onClick = { onPresetSelected(RssiPreset.BALANCED) },
+                label = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Balanced", style = MaterialTheme.typography.labelMedium)
+                        Text("Recommended", style = MaterialTheme.typography.labelSmall)
+                    }
+                },
+                leadingIcon = if (selectedPreset == RssiPreset.BALANCED) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null,
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = selectedPreset == RssiPreset.CONSERVATIVE,
+                onClick = { onPresetSelected(RssiPreset.CONSERVATIVE) },
+                label = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Conservative", style = MaterialTheme.typography.labelMedium)
+                        Text("Fewer alerts", style = MaterialTheme.typography.labelSmall)
+                    }
+                },
+                leadingIcon = if (selectedPreset == RssiPreset.CONSERVATIVE) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+// Threshold slider with RSSI context visualization
+@Composable
+private fun ThresholdSliderWithRssiContext(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    unit: String,
+    description: String,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    steps: Int = 0
+) {
+    val rssiMeaning = getRssiMeaning(value.toInt())
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "${if (value == value.toInt().toFloat()) value.toInt() else "%.1f".format(value)} $unit",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = rssiMeaning,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+        }
+        Text(
+            text = description,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
+            valueRange = valueRange,
+            steps = steps,
+            modifier = Modifier.fillMaxWidth()
+        )
+        // Visual distance indicator
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Far away",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Very close",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun getRssiMeaning(rssi: Int): String {
+    return when {
+        rssi >= -35 -> "touching"
+        rssi >= -50 -> "very close"
+        rssi >= -60 -> "same room"
+        rssi >= -70 -> "nearby"
+        rssi >= -80 -> "moderate distance"
+        rssi >= -90 -> "far away"
+        else -> "barely detectable"
     }
 }
 

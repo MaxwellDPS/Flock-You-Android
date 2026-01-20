@@ -25,6 +25,7 @@ typedef struct FlockNfcScanner FlockNfcScanner;
 typedef struct FlockWipsEngine FlockWipsEngine;
 typedef struct ExternalRadioManager ExternalRadioManager;
 typedef struct DetectionScheduler DetectionScheduler;
+typedef struct CliVcp CliVcp;
 
 // ============================================================================
 // Connection Mode
@@ -130,6 +131,9 @@ struct FlockUsbCdc {
     bool connected;
     bool running;
 
+    // CLI VCP handle - must disable before taking CDC
+    CliVcp* cli_vcp;
+
     // Callback for received data
     void (*data_callback)(void* context, uint8_t* data, size_t length);
     void* callback_context;
@@ -211,10 +215,10 @@ struct FlockBridgeApp {
     bool scanning_active;
     uint32_t uptime_start;
 
-    // Buffers - sizes must accommodate max protocol message size
-    // FLOCK_MAX_MESSAGE_SIZE = 2052 bytes (4 header + 2048 payload)
-    uint8_t tx_buffer[2560];  // TX can hold largest result + some margin
-    uint8_t rx_buffer[2560];  // RX must hold at least FLOCK_MAX_MESSAGE_SIZE
+    // Buffers - sized for typical messages while respecting Flipper RAM limits
+    // Note: Messages larger than buffer will be rejected with error
+    uint8_t tx_buffer[512];   // TX buffer for outgoing messages
+    uint8_t rx_buffer[512];   // RX buffer for incoming messages
     size_t rx_buffer_len;
 
     // Notifications

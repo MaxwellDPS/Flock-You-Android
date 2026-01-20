@@ -69,7 +69,11 @@ fun RfDetectionScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("RF Signal Analysis")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("RF Signal Analysis")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            ExperimentalBadge()
+                        }
                         Text(
                             text = "Jammers, drones & spectrum monitoring",
                             style = MaterialTheme.typography.bodySmall,
@@ -1117,6 +1121,25 @@ private fun DroneCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * Experimental feature badge displayed on advanced/beta screens
+ */
+@Composable
+private fun ExperimentalBadge() {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer
+    ) {
+        Text(
+            text = "BETA",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }
 

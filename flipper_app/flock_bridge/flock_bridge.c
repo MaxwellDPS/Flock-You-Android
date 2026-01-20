@@ -192,6 +192,8 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
     FlockBridgeApp* app = context;
     if (!app || !data || length == 0) return;
 
+    FURI_LOG_I(TAG, "Data callback: %zu bytes received", length);
+
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
     // Append to rx_buffer with overflow protection
@@ -671,6 +673,14 @@ bool flock_bridge_navigation_event_callback(void* context) {
 // Main Scene
 // ============================================================================
 
+static void widget_main_input_callback(GuiButtonType result, InputType type, void* context) {
+    FlockBridgeApp* app = context;
+    if (type == InputTypeShort && result == GuiButtonTypeCenter) {
+        // OK pressed - switch to status scene
+        scene_manager_next_scene(app->scene_manager, FlockBridgeSceneStatus);
+    }
+}
+
 static void flock_bridge_scene_main_on_enter(void* context) {
     FlockBridgeApp* app = context;
 
@@ -680,6 +690,9 @@ static void flock_bridge_scene_main_on_enter(void* context) {
         flock_bridge_get_connection_status(app));
     widget_add_string_element(app->widget_main, 64, 35, AlignCenter, AlignTop, FontSecondary, "Press OK for status");
     widget_add_string_element(app->widget_main, 64, 50, AlignCenter, AlignTop, FontSecondary, "Hold Back to exit");
+
+    // Add button callback for OK press
+    widget_add_button_element(app->widget_main, GuiButtonTypeCenter, "Status", widget_main_input_callback, app);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
 }

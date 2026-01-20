@@ -14,11 +14,18 @@ import logging
 from typing import Optional, Tuple, List, Callable
 from contextlib import contextmanager
 
-from .flock_protocol import (
-    FlockProtocol, FlockMessageHeader, FlockMessageBuffer,
-    FlockMessageType, FlockErrorCode, FlockStatusResponse,
-    FLOCK_HEADER_SIZE, FLOCK_MAX_MESSAGE_SIZE
-)
+try:
+    from .flock_protocol import (
+        FlockProtocol, FlockMessageHeader, FlockMessageBuffer,
+        FlockMessageType, FlockErrorCode, FlockStatusResponse,
+        FLOCK_HEADER_SIZE, FLOCK_MAX_MESSAGE_SIZE
+    )
+except ImportError:
+    from flock_protocol import (
+        FlockProtocol, FlockMessageHeader, FlockMessageBuffer,
+        FlockMessageType, FlockErrorCode, FlockStatusResponse,
+        FLOCK_HEADER_SIZE, FLOCK_MAX_MESSAGE_SIZE
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -135,11 +142,18 @@ class FlipperConnection:
                     port=port,
                     baudrate=self.baudrate,
                     timeout=self.timeout,
-                    write_timeout=self.timeout
+                    write_timeout=self.timeout,
+                    dsrdtr=False,  # Don't use hardware flow control
+                    rtscts=False,
                 )
+                # Explicitly set DTR and RTS to signal connection
+                self._serial.dtr = True
+                self._serial.rts = True
+                time.sleep(0.2)  # Give the FAP time to recognize the connection
+
                 self._serial.reset_input_buffer()
                 self._serial.reset_output_buffer()
-                logger.info(f"Connected to Flipper Zero at {port}")
+                logger.info(f"Connected to Flipper Zero at {port} (DTR=True, RTS=True)")
 
                 # Start receive thread
                 self._running = True

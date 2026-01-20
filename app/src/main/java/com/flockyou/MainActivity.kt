@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -13,16 +14,23 @@ import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -96,6 +104,14 @@ class MainActivity : FragmentActivity() {
     private var permissionsGranted by mutableStateOf(false)
     private var batteryOptimizationChecked by mutableStateOf(false)
     private var showLockScreen by mutableStateOf(true)
+    private var showGettingStartedDialog by mutableStateOf(false)
+
+    // SharedPreferences for Getting Started dialog
+    private val prefs: SharedPreferences by lazy {
+        getSharedPreferences("flockyou_prefs", Context.MODE_PRIVATE)
+    }
+
+    private val PREF_GETTING_STARTED_SHOWN = "getting_started_shown"
 
     // Privilege mode detection
     private lateinit var privilegeMode: PrivilegeMode
@@ -122,6 +138,10 @@ class MainActivity : FragmentActivity() {
         permissionsGranted = permissions.values.all { it }
         if (permissionsGranted) {
             checkBatteryOptimization()
+            // Show Getting Started dialog if not shown before
+            if (!prefs.getBoolean(PREF_GETTING_STARTED_SHOWN, false)) {
+                showGettingStartedDialog = true
+            }
         }
     }
 
@@ -210,6 +230,18 @@ class MainActivity : FragmentActivity() {
                                 nukeSettingsRepository = nukeSettingsRepository,
                                 duressAuthenticator = duressAuthenticator
                             )
+
+                            // Getting Started dialog
+                            if (showGettingStartedDialog) {
+                                GettingStartedDialog(
+                                    onDismiss = { dontShowAgain ->
+                                        showGettingStartedDialog = false
+                                        if (dontShowAgain) {
+                                            prefs.edit().putBoolean(PREF_GETTING_STARTED_SHOWN, true).apply()
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -713,6 +745,171 @@ fun PrivilegeModeInfoCard(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Getting Started dialog shown after permissions are granted
+ * Highlights key features and provides a "Don't show again" option
+ */
+@Composable
+fun GettingStartedDialog(
+    onDismiss: (dontShowAgain: Boolean) -> Unit
+) {
+    var dontShowAgain by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = { onDismiss(dontShowAgain) },
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true
+        )
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header icon
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RocketLaunch,
+                        contentDescription = null,
+                        modifier = Modifier.size(36.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Getting Started",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Here's a quick overview of the main features",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Feature highlights
+                GettingStartedFeatureItem(
+                    icon = Icons.Default.History,
+                    title = "History Tab",
+                    description = "Detections appear here when surveillance devices are found nearby"
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                GettingStartedFeatureItem(
+                    icon = Icons.Default.Map,
+                    title = "Map View",
+                    description = "See all detection locations plotted on an interactive map"
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                GettingStartedFeatureItem(
+                    icon = Icons.Default.MonitorHeart,
+                    title = "Service Health",
+                    description = "Check which detectors are active and troubleshoot issues"
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Don't show again checkbox
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = dontShowAgain,
+                        onCheckedChange = { dontShowAgain = it }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Don't show this again",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Action button
+                Button(
+                    onClick = { onDismiss(dontShowAgain) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Get Started")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GettingStartedFeatureItem(
+    icon: ImageVector,
+    title: String,
+    description: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

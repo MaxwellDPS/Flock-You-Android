@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -24,6 +26,7 @@ import com.flockyou.data.RetentionPeriod
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.EphemeralDetectionRepository
 import com.flockyou.ui.components.SectionHeader
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -618,43 +621,13 @@ fun PrivacySettingsScreen(
         }
     }
 
-    // Quick Wipe Confirmation Dialog
+    // Quick Wipe Confirmation Dialog with Safety Features
     if (showQuickWipeDialog) {
-        AlertDialog(
-            onDismissRequest = { showQuickWipeDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
-                )
-            },
-            title = { Text("Delete All Data?") },
-            text = {
-                Text(
-                    "This will permanently delete ALL detection history. This action cannot be undone."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showQuickWipeDialog = false
-                        // Use ViewModel's performQuickWipe which handles IPC correctly
-                        viewModel.performQuickWipe()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Icon(Icons.Default.DeleteForever, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Delete All")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showQuickWipeDialog = false }) {
-                    Text("Cancel")
-                }
+        SafeWipeDialog(
+            onDismiss = { showQuickWipeDialog = false },
+            onConfirmWipe = {
+                showQuickWipeDialog = false
+                viewModel.performQuickWipe()
             }
         )
     }
@@ -833,6 +806,224 @@ fun PrivacySettingsScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+}
+
+/**
+ * Safe Wipe Dialog with:
+ * - 5-second countdown timer before button becomes active
+ * - Requires typing "DELETE" to confirm
+ * - Shows preview of what will be deleted
+ */
+@Composable
+private fun SafeWipeDialog(
+    onDismiss: () -> Unit,
+    onConfirmWipe: () -> Unit
+) {
+    var countdownSeconds by remember { mutableStateOf(5) }
+    var confirmationText by remember { mutableStateOf("") }
+    val countdownComplete = countdownSeconds <= 0
+    val confirmationValid = confirmationText.uppercase() == "DELETE"
+    val canDelete = countdownComplete && confirmationValid
+
+    // Countdown timer
+    LaunchedEffect(Unit) {
+        while (countdownSeconds > 0) {
+            delay(1000L)
+            countdownSeconds--
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(48.dp)
+            )
+        },
+        title = {
+            Text(
+                text = "Permanent Data Deletion",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.error
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Warning message
+                Text(
+                    text = "This action is IRREVERSIBLE. All detection data will be permanently erased.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Data preview card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "The following will be deleted:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.Bluetooth,
+                            text = "All BLE device detections"
+                        )
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.Wifi,
+                            text = "All WiFi network detections"
+                        )
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.CellTower,
+                            text = "All cellular anomaly records"
+                        )
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.SatelliteAlt,
+                            text = "All satellite connection logs"
+                        )
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.LocationOn,
+                            text = "All stored location data"
+                        )
+                        DataDeletionPreviewItem(
+                            icon = Icons.Default.History,
+                            text = "Complete detection history"
+                        )
+                    }
+                }
+
+                Divider()
+
+                // Countdown timer display
+                if (!countdownComplete) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 3.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Please wait $countdownSeconds seconds...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Confirmation text input
+                Column {
+                    Text(
+                        text = "Type DELETE to confirm:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = confirmationText,
+                        onValueChange = { confirmationText = it },
+                        placeholder = { Text("DELETE") },
+                        singleLine = true,
+                        enabled = countdownComplete,
+                        isError = confirmationText.isNotEmpty() && !confirmationValid,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Characters
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = if (confirmationValid)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.outline,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (confirmationText.isNotEmpty() && !confirmationValid) {
+                        Text(
+                            text = "Type DELETE exactly to confirm",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirmWipe,
+                enabled = canDelete,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+                )
+            ) {
+                Icon(Icons.Default.DeleteForever, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    if (!countdownComplete) {
+                        "Wait ${countdownSeconds}s..."
+                    } else if (!confirmationValid) {
+                        "Type DELETE"
+                    } else {
+                        "Delete All Data"
+                    }
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun DataDeletionPreviewItem(
+    icon: ImageVector,
+    text: String
+) {
+    Row(
+        modifier = Modifier.padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onErrorContainer
         )
     }
 }

@@ -28,6 +28,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.OuiSettings
+import com.flockyou.data.PrivacySettings
 import com.flockyou.network.OrbotHelper
 import com.flockyou.network.TorConnectionStatus
 import com.flockyou.service.BootReceiver
@@ -671,21 +672,13 @@ fun SettingsScreen(
                 )
             }
 
+            // Danger Zone Section
             item {
-                SettingsItem(
-                    icon = Icons.Default.PrivacyTip,
-                    title = "Privacy & Data",
-                    subtitle = "Ephemeral mode, data retention, quick wipe",
-                    onClick = onNavigateToPrivacy
-                )
-            }
-
-            item {
-                SettingsItem(
-                    icon = Icons.Default.DeleteForever,
-                    title = "Emergency Wipe",
-                    subtitle = "Auto-nuke triggers, duress PIN, dead man's switch",
-                    onClick = onNavigateToNuke
+                Spacer(modifier = Modifier.height(16.dp))
+                DangerZoneSection(
+                    privacySettings = viewModel.privacySettings.collectAsState().value,
+                    onNavigateToPrivacy = onNavigateToPrivacy,
+                    onNavigateToNuke = onNavigateToNuke
                 )
             }
 
@@ -1359,5 +1352,213 @@ private fun BroadcastToggle(
             checked = checked,
             onCheckedChange = onCheckedChange
         )
+    }
+}
+
+/**
+ * Danger Zone Section - Groups all destructive settings visually
+ * with warning styling and summary of active dangerous settings
+ */
+@Composable
+fun DangerZoneSection(
+    privacySettings: PrivacySettings,
+    onNavigateToPrivacy: () -> Unit,
+    onNavigateToNuke: () -> Unit
+) {
+    // Count active dangerous settings for the summary
+    val activeDangerousSettings = mutableListOf<String>()
+    if (privacySettings.ephemeralModeEnabled) activeDangerousSettings.add("Ephemeral Mode")
+    if (privacySettings.autoPurgeOnScreenLock) activeDangerousSettings.add("Auto-Purge on Lock")
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Danger Zone Header with warning styling
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+            ),
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "DANGER ZONE",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Settings that can permanently delete your data",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
+
+        // Active Dangerous Settings Summary Card (if any active)
+        if (activeDangerousSettings.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                ),
+                shape = RoundedCornerShape(0.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Active Dangerous Settings:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    activeDangerousSettings.forEach { setting ->
+                        Row(
+                            modifier = Modifier.padding(start = 26.dp, top = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FiberManualRecord,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(8.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = setting,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Privacy & Data Settings Card
+        DangerousSettingCard(
+            icon = Icons.Default.PrivacyTip,
+            title = "Privacy & Data",
+            subtitle = "Ephemeral mode, data retention, quick wipe",
+            consequenceText = "Can immediately delete all detection history",
+            onClick = onNavigateToPrivacy
+        )
+
+        Spacer(modifier = Modifier.height(1.dp))
+
+        // Emergency Wipe Settings Card
+        DangerousSettingCard(
+            icon = Icons.Default.DeleteForever,
+            title = "Emergency Wipe",
+            subtitle = "Auto-nuke triggers, duress PIN, dead man's switch",
+            consequenceText = "Can automatically wipe data based on triggers",
+            onClick = onNavigateToNuke,
+            isLast = true
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DangerousSettingCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    consequenceText: String,
+    onClick: () -> Unit,
+    isLast: Boolean = false
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
+        ),
+        shape = if (isLast) {
+            RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 12.dp, bottomEnd = 12.dp)
+        } else {
+            RoundedCornerShape(0.dp)
+        }
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                )
+            }
+            // Consequence statement
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = consequenceText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
     }
 }

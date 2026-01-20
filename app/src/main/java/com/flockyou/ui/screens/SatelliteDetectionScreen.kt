@@ -80,7 +80,11 @@ fun SatelliteDetectionScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Satellite Monitoring")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Satellite Monitoring")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            ExperimentalBadge()
+                        }
                         Text(
                             text = "NTN & Direct-to-Cell detection",
                             style = MaterialTheme.typography.bodySmall,
@@ -2116,5 +2120,24 @@ private fun formatAnomalyType(type: SatelliteAnomalyType): String {
         SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> "Timing Anomaly"
         SatelliteAnomalyType.EPHEMERIS_MISMATCH -> "Ephemeris Mismatch"
         SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> "Network Downgrade"
+    }
+}
+
+/**
+ * Experimental feature badge displayed on advanced/beta screens
+ */
+@Composable
+private fun ExperimentalBadge() {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer
+    ) {
+        Text(
+            text = "BETA",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }
