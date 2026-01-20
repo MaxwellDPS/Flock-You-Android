@@ -528,6 +528,15 @@ class ScanningService : Service() {
     @Inject
     lateinit var satelliteDetectionHandler: SatelliteDetectionHandler
 
+    @Inject
+    lateinit var falsePositiveAnalyzer: com.flockyou.ai.FalsePositiveAnalyzer
+
+    @Inject
+    lateinit var llmEngineManager: com.flockyou.ai.LlmEngineManager
+
+    @Inject
+    lateinit var deduplicator: com.flockyou.detection.DetectionDeduplicator
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
@@ -599,6 +608,9 @@ class ScanningService : Service() {
 
     // Health check job for monitoring detector health
     private var healthCheckJob: Job? = null
+
+    // Throttle cleanup job for periodic deduplicator cache cleanup
+    private var throttleCleanupJob: Job? = null
 
     // Detector callback implementation for handling errors and health updates
     private val detectorCallbackImpl = object : DetectorCallback {
@@ -1594,9 +1606,16 @@ class ScanningService : Service() {
         initializeDetectorHealth()
         startHealthCheckJob()
 
+        // Start periodic throttle cache cleanup for deduplicator
+        startThrottleCleanup()
+
         // Start threading monitor for scanner performance tracking
         threadingMonitor.startMonitoring()
         threadingMonitor.updateIpcClientCount(ipcClients.size)
+
+        // Warm up the LLM engine in the background for faster FP analysis
+        // This is non-blocking and failures are logged but don't crash the service
+        warmUpLlmEngine()
 
         // Start heartbeat monitoring - sends periodic heartbeats to watchdog
         ServiceRestartReceiver.scheduleHeartbeat(this)
@@ -1849,6 +1868,9 @@ class ScanningService : Service() {
 
         // Stop health check job
         stopHealthCheckJob()
+
+        // Stop throttle cleanup job
+        stopThrottleCleanup()
 
         // Stop threading monitor
         threadingMonitor.stopMonitoring()
@@ -2817,6 +2839,7 @@ class ScanningService : Service() {
                     threatLevel = ThreatLevel.HIGH,
                     threatScore = 85,
                     manufacturer = "Learned Signature",
+                    serviceUuids = serviceUuids.joinToString(",") { it.toString() },
                     matchedPatterns = gson.toJson(listOf(
                         "Matches learned signature: ${signature.id}",
                         signature.notes ?: "User-confirmed suspicious device"
@@ -3244,31 +3267,54 @@ class ScanningService : Service() {
             // Apply privacy settings (strip location if disabled)
             val privacyAwareDetection = applyPrivacySettings(detection)
 
+            // Run quick false positive check before storage
+            val detectionWithFp = try {
+                val quickFpResult = falsePositiveAnalyzer.quickRuleBasedCheck(privacyAwareDetection)
+                privacyAwareDetection.copy(
+                    fpScore = quickFpResult.confidence,
+                    fpReason = quickFpResult.primaryReason,
+                    fpCategory = quickFpResult.category?.name,
+                    analyzedAt = System.currentTimeMillis(),
+                    llmAnalyzed = false
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "FP analysis failed, proceeding without FP score: ${e.message}")
+                privacyAwareDetection
+            }
+
             // Choose storage based on ephemeral mode (Priority 1)
             val isNew = if (currentPrivacySettings.ephemeralModeEnabled) {
                 // Ephemeral mode: store in RAM only
-                ephemeralRepository.upsertDetection(privacyAwareDetection)
+                ephemeralRepository.upsertDetection(detectionWithFp)
             } else {
                 // Normal mode: persist to encrypted database
-                repository.upsertDetection(privacyAwareDetection)
+                repository.upsertDetection(detectionWithFp)
             }
 
             if (isNew) {
                 // New detection
                 detectionCount.value++
-                lastDetection.value = privacyAwareDetection
+                lastDetection.value = detectionWithFp
                 broadcastLastDetection()
                 broadcastStateToClients()
 
-                Log.d(TAG, "New detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
+                Log.d(TAG, "New detection: ${detectionWithFp.deviceType} - ${detectionWithFp.macAddress ?: detectionWithFp.ssid} (FP score: ${detectionWithFp.fpScore ?: "N/A"})")
 
-                // Alert user
-                alertUser(privacyAwareDetection)
+                // Only alert user if FP score is below HIGH_CONFIDENCE_FP_THRESHOLD (0.8f)
+                // High FP confidence means it's likely a false positive - suppress the alert
+                val fpScore = detectionWithFp.fpScore
+                if (fpScore == null || fpScore < com.flockyou.ai.FalsePositiveAnalyzer.HIGH_CONFIDENCE_FP_THRESHOLD) {
+                    alertUser(detectionWithFp)
+                } else {
+                    Log.i(TAG, "Alert suppressed due to high FP confidence: ${detectionWithFp.deviceType} - " +
+                            "${detectionWithFp.macAddress ?: detectionWithFp.ssid} " +
+                            "(FP score: $fpScore, reason: ${detectionWithFp.fpReason})")
+                }
             } else {
                 // Existing detection - update lastDetection to refresh UI
-                lastDetection.value = privacyAwareDetection
+                lastDetection.value = detectionWithFp
                 broadcastLastDetection()
-                Log.d(TAG, "Updated detection: ${privacyAwareDetection.deviceType} - ${privacyAwareDetection.macAddress ?: privacyAwareDetection.ssid}")
+                Log.d(TAG, "Updated detection: ${detectionWithFp.deviceType} - ${detectionWithFp.macAddress ?: detectionWithFp.ssid}")
             }
 
             // Emit refresh event to ensure UI updates even if Room Flow doesn't trigger
@@ -3318,6 +3364,47 @@ class ScanningService : Service() {
 
         // Update scan status to indicate degraded operation
         scanStatus.value = ScanStatus.Error("Database unavailable - using memory storage", recoverable = true)
+    }
+
+    // ==================== LLM Warm-up ====================
+
+    /**
+     * Warm up the LLM engine in the background.
+     * This pre-initializes the engine and runs a simple test inference to ensure
+     * the first real FP analysis is fast.
+     *
+     * Runs asynchronously in serviceScope so it doesn't block scanning startup.
+     * Failures are logged but don't crash the service - we fall back to rule-based.
+     */
+    private fun warmUpLlmEngine() {
+        serviceScope.launch {
+            try {
+                Log.i(TAG, "Starting LLM warm-up in background...")
+                val startTime = System.currentTimeMillis()
+
+                // Check if LLM engine is available
+                val activeEngine = llmEngineManager.activeEngine.value
+                if (activeEngine == com.flockyou.ai.LlmEngine.RULE_BASED) {
+                    Log.d(TAG, "LLM warm-up skipped - using rule-based engine only")
+                    return@launch
+                }
+
+                // Run a simple test prompt to warm up the model
+                // This forces the model to load into memory and JIT compile
+                val warmupPrompt = "Classify: Is a device named 'TestDevice' a surveillance device? Answer YES or NO."
+                val response = llmEngineManager.generateResponse(warmupPrompt)
+
+                val elapsed = System.currentTimeMillis() - startTime
+                if (response != null) {
+                    Log.i(TAG, "LLM warm-up completed in ${elapsed}ms (engine: ${llmEngineManager.activeEngine.value})")
+                } else {
+                    Log.w(TAG, "LLM warm-up completed but returned null response (engine may fall back to rule-based)")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "LLM warm-up failed (will use rule-based FP analysis): ${e.message}")
+                // Don't rethrow - warm-up failure is not critical
+            }
+        }
     }
 
     // ==================== Detection Handler Delegation ====================
@@ -3776,6 +3863,30 @@ class ScanningService : Service() {
         healthCheckJob?.cancel()
         healthCheckJob = null
         Log.d(TAG, "Health check job stopped")
+    }
+
+    /**
+     * Start the periodic throttle cache cleanup job.
+     * Cleans up stale entries from the deduplicator every 30 seconds.
+     */
+    private fun startThrottleCleanup() {
+        throttleCleanupJob?.cancel()
+        throttleCleanupJob = serviceScope.launch {
+            while (isActive) {
+                delay(30_000)  // Every 30 seconds
+                deduplicator.cleanup()
+            }
+        }
+        Log.d(TAG, "Throttle cleanup job started")
+    }
+
+    /**
+     * Stop the throttle cache cleanup job.
+     */
+    private fun stopThrottleCleanup() {
+        throttleCleanupJob?.cancel()
+        throttleCleanupJob = null
+        Log.d(TAG, "Throttle cleanup job stopped")
     }
 
     /**

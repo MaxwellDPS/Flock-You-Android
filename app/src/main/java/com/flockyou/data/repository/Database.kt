@@ -124,6 +124,9 @@ interface DetectionDao {
     
     @Query("SELECT * FROM detections WHERE id = :id")
     suspend fun getDetectionById(id: String): Detection?
+
+    @Query("SELECT * FROM detections WHERE serviceUuids LIKE '%' || :serviceUuid || '%' ORDER BY lastSeenTimestamp DESC LIMIT 1")
+    suspend fun getDetectionByServiceUuid(serviceUuid: String): Detection?
     
     @Query("SELECT COUNT(*) FROM detections")
     suspend fun getTotalDetectionCountSync(): Int
@@ -169,6 +172,21 @@ interface DetectionDao {
     
     @Query("SELECT * FROM detections WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY lastSeenTimestamp DESC")
     fun getDetectionsWithLocation(): Flow<List<Detection>>
+
+    @Query("UPDATE detections SET fpScore = :fpScore, fpReason = :fpReason, fpCategory = :fpCategory, analyzedAt = :analyzedAt, llmAnalyzed = :llmAnalyzed WHERE id = :id")
+    suspend fun updateFpAnalysis(id: String, fpScore: Float?, fpReason: String?, fpCategory: String?, analyzedAt: Long, llmAnalyzed: Boolean)
+
+    @Query("SELECT * FROM detections WHERE analyzedAt IS NULL ORDER BY timestamp DESC")
+    suspend fun getDetectionsPendingFpAnalysis(): List<Detection>
+
+    @Query("SELECT * FROM detections WHERE analyzedAt IS NULL ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getDetectionsPendingFpAnalysis(limit: Int): List<Detection>
+
+    @Query("SELECT * FROM detections WHERE deviceType = :deviceType AND lastSeenTimestamp > :since ORDER BY lastSeenTimestamp DESC LIMIT 50")
+    suspend fun getRecentDetectionsByType(deviceType: String, since: Long): List<Detection>
+
+    @Query("UPDATE detections SET isActive = 1, seenCount = seenCount + 1, lastSeenTimestamp = :timestamp, rssi = :rssi, latitude = :latitude, longitude = :longitude WHERE serviceUuids LIKE '%' || :serviceUuid || '%'")
+    suspend fun updateSeenByServiceUuid(serviceUuid: String, timestamp: Long, rssi: Int, latitude: Double?, longitude: Double?)
 }
 
 /**
@@ -530,7 +548,7 @@ object DatabaseKeyManager {
  * Room database for storing detections.
  * Uses SQLCipher for encryption to protect sensitive detection data.
  */
-@Database(entities = [Detection::class, OuiEntry::class], version = 5, exportSchema = false)
+@Database(entities = [Detection::class, OuiEntry::class], version = 7, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
@@ -572,6 +590,25 @@ abstract class FlockYouDatabase : RoomDatabase() {
             }
         }
 
+        // Migration from version 5 to 6 - adds false positive analysis fields
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Add false positive analysis columns with NULL defaults
+                db.execSQL("ALTER TABLE detections ADD COLUMN fpScore REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE detections ADD COLUMN fpReason TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE detections ADD COLUMN fpCategory TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE detections ADD COLUMN analyzedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE detections ADD COLUMN llmAnalyzed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // Migration from version 6 to 7 - adds serviceUuids index for BLE deduplication
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_detections_serviceUuids ON detections(serviceUuids)")
+            }
+        }
+
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Load SQLCipher native library
@@ -593,7 +630,7 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     "flockyou_database_encrypted"  // New name to avoid conflicts with old unencrypted DB
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance

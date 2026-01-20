@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -172,9 +173,8 @@ class BleDetectionHandler @Inject constructor(
     /** Last detection time per MAC address for rate limiting */
     private val lastDetectionTime = ConcurrentHashMap<String, Long>()
 
-    /** Packet timestamps for advertising rate calculation */
-    private val packetTimestamps = ConcurrentHashMap<String, MutableList<Long>>()
-    private val packetTimestampsLock = Any()
+    /** Packet timestamps for advertising rate calculation (thread-safe) */
+    private val packetTimestamps = ConcurrentHashMap<String, CopyOnWriteArrayList<Long>>()
 
     // ==================== Configuration ====================
 
@@ -229,9 +229,7 @@ class BleDetectionHandler @Inject constructor(
 
     fun clearHistory() {
         lastDetectionTime.clear()
-        synchronized(packetTimestampsLock) {
-            packetTimestamps.clear()
-        }
+        packetTimestamps.clear()
         Log.d(TAG, "BLE detection history cleared")
     }
 
@@ -421,6 +419,7 @@ class BleDetectionHandler @Inject constructor(
             threatLevel = ThreatLevel.CRITICAL,
             threatScore = 95,
             manufacturer = manufacturer,
+            serviceUuids = context.serviceUuids.joinToString(",") { it.toString() },
             matchedPatterns = buildMatchedPatternsJson(listOf(
                 "Advertising spike: ${context.advertisingRate.toInt()} packets/sec",
                 "Possible siren/gun draw activation",
@@ -702,6 +701,7 @@ class BleDetectionHandler @Inject constructor(
 
     /**
      * Track packet timestamp and calculate advertising rate.
+     * Uses CopyOnWriteArrayList for thread-safe iteration without explicit synchronization.
      *
      * @param macAddress The device MAC address
      * @return Advertising rate in packets per second
@@ -710,19 +710,18 @@ class BleDetectionHandler @Inject constructor(
         val now = System.currentTimeMillis()
         val cutoff = now - RATE_CALCULATION_WINDOW_MS
 
-        synchronized(packetTimestampsLock) {
-            val timestamps = packetTimestamps.getOrPut(macAddress) { mutableListOf() }
-            timestamps.add(now)
+        val timestamps = packetTimestamps.computeIfAbsent(macAddress) { CopyOnWriteArrayList() }
+        timestamps.add(now)
 
-            // Remove old timestamps
-            timestamps.removeAll { it < cutoff }
+        // Remove old timestamps (CopyOnWriteArrayList handles concurrent iteration safely)
+        timestamps.removeIf { it < cutoff }
 
-            // Calculate rate
-            return if (timestamps.size > 1) {
-                timestamps.size.toFloat() / (RATE_CALCULATION_WINDOW_MS / 1000f)
-            } else {
-                0f
-            }
+        // Calculate rate
+        val count = timestamps.size
+        return if (count > 1) {
+            count.toFloat() / (RATE_CALCULATION_WINDOW_MS / 1000f)
+        } else {
+            0f
         }
     }
 

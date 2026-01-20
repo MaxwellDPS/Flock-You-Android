@@ -16,7 +16,9 @@ import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.hoho.android.usbserial.util.SerialInputOutputManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.lang.ref.Cleaner
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * USB Serial Client for communicating with Flipper Zero via USB CDC.
@@ -30,6 +32,9 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         private const val FLIPPER_PRODUCT_ID = 0x5740 // Flipper Zero CDC
         private const val ACTION_USB_PERMISSION = "com.flockyou.USB_PERMISSION"
         private const val BAUD_RATE = 115200
+
+        /** Cleaner instance for proper resource management (replaces deprecated finalize()) */
+        private val cleaner: Cleaner = Cleaner.create()
     }
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -331,13 +336,61 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         destroy()
     }
 
+    // ==================== Cleaner-based Resource Management ====================
+
     /**
-     * Ensure resources are cleaned up if close() is not called.
+     * State holder for Cleaner that doesn't reference the outer class.
+     * This allows proper GC while ensuring resources are freed if close() is not called.
      */
-    protected fun finalize() {
-        if (receiversRegistered || serialPort != null || !executor.isShutdown) {
-            Log.w(TAG, "FlipperUsbClient was not properly closed - cleaning up in finalizer")
-            destroy()
+    private class CleanupState(
+        private val tag: String,
+        private val contextRef: java.lang.ref.WeakReference<Context>,
+        private val usbPermissionReceiver: BroadcastReceiver,
+        private val usbStateReceiver: BroadcastReceiver,
+        private val receiversRegisteredFlag: AtomicBoolean,
+        private val executor: java.util.concurrent.ExecutorService,
+        private val scope: CoroutineScope,
+        private val cleanedUp: AtomicBoolean
+    ) : Runnable {
+        override fun run() {
+            // Only run cleanup once
+            if (!cleanedUp.compareAndSet(false, true)) return
+
+            Log.w(tag, "FlipperUsbClient cleaned up via Cleaner - close()/destroy() was not called")
+
+            // Unregister receivers if still registered
+            if (receiversRegisteredFlag.get()) {
+                contextRef.get()?.let { ctx ->
+                    try {
+                        ctx.unregisterReceiver(usbPermissionReceiver)
+                        ctx.unregisterReceiver(usbStateReceiver)
+                    } catch (_: Exception) {}
+                }
+                receiversRegisteredFlag.set(false)
+            }
+
+            // Shutdown executor and coroutine scope
+            scope.cancel()
+            executor.shutdown()
         }
     }
+
+    // Atomic flags for Cleaner state tracking
+    private val receiversRegisteredAtomic = AtomicBoolean(false)
+    private val cleanedUpAtomic = AtomicBoolean(false)
+
+    // Register cleanup action with Cleaner (replaces finalize())
+    private val cleanable: Cleaner.Cleanable = cleaner.register(
+        this,
+        CleanupState(
+            tag = TAG,
+            contextRef = java.lang.ref.WeakReference(context),
+            usbPermissionReceiver = usbPermissionReceiver,
+            usbStateReceiver = usbStateReceiver,
+            receiversRegisteredFlag = receiversRegisteredAtomic,
+            executor = executor,
+            scope = scope,
+            cleanedUp = cleanedUpAtomic
+        )
+    )
 }

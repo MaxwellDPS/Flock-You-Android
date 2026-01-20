@@ -9,6 +9,7 @@ import com.flockyou.service.ScanningServiceConnection
 import com.flockyou.data.oui.OuiDownloader
 import com.flockyou.data.oui.OuiLookupService
 import com.flockyou.data.repository.DetectionDao
+import com.flockyou.data.repository.DetectionDeduplicator
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.FlockYouDatabase
 import com.flockyou.data.repository.OuiDao
@@ -116,8 +117,11 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideDetectionRepository(detectionDao: DetectionDao): DetectionRepository {
-        return DetectionRepository(detectionDao)
+    fun provideDetectionRepository(
+        detectionDao: DetectionDao,
+        deduplicator: DetectionDeduplicator
+    ): DetectionRepository {
+        return DetectionRepository(detectionDao, deduplicator)
     }
 
     @Provides

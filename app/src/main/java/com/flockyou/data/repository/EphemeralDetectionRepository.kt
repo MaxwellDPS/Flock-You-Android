@@ -1,5 +1,6 @@
 package com.flockyou.data.repository
 
+import android.util.Log
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.ThreatLevel
@@ -20,7 +21,9 @@ import javax.inject.Singleton
  * Memory-safe: Limits the maximum number of detections to prevent unbounded growth.
  */
 @Singleton
-class EphemeralDetectionRepository @Inject constructor() {
+class EphemeralDetectionRepository @Inject constructor(
+    private val deduplicator: DetectionDeduplicator
+) {
 
     companion object {
         private const val TAG = "EphemeralDetectionRepo"
@@ -29,6 +32,7 @@ class EphemeralDetectionRepository @Inject constructor() {
          * Older detections are evicted when this limit is reached.
          */
         private const val MAX_DETECTIONS = 10_000
+        private const val COMPOSITE_KEY_WINDOW_MS = 3600000L  // 1 hour
     }
 
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
@@ -78,6 +82,22 @@ class EphemeralDetectionRepository @Inject constructor() {
 
     suspend fun getDetectionById(id: String): Detection? {
         return _detections.value.find { it.id == id }
+    }
+
+    suspend fun getDetectionByServiceUuid(serviceUuid: String): Detection? {
+        return _detections.value.find { detection ->
+            detection.serviceUuids?.contains(serviceUuid) == true
+        }
+    }
+
+    /**
+     * Get recent detections by device type for composite key matching.
+     */
+    private fun getRecentDetectionsByType(deviceType: DeviceType, since: Long): List<Detection> {
+        return _detections.value
+            .filter { it.deviceType == deviceType && it.lastSeenTimestamp > since }
+            .sortedByDescending { it.lastSeenTimestamp }
+            .take(50)
     }
 
     suspend fun getTotalDetectionCount(): Int {
@@ -161,35 +181,71 @@ class EphemeralDetectionRepository @Inject constructor() {
      * Update an existing detection's seen count and location, or insert if new.
      * Returns true if this is a new detection, false if updated existing.
      * Thread-safe: Uses mutex to prevent race conditions during read-modify-write.
+     * Uses enhanced deduplication with throttling and composite key matching.
      */
-    suspend fun upsertDetection(detection: Detection): Boolean = mutex.withLock {
-        val currentList = _detections.value
-        val existingByMac = detection.macAddress?.let { mac -> currentList.find { it.macAddress == mac } }
-        val existingBySsid = if (existingByMac == null) detection.ssid?.let { ssid -> currentList.find { it.ssid == ssid } } else null
-        val existing = existingByMac ?: existingBySsid
+    suspend fun upsertDetection(detection: Detection): Boolean {
+        // 1. Check throttling first (rapid detection suppression) - outside mutex
+        if (deduplicator.shouldThrottle(detection)) {
+            Log.d(TAG, "Throttled rapid detection: ${detection.macAddress ?: detection.ssid}")
+            return false  // Treat as duplicate
+        }
 
-        return@withLock if (existing != null) {
-            // Update existing
-            val updated = existing.copy(
-                lastSeenTimestamp = detection.timestamp,
-                rssi = detection.rssi,
-                latitude = detection.latitude,
-                longitude = detection.longitude,
-                seenCount = existing.seenCount + 1,
-                isActive = true
-            )
-            val mutableList = currentList.toMutableList()
-            val index = mutableList.indexOfFirst { it.id == existing.id }
-            if (index >= 0) {
-                mutableList[index] = updated
-                _detections.value = mutableList
+        return mutex.withLock {
+            val currentList = _detections.value
+
+            // 2. Try existing match strategies (MAC, SSID)
+            val existingByMac = detection.macAddress?.let { mac -> currentList.find { it.macAddress == mac } }
+            val existingBySsid = if (existingByMac == null) {
+                detection.ssid?.let { ssid -> currentList.find { it.ssid == ssid } }
+            } else null
+
+            // 3. Try service UUID match for BLE devices
+            val existingByServiceUuid = if (existingByMac == null && existingBySsid == null) {
+                detection.serviceUuids?.split(",")?.firstOrNull()?.trim()?.let { uuid ->
+                    currentList.find { it.serviceUuids?.contains(uuid) == true }
+                }
+            } else null
+
+            // 4. Try composite key match as fallback
+            val existingByComposite = if (existingByMac == null && existingBySsid == null && existingByServiceUuid == null) {
+                val candidates = getRecentDetectionsByType(
+                    detection.deviceType,
+                    System.currentTimeMillis() - COMPOSITE_KEY_WINDOW_MS
+                )
+                deduplicator.findMatch(detection, candidates)
+            } else null
+
+            val existing = existingByMac ?: existingBySsid ?: existingByServiceUuid ?: existingByComposite
+
+            if (existing != null) {
+                // Update existing
+                val updated = existing.copy(
+                    lastSeenTimestamp = detection.timestamp,
+                    rssi = detection.rssi,
+                    latitude = detection.latitude ?: existing.latitude,
+                    longitude = detection.longitude ?: existing.longitude,
+                    seenCount = existing.seenCount + 1,
+                    isActive = true
+                )
+                val mutableList = currentList.toMutableList()
+                val index = mutableList.indexOfFirst { it.id == existing.id }
+                if (index >= 0) {
+                    mutableList[index] = updated
+                    _detections.value = mutableList
+                }
+                false
+            } else {
+                val mutableList = currentList.toMutableList()
+                mutableList.add(0, detection)
+                // Enforce memory limit - keep most recent detections
+                if (mutableList.size > MAX_DETECTIONS) {
+                    Log.d(TAG, "Memory limit reached (${mutableList.size}), evicting ${mutableList.size - MAX_DETECTIONS} oldest detections")
+                    _detections.value = mutableList.take(MAX_DETECTIONS)
+                } else {
+                    _detections.value = mutableList
+                }
+                true
             }
-            false
-        } else {
-            val mutableList = currentList.toMutableList()
-            mutableList.add(0, detection)
-            _detections.value = mutableList
-            true
         }
     }
 

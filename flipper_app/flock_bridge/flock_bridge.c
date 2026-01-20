@@ -86,7 +86,10 @@ const SceneManagerHandlers flock_bridge_scene_handlers = {
 // Detection Callbacks - Send detections to connected device
 // ============================================================================
 
-static FlockBridgeApp* g_app = NULL;  // For callbacks
+// NOTE: Global app pointer is used ONLY for callback context when the callback
+// API doesn't support passing context. Access should always be guarded by mutex.
+// This is set AFTER all allocations complete and cleared BEFORE any frees.
+static volatile FlockBridgeApp* g_app = NULL;
 
 static void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     FlockBridgeApp* app = context;
@@ -126,8 +129,11 @@ static void on_ble_detection(const FlockBleDevice* device, void* context) {
     };
     memcpy(&result.devices[0], device, sizeof(FlockBleDevice));
 
-    // Serialize and send (would need to add serialization function)
-    // For now just increment counter
+    // Serialize and send BLE detection to connected device
+    size_t len = flock_protocol_serialize_ble_result(&result, app->tx_buffer, sizeof(app->tx_buffer));
+    if (len > 0) {
+        flock_bridge_send_data(app, app->tx_buffer, len);
+    }
 
     furi_mutex_release(app->mutex);
 }
@@ -146,7 +152,11 @@ static void on_ir_detection(const FlockIrDetection* detection, void* context) {
     };
     memcpy(&result.detections[0], detection, sizeof(FlockIrDetection));
 
-    // Serialize and send (would need to add serialization function)
+    // Serialize and send IR detection to connected device
+    size_t len = flock_protocol_serialize_ir_result(&result, app->tx_buffer, sizeof(app->tx_buffer));
+    if (len > 0) {
+        flock_bridge_send_data(app, app->tx_buffer, len);
+    }
 
     furi_mutex_release(app->mutex);
 }
@@ -165,7 +175,11 @@ static void on_nfc_detection(const FlockNfcDetection* detection, void* context) 
     };
     memcpy(&result.detections[0], detection, sizeof(FlockNfcDetection));
 
-    // Serialize and send (would need to add serialization function)
+    // Serialize and send NFC detection to connected device
+    size_t len = flock_protocol_serialize_nfc_result(&result, app->tx_buffer, sizeof(app->tx_buffer));
+    if (len > 0) {
+        flock_bridge_send_data(app, app->tx_buffer, len);
+    }
 
     furi_mutex_release(app->mutex);
 }
@@ -180,14 +194,22 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
-    // Append to rx_buffer
+    // Append to rx_buffer with overflow protection
     size_t space = sizeof(app->rx_buffer) - app->rx_buffer_len;
     size_t to_copy = length < space ? length : space;
-    memcpy(app->rx_buffer + app->rx_buffer_len, data, to_copy);
-    app->rx_buffer_len += to_copy;
+
+    // Warn if data is being dropped due to buffer overflow
+    if (to_copy < length) {
+        FURI_LOG_W(TAG, "RX buffer overflow: dropping %zu bytes (buffer full)", length - to_copy);
+    }
+
+    if (to_copy > 0) {
+        memcpy(app->rx_buffer + app->rx_buffer_len, data, to_copy);
+        app->rx_buffer_len += to_copy;
+    }
 
     // Process complete messages
-    while (app->rx_buffer_len >= 4) {
+    while (app->rx_buffer_len >= FLOCK_HEADER_SIZE) {
         FlockMessageHeader header;
         if (!flock_protocol_parse_header(app->rx_buffer, app->rx_buffer_len, &header)) {
             // Invalid header, discard first byte and try again
@@ -196,7 +218,27 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             continue;
         }
 
-        size_t msg_size = 4 + header.payload_length;
+        // CRITICAL: Validate payload_length to prevent buffer overflow attacks
+        if (header.payload_length > FLOCK_MAX_PAYLOAD_SIZE) {
+            FURI_LOG_E(TAG, "Payload too large: %u > %u", header.payload_length, FLOCK_MAX_PAYLOAD_SIZE);
+
+            // Send error response
+            size_t err_len = flock_protocol_create_error(
+                FLOCK_ERR_INVALID_MSG, "Payload exceeds max size",
+                app->tx_buffer, sizeof(app->tx_buffer));
+            if (err_len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, err_len);
+            }
+
+            // Discard first byte and try to resync
+            memmove(app->rx_buffer, app->rx_buffer + 1, app->rx_buffer_len - 1);
+            app->rx_buffer_len--;
+            continue;
+        }
+
+        // Safe calculation - no overflow possible since payload_length <= FLOCK_MAX_PAYLOAD_SIZE
+        size_t msg_size = (size_t)FLOCK_HEADER_SIZE + (size_t)header.payload_length;
+
         if (app->rx_buffer_len < msg_size) {
             // Wait for more data
             break;
@@ -266,6 +308,14 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
                 // furi_hal_rfid_tim_read_start();
                 // furi_delay_ms(lf_payload.duration_ms);
                 // furi_hal_rfid_tim_read_stop();
+
+                // Send not-implemented error to Android app
+                size_t len = flock_protocol_create_error(
+                    FLOCK_ERR_NOT_IMPLEMENTED, "LF probe not yet implemented",
+                    app->tx_buffer, sizeof(app->tx_buffer));
+                if (len > 0) {
+                    flock_bridge_send_data(app, app->tx_buffer, len);
+                }
             }
             break;
         }
@@ -276,6 +326,13 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
                 FURI_LOG_I(TAG, "IR Strobe TX: %u Hz, %u%% duty, %u ms",
                     ir_payload.frequency_hz, ir_payload.duty_cycle, ir_payload.duration_ms);
                 // TODO: Implement via furi_hal_infrared_async_tx_start()
+
+                size_t len = flock_protocol_create_error(
+                    FLOCK_ERR_NOT_IMPLEMENTED, "IR strobe not yet implemented",
+                    app->tx_buffer, sizeof(app->tx_buffer));
+                if (len > 0) {
+                    flock_bridge_send_data(app, app->tx_buffer, len);
+                }
             }
             break;
         }

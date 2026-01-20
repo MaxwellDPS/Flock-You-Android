@@ -19,6 +19,49 @@ import com.flockyou.service.UltrasonicDetector.BeaconAnalysis
  */
 object PromptTemplates {
 
+    // ==================== INPUT SANITIZATION ====================
+
+    /**
+     * Maximum length for user-provided strings to prevent prompt stuffing.
+     */
+    private const val MAX_INPUT_LENGTH = 256
+
+    /**
+     * Sanitize user-provided input to prevent prompt injection attacks.
+     *
+     * This function:
+     * 1. Truncates excessively long strings
+     * 2. Removes or escapes control characters
+     * 3. Strips potential prompt injection markers
+     * 4. Normalizes whitespace
+     *
+     * @param input The raw input from external sources (device names, SSIDs, etc.)
+     * @param maxLength Maximum allowed length (default 256)
+     * @return Sanitized string safe for prompt interpolation
+     */
+    private fun sanitize(input: String?, maxLength: Int = MAX_INPUT_LENGTH): String {
+        if (input.isNullOrBlank()) return ""
+
+        return input
+            // Truncate to max length
+            .take(maxLength)
+            // Remove control characters except space, tab, newline
+            .replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), "")
+            // Strip potential prompt injection markers
+            .replace(Regex("</?(?:start_of_turn|end_of_turn|system|user|model|assistant|human)>", RegexOption.IGNORE_CASE), "[FILTERED]")
+            .replace(Regex("\\[/?(?:INST|SYS|SYSTEM|USER)\\]", RegexOption.IGNORE_CASE), "[FILTERED]")
+            // Normalize excessive whitespace
+            .replace(Regex("\\s{3,}"), "  ")
+            .trim()
+    }
+
+    /**
+     * Sanitize a list of strings.
+     */
+    private fun sanitizeList(items: List<String>, maxLength: Int = MAX_INPUT_LENGTH): List<String> {
+        return items.map { sanitize(it, maxLength) }.filter { it.isNotEmpty() }
+    }
+
     // ==================== PROMPT FORMATS ====================
 
     /**
@@ -70,10 +113,10 @@ Detection Method: ${detection.detectionMethod.displayName}
 Signal: ${detection.signalStrength.displayName} (${detection.rssi} dBm)
 Threat Level: ${detection.threatLevel.displayName}
 Threat Score: ${detection.threatScore}/100
-${detection.manufacturer?.let { "Manufacturer: $it" } ?: ""}
-${detection.deviceName?.let { "Device Name: $it" } ?: ""}
-${detection.ssid?.let { "Network SSID: $it" } ?: ""}
-${detection.matchedPatterns?.let { "Matched Patterns: $it" } ?: ""}
+${sanitize(detection.manufacturer)?.takeIf { it.isNotEmpty() }?.let { "Manufacturer: $it" } ?: ""}
+${sanitize(detection.deviceName)?.takeIf { it.isNotEmpty() }?.let { "Device Name: $it" } ?: ""}
+${sanitize(detection.ssid)?.takeIf { it.isNotEmpty() }?.let { "Network SSID: $it" } ?: ""}
+${sanitize(detection.matchedPatterns)?.takeIf { it.isNotEmpty() }?.let { "Matched Patterns: $it" } ?: ""}
 $enrichedSection
 
 Provide your analysis following these steps."""
@@ -173,8 +216,8 @@ Detection:
 - Signal: ${detection.rssi} dBm (${detection.signalStrength.displayName})
 - Threat Level: ${detection.threatLevel.displayName}
 - Score: ${detection.threatScore}/100
-${detection.manufacturer?.let { "- Manufacturer: $it" } ?: ""}
-${detection.deviceName?.let { "- Name: $it" } ?: ""}
+${sanitize(detection.manufacturer)?.takeIf { it.isNotEmpty() }?.let { "- Manufacturer: $it" } ?: ""}
+${sanitize(detection.deviceName)?.takeIf { it.isNotEmpty() }?.let { "- Name: $it" } ?: ""}
 $enrichedSection
 
 Respond with this exact JSON structure:
@@ -404,8 +447,8 @@ Format as:
         val content = """Analyze this "following network" detection - a WiFi network appearing at multiple locations.
 
 === FOLLOWING PATTERN ===
-Network SSID: ${detection.ssid ?: "Unknown"}
-MAC Address: ${detection.macAddress ?: "Unknown"}
+Network SSID: ${sanitize(detection.ssid, 64).ifEmpty { "Unknown" }}
+MAC Address: ${sanitize(detection.macAddress, 32).ifEmpty { "Unknown" }}
 Times Spotted: ${analysis.sightingCount}
 Distinct Locations: ${analysis.distinctLocations}
 Following Confidence: ${String.format("%.0f", analysis.followingConfidence)}%
@@ -554,12 +597,15 @@ Write for a tech-savvy user.
 - Provide detailed countermeasures"""
         }
 
+        // Sanitize device name if we need to display it
+        val sanitizedDeviceName = sanitize(detection.deviceName)
+
         val content = """You are explaining a surveillance detection to a user.
 
 $levelInstructions
 
 === DETECTION ===
-Device: ${detection.deviceType.displayName}
+Device: ${detection.deviceType.displayName}${if (sanitizedDeviceName.isNotEmpty()) " ($sanitizedDeviceName)" else ""}
 Type: ${detection.protocol.displayName}
 Threat: ${detection.threatLevel.displayName} (${detection.threatScore}/100)
 Signal: ${detection.signalStrength.displayName}

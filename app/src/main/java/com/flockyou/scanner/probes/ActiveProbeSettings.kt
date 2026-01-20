@@ -41,12 +41,50 @@ data class ActiveProbeSettings(
     val authorizationNote: String = "",
     val authorizationTimestamp: Long = 0,
 
+    // Authorization expiration (default 24 hours)
+    val authorizationExpirationMs: Long = 24 * 60 * 60 * 1000L,
+
+    // Geographic restriction (optional bounding box)
+    val authorizationLatMin: Double? = null,
+    val authorizationLatMax: Double? = null,
+    val authorizationLonMin: Double? = null,
+    val authorizationLonMax: Double? = null,
+
+    // Authorization token hash for verification (SHA-256 of note+timestamp)
+    val authorizationTokenHash: String = "",
+
     // Per-probe consent tracking
     val consentedProbes: Set<String> = emptySet()
 ) {
-    /** Returns true if global consent has been given */
+    /** Returns true if global consent has been given and is still valid */
     val hasGlobalConsent: Boolean
-        get() = authorizationNote.isNotBlank() && authorizationTimestamp > 0
+        get() = authorizationNote.isNotBlank() &&
+                authorizationTimestamp > 0 &&
+                !isAuthorizationExpired
+
+    /** Returns true if authorization has expired */
+    val isAuthorizationExpired: Boolean
+        get() = authorizationTimestamp > 0 &&
+                System.currentTimeMillis() - authorizationTimestamp > authorizationExpirationMs
+
+    /** Returns remaining time until expiration in milliseconds, or 0 if expired */
+    val authorizationRemainingMs: Long
+        get() {
+            if (authorizationTimestamp <= 0) return 0
+            val elapsed = System.currentTimeMillis() - authorizationTimestamp
+            return (authorizationExpirationMs - elapsed).coerceAtLeast(0)
+        }
+
+    /** Check if a location is within the authorized geofence (if set) */
+    fun isLocationAuthorized(latitude: Double, longitude: Double): Boolean {
+        // If no geofence is set, location is authorized
+        if (authorizationLatMin == null || authorizationLatMax == null ||
+            authorizationLonMin == null || authorizationLonMax == null) {
+            return true
+        }
+        return latitude in authorizationLatMin..authorizationLatMax &&
+               longitude in authorizationLonMin..authorizationLonMax
+    }
 }
 
 @Singleton
@@ -66,6 +104,12 @@ class ActiveProbeSettingsRepository @Inject constructor(
         val LOG_ACTIVE_PROBE_USAGE = booleanPreferencesKey("log_active_probe_usage")
         val AUTHORIZATION_NOTE = stringPreferencesKey("authorization_note")
         val AUTHORIZATION_TIMESTAMP = longPreferencesKey("authorization_timestamp")
+        val AUTHORIZATION_EXPIRATION_MS = longPreferencesKey("authorization_expiration_ms")
+        val AUTHORIZATION_TOKEN_HASH = stringPreferencesKey("authorization_token_hash")
+        val AUTH_LAT_MIN = doublePreferencesKey("auth_lat_min")
+        val AUTH_LAT_MAX = doublePreferencesKey("auth_lat_max")
+        val AUTH_LON_MIN = doublePreferencesKey("auth_lon_min")
+        val AUTH_LON_MAX = doublePreferencesKey("auth_lon_max")
         val CONSENTED_PROBES = stringSetPreferencesKey("consented_probes")
     }
 
@@ -83,6 +127,12 @@ class ActiveProbeSettingsRepository @Inject constructor(
             logActiveProbeUsage = preferences[PreferencesKeys.LOG_ACTIVE_PROBE_USAGE] ?: true,
             authorizationNote = preferences[PreferencesKeys.AUTHORIZATION_NOTE] ?: "",
             authorizationTimestamp = preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] ?: 0,
+            authorizationExpirationMs = preferences[PreferencesKeys.AUTHORIZATION_EXPIRATION_MS] ?: (24 * 60 * 60 * 1000L),
+            authorizationLatMin = preferences[PreferencesKeys.AUTH_LAT_MIN],
+            authorizationLatMax = preferences[PreferencesKeys.AUTH_LAT_MAX],
+            authorizationLonMin = preferences[PreferencesKeys.AUTH_LON_MIN],
+            authorizationLonMax = preferences[PreferencesKeys.AUTH_LON_MAX],
+            authorizationTokenHash = preferences[PreferencesKeys.AUTHORIZATION_TOKEN_HASH] ?: "",
             consentedProbes = preferences[PreferencesKeys.CONSENTED_PROBES] ?: emptySet()
         )
     }
@@ -115,8 +165,18 @@ class ActiveProbeSettingsRepository @Inject constructor(
     /**
      * Check if a probe is allowed to execute based on current settings.
      * With global consent model, once authorization is given all probes in enabled categories are allowed.
+     *
+     * @param settings The current active probe settings
+     * @param probeId The probe to check
+     * @param currentLatitude Optional current latitude for geofence check
+     * @param currentLongitude Optional current longitude for geofence check
      */
-    fun isProbeAllowed(settings: ActiveProbeSettings, probeId: String): ProbeAllowedResult {
+    fun isProbeAllowed(
+        settings: ActiveProbeSettings,
+        probeId: String,
+        currentLatitude: Double? = null,
+        currentLongitude: Double? = null
+    ): ProbeAllowedResult {
         val probe = ProbeCatalog.getById(probeId)
             ?: return ProbeAllowedResult.Denied("Unknown probe: $probeId")
 
@@ -128,6 +188,18 @@ class ActiveProbeSettingsRepository @Inject constructor(
         // Global consent check - authorization note serves as consent for all probes
         if (!settings.hasGlobalConsent && probe.type != ProbeType.PASSIVE) {
             return ProbeAllowedResult.Denied("Global authorization required. Enable Active Probes to provide consent.")
+        }
+
+        // Check if authorization has expired
+        if (settings.isAuthorizationExpired && probe.type != ProbeType.PASSIVE) {
+            return ProbeAllowedResult.Denied("Authorization has expired. Please re-authorize to continue.")
+        }
+
+        // Geofence check - if location is provided and geofence is set, verify location
+        if (currentLatitude != null && currentLongitude != null && probe.type != ProbeType.PASSIVE) {
+            if (!settings.isLocationAuthorized(currentLatitude, currentLongitude)) {
+                return ProbeAllowedResult.Denied("Current location is outside the authorized geofence.")
+            }
         }
 
         // Category toggle check
@@ -147,13 +219,58 @@ class ActiveProbeSettingsRepository @Inject constructor(
 
     /**
      * Set authorization context (for pentesting engagements).
+     *
+     * @param note Authorization note/justification
+     * @param expirationHours How long the authorization is valid (default 24 hours)
+     * @param geofence Optional bounding box to restrict probe execution geographically
      */
-    suspend fun setAuthorizationContext(note: String) {
+    suspend fun setAuthorizationContext(
+        note: String,
+        expirationHours: Int = 24,
+        geofence: GeofenceBounds? = null
+    ) {
+        val timestamp = System.currentTimeMillis()
+        val expirationMs = expirationHours.toLong() * 60 * 60 * 1000
+
+        // Generate a hash for verification (note + timestamp)
+        val tokenHash = try {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hashBytes = digest.digest("$note:$timestamp".toByteArray())
+            hashBytes.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            ""
+        }
+
         context.activeProbeDataStore.edit { preferences ->
             preferences[PreferencesKeys.AUTHORIZATION_NOTE] = note
-            preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] = System.currentTimeMillis()
+            preferences[PreferencesKeys.AUTHORIZATION_TIMESTAMP] = timestamp
+            preferences[PreferencesKeys.AUTHORIZATION_EXPIRATION_MS] = expirationMs
+            preferences[PreferencesKeys.AUTHORIZATION_TOKEN_HASH] = tokenHash
+
+            // Set geofence if provided
+            if (geofence != null) {
+                preferences[PreferencesKeys.AUTH_LAT_MIN] = geofence.latMin
+                preferences[PreferencesKeys.AUTH_LAT_MAX] = geofence.latMax
+                preferences[PreferencesKeys.AUTH_LON_MIN] = geofence.lonMin
+                preferences[PreferencesKeys.AUTH_LON_MAX] = geofence.lonMax
+            } else {
+                preferences.remove(PreferencesKeys.AUTH_LAT_MIN)
+                preferences.remove(PreferencesKeys.AUTH_LAT_MAX)
+                preferences.remove(PreferencesKeys.AUTH_LON_MIN)
+                preferences.remove(PreferencesKeys.AUTH_LON_MAX)
+            }
         }
     }
+
+    /**
+     * Geographic bounding box for authorization geofencing.
+     */
+    data class GeofenceBounds(
+        val latMin: Double,
+        val latMax: Double,
+        val lonMin: Double,
+        val lonMax: Double
+    )
 
     /**
      * Clear authorization/consent and disable active probes.

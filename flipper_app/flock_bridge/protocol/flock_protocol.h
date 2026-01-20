@@ -11,6 +11,20 @@
 #define FLOCK_PROTOCOL_VERSION 1
 
 // ============================================================================
+// Message Size Limits
+// ============================================================================
+
+// Maximum payload size we accept (reasonable for Flipper's 256KB RAM)
+// Must be less than UINT16_MAX (65535) since payload_length is uint16_t
+#define FLOCK_MAX_PAYLOAD_SIZE 2048
+
+// Maximum total message size (header + payload)
+#define FLOCK_MAX_MESSAGE_SIZE (4 + FLOCK_MAX_PAYLOAD_SIZE)
+
+// Header size in bytes
+#define FLOCK_HEADER_SIZE 4
+
+// ============================================================================
 // Message Types
 // ============================================================================
 
@@ -56,6 +70,18 @@ typedef enum {
 
     FlockMsgTypeError = 0xFF,
 } FlockMessageType;
+
+// ============================================================================
+// Error Codes
+// ============================================================================
+
+#define FLOCK_ERR_NONE             0x00
+#define FLOCK_ERR_INVALID_MSG      0x01
+#define FLOCK_ERR_NOT_IMPLEMENTED  0x02
+#define FLOCK_ERR_HARDWARE_FAIL    0x03
+#define FLOCK_ERR_BUSY             0x04
+#define FLOCK_ERR_TIMEOUT          0x05
+#define FLOCK_ERR_INVALID_PARAM    0x06
 
 // ============================================================================
 // WiFi Security Types
@@ -381,6 +407,33 @@ size_t flock_protocol_serialize_status(
  */
 size_t flock_protocol_serialize_wips_alert(
     const FlockWipsAlert* alert,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a BLE scan result into a buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_ble_result(
+    const FlockBleScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize an IR scan result into a buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_ir_result(
+    const FlockIrScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize an NFC scan result into a buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_nfc_result(
+    const FlockNfcScanResult* result,
     uint8_t* buffer,
     size_t buffer_size);
 

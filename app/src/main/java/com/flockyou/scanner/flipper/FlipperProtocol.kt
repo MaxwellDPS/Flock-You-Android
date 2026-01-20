@@ -308,19 +308,31 @@ object FlipperProtocol {
     // ========================================================================
 
     // Storage command types
-    private const val MSG_STORAGE_WRITE_START = 0x20
-    private const val MSG_STORAGE_WRITE_DATA = 0x21
-    private const val MSG_STORAGE_WRITE_END = 0x22
+    private const val MSG_STORAGE_WRITE_START = 0x30
+    private const val MSG_STORAGE_WRITE_DATA = 0x31
+    private const val MSG_STORAGE_WRITE_END = 0x32
+    private const val MSG_STORAGE_WRITE_ABORT = 0x33
 
     /**
-     * Build command to start a file write operation
+     * Build command to start a file write operation.
+     *
+     * @param path Remote path on Flipper (max 256 characters)
+     * @param totalSize Total file size in bytes (max 4GB, stored as unsigned 32-bit)
+     * @throws IllegalArgumentException if totalSize exceeds unsigned 32-bit max
      */
     fun buildStorageWriteStartCommand(path: String, totalSize: Long): ByteArray {
-        val pathBytes = path.toByteArray(Charsets.UTF_8)
+        // Validate totalSize fits in unsigned 32-bit integer
+        val maxFileSize = 0xFFFFFFFFL // ~4GB
+        require(totalSize >= 0 && totalSize <= maxFileSize) {
+            "File size must be between 0 and $maxFileSize bytes, got $totalSize"
+        }
+
+        val pathBytes = path.take(256).toByteArray(Charsets.UTF_8)
         val payloadSize = 4 + pathBytes.size + 1 // 4 bytes for size, path bytes, null terminator
 
         val payload = ByteBuffer.allocate(payloadSize).order(ByteOrder.LITTLE_ENDIAN)
-        payload.putInt(totalSize.toInt())
+        // Store as unsigned 32-bit by masking
+        payload.putInt((totalSize and 0xFFFFFFFFL).toInt())
         payload.put(pathBytes)
         payload.put(0.toByte()) // null terminator
 
@@ -339,6 +351,14 @@ object FlipperProtocol {
      */
     fun buildStorageWriteEndCommand(): ByteArray {
         return createHeader(MSG_STORAGE_WRITE_END, 0)
+    }
+
+    /**
+     * Build command to abort a file write operation.
+     * Used when an upload fails mid-way to clean up partial state on Flipper.
+     */
+    fun buildStorageWriteAbortCommand(): ByteArray {
+        return createHeader(MSG_STORAGE_WRITE_ABORT, 0)
     }
 
     // ========================================================================
@@ -376,13 +396,32 @@ object FlipperProtocol {
     }
 
     private fun parseWifiScanResult(buffer: ByteBuffer, payloadLength: Int): FlipperMessage {
+        // Minimum: 4 bytes timestamp + 1 byte count = 5 bytes
         if (payloadLength < 5) return FlipperMessage.Error(-3, "WiFi scan result too short")
 
         val timestamp = buffer.int.toLong() and 0xFFFFFFFFL
-        val networkCount = (buffer.get().toInt() and 0xFF).coerceAtMost(MAX_WIFI_NETWORKS)
+        val declaredNetworkCount = (buffer.get().toInt() and 0xFF).coerceAtMost(MAX_WIFI_NETWORKS)
+
+        // Each network entry is 43 bytes: 33 SSID + 6 BSSID + 1 RSSI + 1 channel + 1 security + 1 hidden
+        val bytesPerNetwork = 43
+        val availableBytes = payloadLength - 5
+        val maxNetworksFromPayload = availableBytes / bytesPerNetwork
+
+        // Use the smaller of declared count or what the payload can actually contain
+        val networkCount = minOf(declaredNetworkCount, maxNetworksFromPayload)
+
+        if (networkCount < declaredNetworkCount) {
+            android.util.Log.w("FlipperProtocol", "WiFi scan: declared $declaredNetworkCount networks but payload only supports $networkCount")
+        }
 
         val networks = mutableListOf<FlipperWifiNetwork>()
-        repeat(networkCount) {
+        repeat(networkCount) { index ->
+            // Check remaining buffer capacity before each read
+            if (buffer.remaining() < bytesPerNetwork) {
+                android.util.Log.w("FlipperProtocol", "Buffer underflow at network $index, stopping parse")
+                return@repeat
+            }
+
             try {
                 val ssidBytes = ByteArray(33)
                 buffer.get(ssidBytes)
@@ -399,7 +438,7 @@ object FlipperProtocol {
 
                 networks.add(FlipperWifiNetwork(ssid, bssidStr, rssi, channel, security, hidden))
             } catch (e: Exception) {
-                android.util.Log.w("FlipperProtocol", "Error parsing WiFi network $it: ${e.message}")
+                android.util.Log.w("FlipperProtocol", "Error parsing WiFi network $index: ${e.message}")
                 return@repeat
             }
         }
@@ -497,13 +536,33 @@ object FlipperProtocol {
     }
 
     private fun parseBleScanResult(buffer: ByteBuffer, payloadLength: Int): FlipperMessage {
+        // Minimum: 4 bytes timestamp + 1 byte count = 5 bytes
         if (payloadLength < 5) return FlipperMessage.Error(-8, "BLE scan result too short")
 
         val timestamp = buffer.int.toLong() and 0xFFFFFFFFL
-        val deviceCount = (buffer.get().toInt() and 0xFF).coerceAtMost(MAX_BLE_DEVICES)
+        val declaredDeviceCount = (buffer.get().toInt() and 0xFF).coerceAtMost(MAX_BLE_DEVICES)
+
+        // Each BLE device entry is: 6 MAC + 32 name + 1 rssi + 1 addrType + 1 connectable
+        // + 1 uuidCount + 64 uuids (4*16) + 2 mfrId + 1 mfrDataLen + 32 mfrData = 141 bytes
+        val bytesPerDevice = 141
+        val availableBytes = payloadLength - 5
+        val maxDevicesFromPayload = availableBytes / bytesPerDevice
+
+        // Use the smaller of declared count or what the payload can actually contain
+        val deviceCount = minOf(declaredDeviceCount, maxDevicesFromPayload)
+
+        if (deviceCount < declaredDeviceCount) {
+            android.util.Log.w("FlipperProtocol", "BLE scan: declared $declaredDeviceCount devices but payload only supports $deviceCount")
+        }
 
         val devices = mutableListOf<FlipperBleDevice>()
-        repeat(deviceCount) {
+        repeat(deviceCount) { index ->
+            // Check remaining buffer capacity before each read
+            if (buffer.remaining() < bytesPerDevice) {
+                android.util.Log.w("FlipperProtocol", "Buffer underflow at device $index, stopping parse")
+                return@repeat
+            }
+
             try {
                 val mac = ByteArray(6)
                 buffer.get(mac)
@@ -535,7 +594,7 @@ object FlipperProtocol {
 
                 devices.add(FlipperBleDevice(macStr, name, rssi, addressType, isConnectable, serviceUuids, manufacturerId, manufacturerData))
             } catch (e: Exception) {
-                android.util.Log.w("FlipperProtocol", "Error parsing BLE device $it: ${e.message}")
+                android.util.Log.w("FlipperProtocol", "Error parsing BLE device $index: ${e.message}")
                 return@repeat
             }
         }

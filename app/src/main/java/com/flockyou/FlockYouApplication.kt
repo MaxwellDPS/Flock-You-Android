@@ -12,6 +12,7 @@ import com.flockyou.data.NukeSettingsRepository
 import com.flockyou.data.OuiSettingsRepository
 import com.flockyou.data.repository.OuiRepository
 import com.flockyou.util.NotificationChannelIds
+import com.flockyou.worker.BackgroundAnalysisWorker
 import com.flockyou.worker.DeadManSwitchWorker
 import com.flockyou.worker.OuiUpdateWorker
 import dagger.hilt.android.HiltAndroidApp
@@ -168,6 +169,14 @@ class FlockYouApplication : Application(), Configuration.Provider {
         // Initialize the AI model if AI analysis is enabled
         if (settings.enabled) {
             detectionAnalyzer.initializeModel()
+
+            // Schedule background analysis if FP filtering is enabled
+            if (settings.enableFalsePositiveFiltering) {
+                BackgroundAnalysisWorker.schedule(this)
+            }
+        } else {
+            // Cancel background analysis if AI is disabled
+            BackgroundAnalysisWorker.cancel(this)
         }
     }
 

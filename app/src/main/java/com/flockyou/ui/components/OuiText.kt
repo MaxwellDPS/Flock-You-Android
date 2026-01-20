@@ -24,18 +24,18 @@ import javax.inject.Inject
 
 /**
  * ViewModel for OUI lookups that can be shared across composables.
- * Uses a cache to avoid repeated database lookups for the same MAC address.
+ * Uses a thread-safe cache to avoid repeated database lookups for the same MAC address.
  */
 @HiltViewModel
 class OuiLookupViewModel @Inject constructor(
     private val ouiLookupService: OuiLookupService
 ) : ViewModel() {
 
-    // Cache of OUI prefix -> manufacturer name
-    private val cache = mutableMapOf<String, String?>()
+    // Thread-safe cache of OUI prefix -> manufacturer name
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String?>()
 
-    // Currently loading OUIs
-    private val loading = mutableSetOf<String>()
+    // Thread-safe set of currently loading OUIs
+    private val loading = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     // State flow for reactive updates
     private val _lookupResults = MutableStateFlow<Map<String, String?>>(emptyMap())

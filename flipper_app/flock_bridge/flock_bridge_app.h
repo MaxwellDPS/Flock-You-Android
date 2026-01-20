@@ -211,9 +211,10 @@ struct FlockBridgeApp {
     bool scanning_active;
     uint32_t uptime_start;
 
-    // Buffers
-    uint8_t tx_buffer[1024];
-    uint8_t rx_buffer[256];
+    // Buffers - sizes must accommodate max protocol message size
+    // FLOCK_MAX_MESSAGE_SIZE = 2052 bytes (4 header + 2048 payload)
+    uint8_t tx_buffer[2560];  // TX can hold largest result + some margin
+    uint8_t rx_buffer[2560];  // RX must hold at least FLOCK_MAX_MESSAGE_SIZE
     size_t rx_buffer_len;
 
     // Notifications

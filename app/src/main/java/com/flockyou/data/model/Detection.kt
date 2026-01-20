@@ -1,5 +1,6 @@
 package com.flockyou.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -17,7 +18,8 @@ import java.util.UUID
         Index(value = ["deviceType"]),
         Index(value = ["timestamp"]),
         Index(value = ["lastSeenTimestamp"]),
-        Index(value = ["isActive"])
+        Index(value = ["isActive"]),
+        Index(value = ["serviceUuids"])
     ]
 )
 data class Detection(
@@ -38,12 +40,25 @@ data class Detection(
     val threatScore: Int = 0,
     val manufacturer: String? = null,
     val firmwareVersion: String? = null,
-    val serviceUuids: String? = null, // JSON array of service UUIDs
+    @ColumnInfo(name = "serviceUuids", defaultValue = "NULL")
+    val serviceUuids: String? = null,  // BLE service UUIDs (comma-separated)
     val matchedPatterns: String? = null, // JSON array of matched patterns
     val rawData: String? = null, // Raw advertisement/frame data as hex string for advanced mode display
     val isActive: Boolean = true,
     val seenCount: Int = 1, // Number of times this device has been seen
-    val lastSeenTimestamp: Long = System.currentTimeMillis() // When device was last seen
+    val lastSeenTimestamp: Long = System.currentTimeMillis(), // When device was last seen
+
+    // False positive analysis fields (computed in background)
+    @ColumnInfo(name = "fpScore", defaultValue = "NULL")
+    val fpScore: Float? = null,              // 0.0-1.0, null if not analyzed
+    @ColumnInfo(name = "fpReason", defaultValue = "NULL")
+    val fpReason: String? = null,            // Primary reason for FP classification
+    @ColumnInfo(name = "fpCategory", defaultValue = "NULL")
+    val fpCategory: String? = null,          // FpCategory name
+    @ColumnInfo(name = "analyzedAt", defaultValue = "NULL")
+    val analyzedAt: Long? = null,            // Timestamp when FP analysis was performed
+    @ColumnInfo(name = "llmAnalyzed", defaultValue = "0")
+    val llmAnalyzed: Boolean = false         // Whether LLM was used (vs rule-based only)
 )
 
 enum class DetectionProtocol(val displayName: String, val icon: String) {

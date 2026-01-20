@@ -221,6 +221,8 @@ class FlipperScannerManager @Inject constructor(
     /**
      * Upload a file to the connected Flipper Zero
      * Returns true if successful
+     *
+     * On failure, sends abort command to clean up partial write state on Flipper.
      */
     suspend fun uploadFile(
         localFile: java.io.File,
@@ -230,10 +232,17 @@ class FlipperScannerManager @Inject constructor(
         if (!isConnected()) return false
 
         return withContext(Dispatchers.IO) {
+            val client = flipperClient ?: return@withContext false
+            var writeStarted = false
+
             try {
-                val client = flipperClient ?: return@withContext false
                 val data = localFile.readBytes()
                 val totalSize = data.size
+
+                if (totalSize == 0) {
+                    Log.w(TAG, "Cannot upload empty file: $remotePath")
+                    return@withContext false
+                }
 
                 // Send storage write command
                 // The Flipper storage protocol requires:
@@ -241,9 +250,12 @@ class FlipperScannerManager @Inject constructor(
                 // 2. Send chunks
                 // 3. End write
 
-                val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
                 val startCommand = FlipperProtocol.buildStorageWriteStartCommand(remotePath, totalSize.toLong())
-                client.sendRawCommand(startCommand)
+                if (!client.sendRawCommand(startCommand)) {
+                    Log.e(TAG, "Failed to send write start command")
+                    return@withContext false
+                }
+                writeStarted = true
 
                 // Send data in chunks
                 val chunkSize = 512
@@ -254,7 +266,9 @@ class FlipperScannerManager @Inject constructor(
                     val chunk = data.copyOfRange(offset, offset + currentChunkSize)
 
                     val chunkCommand = FlipperProtocol.buildStorageWriteDataCommand(chunk)
-                    client.sendRawCommand(chunkCommand)
+                    if (!client.sendRawCommand(chunkCommand)) {
+                        throw java.io.IOException("Failed to send data chunk at offset $offset")
+                    }
 
                     offset += currentChunkSize
                     onProgress(offset.toFloat() / totalSize)
@@ -265,13 +279,26 @@ class FlipperScannerManager @Inject constructor(
 
                 // Send end command
                 val endCommand = FlipperProtocol.buildStorageWriteEndCommand()
-                client.sendRawCommand(endCommand)
+                if (!client.sendRawCommand(endCommand)) {
+                    throw java.io.IOException("Failed to send write end command")
+                }
 
                 onProgress(1f)
                 Log.i(TAG, "File uploaded successfully: $remotePath")
                 true
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to upload file", e)
+                Log.e(TAG, "Failed to upload file: $remotePath", e)
+
+                // Send abort command to clean up partial write state on Flipper
+                if (writeStarted) {
+                    try {
+                        val abortCommand = FlipperProtocol.buildStorageWriteAbortCommand()
+                        client.sendRawCommand(abortCommand)
+                        Log.d(TAG, "Sent storage write abort command")
+                    } catch (abortError: Exception) {
+                        Log.w(TAG, "Failed to send abort command", abortError)
+                    }
+                }
                 false
             }
         }

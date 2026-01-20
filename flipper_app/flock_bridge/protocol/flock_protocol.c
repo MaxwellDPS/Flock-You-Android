@@ -1,7 +1,8 @@
 #include "flock_protocol.h"
 #include <string.h>
 
-#define HEADER_SIZE 4
+// Use the centralized header size constant
+#define HEADER_SIZE FLOCK_HEADER_SIZE
 
 // ============================================================================
 // Helper Functions
@@ -160,6 +161,144 @@ size_t flock_protocol_serialize_wips_alert(
 
     // Write payload
     memcpy(buffer + HEADER_SIZE, alert, payload_size);
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_ble_result(
+    const FlockBleScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!result || !buffer) return 0;
+
+    // Calculate payload size - clamp device_count for size calculation
+    // timestamp (4) + count (1) + devices (sizeof(FlockBleDevice) * count)
+    uint8_t count_for_size = result->device_count;
+    if (count_for_size > MAX_BLE_DEVICES) {
+        count_for_size = MAX_BLE_DEVICES;
+    }
+    size_t payload_size = 5 + (count_for_size * sizeof(FlockBleDevice));
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    // Write header
+    write_header(buffer, FlockMsgTypeBleScanResult, payload_size);
+
+    // Write payload
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp (little-endian)
+    *p++ = (uint8_t)(result->timestamp & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 24) & 0xFF);
+
+    // Device count - clamp to MAX_BLE_DEVICES to prevent buffer overflow
+    uint8_t safe_count = result->device_count;
+    if (safe_count > MAX_BLE_DEVICES) {
+        safe_count = MAX_BLE_DEVICES;
+    }
+    *p++ = safe_count;
+
+    // Devices
+    for (uint8_t i = 0; i < safe_count; i++) {
+        memcpy(p, &result->devices[i], sizeof(FlockBleDevice));
+        p += sizeof(FlockBleDevice);
+    }
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_ir_result(
+    const FlockIrScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!result || !buffer) return 0;
+
+    // Calculate payload size - clamp detection_count for size calculation
+    // timestamp (4) + count (1) + detections (sizeof(FlockIrDetection) * count)
+    uint8_t count_for_size = result->detection_count;
+    if (count_for_size > MAX_IR_DETECTIONS) {
+        count_for_size = MAX_IR_DETECTIONS;
+    }
+    size_t payload_size = 5 + (count_for_size * sizeof(FlockIrDetection));
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    // Write header
+    write_header(buffer, FlockMsgTypeIrScanResult, payload_size);
+
+    // Write payload
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp (little-endian)
+    *p++ = (uint8_t)(result->timestamp & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 24) & 0xFF);
+
+    // Detection count - clamp to MAX_IR_DETECTIONS to prevent buffer overflow
+    uint8_t safe_count = result->detection_count;
+    if (safe_count > MAX_IR_DETECTIONS) {
+        safe_count = MAX_IR_DETECTIONS;
+    }
+    *p++ = safe_count;
+
+    // Detections
+    for (uint8_t i = 0; i < safe_count; i++) {
+        memcpy(p, &result->detections[i], sizeof(FlockIrDetection));
+        p += sizeof(FlockIrDetection);
+    }
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_nfc_result(
+    const FlockNfcScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!result || !buffer) return 0;
+
+    // Calculate payload size - clamp detection_count for size calculation
+    // timestamp (4) + count (1) + detections (sizeof(FlockNfcDetection) * count)
+    uint8_t count_for_size = result->detection_count;
+    if (count_for_size > MAX_NFC_DETECTIONS) {
+        count_for_size = MAX_NFC_DETECTIONS;
+    }
+    size_t payload_size = 5 + (count_for_size * sizeof(FlockNfcDetection));
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    // Write header
+    write_header(buffer, FlockMsgTypeNfcScanResult, payload_size);
+
+    // Write payload
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp (little-endian)
+    *p++ = (uint8_t)(result->timestamp & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((result->timestamp >> 24) & 0xFF);
+
+    // Detection count - clamp to MAX_NFC_DETECTIONS to prevent buffer overflow
+    uint8_t safe_count = result->detection_count;
+    if (safe_count > MAX_NFC_DETECTIONS) {
+        safe_count = MAX_NFC_DETECTIONS;
+    }
+    *p++ = safe_count;
+
+    // Detections
+    for (uint8_t i = 0; i < safe_count; i++) {
+        memcpy(p, &result->detections[i], sizeof(FlockNfcDetection));
+        p += sizeof(FlockNfcDetection);
+    }
 
     return total_size;
 }

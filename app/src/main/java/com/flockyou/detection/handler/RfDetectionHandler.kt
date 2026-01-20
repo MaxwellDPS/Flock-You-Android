@@ -59,10 +59,78 @@ class RfDetectionHandler @Inject constructor() {
             "9C:28:B3", "00:02:D1"
         )
 
-        // Drone manufacturer OUIs
+        // Drone manufacturer OUIs - comprehensive list
         private val DRONE_OUIS = setOf(
-            "60:60:1F", "34:D2:62", "48:1C:B9", "60:C7:98", // DJI
-            "A0:14:3D", "90:03:B7", "00:12:1C", "00:26:7E"  // Parrot
+            // DJI (Shenzhen DJI Sciences and Technologies)
+            "60:60:1F", "34:D2:62", "48:1C:B9", "60:C7:98",
+            "D8:71:4D", "F0:76:1C", "F8:8A:3C", "70:4D:7B",
+            "98:3E:B4", "C8:F0:9E", "40:A2:DB", "B4:E0:8C",
+            "CC:50:E3", "AC:67:84", "D4:D9:19", "24:0D:C2",
+            "2C:D1:46", "1C:CC:D6", "90:8D:78", "64:D4:BD",
+
+            // Parrot SA
+            "A0:14:3D", "90:03:B7", "00:12:1C", "00:26:7E",
+            "00:26:7D", "90:3A:E6", "D0:3A:E3", "A0:94:69",
+
+            // Autel Robotics
+            "30:84:54", "58:D5:6E", "84:D4:7E",
+
+            // Yuneec International
+            "00:1B:C5", "00:1C:12", "1C:1B:B5", "64:1C:AE",
+
+            // Skydio
+            "84:71:27", "3C:A9:F4",
+
+            // Holy Stone / HS (Shenzhen)
+            "88:3F:4A", "84:C9:B2", "E8:65:D4",
+
+            // Hubsan
+            "48:02:2A", "78:A5:04", "A4:E4:2E",
+
+            // Syma
+            "C8:3A:35", "D4:22:3F",
+
+            // JJRC
+            "E8:AB:F3", "AC:12:2F",
+
+            // Walkera
+            "00:1E:10", "64:69:BC",
+
+            // Eachine
+            "84:F3:EB", "10:08:B1",
+
+            // MJX
+            "74:DF:BF", "D4:36:DB",
+
+            // EHang
+            "58:7A:62",
+
+            // PowerVision
+            "00:04:4B", "B4:E6:2A",
+
+            // GoPro Karma
+            "D8:96:85", "24:D9:21",
+
+            // Intel Falcon / Aero
+            "7C:D1:C3", "94:EB:CD",
+
+            // 3D Robotics (Solo)
+            "74:DA:EA", "84:CC:A8",
+
+            // Xiaomi / FIMI
+            "64:CC:2E", "78:11:DC", "B0:E2:35", "F8:A4:5F",
+
+            // Potensic
+            "CC:D2:81",
+
+            // Snaptain
+            "48:BF:6B",
+
+            // Ruko
+            "E4:5F:01",
+
+            // DroneX Pro / Eachine rebrands
+            "D4:D9:00", "B0:6E:BF"
         )
 
         // Drone SSID patterns
@@ -659,16 +727,65 @@ class RfDetectionHandler @Inject constructor() {
     /**
      * Identify drone manufacturer from OUI and SSID.
      */
-    private fun identifyDroneManufacturer(oui: String, ssid: String): String = when {
-        oui.startsWith("60:60:1F") || oui.startsWith("34:D2:62") ||
-        oui.startsWith("48:1C:B9") || oui.startsWith("60:C7:98") -> "DJI"
-        oui.startsWith("A0:14:3D") || oui.startsWith("90:03:B7") ||
-        oui.startsWith("00:12:1C") || oui.startsWith("00:26:7E") -> "Parrot"
-        ssid.lowercase().contains("skydio") -> "Skydio"
-        ssid.lowercase().contains("autel") || ssid.lowercase().contains("evo") -> "Autel"
-        ssid.lowercase().contains("yuneec") -> "Yuneec"
-        ssid.lowercase().contains("hubsan") -> "Hubsan"
-        else -> "Unknown"
+    private fun identifyDroneManufacturer(oui: String, ssid: String): String {
+        // DJI OUIs
+        val djiOuis = setOf(
+            "60:60:1F", "34:D2:62", "48:1C:B9", "60:C7:98",
+            "D8:71:4D", "F0:76:1C", "F8:8A:3C", "70:4D:7B",
+            "98:3E:B4", "C8:F0:9E", "40:A2:DB", "B4:E0:8C",
+            "CC:50:E3", "AC:67:84", "D4:D9:19", "24:0D:C2",
+            "2C:D1:46", "1C:CC:D6", "90:8D:78", "64:D4:BD"
+        )
+        // Parrot OUIs
+        val parrotOuis = setOf(
+            "A0:14:3D", "90:03:B7", "00:12:1C", "00:26:7E",
+            "00:26:7D", "90:3A:E6", "D0:3A:E3", "A0:94:69"
+        )
+        // Autel OUIs
+        val autelOuis = setOf("30:84:54", "58:D5:6E", "84:D4:7E")
+        // Yuneec OUIs
+        val yuneecOuis = setOf("00:1B:C5", "00:1C:12", "1C:1B:B5", "64:1C:AE")
+        // Skydio OUIs
+        val skydioOuis = setOf("84:71:27", "3C:A9:F4")
+        // Holy Stone OUIs
+        val holyStoneOuis = setOf("88:3F:4A", "84:C9:B2", "E8:65:D4")
+        // Hubsan OUIs
+        val hubsanOuis = setOf("48:02:2A", "78:A5:04", "A4:E4:2E")
+        // Xiaomi/FIMI OUIs
+        val xiaomiOuis = setOf("64:CC:2E", "78:11:DC", "B0:E2:35", "F8:A4:5F")
+        // GoPro Karma OUIs
+        val goProOuis = setOf("D8:96:85", "24:D9:21")
+        // 3DR OUIs
+        val threedrOuis = setOf("74:DA:EA", "84:CC:A8")
+
+        return when {
+            djiOuis.any { oui.startsWith(it) } -> "DJI"
+            parrotOuis.any { oui.startsWith(it) } -> "Parrot"
+            autelOuis.any { oui.startsWith(it) } -> "Autel"
+            yuneecOuis.any { oui.startsWith(it) } -> "Yuneec"
+            skydioOuis.any { oui.startsWith(it) } -> "Skydio"
+            holyStoneOuis.any { oui.startsWith(it) } -> "Holy Stone"
+            hubsanOuis.any { oui.startsWith(it) } -> "Hubsan"
+            xiaomiOuis.any { oui.startsWith(it) } -> "Xiaomi/FIMI"
+            goProOuis.any { oui.startsWith(it) } -> "GoPro"
+            threedrOuis.any { oui.startsWith(it) } -> "3D Robotics"
+            // SSID-based fallback detection
+            ssid.lowercase().contains("skydio") -> "Skydio"
+            ssid.lowercase().contains("autel") || ssid.lowercase().contains("evo") -> "Autel"
+            ssid.lowercase().contains("yuneec") || ssid.lowercase().contains("typhoon") -> "Yuneec"
+            ssid.lowercase().contains("hubsan") -> "Hubsan"
+            ssid.lowercase().contains("holy") && ssid.lowercase().contains("stone") -> "Holy Stone"
+            ssid.lowercase().contains("fimi") -> "Xiaomi/FIMI"
+            ssid.lowercase().contains("karma") -> "GoPro"
+            ssid.lowercase().contains("potensic") -> "Potensic"
+            ssid.lowercase().contains("snaptain") -> "Snaptain"
+            ssid.lowercase().contains("ruko") -> "Ruko"
+            ssid.lowercase().contains("eachine") -> "Eachine"
+            ssid.lowercase().contains("syma") -> "Syma"
+            ssid.lowercase().contains("mjx") -> "MJX"
+            ssid.lowercase().contains("jjrc") -> "JJRC"
+            else -> "Unknown"
+        }
     }
 
     /**

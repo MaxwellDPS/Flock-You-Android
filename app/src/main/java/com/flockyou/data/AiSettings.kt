@@ -1,9 +1,12 @@
 package com.flockyou.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -383,7 +386,32 @@ class AiSettingsRepository @Inject constructor(
         val MAX_TOKENS = intPreferencesKey("ai_max_tokens")
         val TEMPERATURE_TENTHS = intPreferencesKey("ai_temperature_tenths")
         val LAST_MODEL_UPDATE = longPreferencesKey("ai_last_model_update")
-        val HUGGINGFACE_TOKEN = stringPreferencesKey("ai_huggingface_token")
+        // Note: HuggingFace token is stored in EncryptedSharedPreferences, not DataStore
+    }
+
+    // Encrypted storage for sensitive credentials like API tokens
+    private object EncryptedKeys {
+        const val HUGGINGFACE_TOKEN = "hf_token_encrypted"
+    }
+
+    private val encryptedPrefs: SharedPreferences by lazy {
+        try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            EncryptedSharedPreferences.create(
+                context,
+                "ai_secure_prefs",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("AiSettingsRepository", "Failed to create encrypted prefs, using fallback", e)
+            // Fallback to regular shared prefs if encryption fails (rare, device-specific issues)
+            context.getSharedPreferences("ai_secure_prefs_fallback", Context.MODE_PRIVATE)
+        }
     }
 
     val settings: Flow<AiSettings> = context.aiSettingsDataStore.data.map { prefs ->
@@ -406,12 +434,34 @@ class AiSettingsRepository @Inject constructor(
             maxTokens = prefs[Keys.MAX_TOKENS] ?: 1024,
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
             lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0,
-            huggingFaceToken = prefs[Keys.HUGGINGFACE_TOKEN] ?: ""
+            // Read HuggingFace token from encrypted storage
+            huggingFaceToken = getHuggingFaceTokenInternal()
         )
     }
 
+    /**
+     * Get the HuggingFace token from encrypted storage.
+     * Called synchronously since EncryptedSharedPreferences doesn't support flows.
+     */
+    private fun getHuggingFaceTokenInternal(): String {
+        return try {
+            encryptedPrefs.getString(EncryptedKeys.HUGGINGFACE_TOKEN, "") ?: ""
+        } catch (e: Exception) {
+            android.util.Log.w("AiSettingsRepository", "Failed to read encrypted token", e)
+            ""
+        }
+    }
+
+    /**
+     * Set the HuggingFace API token.
+     * Stored in EncryptedSharedPreferences for security.
+     */
     suspend fun setHuggingFaceToken(token: String) {
-        context.aiSettingsDataStore.edit { it[Keys.HUGGINGFACE_TOKEN] = token }
+        try {
+            encryptedPrefs.edit().putString(EncryptedKeys.HUGGINGFACE_TOKEN, token).apply()
+        } catch (e: Exception) {
+            android.util.Log.e("AiSettingsRepository", "Failed to save encrypted token", e)
+        }
     }
 
     suspend fun setEnabled(enabled: Boolean) {

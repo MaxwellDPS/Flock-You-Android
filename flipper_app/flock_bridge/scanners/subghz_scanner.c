@@ -3,12 +3,13 @@
 #include <lib/subghz/receiver.h>
 #include <lib/subghz/transmitter.h>
 #include <lib/subghz/subghz_setting.h>
-// Note: protocol_items.h has been removed in newer SDK
-// #include <lib/subghz/protocols/protocol_items.h>
+#include <lib/subghz/subghz_protocol_registry.h>
+#include <lib/subghz/devices/devices.h>
 #include <string.h>
 #include <stdlib.h>
 
 #define TAG "SubGhzScanner"
+#define SUBGHZ_DEVICE_CC1101_INT_NAME "cc1101_int"
 
 // ============================================================================
 // Replay Detection
@@ -33,6 +34,7 @@ struct SubGhzScanner {
     SubGhzScannerConfig config;
 
     // Hardware
+    const SubGhzDevice* device;
     SubGhzEnvironment* environment;
     SubGhzReceiver* receiver;
     SubGhzSetting* setting;
@@ -186,28 +188,22 @@ static void check_jamming(SubGhzScanner* scanner, int8_t rssi) {
 }
 
 // ============================================================================
-// Receiver Callback
+// Receiver Callback - called when protocol is decoded
 // ============================================================================
 
-// Note: SubGhz receiver callback API has changed in newer firmware
-// The function signature and available functions have changed
-__attribute__((unused))
 static void subghz_receiver_callback(SubGhzReceiver* receiver, SubGhzProtocolDecoderBase* decoder_base, void* context) {
     UNUSED(receiver);
-    UNUSED(decoder_base);
     SubGhzScanner* scanner = context;
     if (!scanner || !scanner->running) return;
 
     furi_mutex_acquire(scanner->mutex, FuriWaitForever);
 
     // Get protocol info
-    FuriString* protocol_name = furi_string_alloc();
     FuriString* protocol_data = furi_string_alloc();
-
     subghz_protocol_decoder_base_get_string(decoder_base, protocol_data);
 
-    // Note: subghz_protocol_decoder_base_get_name no longer exists
-    const char* name = "Unknown";
+    // Get protocol name from decoder base
+    const char* name = decoder_base->protocol->name;
 
     // Get signal characteristics
     int8_t rssi = subghz_scanner_get_rssi(scanner);
@@ -216,7 +212,7 @@ static void subghz_receiver_callback(SubGhzReceiver* receiver, SubGhzProtocolDec
     FlockSubGhzDetection detection = {
         .frequency = scanner->current_frequency,
         .rssi = rssi,
-        .modulation = ModulationUnknown,  // Would need deeper access to determine
+        .modulation = ModulationUnknown,
         .duration_ms = 0,
         .bandwidth = 0,
         .protocol_id = identify_protocol(name),
@@ -268,10 +264,21 @@ static void subghz_receiver_callback(SubGhzReceiver* receiver, SubGhzProtocolDec
     FURI_LOG_I(TAG, "Detection: %s @ %lu Hz (RSSI: %d)",
         detection.protocol_name, detection.frequency, detection.rssi);
 
-    furi_string_free(protocol_name);
     furi_string_free(protocol_data);
 
     furi_mutex_release(scanner->mutex);
+}
+
+// ============================================================================
+// Capture Callback - receives raw pulse data from radio
+// ============================================================================
+
+static void subghz_capture_callback(bool level, uint32_t duration, void* context) {
+    SubGhzScanner* scanner = context;
+    if (!scanner || !scanner->running || !scanner->receiver) return;
+
+    // Feed raw pulse data to the receiver for decoding
+    subghz_receiver_decode(scanner->receiver, level, duration);
 }
 
 // ============================================================================
@@ -316,10 +323,21 @@ SubGhzScanner* subghz_scanner_alloc(void) {
     scanner->config.detect_jamming = true;
     scanner->config.min_signal_duration = 100;
 
+    // Get internal CC1101 device
+    subghz_devices_init();
+    scanner->device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
+    if (!scanner->device) {
+        FURI_LOG_E(TAG, "Failed to get CC1101 device");
+        furi_mutex_free(scanner->mutex);
+        free(scanner);
+        return NULL;
+    }
+
     // Initialize Sub-GHz environment
     scanner->environment = subghz_environment_alloc();
-    // Note: subghz_protocol_registry reference has changed in newer SDK
-    // The protocol registry initialization needs to be updated for new API
+
+    // Set protocol registry
+    subghz_environment_set_protocol_registry(scanner->environment, (void*)&subghz_protocol_registry);
 
     // Load settings
     scanner->setting = subghz_setting_alloc();
@@ -352,6 +370,9 @@ void subghz_scanner_free(SubGhzScanner* scanner) {
         furi_mutex_free(scanner->mutex);
     }
 
+    // Deinitialize devices
+    subghz_devices_deinit();
+
     free(scanner);
     FURI_LOG_I(TAG, "Sub-GHz scanner freed");
 }
@@ -365,7 +386,7 @@ void subghz_scanner_configure(SubGhzScanner* scanner, const SubGhzScannerConfig*
 }
 
 bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
-    if (!scanner || scanner->running) return false;
+    if (!scanner || scanner->running || !scanner->device) return false;
 
     FURI_LOG_I(TAG, "Starting Sub-GHz scanner at %lu Hz", frequency);
 
@@ -373,30 +394,36 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
 
     scanner->current_frequency = frequency;
 
-    // Configure and start radio
-    furi_hal_subghz_reset();
-    furi_hal_subghz_idle();
-
-    // Note: Preset loading API has changed in newer SDK
-    // furi_hal_subghz_load_custom_preset(subghz_device_cc1101_preset_ook_650khz_async_regs);
-    FURI_LOG_W(TAG, "SubGhz preset loading requires updated API");
-
-    if (!furi_hal_subghz_is_frequency_valid(frequency)) {
-        FURI_LOG_E(TAG, "Invalid frequency: %lu Hz", frequency);
+    // Begin device access
+    if (!subghz_devices_begin(scanner->device)) {
+        FURI_LOG_E(TAG, "Failed to begin device");
         furi_mutex_release(scanner->mutex);
         return false;
     }
 
-    furi_hal_subghz_set_frequency_and_path(frequency);
+    // Check frequency validity
+    if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
+        FURI_LOG_E(TAG, "Invalid frequency: %lu Hz", frequency);
+        subghz_devices_end(scanner->device);
+        furi_mutex_release(scanner->mutex);
+        return false;
+    }
+
+    // Reset and configure device
+    subghz_devices_reset(scanner->device);
+    subghz_devices_idle(scanner->device);
+
+    // Load OOK preset
+    subghz_devices_load_preset(scanner->device, FuriHalSubGhzPresetOok650Async, NULL);
+
+    // Set frequency
+    subghz_devices_set_frequency(scanner->device, frequency);
 
     // Reset receiver
     subghz_receiver_reset(scanner->receiver);
 
-    // Note: furi_hal_subghz_start_async_rx callback signature has changed
-    // The new signature is (FuriHalSubGhzCaptureCallback callback, void* context)
-    // where callback is void (*)(bool level, uint32_t duration, void* context)
-    // This needs to be updated to use the new capture callback API
-    FURI_LOG_W(TAG, "SubGhz async RX requires updated API");
+    // Start async RX with capture callback
+    subghz_devices_start_async_rx(scanner->device, subghz_capture_callback, scanner);
 
     scanner->running = true;
     scanner->should_stop = false;
@@ -429,9 +456,12 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
     furi_mutex_acquire(scanner->mutex, FuriWaitForever);
 
     // Stop radio
-    furi_hal_subghz_stop_async_rx();
-    furi_hal_subghz_idle();
-    furi_hal_subghz_sleep();
+    if (scanner->device) {
+        subghz_devices_stop_async_rx(scanner->device);
+        subghz_devices_idle(scanner->device);
+        subghz_devices_sleep(scanner->device);
+        subghz_devices_end(scanner->device);
+    }
 
     scanner->running = false;
 
@@ -441,9 +471,9 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
 }
 
 bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
-    if (!scanner) return false;
+    if (!scanner || !scanner->device) return false;
 
-    if (!furi_hal_subghz_is_frequency_valid(frequency)) {
+    if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
         FURI_LOG_E(TAG, "Invalid frequency: %lu Hz", frequency);
         return false;
     }
@@ -452,16 +482,14 @@ bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
 
     if (scanner->running) {
         // Stop RX, switch frequency, restart
-        furi_hal_subghz_stop_async_rx();
-        furi_hal_subghz_idle();
+        subghz_devices_stop_async_rx(scanner->device);
+        subghz_devices_idle(scanner->device);
 
         scanner->current_frequency = frequency;
-        furi_hal_subghz_set_frequency_and_path(frequency);
+        subghz_devices_set_frequency(scanner->device, frequency);
 
         subghz_receiver_reset(scanner->receiver);
-        // Note: furi_hal_subghz_start_async_rx callback signature has changed
-        // furi_hal_subghz_start_async_rx(subghz_receiver_decode, scanner->receiver);
-        FURI_LOG_W(TAG, "SubGhz async RX restart requires updated API");
+        subghz_devices_start_async_rx(scanner->device, subghz_capture_callback, scanner);
     } else {
         scanner->current_frequency = frequency;
     }
@@ -483,8 +511,8 @@ bool subghz_scanner_is_running(SubGhzScanner* scanner) {
 }
 
 int8_t subghz_scanner_get_rssi(SubGhzScanner* scanner) {
-    if (!scanner || !scanner->running) return -128;
-    return furi_hal_subghz_get_rssi();
+    if (!scanner || !scanner->running || !scanner->device) return -128;
+    return (int8_t)subghz_devices_get_rssi(scanner->device);
 }
 
 uint32_t subghz_scanner_get_detection_count(SubGhzScanner* scanner) {

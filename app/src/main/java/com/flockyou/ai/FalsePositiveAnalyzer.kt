@@ -28,10 +28,10 @@ class FalsePositiveAnalyzer @Inject constructor(
     companion object {
         private const val TAG = "FalsePositiveAnalyzer"
 
-        // FP confidence thresholds
-        private const val HIGH_CONFIDENCE_FP_THRESHOLD = 0.8f   // Definitely FP
-        private const val MEDIUM_CONFIDENCE_FP_THRESHOLD = 0.6f // Likely FP
-        private const val LOW_CONFIDENCE_FP_THRESHOLD = 0.4f    // Possibly FP
+        // FP confidence thresholds - public for use in ScanningService
+        const val HIGH_CONFIDENCE_FP_THRESHOLD = 0.8f   // Definitely FP
+        const val MEDIUM_CONFIDENCE_FP_THRESHOLD = 0.6f // Likely FP
+        const val LOW_CONFIDENCE_FP_THRESHOLD = 0.4f    // Possibly FP
     }
 
     /**
@@ -164,6 +164,79 @@ class FalsePositiveAnalyzer @Inject constructor(
             filteredFalsePositives = filtered,
             totalAnalyzed = detections.size,
             filterThreshold = threshold
+        )
+    }
+
+    /**
+     * Quick synchronous rule-based false positive check.
+     *
+     * This method runs only the 7 rule-based checks without any LLM inference,
+     * making it suitable for fast, synchronous calls from detection handlers.
+     * Designed to complete in <10ms.
+     *
+     * @param detection The detection to analyze
+     * @param contextInfo Optional context about user's location/environment
+     * @return QuickFpResult with confidence score and primary reason
+     */
+    fun quickRuleBasedCheck(
+        detection: Detection,
+        contextInfo: FpContextInfo? = null
+    ): QuickFpResult {
+        val reasons = mutableListOf<FpReason>()
+        var fpScore = 0f
+
+        // Check 1: Known benign device patterns
+        checkBenignPatterns(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        // Check 2: Signal strength anomalies
+        checkSignalStrength(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        // Check 3: Common consumer device names
+        checkConsumerDevicePatterns(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        // Check 4: Known infrastructure (ISP routers, public WiFi)
+        checkKnownInfrastructure(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        // Check 5: Location context (home, work, known safe areas)
+        if (contextInfo != null) {
+            checkLocationContext(detection, contextInfo)?.let {
+                reasons.add(it)
+                fpScore += it.weight
+            }
+        }
+
+        // Check 6: Transient detections (seen only once, briefly)
+        checkTransientDetection(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        // Check 7: Low threat score devices with common characteristics
+        checkLowThreatCommonDevice(detection)?.let {
+            reasons.add(it)
+            fpScore += it.weight
+        }
+
+        val confidence = fpScore.coerceIn(0f, 1f)
+        val topReason = reasons.maxByOrNull { it.weight }
+
+        return QuickFpResult(
+            confidence = confidence,
+            isFalsePositive = confidence >= LOW_CONFIDENCE_FP_THRESHOLD,
+            primaryReason = topReason?.description,
+            category = topReason?.category
         )
     }
 
@@ -626,6 +699,17 @@ EXPLANATION: user-friendly explanation
 }
 
 // ==================== DATA CLASSES ====================
+
+/**
+ * Lightweight result for quick rule-based false positive check.
+ * Used for fast synchronous checks without LLM inference.
+ */
+data class QuickFpResult(
+    val confidence: Float,           // 0.0-1.0
+    val isFalsePositive: Boolean,    // confidence >= LOW_CONFIDENCE_FP_THRESHOLD
+    val primaryReason: String?,
+    val category: FpCategory?
+)
 
 /**
  * Result of false positive analysis

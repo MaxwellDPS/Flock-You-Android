@@ -21,7 +21,7 @@ struct DetectionScheduler {
     SubGhzScanner* subghz_internal;
     BleScanner* ble_internal;
     IrScanner* ir;
-    NfcScanner* nfc;
+    FlockNfcScanner* nfc;
 
     // External radio manager
     ExternalRadioManager* external_radio;
@@ -163,7 +163,7 @@ static void scheduler_ir_callback(
 }
 
 static void scheduler_nfc_callback(
-    const NfcDetectionExtended* detection,
+    const FlockNfcDetectionExtended* detection,
     void* context) {
 
     DetectionScheduler* scheduler = context;
@@ -515,7 +515,7 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     }
 
     if (scheduler->nfc) {
-        NfcScannerConfig nfc_config = {
+        FlockNfcScannerConfig nfc_config = {
             .detect_cards = true,
             .detect_tags = true,
             .detect_phones = true,

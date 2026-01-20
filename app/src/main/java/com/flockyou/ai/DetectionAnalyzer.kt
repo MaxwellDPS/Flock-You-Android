@@ -37,6 +37,7 @@ import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 import kotlin.math.*
 import com.flockyou.data.model.DetectionMethod
+import com.flockyou.data.model.DetectionProtocol
 import com.flockyou.detection.DetectionRegistry
 import com.flockyou.detection.profile.DeviceTypeProfile as CentralizedProfile
 import com.flockyou.detection.profile.DeviceTypeProfileRegistry
@@ -78,6 +79,10 @@ class DetectionAnalyzer @Inject constructor(
         private const val DOWNLOAD_TIMEOUT_SECONDS = 300L
         private const val MAX_DOWNLOAD_RETRIES = 3
         private const val INITIAL_RETRY_DELAY_MS = 1000L
+        // Cache expiry times based on device stability
+        private const val CACHE_EXPIRY_CONSUMER_DEVICE_MS = 2 * 60 * 60 * 1000L // 2 hours for Ring, Nest, etc.
+        private const val CACHE_EXPIRY_INFRASTRUCTURE_MS = 2 * 60 * 60 * 1000L // 2 hours for WiFi routers
+        private const val CACHE_EXPIRY_UNKNOWN_MS = 30 * 60 * 1000L // 30 min for unknown/suspicious
     }
 
     private val _modelStatus = MutableStateFlow<AiModelStatus>(AiModelStatus.NotDownloaded)
@@ -90,14 +95,55 @@ class DetectionAnalyzer @Inject constructor(
     private data class CacheEntry(
         val result: AiAnalysisResult,
         val timestamp: Long,
-        val detection: Detection // Store detection for similarity comparison
+        val detection: Detection, // Store detection for similarity comparison
+        val expiryMs: Long = CACHE_EXPIRY_MS // Variable expiry based on device type
     )
     private val analysisCache = Collections.synchronizedMap(mutableMapOf<String, CacheEntry>())
     private val cacheMutex = Mutex()
 
+    // Fast-path cache for quick lookups by device type + detection method + protocol
+    data class CachedAnalysis(
+        val result: AiAnalysisResult,
+        val timestamp: Long,
+        val expiryMs: Long
+    )
+    private val fastPathCache = java.util.concurrent.ConcurrentHashMap<String, CachedAnalysis>()
+
+    // Cache statistics tracking
+    data class CacheStats(
+        var hits: Int = 0,
+        var misses: Int = 0,
+        var fastPathHits: Int = 0,
+        var semanticHits: Int = 0
+    ) {
+        val hitRate: Float get() = if (hits + misses > 0) hits.toFloat() / (hits + misses) else 0f
+        val totalRequests: Int get() = hits + misses
+        fun reset() { hits = 0; misses = 0; fastPathHits = 0; semanticHits = 0 }
+    }
+    private val cacheStats = CacheStats()
+
     // Semantic cache settings
     private val semanticCacheEnabled = true
     private val semanticSimilarityThreshold = 0.85f // 85% similarity required for cache hit
+
+    // Common benign device types for cache pre-population
+    private val consumerDeviceTypes = setOf(
+        DeviceType.RING_DOORBELL,
+        DeviceType.NEST_CAMERA,
+        DeviceType.WYZE_CAMERA,
+        DeviceType.ARLO_CAMERA,
+        DeviceType.EUFY_CAMERA,
+        DeviceType.BLINK_CAMERA,
+        DeviceType.SIMPLISAFE_DEVICE,
+        DeviceType.ADT_DEVICE,
+        DeviceType.VIVINT_DEVICE,
+        DeviceType.AMAZON_SIDEWALK
+    )
+
+    private val infrastructureDeviceTypes = setOf(
+        DeviceType.BLUETOOTH_BEACON,
+        DeviceType.RETAIL_TRACKER
+    )
 
     // Efficient feedback storage with O(1) removal from front
     private val feedbackHistory = ArrayDeque<AnalysisFeedback>(MAX_FEEDBACK_HISTORY_SIZE)
@@ -563,13 +609,23 @@ class DetectionAnalyzer @Inject constructor(
             Log.d(TAG, "Skipping lazy init: enabled=${settings.enabled}, modelFromSettings=${modelFromSettings.id}, isModelLoaded=$isModelLoaded")
         }
 
+        // FAST-PATH: Try fast-path cache first (O(1) lookup by device type + method + protocol)
+        val fastPathResult = tryFastPathCache(detection)
+        if (fastPathResult != null) {
+            return@withContext fastPathResult.copy(
+                processingTimeMs = System.currentTimeMillis() - startTime
+            )
+        }
+
         // Check if already analyzing - return early with informative message
         if (_isAnalyzing.value) {
             Log.d(TAG, "Analysis already in progress, checking cache for: ${detection.id}")
             // Try to serve from cache even if analysis is in progress (reuse settings from above)
             val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}"
             val cached = analysisCache[cacheKey]
-            if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_EXPIRY_MS) {
+            val expiryMs = getCacheExpiryForDevice(detection.deviceType)
+            if (cached != null && System.currentTimeMillis() - cached.timestamp < expiryMs) {
+                cacheStats.hits++
                 return@withContext cached.result.copy(
                     processingTimeMs = System.currentTimeMillis() - startTime
                 )
@@ -607,13 +663,15 @@ class DetectionAnalyzer @Inject constructor(
 
             // Check cache first before setting analyzing state (include contextual flag and model to avoid serving stale results)
             val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}_${currentModel.id}"
+            val cacheExpiryMs = getCacheExpiryForDevice(detection.deviceType)
             val cached = cacheMutex.withLock {
                 val entry = analysisCache[cacheKey]
-                if (entry != null && System.currentTimeMillis() - entry.timestamp < CACHE_EXPIRY_MS) {
+                if (entry != null && System.currentTimeMillis() - entry.timestamp < entry.expiryMs) {
                     entry.result
                 } else null
             }
             if (cached != null) {
+                cacheStats.hits++
                 return@withContext cached.copy(
                     processingTimeMs = System.currentTimeMillis() - startTime
                 )
@@ -622,10 +680,14 @@ class DetectionAnalyzer @Inject constructor(
             // Try semantic cache lookup for similar detections (when exact cache misses)
             val similarCached = findSimilarCachedResult(detection)
             if (similarCached != null) {
+                // Statistics already tracked in findSimilarCachedResult
                 return@withContext similarCached.copy(
                     processingTimeMs = System.currentTimeMillis() - startTime
                 )
             }
+
+            // Cache miss - track it
+            cacheStats.misses++
 
             _isAnalyzing.value = true
 
@@ -664,12 +726,20 @@ class DetectionAnalyzer @Inject constructor(
             // Check for cancellation before caching
             coroutineContext.ensureActive()
 
-            // Cache result
+            // Cache result with variable expiry based on device type
             if (finalResult.success) {
+                val deviceExpiryMs = getCacheExpiryForDevice(detection.deviceType)
                 cacheMutex.withLock {
                     pruneCache()
-                    analysisCache[cacheKey] = CacheEntry(finalResult, System.currentTimeMillis(), detection)
+                    analysisCache[cacheKey] = CacheEntry(
+                        result = finalResult,
+                        timestamp = System.currentTimeMillis(),
+                        detection = detection,
+                        expiryMs = deviceExpiryMs
+                    )
                 }
+                // Also add to fast-path cache for quick lookups
+                addToFastPathCache(detection, finalResult)
             }
 
             finalResult
@@ -2776,8 +2846,9 @@ Provide your analysis with specific recommendations for this detection.
     private fun pruneCache() {
         if (analysisCache.size >= MAX_CACHE_SIZE) {
             val now = System.currentTimeMillis()
+            // Remove expired entries using each entry's own expiry time
             val expired = analysisCache.entries
-                .filter { now - it.value.timestamp > CACHE_EXPIRY_MS }
+                .filter { now - it.value.timestamp > it.value.expiryMs }
                 .map { it.key }
             expired.forEach { analysisCache.remove(it) }
 
@@ -2789,10 +2860,22 @@ Provide your analysis with specific recommendations for this detection.
                 oldest.forEach { analysisCache.remove(it) }
             }
         }
+
+        // Also prune fast-path cache (max 200 entries)
+        if (fastPathCache.size > 200) {
+            val now = System.currentTimeMillis()
+            val expiredKeys = fastPathCache.entries
+                .filter { now - it.value.timestamp > it.value.expiryMs }
+                .map { it.key }
+            expiredKeys.forEach { fastPathCache.remove(it) }
+        }
     }
 
     fun clearCache() {
         analysisCache.clear()
+        fastPathCache.clear()
+        cacheStats.reset()
+        Log.d(TAG, "All caches cleared")
     }
 
     suspend fun isAvailable(): Boolean {
@@ -2801,6 +2884,85 @@ Provide your analysis with specific recommendations for this detection.
     }
 
     // ==================== SEMANTIC CACHE FUNCTIONS ====================
+
+    /**
+     * Generate a fast-path cache key using device type + detection method + protocol.
+     * This allows quick lookups for identical device classification patterns.
+     */
+    private fun getFastCacheKey(detection: Detection): String {
+        return "${detection.deviceType.name}:${detection.detectionMethod.name}:${detection.protocol.name}"
+    }
+
+    /**
+     * Get appropriate cache expiry time based on device type classification.
+     * Consumer devices and infrastructure get longer expiry (2 hours),
+     * unknown/suspicious devices keep shorter expiry (30 min).
+     */
+    private fun getCacheExpiryForDevice(deviceType: DeviceType): Long {
+        return when {
+            deviceType in consumerDeviceTypes -> CACHE_EXPIRY_CONSUMER_DEVICE_MS
+            deviceType in infrastructureDeviceTypes -> CACHE_EXPIRY_INFRASTRUCTURE_MS
+            // Unknown or suspicious device types get shorter expiry
+            deviceType == DeviceType.UNKNOWN_SURVEILLANCE -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.STINGRAY_IMSI -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.SURVEILLANCE_VAN -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.HIDDEN_CAMERA -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.ROGUE_AP -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.TRACKING_DEVICE -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.GNSS_SPOOFER -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.GNSS_JAMMER -> CACHE_EXPIRY_UNKNOWN_MS
+            deviceType == DeviceType.RF_JAMMER -> CACHE_EXPIRY_UNKNOWN_MS
+            // Default to standard 30-minute expiry
+            else -> CACHE_EXPIRY_MS
+        }
+    }
+
+    /**
+     * Try to get a result from the fast-path cache.
+     * Returns null if no valid cached result exists.
+     */
+    private fun tryFastPathCache(detection: Detection): AiAnalysisResult? {
+        val key = getFastCacheKey(detection)
+        val cached = fastPathCache[key] ?: return null
+        val now = System.currentTimeMillis()
+
+        if (now - cached.timestamp > cached.expiryMs) {
+            // Entry expired, remove it
+            fastPathCache.remove(key)
+            return null
+        }
+
+        cacheStats.fastPathHits++
+        cacheStats.hits++
+        Log.d(TAG, "Fast-path cache hit for key: $key")
+        return cached.result
+    }
+
+    /**
+     * Add a result to the fast-path cache.
+     */
+    private fun addToFastPathCache(detection: Detection, result: AiAnalysisResult) {
+        val key = getFastCacheKey(detection)
+        val expiryMs = getCacheExpiryForDevice(detection.deviceType)
+        fastPathCache[key] = CachedAnalysis(
+            result = result,
+            timestamp = System.currentTimeMillis(),
+            expiryMs = expiryMs
+        )
+        Log.d(TAG, "Added to fast-path cache: $key (expiry: ${expiryMs / 1000 / 60} min)")
+    }
+
+    /**
+     * Get current cache statistics for monitoring.
+     */
+    fun getCacheStats(): CacheStats = cacheStats.copy()
+
+    /**
+     * Reset cache statistics.
+     */
+    fun resetCacheStats() {
+        cacheStats.reset()
+    }
 
     /**
      * Find a semantically similar cached result.
@@ -2812,11 +2974,13 @@ Provide your analysis with specific recommendations for this detection.
         val now = System.currentTimeMillis()
 
         for ((_, entry) in analysisCache) {
-            // Skip expired entries
-            if (now - entry.timestamp > CACHE_EXPIRY_MS) continue
+            // Skip expired entries (use variable expiry from entry)
+            if (now - entry.timestamp > entry.expiryMs) continue
 
             val similarity = computeDetectionSimilarity(detection, entry.detection)
             if (similarity >= semanticSimilarityThreshold) {
+                cacheStats.semanticHits++
+                cacheStats.hits++
                 Log.d(TAG, "Semantic cache hit! Similarity: ${(similarity * 100).toInt()}%")
                 return entry.result.copy(
                     analysis = entry.result.analysis?.let {
@@ -2926,6 +3090,157 @@ What is an IMSI catcher? Reply in one sentence.
     }
 
     /**
+     * Warm up the analysis cache with pre-populated common patterns.
+     * Call this during app startup to improve cache hit rates for common device types.
+     * This method:
+     * 1. Pre-populates the fast-path cache with analysis for common benign devices
+     * 2. Optionally warms up the LLM model
+     */
+    suspend fun warmUpCache(): Unit = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Starting cache warm-up...")
+        val startTime = System.currentTimeMillis()
+
+        try {
+            // Pre-populate common patterns
+            prepopulateCommonPatterns()
+
+            // Also warm up the model if needed
+            warmUpModel()
+
+            val duration = System.currentTimeMillis() - startTime
+            Log.i(TAG, "Cache warm-up completed in ${duration}ms. Fast-path cache size: ${fastPathCache.size}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Cache warm-up failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Pre-populate the fast-path cache with common benign device patterns.
+     * This improves hit rates by caching analysis for devices that are frequently encountered.
+     */
+    private fun prepopulateCommonPatterns() {
+        Log.d(TAG, "Pre-populating common device patterns...")
+
+        // Common consumer smart home devices with pre-built analysis
+        val commonPatterns = listOf(
+            // Ring devices
+            Triple(
+                DeviceType.RING_DOORBELL,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Ring Doorbells are Amazon-owned smart doorbells that can record video and audio. While they contribute to neighborhood surveillance networks, they are legitimate consumer products. Privacy concern is moderate due to data sharing with law enforcement."
+            ),
+            // Nest/Google cameras
+            Triple(
+                DeviceType.NEST_CAMERA,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Google Nest cameras are cloud-connected security cameras. They may share data with Google and, under certain conditions, law enforcement. Privacy concern is moderate."
+            ),
+            // Wyze cameras
+            Triple(
+                DeviceType.WYZE_CAMERA,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Wyze cameras are affordable smart cameras popular for home security. Data is stored in the cloud. Privacy concern is low to moderate."
+            ),
+            // Arlo cameras
+            Triple(
+                DeviceType.ARLO_CAMERA,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Arlo cameras are wireless security cameras with cloud storage. They have good encryption but data is cloud-accessible. Privacy concern is low to moderate."
+            ),
+            // Eufy cameras
+            Triple(
+                DeviceType.EUFY_CAMERA,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Eufy cameras emphasize local storage but have had past privacy controversies regarding cloud uploads. Privacy concern is low to moderate."
+            ),
+            // Blink cameras
+            Triple(
+                DeviceType.BLINK_CAMERA,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer smart home device. Blink is an Amazon-owned camera brand with cloud storage. Similar privacy implications to Ring. Privacy concern is moderate."
+            ),
+            // SimpliSafe
+            Triple(
+                DeviceType.SIMPLISAFE_DEVICE,
+                DetectionMethod.SSID_PATTERN,
+                "Consumer home security system. SimpliSafe is a popular DIY home security system. Professional monitoring available. Privacy concern is low."
+            ),
+            // ADT
+            Triple(
+                DeviceType.ADT_DEVICE,
+                DetectionMethod.SSID_PATTERN,
+                "Professional home security system. ADT is a traditional security company with professional monitoring. Privacy concern is low."
+            ),
+            // Vivint
+            Triple(
+                DeviceType.VIVINT_DEVICE,
+                DetectionMethod.SSID_PATTERN,
+                "Professional smart home security. Vivint provides professional installation and monitoring with smart home integration. Privacy concern is low."
+            ),
+            // Amazon Sidewalk
+            Triple(
+                DeviceType.AMAZON_SIDEWALK,
+                DetectionMethod.SSID_PATTERN,
+                "Amazon Sidewalk network device. Sidewalk creates a shared network using customer devices. This extends Amazon's tracking capabilities but is opt-out. Privacy concern is moderate due to mesh network tracking potential."
+            ),
+            // Bluetooth beacons (infrastructure)
+            Triple(
+                DeviceType.BLUETOOTH_BEACON,
+                DetectionMethod.BLE_SERVICE_UUID,
+                "Retail/commercial Bluetooth beacon. Used for indoor navigation and proximity marketing. Common in stores and malls. Privacy concern is low to moderate depending on location tracking usage."
+            ),
+            // Retail trackers
+            Triple(
+                DeviceType.RETAIL_TRACKER,
+                DetectionMethod.BLE_SERVICE_UUID,
+                "Retail analytics device. Used by stores for foot traffic analysis and customer behavior tracking. Privacy concern is moderate as it tracks movement patterns."
+            )
+        )
+
+        val now = System.currentTimeMillis()
+
+        for ((deviceType, detectionMethod, analysisText) in commonPatterns) {
+            // Create analysis result for each common pattern
+            val result = AiAnalysisResult(
+                success = true,
+                analysis = analysisText,
+                modelUsed = "cached_pattern",
+                processingTimeMs = 0,
+                structuredData = StructuredAnalysis(
+                    deviceCategory = when (deviceType) {
+                        in consumerDeviceTypes -> "Consumer Smart Home"
+                        in infrastructureDeviceTypes -> "Commercial Infrastructure"
+                        else -> "Unknown"
+                    },
+                    surveillanceType = "Passive Observation",
+                    dataCollectionTypes = listOf("Video", "Audio", "Presence"),
+                    riskScore = when (deviceType) {
+                        DeviceType.RING_DOORBELL, DeviceType.NEST_CAMERA, DeviceType.AMAZON_SIDEWALK -> 30
+                        DeviceType.RETAIL_TRACKER -> 40
+                        else -> 20
+                    },
+                    riskFactors = listOf("Consumer surveillance device", "Data may be cloud-stored"),
+                    mitigationActions = emptyList(),
+                    contextualInsights = null
+                )
+            )
+
+            // Add to fast-path cache with consumer device expiry (2 hours)
+            val protocols = listOf(DetectionProtocol.WIFI, DetectionProtocol.BLUETOOTH_LE)
+            for (protocol in protocols) {
+                val key = "${deviceType.name}:${detectionMethod.name}:${protocol.name}"
+                fastPathCache[key] = CachedAnalysis(
+                    result = result,
+                    timestamp = now,
+                    expiryMs = CACHE_EXPIRY_CONSUMER_DEVICE_MS
+                )
+            }
+        }
+
+        Log.d(TAG, "Pre-populated ${fastPathCache.size} fast-path cache entries")
+    }
+
+    /**
      * Check if the model is warmed up and ready for fast inference.
      */
     fun isModelWarmedUp(): Boolean {
@@ -2961,6 +3276,8 @@ What is an IMSI catcher? Reply in one sentence.
         cacheMutex.withLock {
             analysisCache.clear()
         }
+        fastPathCache.clear()
+        cacheStats.reset()
         feedbackMutex.withLock {
             feedbackHistory.clear()
         }

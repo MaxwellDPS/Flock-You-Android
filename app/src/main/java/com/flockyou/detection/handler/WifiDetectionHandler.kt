@@ -13,7 +13,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -89,10 +91,42 @@ class WifiDetectionHandler @Inject constructor(
         rogueWifiMonitor?.stopMonitoring()
     }
 
+    /**
+     * Process WiFi scan results and return any immediate detections.
+     *
+     * Note: Some detections require pattern analysis over time (like "following networks")
+     * and will be emitted via the [detections] flow rather than returned here.
+     * Callers should also subscribe to the flow for complete coverage.
+     *
+     * @param data WiFi scan results to process
+     * @return List of immediate detections found, may be empty if detections require more time
+     */
     suspend fun processData(data: List<ScanResult>): List<Detection> {
-        rogueWifiMonitor?.processScanResults(data)
-        // Detections are emitted asynchronously via the flow
-        return emptyList()
+        val monitor = rogueWifiMonitor ?: return emptyList()
+
+        // Process the scan results
+        monitor.processScanResults(data)
+
+        // Collect any immediate detections (with short timeout)
+        // This handles synchronous detection cases like evil twins, hidden cameras, etc.
+        val immediateDetections = mutableListOf<Detection>()
+
+        // Try to get any anomalies that were detected immediately
+        val anomalies = withTimeoutOrNull(100L) {
+            monitor.anomalies.first { it.isNotEmpty() }
+        } ?: emptyList()
+
+        // Convert anomalies to detections
+        for (anomaly in anomalies) {
+            val detection = monitor.anomalyToDetection(anomaly)
+            if (detection != null) {
+                immediateDetections.add(detection)
+                // Also emit to flow for subscribers
+                _detections.emit(detection)
+            }
+        }
+
+        return immediateDetections
     }
 
     fun updateLocation(latitude: Double, longitude: Double) {

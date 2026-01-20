@@ -56,8 +56,9 @@ class StandardBluetoothScanner(
         bluetoothAdapter?.bluetoothLeScanner
     }
 
-    private val supervisorJob = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Default + supervisorJob)
+    // Use a lazy-init supervisor job that can be recreated if cancelled
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.Default + supervisorJob)
 
     private val _isActive = MutableStateFlow(false)
     override val isActive: StateFlow<Boolean> = _isActive
@@ -127,6 +128,12 @@ class StandardBluetoothScanner(
             _lastError.value = "Bluetooth is disabled"
             Log.w(TAG, "Bluetooth is disabled")
             return false
+        }
+
+        // Recreate scope if it was cancelled (e.g., after stop())
+        if (!supervisorJob.isActive) {
+            supervisorJob = SupervisorJob()
+            scope = CoroutineScope(Dispatchers.Default + supervisorJob)
         }
 
         _isActive.value = true
