@@ -751,30 +751,83 @@ static void flock_bridge_scene_main_on_exit(void* context) {
 // Status Scene
 // ============================================================================
 
+// Status refresh interval (500ms for smooth updates)
+#define STATUS_REFRESH_INTERVAL_MS 500
+
+// Helper to refresh status widget content
+static void flock_bridge_status_refresh(FlockBridgeApp* app) {
+    widget_reset(app->widget_status);
+
+    // Title with connection indicator
+    const char* conn_status = flock_bridge_get_connection_status(app);
+    widget_add_string_element(app->widget_status, 64, 2, AlignCenter, AlignTop, FontPrimary, conn_status);
+
+    char buf[40];
+
+    // Messages sent/received
+    snprintf(buf, sizeof(buf), "TX: %lu  RX: %lu", app->messages_sent, app->messages_received);
+    widget_add_string_element(app->widget_status, 64, 16, AlignCenter, AlignTop, FontSecondary, buf);
+
+    // Detection counts
+    snprintf(buf, sizeof(buf), "SubGHz:%lu BLE:%lu NFC:%lu",
+        app->subghz_detection_count, app->ble_scan_count, app->nfc_detection_count);
+    widget_add_string_element(app->widget_status, 64, 28, AlignCenter, AlignTop, FontSecondary, buf);
+
+    // WIPS alerts and uptime
+    uint32_t uptime_sec = (furi_get_tick() - app->uptime_start) / 1000;
+    snprintf(buf, sizeof(buf), "WIPS:%lu  Up:%lus", app->wips_alert_count, uptime_sec);
+    widget_add_string_element(app->widget_status, 64, 40, AlignCenter, AlignTop, FontSecondary, buf);
+
+    // WiFi/IR counts
+    snprintf(buf, sizeof(buf), "WiFi:%lu IR:%lu", app->wifi_scan_count, app->ir_detection_count);
+    widget_add_string_element(app->widget_status, 64, 52, AlignCenter, AlignTop, FontSecondary, buf);
+}
+
+// Timer callback for status refresh
+static void flock_bridge_status_timer_callback(void* context) {
+    FlockBridgeApp* app = context;
+    // Send custom event to trigger UI refresh on main thread
+    view_dispatcher_send_custom_event(app->view_dispatcher, FlockBridgeEventRefreshStatus);
+}
+
 static void flock_bridge_scene_status_on_enter(void* context) {
     FlockBridgeApp* app = context;
 
-    widget_reset(app->widget_status);
-    widget_add_string_element(app->widget_status, 64, 5, AlignCenter, AlignTop, FontPrimary, "Status");
+    // Initial status refresh
+    flock_bridge_status_refresh(app);
 
-    char buf[32];
-    snprintf(buf, sizeof(buf), "Sent: %lu  Recv: %lu", app->messages_sent, app->messages_received);
-    widget_add_string_element(app->widget_status, 64, 20, AlignCenter, AlignTop, FontSecondary, buf);
-
-    snprintf(buf, sizeof(buf), "WIPS Alerts: %lu", app->wips_alert_count);
-    widget_add_string_element(app->widget_status, 64, 35, AlignCenter, AlignTop, FontSecondary, buf);
+    // Create and start the status update timer
+    app->status_timer = furi_timer_alloc(flock_bridge_status_timer_callback, FuriTimerTypePeriodic, app);
+    furi_timer_start(app->status_timer, furi_ms_to_ticks(STATUS_REFRESH_INTERVAL_MS));
 
     view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewStatus);
 }
 
 static bool flock_bridge_scene_status_on_event(void* context, SceneManagerEvent event) {
-    UNUSED(context);
-    UNUSED(event);
-    return false;
+    FlockBridgeApp* app = context;
+    bool consumed = false;
+
+    if (event.type == SceneManagerEventTypeCustom) {
+        if (event.event == FlockBridgeEventRefreshStatus) {
+            // Refresh the status display
+            flock_bridge_status_refresh(app);
+            consumed = true;
+        }
+    }
+
+    return consumed;
 }
 
 static void flock_bridge_scene_status_on_exit(void* context) {
     FlockBridgeApp* app = context;
+
+    // Stop and free the timer
+    if (app->status_timer) {
+        furi_timer_stop(app->status_timer);
+        furi_timer_free(app->status_timer);
+        app->status_timer = NULL;
+    }
+
     widget_reset(app->widget_status);
 }
 

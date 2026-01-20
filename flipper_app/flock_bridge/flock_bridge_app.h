@@ -224,6 +224,9 @@ struct FlockBridgeApp {
     // Notifications
     NotificationApp* notifications;
 
+    // Status update timer
+    FuriTimer* status_timer;
+
     // Mutex for thread safety
     FuriMutex* mutex;
 };
