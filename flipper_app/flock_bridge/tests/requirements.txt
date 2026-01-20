@@ -1,0 +1,13 @@
+# Flock Bridge FAP Test Dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-timeout>=2.2.0
+pyserial>=3.5
+pyusb>=1.2.1
+construct>=2.10.68  # Binary parsing library
+hypothesis>=6.82.0  # Property-based testing
+coverage>=7.3.0
+pytest-cov>=4.1.0
+pytest-html>=4.0.0
+colorama>=0.4.6
+tqdm>=4.66.0

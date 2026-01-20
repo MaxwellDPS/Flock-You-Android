@@ -47,15 +47,27 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
     companion object {
         const val TAG = "BackgroundAnalysisWorker"
         const val WORK_NAME = "background_analysis"
+        const val HIGH_PRIORITY_WORK_NAME = "high_priority_analysis"
 
         // Batch processing limits
         const val DEFAULT_BATCH_SIZE = 15
         const val MIN_BATCH_SIZE = 5
         const val MAX_BATCH_SIZE = 25
 
+        // Priority-based batch sizes
+        const val HIGH_PRIORITY_BATCH_SIZE = 3  // Analyze fewer but faster
+        const val LOW_PRIORITY_BATCH_SIZE = 20  // Analyze more during idle
+
         // Input data keys
         const val KEY_BATCH_SIZE = "batch_size"
         const val KEY_FORCE_REANALYZE = "force_reanalyze"
+        const val KEY_PRIORITY_MODE = "priority_mode"
+        const val KEY_DETECTION_IDS = "detection_ids"
+
+        // Priority modes
+        const val PRIORITY_HIGH = "high"      // High-threat detections - run immediately
+        const val PRIORITY_NORMAL = "normal"  // Normal batch processing
+        const val PRIORITY_LOW = "low"        // Low-threat only - run during idle
 
         // Analysis age threshold - re-analyze detections older than this
         private const val ANALYSIS_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000L // 24 hours
@@ -185,8 +197,116 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
         fun cancel(context: Context) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
             WorkManager.getInstance(context).cancelUniqueWork("${WORK_NAME}_immediate")
+            WorkManager.getInstance(context).cancelUniqueWork(HIGH_PRIORITY_WORK_NAME)
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "Cancelled background analysis work")
+            }
+        }
+
+        /**
+         * Trigger high-priority analysis for critical detections.
+         * This runs immediately without constraints, analyzing only high-threat detections.
+         * Use this when a new high-threat detection is found.
+         */
+        fun triggerHighPriority(context: Context): java.util.UUID {
+            val inputData = Data.Builder()
+                .putInt(KEY_BATCH_SIZE, HIGH_PRIORITY_BATCH_SIZE)
+                .putString(KEY_PRIORITY_MODE, PRIORITY_HIGH)
+                .build()
+
+            val workRequest = OneTimeWorkRequestBuilder<BackgroundAnalysisWorker>()
+                .setInputData(inputData)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .addTag(TAG)
+                .addTag("high_priority")
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                HIGH_PRIORITY_WORK_NAME,
+                ExistingWorkPolicy.KEEP,  // Don't replace if already running
+                workRequest
+            )
+
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Triggered HIGH PRIORITY analysis (expedited)")
+            }
+            return workRequest.id
+        }
+
+        /**
+         * Trigger high-priority analysis for specific detections by ID.
+         * Use this when you have specific detections that need immediate analysis.
+         */
+        fun triggerForDetections(
+            context: Context,
+            detectionIds: List<String>
+        ): java.util.UUID {
+            if (detectionIds.isEmpty()) {
+                throw IllegalArgumentException("detectionIds cannot be empty")
+            }
+
+            val inputData = Data.Builder()
+                .putInt(KEY_BATCH_SIZE, detectionIds.size.coerceAtMost(MAX_BATCH_SIZE))
+                .putString(KEY_PRIORITY_MODE, PRIORITY_HIGH)
+                .putStringArray(KEY_DETECTION_IDS, detectionIds.toTypedArray())
+                .build()
+
+            val workRequest = OneTimeWorkRequestBuilder<BackgroundAnalysisWorker>()
+                .setInputData(inputData)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .addTag(TAG)
+                .addTag("specific_detections")
+                .build()
+
+            // Use unique name based on detection count to allow multiple parallel analyses
+            val workName = "${HIGH_PRIORITY_WORK_NAME}_${System.currentTimeMillis()}"
+            WorkManager.getInstance(context).enqueue(workRequest)
+
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Triggered analysis for ${detectionIds.size} specific detections")
+            }
+            return workRequest.id
+        }
+
+        /**
+         * Schedule low-priority analysis for low-threat detections.
+         * Only runs when device is idle and battery is not low.
+         * Processes larger batches since there's no urgency.
+         */
+        fun scheduleLowPriority(context: Context) {
+            val inputData = Data.Builder()
+                .putInt(KEY_BATCH_SIZE, LOW_PRIORITY_BATCH_SIZE)
+                .putString(KEY_PRIORITY_MODE, PRIORITY_LOW)
+                .build()
+
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .setRequiresDeviceIdle(true)  // Only when truly idle
+                .build()
+
+            val workRequest = PeriodicWorkRequestBuilder<BackgroundAnalysisWorker>(
+                90, TimeUnit.MINUTES,  // Less frequent for low priority
+                45, TimeUnit.MINUTES   // Wide flex window
+            )
+                .setConstraints(constraints)
+                .setInputData(inputData)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS
+                )
+                .addTag(TAG)
+                .addTag("low_priority")
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "${WORK_NAME}_low_priority",
+                ExistingPeriodicWorkPolicy.UPDATE,
+                workRequest
+            )
+
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Scheduled low-priority background analysis (idle-only, batch: $LOW_PRIORITY_BATCH_SIZE)")
             }
         }
     }
@@ -194,9 +314,12 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val batchSize = inputData.getInt(KEY_BATCH_SIZE, DEFAULT_BATCH_SIZE)
         val forceReanalyze = inputData.getBoolean(KEY_FORCE_REANALYZE, false)
+        val priorityMode = inputData.getString(KEY_PRIORITY_MODE) ?: PRIORITY_NORMAL
+        val specificDetectionIds = inputData.getStringArray(KEY_DETECTION_IDS)?.toList()
 
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Starting background analysis (batch: $batchSize, force: $forceReanalyze)")
+            Log.d(TAG, "Starting background analysis (batch: $batchSize, priority: $priorityMode, " +
+                    "force: $forceReanalyze, specific: ${specificDetectionIds?.size ?: 0})")
         }
 
         try {
@@ -227,22 +350,32 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
                 return@withContext Result.success()
             }
 
-            // Select detections that need analysis
-            val detectionsToAnalyze = selectDetectionsForAnalysis(
-                allDetections,
-                batchSize,
-                forceReanalyze
-            )
+            // Select detections based on priority mode
+            val detectionsToAnalyze = when {
+                // If specific detection IDs are provided, analyze those
+                !specificDetectionIds.isNullOrEmpty() -> {
+                    val idSet = specificDetectionIds.toSet()
+                    allDetections.filter { it.id in idSet }
+                }
+                // Otherwise use priority-based selection
+                else -> selectDetectionsForAnalysis(
+                    allDetections,
+                    batchSize,
+                    forceReanalyze,
+                    priorityMode
+                )
+            }
 
             if (detectionsToAnalyze.isEmpty()) {
                 if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "All detections already analyzed")
+                    Log.d(TAG, "No detections to analyze for priority: $priorityMode")
                 }
                 return@withContext Result.success()
             }
 
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Analyzing ${detectionsToAnalyze.size} detections")
+                val threatBreakdown = detectionsToAnalyze.groupBy { it.threatLevel }.mapValues { it.value.size }
+                Log.d(TAG, "Analyzing ${detectionsToAnalyze.size} detections (priority: $priorityMode, threats: $threatBreakdown)")
             }
 
             // Analyze detections and cache results
@@ -250,7 +383,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
 
             if (BuildConfig.DEBUG) {
                 val successCount = results.count { it.value != null }
-                Log.d(TAG, "Background analysis complete: $successCount/${detectionsToAnalyze.size} successful")
+                Log.d(TAG, "Background analysis complete: $successCount/${detectionsToAnalyze.size} successful (priority: $priorityMode)")
             }
 
             Result.success()
@@ -270,54 +403,84 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
     }
 
     /**
-     * Select detections that need analysis.
-     * Prioritizes:
-     * 1. Detections with higher threat levels
-     * 2. More recently seen detections
-     * 3. Detections that haven't been analyzed
+     * Select detections that need analysis based on priority mode.
+     *
+     * Priority modes:
+     * - HIGH: Only HIGH and CRITICAL threat detections (analyze immediately)
+     * - NORMAL: All detections, prioritized by threat level
+     * - LOW: Only LOW and UNKNOWN threat detections (defer to idle time)
      */
     private fun selectDetectionsForAnalysis(
         allDetections: List<Detection>,
         batchSize: Int,
-        forceReanalyze: Boolean
+        forceReanalyze: Boolean,
+        priorityMode: String = PRIORITY_NORMAL
     ): List<Detection> {
         val now = System.currentTimeMillis()
         val staleThreshold = now - ANALYSIS_STALE_THRESHOLD_MS
 
-        // For now, we use a simple heuristic based on when detections were last seen.
-        // In a future enhancement, we could add an "analyzedAt" field to Detection
-        // to track when each detection was last analyzed by the background worker.
-        //
-        // Current approach: analyze detections sorted by threat level and recency,
-        // limiting to batch size. The FalsePositiveAnalyzer caches results internally.
+        // Filter by priority mode
+        val filteredDetections = when (priorityMode) {
+            PRIORITY_HIGH -> {
+                // Only high-threat detections for immediate analysis
+                allDetections.filter {
+                    it.threatLevel == com.flockyou.data.model.ThreatLevel.HIGH ||
+                    it.threatLevel == com.flockyou.data.model.ThreatLevel.CRITICAL
+                }
+            }
+            PRIORITY_LOW -> {
+                // Only low-threat detections for idle-time analysis
+                allDetections.filter {
+                    it.threatLevel == com.flockyou.data.model.ThreatLevel.LOW ||
+                    it.threatLevel == com.flockyou.data.model.ThreatLevel.INFO
+                }
+            }
+            else -> allDetections  // PRIORITY_NORMAL - all detections
+        }
+
+        if (filteredDetections.isEmpty()) {
+            return emptyList()
+        }
 
         return if (forceReanalyze) {
             // Force re-analyze: take top detections by threat and recency
-            allDetections
+            filteredDetections
                 .sortedWith(
                     compareByDescending<Detection> { it.threatLevel.ordinal }
                         .thenByDescending { it.lastSeenTimestamp }
                 )
                 .take(batchSize)
         } else {
-            // Normal mode: prioritize active detections first
-            allDetections
-                .filter { it.isActive }
+            // Normal mode: prioritize active detections first, then by threat level
+            val activeDetections = filteredDetections.filter { it.isActive }
+            val sortedActive = activeDetections
                 .sortedWith(
                     compareByDescending<Detection> { it.threatLevel.ordinal }
                         .thenByDescending { it.lastSeenTimestamp }
                 )
                 .take(batchSize)
-                .ifEmpty {
-                    // If no active detections, fall back to all detections
-                    allDetections
-                        .sortedWith(
-                            compareByDescending<Detection> { it.threatLevel.ordinal }
-                                .thenByDescending { it.lastSeenTimestamp }
-                        )
-                        .take(batchSize)
-                }
+
+            if (sortedActive.isNotEmpty()) {
+                sortedActive
+            } else {
+                // If no active detections match criteria, fall back to all filtered
+                filteredDetections
+                    .sortedWith(
+                        compareByDescending<Detection> { it.threatLevel.ordinal }
+                            .thenByDescending { it.lastSeenTimestamp }
+                    )
+                    .take(batchSize)
+            }
         }
+    }
+
+    /**
+     * Check if a detection should trigger high-priority analysis.
+     * Call this from detection handlers when a new detection is created.
+     */
+    fun shouldTriggerHighPriority(detection: Detection): Boolean {
+        return detection.threatLevel == com.flockyou.data.model.ThreatLevel.HIGH ||
+               detection.threatLevel == com.flockyou.data.model.ThreatLevel.CRITICAL
     }
 
     /**

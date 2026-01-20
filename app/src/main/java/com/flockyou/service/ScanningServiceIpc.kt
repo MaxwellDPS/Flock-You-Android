@@ -79,6 +79,9 @@ object ScanningServiceIpc {
     /** Message sent from service with boost mode status */
     const val MSG_BOOST_STATUS = 133
 
+    /** Message sent from service with battery-adaptive mode state */
+    const val MSG_BATTERY_STATE = 134
+
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
     const val KEY_DETECTION_COUNT = "detection_count"

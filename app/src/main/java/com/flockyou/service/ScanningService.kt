@@ -142,11 +142,17 @@ class ScanningService : Service() {
         // Detector health tracking for all subsystems
         val detectorHealth = MutableStateFlow<Map<String, DetectorHealthStatus>>(emptyMap())
 
+        // Battery-adaptive scanning mode
+        val currentBatteryMode = MutableStateFlow(com.flockyou.data.BatteryAdaptiveMode.BALANCED)
+        val currentBatteryLevel = MutableStateFlow(100)
+        val isBatteryCharging = MutableStateFlow(false)
+
         // Constants for health monitoring
         private const val MAX_CONSECUTIVE_FAILURES = 5
         private const val MAX_RESTART_ATTEMPTS = 5
         private const val HEALTH_CHECK_INTERVAL_MS = 30_000L // 30 seconds
         private const val DETECTOR_STALE_THRESHOLD_MS = 120_000L // 2 minutes without scan = stale
+        private const val BLE_HEALTH_UPDATE_THROTTLE_MS = 5_000L // Throttle BLE health updates to every 5 seconds
 
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
@@ -545,6 +551,9 @@ class ScanningService : Service() {
 
     private var currentDetectionSettings: com.flockyou.data.DetectionSettings = com.flockyou.data.DetectionSettings()
 
+    // Current scan settings for battery-adaptive mode calculations
+    private var currentScanSettings: com.flockyou.data.ScanSettings = com.flockyou.data.ScanSettings()
+
     // Screen lock receiver for auto-purge feature (Priority 5)
     private var screenLockReceiver: ScreenLockReceiver? = null
 
@@ -558,6 +567,7 @@ class ScanningService : Service() {
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bleScanner: BluetoothLeScanner? = null
     private var isBleScanningActive = false
+    private var lastBleHealthUpdateTime: Long = 0L
     
     // WiFi
     private lateinit var wifiManager: WifiManager
@@ -611,6 +621,11 @@ class ScanningService : Service() {
 
     // Throttle cleanup job for periodic deduplicator cache cleanup
     private var throttleCleanupJob: Job? = null
+
+    // Battery monitoring for adaptive scanning
+    private var batteryReceiver: BroadcastReceiver? = null
+    private var currentBatteryPercent: Int = 100
+    private var isCharging: Boolean = false
 
     // Detector callback implementation for handling errors and health updates
     private val detectorCallbackImpl = object : DetectorCallback {
@@ -1493,6 +1508,9 @@ class ScanningService : Service() {
             scanSettingsRepository.settings.collect { settings ->
                 Log.d(TAG, "Scan settings updated - applying to detectors")
 
+                // Store current settings for battery-adaptive calculations
+                currentScanSettings = settings
+
                 // Update ultrasonic detector timing
                 ultrasonicDetector?.updateScanTiming(
                     intervalSeconds = settings.ultrasonicScanIntervalSeconds,
@@ -1518,6 +1536,9 @@ class ScanningService : Service() {
                     enableWifi = settings.enableWifiScanning,
                     trackSeenDevices = settings.trackSeenDevices
                 )
+
+                // Recalculate effective battery mode when settings change
+                updateEffectiveBatteryMode()
             }
         }
 
@@ -1551,6 +1572,9 @@ class ScanningService : Service() {
 
         // Register nuke receiver for graceful database shutdown
         registerNukeReceiver()
+
+        // Register battery receiver for adaptive scanning
+        registerBatteryReceiver()
 
         val config = currentSettings.value
 
@@ -1632,19 +1656,34 @@ class ScanningService : Service() {
             while (isActive) {
                 val scanConfig = currentSettings.value // Re-read in case settings changed
 
+                // Get battery-adaptive multipliers
+                val (batteryIntervalMultiplier, batteryDurationMultiplier) = getBatteryMultipliers()
+                val batteryMode = currentBatteryMode.value
+
                 // Boost mode reduces intervals by ~40% for faster detection on Android Auto
+                // Battery mode adjusts based on battery level (higher multiplier = longer intervals)
+                // Boost takes priority over battery mode
                 val boostMultiplier = if (isBoostModeActive) 0.6f else 1.0f
 
-                // Apply boost to BLE scan duration
-                val effectiveBleScanDuration = (scanConfig.bleScanDuration * boostMultiplier).toLong()
-                    .coerceAtLeast(10_000L) // Minimum 10 seconds
+                // Combine boost and battery multipliers:
+                // - For duration: boost reduces, battery mode may also reduce (0.5x-1.2x)
+                // - For intervals: boost reduces, battery mode increases (0.7x-2.5x)
+                val effectiveDurationMultiplier = boostMultiplier * batteryDurationMultiplier
+                val effectiveIntervalMultiplier = if (isBoostModeActive) boostMultiplier else batteryIntervalMultiplier
 
-                // Apply boost to BLE cooldown
-                val effectiveBleCooldown = (scanConfig.bleCooldown * boostMultiplier).toLong()
+                // Apply multipliers to BLE scan duration
+                val effectiveBleScanDuration = (scanConfig.bleScanDuration * effectiveDurationMultiplier).toLong()
+                    .coerceAtLeast(5_000L) // Minimum 5 seconds
+
+                // Apply multipliers to BLE cooldown
+                val effectiveBleCooldown = (scanConfig.bleCooldown * effectiveIntervalMultiplier).toLong()
                     .coerceAtLeast(2_000L) // Minimum 2 seconds
 
                 if (isBoostModeActive) {
                     Log.d(TAG, "Boost mode active - using ${effectiveBleScanDuration}ms scan, ${effectiveBleCooldown}ms cooldown")
+                } else if (batteryMode != com.flockyou.data.BatteryAdaptiveMode.BALANCED) {
+                    Log.d(TAG, "Battery mode: ${batteryMode.displayName} (${currentBatteryPercent}%) - " +
+                            "${effectiveBleScanDuration}ms scan, ${effectiveBleCooldown}ms cooldown")
                 }
 
                 // Refresh wake lock to prevent timeout
@@ -1883,6 +1922,9 @@ class ScanningService : Service() {
 
         // Unregister nuke receiver
         unregisterNukeReceiver()
+
+        // Unregister battery receiver
+        unregisterBatteryReceiver()
 
         // Reset subsystem statuses
         bleStatus.value = SubsystemStatus.Idle
@@ -2759,6 +2801,13 @@ class ScanningService : Service() {
         )
         broadcastScanStats()
 
+        // Report successful scan for health monitoring (throttled to avoid excessive updates)
+        val now = System.currentTimeMillis()
+        if (now - lastBleHealthUpdateTime >= BLE_HEALTH_UPDATE_THROTTLE_MS) {
+            lastBleHealthUpdateTime = now
+            detectorCallbackImpl.onScanSuccess(DetectorHealthStatus.DETECTOR_BLE)
+        }
+
         // ==================== Handler-Based Detection ====================
         // Delegate detection logic to the BleDetectionHandler for:
         // - Consistent detection patterns across all BLE scans
@@ -2908,7 +2957,20 @@ class ScanningService : Service() {
     }
 
     // ==================== WiFi Scanning ====================
-    
+
+    // WiFi scan optimization: track last successful scan to avoid wasted API calls
+    // Android throttles WiFi scans: 4 scans / 2 min foreground, 1 scan / 30 min background
+    private var lastSuccessfulWifiScanTime: Long = 0L
+    private var wifiScanAttemptsSinceSuccess: Int = 0
+
+    // Minimum interval between WiFi scan attempts (slightly under Android's limit)
+    // Foreground: ~30 seconds is safe (4 scans / 2 min = 1 scan / 30 sec)
+    // We use 25 seconds to have some margin for timing variations
+    private val MIN_WIFI_SCAN_INTERVAL_MS = 25_000L
+
+    // Adaptive backoff: increase interval after consecutive throttles
+    private val MAX_WIFI_SCAN_INTERVAL_MS = 120_000L  // 2 minutes max backoff
+
     @SuppressLint("MissingPermission")
     private fun startWifiScan() {
         if (!hasLocationPermissions()) {
@@ -2916,13 +2978,33 @@ class ScanningService : Service() {
             Log.w(TAG, "Missing location permissions for WiFi scan")
             return
         }
-        
+
         if (!wifiManager.isWifiEnabled) {
             wifiStatus.value = SubsystemStatus.Disabled
             Log.w(TAG, "WiFi is disabled")
             return
         }
-        
+
+        // Optimization: Skip scan if we're within the throttle window
+        val now = System.currentTimeMillis()
+        val timeSinceLastScan = now - lastSuccessfulWifiScanTime
+
+        // Calculate adaptive interval based on recent throttle history
+        // Each throttled scan doubles the wait time (up to max)
+        val adaptiveInterval = if (wifiScanAttemptsSinceSuccess > 0) {
+            (MIN_WIFI_SCAN_INTERVAL_MS * (1 shl wifiScanAttemptsSinceSuccess.coerceAtMost(3)))
+                .coerceAtMost(MAX_WIFI_SCAN_INTERVAL_MS)
+        } else {
+            MIN_WIFI_SCAN_INTERVAL_MS
+        }
+
+        if (timeSinceLastScan < adaptiveInterval) {
+            // Skip this scan request - we're within the throttle window
+            val remainingMs = adaptiveInterval - timeSinceLastScan
+            Log.d(TAG, "WiFi scan skipped (throttle optimization): ${remainingMs}ms until next allowed scan")
+            return
+        }
+
         // Update total scan attempts
         scanStats.value = scanStats.value.copy(
             totalWifiScans = scanStats.value.totalWifiScans + 1
@@ -2934,10 +3016,11 @@ class ScanningService : Service() {
             val started = wifiManager.startScan()
             if (started) {
                 wifiStatus.value = SubsystemStatus.Active
-                Log.d(TAG, "WiFi scan started")
+                Log.d(TAG, "WiFi scan started (attempt ${wifiScanAttemptsSinceSuccess + 1})")
             } else {
-                // Rejection is expected due to Android throttling - don't spam errors
-                Log.d(TAG, "WiFi scan request rejected (throttled)")
+                // Rejection means we're throttled - increase backoff
+                wifiScanAttemptsSinceSuccess++
+                Log.d(TAG, "WiFi scan request rejected (throttled, backoff level: $wifiScanAttemptsSinceSuccess)")
                 // Status will be updated by the receiver
             }
         } catch (e: Exception) {
@@ -2955,12 +3038,31 @@ class ScanningService : Service() {
                 if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
                     val success = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)
                     if (success) {
+                        // Record successful scan time and reset backoff
+                        lastSuccessfulWifiScanTime = System.currentTimeMillis()
+                        wifiScanAttemptsSinceSuccess = 0
+
                         wifiStatus.value = SubsystemStatus.Active
                         serviceScope.launch {
                             processWifiScanResults()
                         }
+
+                        // Update stats with successful scan
+                        val stats = scanStats.value
+                        scanStats.value = stats.copy(
+                            successfulWifiScans = stats.successfulWifiScans + 1,
+                            lastWifiSuccessTime = lastSuccessfulWifiScanTime
+                        )
+                        broadcastScanStats()
+
+                        // Report successful scan for health monitoring
+                        detectorCallbackImpl.onScanSuccess(DetectorHealthStatus.DETECTOR_WIFI)
+
+                        Log.d(TAG, "WiFi scan successful, backoff reset")
                     } else {
-                        // Scan failed or was throttled - update stats but don't spam errors
+                        // Scan failed or was throttled - increase backoff
+                        wifiScanAttemptsSinceSuccess++
+
                         val stats = scanStats.value
                         scanStats.value = stats.copy(
                             throttledWifiScans = stats.throttledWifiScans + 1
@@ -2972,8 +3074,9 @@ class ScanningService : Service() {
                         val now = System.currentTimeMillis()
                         if (lastThrottle == null || now - lastThrottle > 60000) {
                             lastWifiThrottleLogTime = now
-                            wifiStatus.value = SubsystemStatus.Error(-2, "Throttled (${stats.throttledWifiScans + 1}x)")
-                            logError("WiFi", -2, "WiFi scan throttled by system (Android limits: 4 scans/2min)", recoverable = true)
+                            val nextAllowedIn = MIN_WIFI_SCAN_INTERVAL_MS * (1 shl wifiScanAttemptsSinceSuccess.coerceAtMost(3))
+                            wifiStatus.value = SubsystemStatus.Error(-2, "Throttled (backoff: ${nextAllowedIn/1000}s)")
+                            logError("WiFi", -2, "WiFi scan throttled by system (next attempt in ${nextAllowedIn/1000}s)", recoverable = true)
                         }
                     }
                 }
@@ -3047,6 +3150,120 @@ class ScanningService : Service() {
             }
         }
         nukeReceiver = null
+    }
+
+    // ==================== Battery Monitoring ====================
+
+    /**
+     * Register receiver to monitor battery level for adaptive scanning.
+     */
+    private fun registerBatteryReceiver() {
+        if (batteryReceiver != null) return
+
+        batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                intent?.let { updateBatteryState(it) }
+            }
+        }
+
+        val intentFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
+
+        // Get initial battery state
+        val batteryStatus = registerReceiver(batteryReceiver, intentFilter)
+        batteryStatus?.let { updateBatteryState(it) }
+
+        Log.d(TAG, "Battery receiver registered, initial level: $currentBatteryPercent%, charging: $isCharging")
+    }
+
+    /**
+     * Unregister the battery receiver.
+     */
+    private fun unregisterBatteryReceiver() {
+        batteryReceiver?.let {
+            try {
+                unregisterReceiver(it)
+                Log.d(TAG, "Battery receiver unregistered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unregistering battery receiver", e)
+            }
+        }
+        batteryReceiver = null
+    }
+
+    /**
+     * Update battery state from intent and recalculate effective scanning mode.
+     */
+    private fun updateBatteryState(intent: Intent) {
+        val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+        val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+
+        if (level >= 0 && scale > 0) {
+            currentBatteryPercent = (level * 100) / scale
+            currentBatteryLevel.value = currentBatteryPercent
+        }
+
+        isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                     status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        isBatteryCharging.value = isCharging
+
+        // Update the effective battery mode based on current settings and battery level
+        updateEffectiveBatteryMode()
+    }
+
+    /**
+     * Calculate and update the effective battery-adaptive mode.
+     */
+    private fun updateEffectiveBatteryMode() {
+        // If charging, always use performance mode
+        val effectiveMode = if (isCharging) {
+            com.flockyou.data.BatteryAdaptiveMode.PERFORMANCE
+        } else {
+            // Use settings to determine mode (auto or manual)
+            currentScanSettings.getEffectiveMode(currentBatteryPercent)
+        }
+
+        if (currentBatteryMode.value != effectiveMode) {
+            Log.d(TAG, "Battery mode changed: ${currentBatteryMode.value} -> $effectiveMode " +
+                    "(battery: $currentBatteryPercent%, charging: $isCharging)")
+            currentBatteryMode.value = effectiveMode
+            broadcastBatteryState()
+        }
+    }
+
+    /**
+     * Broadcast battery state to IPC clients.
+     */
+    private fun broadcastBatteryState() {
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_BATTERY_STATE).apply {
+                data = Bundle().apply {
+                    putString("mode", currentBatteryMode.value.id)
+                    putString("modeName", currentBatteryMode.value.displayName)
+                    putInt("batteryPercent", currentBatteryPercent)
+                    putBoolean("isCharging", isCharging)
+                }
+            }
+        }
+    }
+
+    /**
+     * Get the current effective battery multipliers for scan timing.
+     */
+    private fun getBatteryMultipliers(): Pair<Float, Float> {
+        val mode = currentBatteryMode.value
+        return Pair(mode.intervalMultiplier, mode.durationMultiplier)
+    }
+
+    /**
+     * Check if non-essential subsystems should be disabled for current battery mode.
+     */
+    private fun shouldDisableNonEssentialSubsystems(): Boolean {
+        return currentBatteryMode.value.disableNonEssential && !isCharging
     }
 
     /**
