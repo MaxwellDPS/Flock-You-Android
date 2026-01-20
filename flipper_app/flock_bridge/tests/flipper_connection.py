@@ -92,24 +92,71 @@ class FlipperConnection:
 
     @classmethod
     def find_flipper_port(cls) -> Optional[str]:
-        """Find the serial port for a connected Flipper Zero."""
+        """
+        Find the serial port for the Flock Bridge protocol.
+
+        In dual CDC mode, returns the protocol port (channel 1).
+        Tests each port to find the one responding to heartbeats.
+        """
         ports = serial.tools.list_ports.comports()
 
+        # Find all Flipper ports
+        flipper_ports = []
         for port in ports:
+            is_flipper = False
             # Check for Flipper Zero VID/PID
             if port.vid == cls.FLIPPER_VID and port.pid == cls.FLIPPER_PID:
-                logger.info(f"Found Flipper Zero at {port.device}")
-                return port.device
-            if port.vid == cls.FLIPPER_VID_ALT and port.pid == cls.FLIPPER_PID_ALT:
-                logger.info(f"Found Flipper Zero (alt) at {port.device}")
-                return port.device
+                is_flipper = True
+            elif port.vid == cls.FLIPPER_VID_ALT and port.pid == cls.FLIPPER_PID_ALT:
+                is_flipper = True
+            elif port.description and 'flipper' in port.description.lower():
+                is_flipper = True
+            elif 'flip' in port.device.lower():
+                is_flipper = True
 
-            # Also check by description
-            if port.description and 'flipper' in port.description.lower():
-                logger.info(f"Found Flipper Zero by description at {port.device}")
-                return port.device
+            if is_flipper:
+                flipper_ports.append(port.device)
 
-        return None
+        if not flipper_ports:
+            return None
+
+        # Sort ports (higher number = channel 1 in dual CDC mode)
+        flipper_ports.sort()
+
+        # If only one port, return it
+        if len(flipper_ports) == 1:
+            logger.info(f"Found single Flipper port: {flipper_ports[0]}")
+            return flipper_ports[0]
+
+        # Multiple ports - test each for protocol response
+        import struct
+        for port_name in reversed(flipper_ports):  # Try highest first (likely protocol port)
+            try:
+                logger.info(f"Testing port {port_name} for Flock protocol...")
+                test_ser = serial.Serial(port_name, 115200, timeout=1)
+                time.sleep(0.2)
+                test_ser.reset_input_buffer()
+
+                # Send heartbeat
+                heartbeat = struct.pack('<BBH', 1, 0, 0)  # version=1, type=0, length=0
+                test_ser.write(heartbeat)
+                time.sleep(0.3)
+
+                response = test_ser.read(100)
+                test_ser.close()
+
+                if len(response) >= 4:
+                    version, msg_type, length = struct.unpack('<BBH', response[:4])
+                    if version == 1 and msg_type == 0:
+                        logger.info(f"Found Flock protocol port: {port_name}")
+                        return port_name
+            except Exception as e:
+                logger.debug(f"Port {port_name} test failed: {e}")
+                continue
+
+        # Fallback to highest port number
+        logger.warning(f"Could not verify protocol port, using: {flipper_ports[-1]}")
+        return flipper_ports[-1]
 
     @classmethod
     def list_serial_ports(cls) -> List[Tuple[str, str, str]]:

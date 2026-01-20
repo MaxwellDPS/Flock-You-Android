@@ -91,6 +91,7 @@ const SceneManagerHandlers flock_bridge_scene_handlers = {
 // This is set AFTER all allocations complete and cleared BEFORE any frees.
 static volatile FlockBridgeApp* g_app = NULL;
 
+#if 0 // Disabled for memory testing
 static void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     FlockBridgeApp* app = context;
     if (!app) return;
@@ -183,6 +184,7 @@ static void on_nfc_detection(const FlockNfcDetection* detection, void* context) 
 
     furi_mutex_release(app->mutex);
 }
+#endif // Disabled for memory testing
 
 // ============================================================================
 // Data Callback
@@ -525,8 +527,8 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         flock_usb_cdc_set_callback(app->usb_cdc, flock_bridge_data_received, app);
     }
 
-    // Allocate WIPS engine
-    app->wips_engine = flock_wips_engine_alloc();
+    // Allocate WIPS engine - DISABLED for memory testing
+    // app->wips_engine = flock_wips_engine_alloc();
 
     // Initialize default radio settings
     app->radio_settings.subghz_source = FlockRadioSourceAuto;
@@ -541,6 +543,8 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     // Load settings from storage
     flock_bridge_load_settings(app);
 
+    // DISABLED FOR MEMORY TESTING - External radio and scanners use too much RAM
+    #if 0
     // Allocate external radio manager
     app->external_radio = external_radio_alloc();
     if (app->external_radio) {
@@ -591,6 +595,9 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         app->ir_ready = true;
         app->nfc_ready = true;
     }
+    #endif
+    // Scanners disabled - just USB CDC for now
+    FURI_LOG_I(TAG, "Scanners disabled for memory testing");
 
     // Initialize state
     g_app = app;
@@ -786,7 +793,11 @@ int32_t flock_bridge_app(void* p) {
 
     // Start USB CDC
     if (app->usb_cdc) {
-        flock_usb_cdc_start(app->usb_cdc);
+        if (flock_usb_cdc_start(app->usb_cdc)) {
+            app->usb_connected = true;
+            app->connection_mode = FlockConnectionUsb;
+            FURI_LOG_I(TAG, "USB CDC started - connected");
+        }
     }
 
     // Start external radio manager (will auto-detect ESP32)

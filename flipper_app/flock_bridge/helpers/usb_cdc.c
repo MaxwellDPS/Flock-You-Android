@@ -4,55 +4,59 @@
 #define TAG "FlockUsbCdc"
 #define USB_CDC_RX_BUFFER_SIZE 512
 #define USB_CDC_TX_BUFFER_SIZE 512
+#define FLOCK_CDC_CHANNEL 1  // Use channel 1 for Flock, channel 0 stays with CLI
 
-// ============================================================================
-// USB CDC Callbacks
-// ============================================================================
-
-// Forward declaration
+// Forward declarations
 static int32_t usb_cdc_rx_thread(void* context);
+static void cdc_rx_callback(void* context);
+static void cdc_state_callback(void* context, CdcState state);
+static void cdc_ctrl_line_callback(void* context, CdcCtrlLine ctrl_lines);
 
-// Note: CDC callback structure changed in newer firmware
-// These callbacks are adapted to the new CdcCallbacks structure
-static void usb_cdc_ctrl_line_callback(void* context, CdcCtrlLine ctrl_line) {
+// CDC callbacks for channel 1
+static CdcCallbacks cdc_callbacks = {
+    .tx_ep_callback = NULL,
+    .rx_ep_callback = cdc_rx_callback,
+    .state_callback = cdc_state_callback,
+    .ctrl_line_callback = cdc_ctrl_line_callback,
+    .config_callback = NULL,
+};
+
+// ============================================================================
+// CDC Callbacks
+// ============================================================================
+
+static void cdc_rx_callback(void* context) {
     FlockUsbCdc* usb = context;
+    if (!usb || !usb->running) return;
 
-    // DTR (Data Terminal Ready) indicates connection state
-    bool connected = (ctrl_line & CdcCtrlLineDTR) != 0;
-
-    if (connected != usb->connected) {
-        usb->connected = connected;
-        FURI_LOG_I(TAG, "USB CDC ctrl_line: DTR=%d RTS=%d, connected=%d",
-            (ctrl_line & CdcCtrlLineDTR) ? 1 : 0,
-            (ctrl_line & CdcCtrlLineRTS) ? 1 : 0,
-            connected);
-    }
+    // Signal RX thread that data is available
+    FURI_LOG_D(TAG, "RX callback triggered");
 }
 
-// State callback - called when USB connection state changes
-static void usb_cdc_state_callback(void* context, CdcState state) {
-    FlockUsbCdc* usb = context;
-    FURI_LOG_I(TAG, "USB CDC state changed: %s",
-        state == CdcStateConnected ? "Connected" : "Disconnected");
-
-    if (usb) {
-        usb->connected = (state == CdcStateConnected);
-    }
-}
-
-// RX endpoint callback - called when data arrives on the USB CDC endpoint
-// Note: This is called from USB interrupt context - only do minimal work here
-static void usb_cdc_rx_ep_callback(void* context) {
+static void cdc_state_callback(void* context, CdcState state) {
     FlockUsbCdc* usb = context;
     if (!usb) return;
 
-    // Just mark that data is available - the polling thread will handle it
-    // Don't call furi_hal_cdc_receive here as it may interfere with the polling thread
-    FURI_LOG_D(TAG, "RX EP callback - data available");
+    usb->connected = (state == CdcStateConnected);
+    FURI_LOG_I(TAG, "CDC state: %s", usb->connected ? "Connected" : "Disconnected");
+}
+
+static void cdc_ctrl_line_callback(void* context, CdcCtrlLine ctrl_lines) {
+    FlockUsbCdc* usb = context;
+    if (!usb) return;
+
+    bool dtr = (ctrl_lines & CdcCtrlLineDTR) != 0;
+    bool rts = (ctrl_lines & CdcCtrlLineRTS) != 0;
+    FURI_LOG_I(TAG, "CDC ctrl lines: DTR=%d RTS=%d", dtr, rts);
+
+    // Consider connected if DTR is asserted
+    if (dtr) {
+        usb->connected = true;
+    }
 }
 
 // ============================================================================
-// USB CDC RX Thread (with fallback polling)
+// USB CDC RX Thread (polling channel 1)
 // ============================================================================
 
 static int32_t usb_cdc_rx_thread(void* context) {
@@ -60,7 +64,7 @@ static int32_t usb_cdc_rx_thread(void* context) {
     uint8_t buffer[64];
     uint32_t poll_count = 0;
 
-    FURI_LOG_I(TAG, "USB CDC RX thread started (polling channel 0)");
+    FURI_LOG_I(TAG, "USB CDC RX thread started (polling channel %d)", FLOCK_CDC_CHANNEL);
 
     while (usb->running) {
         // Log periodically
@@ -70,9 +74,9 @@ static int32_t usb_cdc_rx_thread(void* context) {
         poll_count++;
 
         // Poll for data on channel 1
-        int32_t received = furi_hal_cdc_receive(0, buffer, sizeof(buffer));
+        int32_t received = furi_hal_cdc_receive(FLOCK_CDC_CHANNEL, buffer, sizeof(buffer));
         if (received > 0) {
-            FURI_LOG_I(TAG, "RX poll: %ld bytes: %02X %02X %02X %02X",
+            FURI_LOG_I(TAG, "RX: %ld bytes: %02X %02X %02X %02X",
                 (long)received,
                 received > 0 ? buffer[0] : 0,
                 received > 1 ? buffer[1] : 0,
@@ -160,55 +164,57 @@ void flock_usb_cdc_free(FlockUsbCdc* usb) {
 bool flock_usb_cdc_start(FlockUsbCdc* usb) {
     if (!usb || usb->running) return false;
 
-    FURI_LOG_I(TAG, "Starting USB CDC");
+    FURI_LOG_I(TAG, "Starting USB CDC (dual mode, channel %d)", FLOCK_CDC_CHANNEL);
+
+    // Check if USB is locked
+    if (furi_hal_usb_is_locked()) {
+        FURI_LOG_W(TAG, "USB is locked, trying to unlock...");
+        furi_hal_usb_unlock();
+        furi_delay_ms(50);
+    }
 
     // Save current USB interface
     usb->usb_if_prev = furi_hal_usb_get_config();
-    FURI_LOG_I(TAG, "Previous USB config: %p", usb->usb_if_prev);
+    FURI_LOG_I(TAG, "Previous USB config: %p (single=%p, dual=%p)",
+        usb->usb_if_prev, &usb_cdc_single, &usb_cdc_dual);
 
-    // Unlock USB if locked
-    furi_hal_usb_unlock();
-
-    // Set USB mode to CDC single FIRST
-    FURI_LOG_I(TAG, "Switching to USB CDC single mode...");
-    if (!furi_hal_usb_set_config(&usb_cdc_single, NULL)) {
-        FURI_LOG_E(TAG, "Failed to set USB CDC config");
-        return false;
-    }
-
-    // Wait for USB re-enumeration
-    FURI_LOG_I(TAG, "Waiting for USB re-enumeration...");
-    furi_delay_ms(500);
-
-    // Configure CDC callbacks AFTER setting config (channel 0)
-    static CdcCallbacks cdc_callbacks = {
-        .tx_ep_callback = NULL,
-        .rx_ep_callback = usb_cdc_rx_ep_callback,
-        .state_callback = usb_cdc_state_callback,
-        .ctrl_line_callback = usb_cdc_ctrl_line_callback,
-    };
-    furi_hal_cdc_set_callbacks(0, &cdc_callbacks, usb);
-    FURI_LOG_I(TAG, "CDC callbacks configured on channel 0");
-
-    // Verify the mode switch
-    FuriHalUsbInterface* current = furi_hal_usb_get_config();
-    if (current != &usb_cdc_single) {
-        FURI_LOG_E(TAG, "USB mode switch verification failed: %p != %p", current, &usb_cdc_single);
+    // Switch to dual CDC mode - this gives us channel 0 (CLI) + channel 1 (Flock)
+    if (!furi_hal_usb_set_config(&usb_cdc_dual, NULL)) {
+        FURI_LOG_E(TAG, "Failed to switch to dual CDC mode (USB might be locked)");
+        // Try fallback: use single mode channel 0 (shared with CLI)
+        FURI_LOG_W(TAG, "Falling back to single CDC mode channel 0");
+        usb->usb_if_prev = NULL;  // Don't restore on stop
+        // Continue with channel 0 instead
     } else {
-        FURI_LOG_I(TAG, "USB mode switch successful (single CDC)");
+        // Wait for USB re-enumeration
+        furi_delay_ms(200);
+        FURI_LOG_I(TAG, "Switched to dual CDC mode");
     }
+
+    // Set up callbacks on our channel
+    furi_hal_cdc_set_callbacks(FLOCK_CDC_CHANNEL, &cdc_callbacks, usb);
+    FURI_LOG_I(TAG, "CDC callbacks registered on channel %d", FLOCK_CDC_CHANNEL);
 
     // Start RX thread
     usb->running = true;
     usb->rx_thread = furi_thread_alloc_ex("FlockUsbCdcRx", 1024, usb_cdc_rx_thread, usb);
     furi_thread_start(usb->rx_thread);
 
-    // Send a startup beacon to verify TX path works
-    uint8_t beacon[] = {0x01, 0x00, 0x00, 0x00}; // Heartbeat message
-    furi_hal_cdc_send(0, beacon, sizeof(beacon));
-    FURI_LOG_I(TAG, "Sent startup beacon");
+    // Assume connected - the host should see us now
+    usb->connected = true;
 
-    FURI_LOG_I(TAG, "USB CDC started successfully");
+    // Give the USB stack a moment to settle
+    furi_delay_ms(100);
+
+    // Send multiple startup beacons to verify TX path works
+    uint8_t beacon[] = {0x01, 0x00, 0x00, 0x00}; // Heartbeat message
+    for (int i = 0; i < 3; i++) {
+        furi_hal_cdc_send(FLOCK_CDC_CHANNEL, beacon, sizeof(beacon));
+        furi_delay_ms(50);
+    }
+    FURI_LOG_I(TAG, "Sent startup beacons on channel %d", FLOCK_CDC_CHANNEL);
+
+    FURI_LOG_I(TAG, "USB CDC started successfully (connected=%d)", usb->connected);
     return true;
 }
 
@@ -225,11 +231,12 @@ void flock_usb_cdc_stop(FlockUsbCdc* usb) {
         usb->rx_thread = NULL;
     }
 
-    // Clear callbacks on channel 0
-    furi_hal_cdc_set_callbacks(0, NULL, NULL);
+    // Clear callbacks on channel 1
+    furi_hal_cdc_set_callbacks(FLOCK_CDC_CHANNEL, NULL, NULL);
 
-    // Restore previous USB interface
+    // Restore previous USB interface (back to single CDC)
     if (usb->usb_if_prev) {
+        FURI_LOG_I(TAG, "Restoring USB config to %p", usb->usb_if_prev);
         furi_hal_usb_set_config(usb->usb_if_prev, NULL);
         usb->usb_if_prev = NULL;
     }
@@ -253,11 +260,11 @@ bool flock_usb_cdc_send(FlockUsbCdc* usb, const uint8_t* data, size_t length) {
         if (to_send > 64) to_send = 64; // CDC max packet size
 
         memcpy(tx_buf, data + sent, to_send);
-        furi_hal_cdc_send(0, tx_buf, to_send);
+        furi_hal_cdc_send(FLOCK_CDC_CHANNEL, tx_buf, to_send);
         sent += to_send;
     }
 
-    FURI_LOG_D(TAG, "TX: %zu bytes via channel 1", length);
+    FURI_LOG_D(TAG, "TX: %zu bytes via channel %d", length, FLOCK_CDC_CHANNEL);
     return true;
 }
 
