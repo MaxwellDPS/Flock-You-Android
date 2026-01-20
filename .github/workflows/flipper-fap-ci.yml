@@ -1,0 +1,185 @@
+name: Flipper FAP CI
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'flipper_app/**'
+      - '.github/workflows/flipper-fap-ci.yml'
+
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'flipper_app/**'
+      - '.github/workflows/flipper-fap-ci.yml'
+
+  workflow_dispatch:
+    inputs:
+      upload_artifact:
+        description: 'Upload FAP as artifact'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  UFBT_VERSION: 'latest'
+  PYTHON_VERSION: '3.11'
+
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================
+  # Build FAP
+  # ===========================================
+  build:
+    name: Build FAP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ufbt
+        run: |
+          python -m pip install --upgrade pip
+          pip install ufbt
+
+      - name: Update ufbt SDK
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt update
+
+      - name: Build FAP
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt
+
+      - name: Verify build output
+        run: |
+          ls -la flipper_app/flock_bridge/dist/
+          test -f flipper_app/flock_bridge/dist/flock_bridge.fap
+
+      - name: Upload FAP artifact
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.upload_artifact == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flock_bridge-${{ github.sha }}
+          path: flipper_app/flock_bridge/dist/flock_bridge.fap
+          retention-days: 30
+
+  # ===========================================
+  # Run Unit Tests (no Flipper required)
+  # ===========================================
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r flipper_app/flock_bridge/tests/requirements.txt
+
+      - name: Run unit tests
+        run: |
+          cd flipper_app/flock_bridge/tests
+          python -m pytest unit/ -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}/flipper_app/flock_bridge/tests
+
+  # ===========================================
+  # Lint and Static Analysis
+  # ===========================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+
+      - name: Check Python formatting with Black
+        run: |
+          cd flipper_app/flock_bridge/tests
+          black --check --diff . || echo "::warning::Python files need formatting with black"
+        continue-on-error: true
+
+      - name: Check import ordering with isort
+        run: |
+          cd flipper_app/flock_bridge/tests
+          isort --check-only --diff . || echo "::warning::Python imports need sorting with isort"
+        continue-on-error: true
+
+      - name: Lint Python with flake8
+        run: |
+          cd flipper_app/flock_bridge/tests
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+  # ===========================================
+  # Build for Multiple SDK Versions (optional)
+  # ===========================================
+  build-matrix:
+    name: Build (SDK ${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ['latest', 'release']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ufbt
+        run: |
+          python -m pip install --upgrade pip
+          pip install ufbt
+
+      - name: Update ufbt SDK (${{ matrix.sdk }})
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt update --channel=${{ matrix.sdk }}
+
+      - name: Build FAP
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt
+
+      - name: Upload FAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flock_bridge-${{ matrix.sdk }}-${{ github.sha }}
+          path: flipper_app/flock_bridge/dist/flock_bridge.fap
+          retention-days: 7
