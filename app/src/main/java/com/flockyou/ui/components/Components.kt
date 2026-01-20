@@ -1008,40 +1008,330 @@ fun DetectionCard(
                 }
             }
 
-            // AI Analysis Button
-            if (onAnalyzeClick != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { onAnalyzeClick(detection) },
-                    enabled = !isAnalyzing,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    if (isAnalyzing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+            // Inline AI Analysis - always show contextual insights
+            Spacer(modifier = Modifier.height(8.dp))
+            InlineAnalysisSection(
+                detection = detection,
+                isAnalyzing = isAnalyzing,
+                onAnalyzeClick = onAnalyzeClick
+            )
+        }
+    }
+}
+
+/**
+ * Inline AI analysis section that shows contextual, actionable insights
+ * directly in the detection card without requiring user interaction.
+ */
+@Composable
+private fun InlineAnalysisSection(
+    detection: Detection,
+    isAnalyzing: Boolean,
+    onAnalyzeClick: ((Detection) -> Unit)?
+) {
+    val insight = generateContextualInsight(detection)
+    var expanded by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = insight.backgroundColor
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp)
+        ) {
+            // Main insight row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(
+                    imageVector = insight.icon,
+                    contentDescription = null,
+                    tint = insight.iconColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = insight.headline,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = insight.textColor
+                    )
+                    Text(
+                        text = insight.summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = insight.textColor.copy(alpha = 0.85f)
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = insight.textColor.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Expanded details
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    Divider(color = insight.textColor.copy(alpha = 0.15f))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Action items
+                    insight.actions.forEach { action ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                text = "→",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = insight.iconColor
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = action,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = insight.textColor.copy(alpha = 0.9f)
+                            )
+                        }
+                    }
+
+                    // Technical details
+                    if (insight.technicalDetails.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Analyzing...",
-                            style = MaterialTheme.typography.labelMedium
+                            text = insight.technicalDetails,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = insight.textColor.copy(alpha = 0.6f)
                         )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Psychology,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "AI Analysis",
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                    }
+
+                    // FP analysis if available
+                    detection.fpReason?.let { reason ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = insight.textColor.copy(alpha = 0.5f),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = insight.textColor.copy(alpha = 0.6f)
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Data class for contextual insights
+ */
+private data class ContextualInsight(
+    val headline: String,
+    val summary: String,
+    val actions: List<String>,
+    val technicalDetails: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val backgroundColor: androidx.compose.ui.graphics.Color,
+    val iconColor: androidx.compose.ui.graphics.Color,
+    val textColor: androidx.compose.ui.graphics.Color
+)
+
+/**
+ * Generate contextual, actionable insights based on detection characteristics
+ */
+@Composable
+private fun generateContextualInsight(detection: Detection): ContextualInsight {
+    val isFalsePositive = detection.fpScore != null && detection.fpScore >= 0.4f
+    val fpConfidence = detection.fpScore ?: 0f
+
+    // Determine insight based on threat level and device characteristics
+    return when {
+        // High confidence false positive
+        isFalsePositive && fpConfidence >= 0.7f -> {
+            ContextualInsight(
+                headline = "Likely Safe",
+                summary = getFpSummary(detection),
+                actions = listOf(
+                    "No immediate action needed",
+                    "Common in residential/commercial areas",
+                    "Dismiss or mark as safe if seen regularly"
+                ),
+                technicalDetails = "FP Score: ${(fpConfidence * 100).toInt()}% • ${detection.detectionMethod.displayName}",
+                icon = Icons.Default.CheckCircle,
+                backgroundColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+                iconColor = MaterialTheme.colorScheme.tertiary,
+                textColor = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+        }
+
+        // Critical threat
+        detection.threatLevel == ThreatLevel.CRITICAL -> {
+            ContextualInsight(
+                headline = "Active Surveillance",
+                summary = getCriticalSummary(detection),
+                actions = listOf(
+                    "Leave the area if possible",
+                    "Disable WiFi/Bluetooth temporarily",
+                    "Note location and time for records",
+                    "Consider if this is expected (police station, courthouse)"
+                ),
+                technicalDetails = "Threat: ${detection.threatScore}/100 • Signal: ${detection.rssi}dBm (${detection.signalStrength.description})",
+                icon = Icons.Default.Warning,
+                backgroundColor = MaterialTheme.colorScheme.errorContainer,
+                iconColor = MaterialTheme.colorScheme.error,
+                textColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+
+        // High threat
+        detection.threatLevel == ThreatLevel.HIGH -> {
+            ContextualInsight(
+                headline = "Surveillance Device",
+                summary = getHighThreatSummary(detection),
+                actions = getHighThreatActions(detection),
+                technicalDetails = "Threat: ${detection.threatScore}/100 • ${detection.protocol.displayName} • ${detection.signalStrength.description}",
+                icon = Icons.Default.Shield,
+                backgroundColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                iconColor = MaterialTheme.colorScheme.error,
+                textColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+
+        // Medium threat
+        detection.threatLevel == ThreatLevel.MEDIUM -> {
+            ContextualInsight(
+                headline = "Possible Surveillance",
+                summary = getMediumThreatSummary(detection),
+                actions = listOf(
+                    "Monitor if this device follows you",
+                    "Check if seen in multiple locations",
+                    if (detection.seenCount > 1) "Seen ${detection.seenCount}x - pattern emerging" else "First sighting - may be transient"
+                ),
+                technicalDetails = "Threat: ${detection.threatScore}/100 • ${detection.detectionMethod.displayName}",
+                icon = Icons.Default.Visibility,
+                backgroundColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                iconColor = MaterialTheme.colorScheme.secondary,
+                textColor = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
+
+        // Low threat / Info
+        else -> {
+            ContextualInsight(
+                headline = "Device of Interest",
+                summary = getLowThreatSummary(detection),
+                actions = listOf(
+                    "Likely benign but worth noting",
+                    if (detection.seenCount == 1) "Single detection - probably passing device" else "Seen ${detection.seenCount}x at this location"
+                ),
+                technicalDetails = "${detection.deviceType.displayName} • ${detection.protocol.displayName}",
+                icon = Icons.Default.Info,
+                backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                textColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun getFpSummary(detection: Detection): String {
+    return when (detection.fpCategory) {
+        "BENIGN_DEVICE" -> "This matches a known consumer device pattern - likely a neighbor's router, smart device, or personal electronics."
+        "CONSUMER_SMART_HOME" -> "Consumer smart home device (Ring, Nest, etc.) - common in residential areas, not surveillance."
+        "PUBLIC_INFRASTRUCTURE" -> "Public WiFi or business network infrastructure - expected in commercial areas."
+        "HOME_LOCATION" -> "Detected near your home - likely your own device or a neighbor's."
+        "WORK_LOCATION" -> "Normal workplace infrastructure - expected security/networking equipment."
+        "WEAK_SIGNAL" -> "Very weak signal from a distant device - not targeting you specifically."
+        "TRANSIENT" -> "Brief one-time detection - likely a passing vehicle or pedestrian's device."
+        else -> "Analysis suggests this is a common device, not targeted surveillance."
+    }
+}
+
+private fun getCriticalSummary(detection: Detection): String {
+    return when (detection.deviceType) {
+        DeviceType.RAVEN_GUNSHOT_DETECTOR -> "Acoustic gunshot detection system - actively listening to audio in the area."
+        DeviceType.STINGRAY_IMSI -> "Cell site simulator detected - can intercept calls and track phones."
+        DeviceType.SHOTSPOTTER -> "ShotSpotter acoustic sensor - monitors audio for gunfire detection."
+        DeviceType.FACIAL_RECOGNITION -> "Facial recognition system - capturing and analyzing faces."
+        else -> "Active surveillance system capable of capturing audio, video, or communications."
+    }
+}
+
+private fun getHighThreatSummary(detection: Detection): String {
+    return when (detection.deviceType) {
+        DeviceType.FLOCK_SAFETY_CAMERA -> "License plate reader capturing all passing vehicles. Your plate is being logged."
+        DeviceType.RING_DOORBELL, DeviceType.NEST_CAMERA -> "Smart camera with cloud recording. Video may be shared with police."
+        DeviceType.BODY_CAMERA -> "Law enforcement body camera - you may be recorded."
+        DeviceType.CCTV_CAMERA, DeviceType.PTZ_CAMERA -> "Surveillance camera with ${if (detection.rssi > -60) "clear view of you" else "coverage of this area"}."
+        DeviceType.WIFI_PINEAPPLE -> "Network attack device - do not connect to unknown WiFi here."
+        DeviceType.DRONE -> "Drone with camera detected ${detection.signalStrength.description.lowercase()}."
+        else -> "${detection.deviceType.displayName} confirmed. Recording or monitoring likely active."
+    }
+}
+
+private fun getMediumThreatSummary(detection: Detection): String {
+    return when (detection.detectionMethod) {
+        DetectionMethod.WIFI_EVIL_TWIN -> "Possible fake WiFi network mimicking a legitimate one. Don't connect."
+        DetectionMethod.WIFI_FOLLOWING -> "This network has appeared at multiple locations you've visited."
+        DetectionMethod.TRACKER_FOLLOWING -> "Bluetooth tracker detected multiple times - may be following you."
+        DetectionMethod.CELL_ENCRYPTION_DOWNGRADE -> "Your phone was forced to weaker encryption - potential interception."
+        else -> "${detection.deviceType.displayName} - monitoring capabilities unconfirmed."
+    }
+}
+
+private fun getLowThreatSummary(detection: Detection): String {
+    return when {
+        detection.deviceType in listOf(DeviceType.BLUETOOTH_BEACON, DeviceType.RETAIL_TRACKER) ->
+            "Retail tracking beacon - stores use these for analytics and targeted ads."
+        detection.deviceType == DeviceType.AMAZON_SIDEWALK ->
+            "Amazon Sidewalk mesh network node - helps Amazon devices connect but also tracks."
+        detection.protocol == DetectionProtocol.WIFI && detection.threatLevel == ThreatLevel.INFO ->
+            "WiFi network with surveillance-like name but may be legitimate."
+        else -> "Flagged due to ${detection.detectionMethod.displayName} but threat level is low."
+    }
+}
+
+private fun getHighThreatActions(detection: Detection): List<String> {
+    return when (detection.deviceType) {
+        DeviceType.FLOCK_SAFETY_CAMERA -> listOf(
+            "Your license plate is being recorded",
+            "Data shared with law enforcement",
+            "Common near neighborhoods, parking lots"
+        )
+        DeviceType.WIFI_PINEAPPLE -> listOf(
+            "Do NOT connect to any WiFi here",
+            "Disable auto-connect on your phone",
+            "Use cellular data only in this area"
+        )
+        DeviceType.STINGRAY_IMSI -> listOf(
+            "Phone calls may be intercepted",
+            "Consider airplane mode",
+            "Use encrypted messaging apps only"
+        )
+        else -> listOf(
+            "Be aware of your surroundings",
+            "Limit sensitive conversations",
+            if (detection.rssi > -60) "Device is very close (${detection.signalStrength.description.lowercase()})" else "Device is ${detection.signalStrength.description.lowercase()}"
+        )
     }
 }
 
