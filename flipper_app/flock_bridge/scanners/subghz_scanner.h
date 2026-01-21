@@ -137,3 +137,9 @@ uint32_t subghz_scanner_get_detection_count(SubGhzScanner* scanner);
  * Get protocol name from ID.
  */
 const char* subghz_scanner_get_protocol_name(SubGhzProtocolId proto_id);
+
+/**
+ * Reset decoder state to clear accumulated buffers.
+ * Call periodically to prevent memory growth from RF noise.
+ */
+void subghz_scanner_reset_decoder(SubGhzScanner* scanner);

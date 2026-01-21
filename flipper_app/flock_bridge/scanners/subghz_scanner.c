@@ -525,3 +525,25 @@ uint32_t subghz_scanner_get_detection_count(SubGhzScanner* scanner) {
     if (!scanner) return 0;
     return scanner->detection_count;
 }
+
+void subghz_scanner_reset_decoder(SubGhzScanner* scanner) {
+    if (!scanner || !scanner->running || !scanner->receiver) return;
+
+    furi_mutex_acquire(scanner->mutex, FuriWaitForever);
+
+    // Reset the receiver to clear all accumulated decoder state
+    // This is critical for preventing memory growth from RF noise
+    subghz_receiver_reset(scanner->receiver);
+
+    // Clear signal history to free any accumulated entries
+    memset(scanner->signal_history, 0, sizeof(scanner->signal_history));
+    scanner->history_head = 0;
+
+    // Reset jamming detection state
+    scanner->high_rssi_start = 0;
+    scanner->jamming_detected = false;
+
+    FURI_LOG_D(TAG, "Decoder state reset (memory cleanup)");
+
+    furi_mutex_release(scanner->mutex);
+}

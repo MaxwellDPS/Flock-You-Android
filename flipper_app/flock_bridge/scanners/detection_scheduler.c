@@ -241,6 +241,10 @@ static int32_t scheduler_thread_func(void* context) {
     uint32_t last_frequency_hop = 0;
     uint32_t last_ble_scan = 0;
     uint32_t last_wifi_scan = 0;
+    uint32_t last_memory_cleanup = 0;
+
+    // Memory cleanup interval - periodically reset decoder state to prevent accumulation
+    const uint32_t MEMORY_CLEANUP_INTERVAL_MS = 10000;  // Every 10 seconds
 
     // Determine which radios to use based on settings
     bool ext_available = scheduler->external_radio &&
@@ -456,6 +460,31 @@ static int32_t scheduler_thread_func(void* context) {
                 scheduler->stats.wifi_scans_completed++;
                 furi_mutex_release(scheduler->mutex);
             }
+        }
+
+        // ====================================================================
+        // Periodic Memory Cleanup - Prevents decoder state accumulation
+        // ====================================================================
+        if ((now - last_memory_cleanup) >= MEMORY_CLEANUP_INTERVAL_MS) {
+            FURI_LOG_D(TAG, "Performing periodic memory cleanup");
+
+            // Reset SubGHz receiver to clear accumulated pulse data buffers
+            // This is critical for long-running sessions where RF noise can
+            // cause internal decoder state to grow unbounded
+            if (scheduler->subghz_internal && subghz_scanner_is_running(scheduler->subghz_internal)) {
+                subghz_scanner_reset_decoder(scheduler->subghz_internal);
+            }
+
+            // Restart NFC scanner to clear SDK internal state
+            // The NFC SDK may accumulate state during continuous scanning
+            if (scheduler->nfc && flock_nfc_scanner_is_running(scheduler->nfc)) {
+                flock_nfc_scanner_stop(scheduler->nfc);
+                furi_delay_ms(50);  // Brief pause for cleanup
+                flock_nfc_scanner_start(scheduler->nfc);
+                FURI_LOG_D(TAG, "NFC scanner restarted for memory cleanup");
+            }
+
+            last_memory_cleanup = now;
         }
 
         // ====================================================================

@@ -237,7 +237,10 @@ static bool check_device_following(BleScanner* scanner, const uint8_t* mac) {
         entry->timestamp_count = 0;
         entry->timestamp_head = 0;
         entry->valid = true;
-        scanner->history_count++;
+        // Only increment count if we're using a new slot, not overwriting
+        if (scanner->history_count < MAX_DEVICE_HISTORY) {
+            scanner->history_count++;
+        }
     }
 
     // Add timestamp
