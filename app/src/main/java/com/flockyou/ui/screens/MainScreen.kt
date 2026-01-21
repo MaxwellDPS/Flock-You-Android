@@ -1234,11 +1234,11 @@ fun DetectionDetailSheet(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // AI Analysis Section (only show if LLM analysis was performed)
-            if (detection.llmAnalyzed) {
+            // AI Analysis Section (show if any FP analysis was performed - LLM or rule-based)
+            if (detection.fpScore != null) {
                 item {
                     Text(
-                        text = "AI Analysis",
+                        text = if (detection.llmAnalyzed) "AI Analysis" else "Analysis",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -1251,10 +1251,10 @@ fun DetectionDetailSheet(
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            // LLM badge
+                            // Analysis type badge
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.AutoAwesome,
+                                    imageVector = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Rule,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(18.dp)
@@ -1265,70 +1265,83 @@ fun DetectionDetailSheet(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                                 ) {
                                     Text(
-                                        text = "On-device LLM",
+                                        text = if (detection.llmAnalyzed) "On-device LLM" else "Rule-based",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
-                            }
-
-                            // FP verdict
-                            if (detection.fpScore != null) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                                val fpPercent = (detection.fpScore * 100).toInt()
-                                val verdictText = when {
-                                    fpPercent >= 70 -> "Likely false positive"
-                                    fpPercent >= 40 -> "Possibly false positive"
-                                    else -> "Likely genuine threat"
-                                }
-                                val verdictColor = when {
-                                    fpPercent >= 70 -> MaterialTheme.colorScheme.tertiary
-                                    fpPercent >= 40 -> MaterialTheme.colorScheme.secondary
-                                    else -> MaterialTheme.colorScheme.error
-                                }
-                                val verdictIcon = when {
-                                    fpPercent >= 70 -> Icons.Default.CheckCircle
-                                    fpPercent >= 40 -> Icons.Default.Help
-                                    else -> Icons.Default.Warning
-                                }
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = verdictIcon,
-                                        contentDescription = null,
-                                        tint = verdictColor,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                // Show "Pending LLM" indicator if not yet LLM analyzed
+                                if (!detection.llmAnalyzed) {
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer
+                                    ) {
                                         Text(
-                                            text = verdictText,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = verdictColor
-                                        )
-                                        Text(
-                                            text = "$fpPercent% confidence",
+                                            text = "LLM pending",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = verdictColor.copy(alpha = 0.8f)
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
-
-                                // Confidence bar
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LinearProgressIndicator(
-                                    progress = detection.fpScore,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                        .clip(RoundedCornerShape(2.dp)),
-                                    color = verdictColor,
-                                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
-                                )
                             }
+
+                            // FP verdict (fpScore is guaranteed non-null in this block)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val fpPercent = (detection.fpScore!! * 100).toInt()
+                            val verdictText = when {
+                                fpPercent >= 70 -> "Likely false positive"
+                                fpPercent >= 40 -> "Possibly false positive"
+                                else -> "Likely genuine threat"
+                            }
+                            val verdictColor = when {
+                                fpPercent >= 70 -> MaterialTheme.colorScheme.tertiary
+                                fpPercent >= 40 -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.error
+                            }
+                            val verdictIcon = when {
+                                fpPercent >= 70 -> Icons.Default.CheckCircle
+                                fpPercent >= 40 -> Icons.Default.Help
+                                else -> Icons.Default.Warning
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = verdictIcon,
+                                    contentDescription = null,
+                                    tint = verdictColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = verdictText,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = verdictColor
+                                    )
+                                    Text(
+                                        text = "$fpPercent% confidence",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = verdictColor.copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+
+                            // Confidence bar
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = detection.fpScore!!,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = verdictColor,
+                                trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
+                            )
 
                             // AI-generated reason
                             detection.fpReason?.let { reason ->

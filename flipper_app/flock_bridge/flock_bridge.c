@@ -220,7 +220,7 @@ static void on_nfc_detection(const FlockNfcDetection* detection, void* context) 
 // ============================================================================
 
 // Buffer timeout in ticks (500ms) - discard partial data waiting too long
-#define RX_BUFFER_TIMEOUT_MS 200  // Reduced for faster recovery after garbage data
+#define RX_BUFFER_TIMEOUT_MS 50  // Very short timeout to discard stale partial data quickly
 
 // Check if a message type is valid/known
 static bool is_valid_message_type(uint8_t type) {
@@ -377,11 +377,20 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Handle message
         app->messages_received++;
 
+        // Rate limiting for responses - prevent USB CDC overflow under stress
+        static uint32_t last_response_tick = 0;
+        const uint32_t MIN_RESPONSE_INTERVAL_MS = 5;  // Max ~200 responses/sec
+        uint32_t current_tick = furi_get_tick();
+        bool should_respond = (current_tick - last_response_tick) >= furi_ms_to_ticks(MIN_RESPONSE_INTERVAL_MS);
+
         switch (header.type) {
         case FlockMsgTypeHeartbeat: {
-            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
-            if (len > 0) {
-                flock_bridge_send_data(app, app->tx_buffer, len);
+            if (should_respond) {
+                size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+                if (len > 0) {
+                    flock_bridge_send_data(app, app->tx_buffer, len);
+                    last_response_tick = current_tick;
+                }
             }
             break;
         }

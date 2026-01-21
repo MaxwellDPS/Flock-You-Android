@@ -564,95 +564,12 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->config.radio_sources.wifi_source = RadioSourceExternal;  // No internal WiFi
 
     // ========================================================================
-    // Allocate internal scanners
-    // NOTE: BLE and IR scanners are disabled due to hardware conflicts
-    // - BLE scanner conflicts with BT serial (both use Bluetooth stack)
-    // - IR scanner conflicts with infrared hardware during USB CDC init
-    // SubGHz and NFC scanners work correctly in parallel with USB CDC
+    // Scanner allocation is DEFERRED to detection_scheduler_start()
+    // This saves memory by only allocating scanners that are actually enabled.
+    // The SubGHz receiver in particular uses significant memory for decoders.
     // ========================================================================
 
-    // SubGHz scanner - ENABLED
-    scheduler->subghz_internal = subghz_scanner_alloc();
-    if (!scheduler->subghz_internal) {
-        FURI_LOG_E(TAG, "Failed to allocate SubGhz scanner");
-    } else {
-        FURI_LOG_I(TAG, "SubGHz scanner allocated");
-    }
-
-    // BLE scanner - ENABLED (BT serial is disabled to allow this)
-    scheduler->ble_internal = ble_scanner_alloc();
-    if (!scheduler->ble_internal) {
-        FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
-    } else {
-        FURI_LOG_I(TAG, "BLE scanner allocated");
-    }
-
-    // IR scanner - ENABLED (allocation only, started with delay in thread)
-    scheduler->ir = ir_scanner_alloc();
-    if (!scheduler->ir) {
-        FURI_LOG_E(TAG, "Failed to allocate IR scanner");
-    } else {
-        FURI_LOG_I(TAG, "IR scanner allocated (will start delayed)");
-    }
-
-    // NFC scanner - ENABLED
-    scheduler->nfc = flock_nfc_scanner_alloc();
-    if (!scheduler->nfc) {
-        FURI_LOG_E(TAG, "Failed to allocate NFC scanner");
-    } else {
-        FURI_LOG_I(TAG, "NFC scanner allocated");
-    }
-
-    // Configure internal scanner callbacks
-    if (scheduler->subghz_internal) {
-        SubGhzScannerConfig subghz_config = {
-            .detect_replays = true,
-            .detect_jamming = true,
-            .rssi_threshold = -90,
-            .callback = scheduler_subghz_callback,
-            .callback_context = scheduler,
-        };
-        subghz_scanner_configure(scheduler->subghz_internal, &subghz_config);
-    }
-
-    if (scheduler->ble_internal) {
-        BleScannerConfig ble_config = {
-            .detect_trackers = true,
-            .detect_spam = true,
-            .detect_following = true,
-            .rssi_threshold = -85,
-            .scan_duration_ms = BLE_SCAN_DURATION_MS,
-            .callback = scheduler_ble_callback,
-            .callback_context = scheduler,
-        };
-        ble_scanner_configure(scheduler->ble_internal, &ble_config);
-    }
-
-    if (scheduler->ir) {
-        IrScannerConfig ir_config = {
-            .detect_brute_force = true,
-            .detect_replay = true,
-            .brute_force_threshold = 20,
-            .replay_window_ms = 5000,
-            .callback = scheduler_ir_callback,
-            .callback_context = scheduler,
-        };
-        ir_scanner_configure(scheduler->ir, &ir_config);
-    }
-
-    if (scheduler->nfc) {
-        FlockNfcScannerConfig nfc_config = {
-            .detect_cards = true,
-            .detect_tags = true,
-            .detect_phones = true,
-            .continuous_poll = true,
-            .callback = scheduler_nfc_callback,
-            .callback_context = scheduler,
-        };
-        flock_nfc_scanner_configure(scheduler->nfc, &nfc_config);
-    }
-
-    FURI_LOG_I(TAG, "Detection scheduler allocated");
+    FURI_LOG_I(TAG, "Detection scheduler allocated (scanners deferred)");
     return scheduler;
 }
 
@@ -725,6 +642,87 @@ bool detection_scheduler_start(DetectionScheduler* scheduler) {
     FURI_LOG_I(TAG, "Starting detection scheduler");
 
     furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+
+    // ========================================================================
+    // Allocate scanners on-demand based on config (saves memory)
+    // Only allocate scanners that are actually enabled
+    // ========================================================================
+
+    // SubGHz scanner - allocate only if enabled
+    if (scheduler->config.enable_subghz && !scheduler->subghz_internal) {
+        scheduler->subghz_internal = subghz_scanner_alloc();
+        if (scheduler->subghz_internal) {
+            SubGhzScannerConfig subghz_config = {
+                .detect_replays = true,
+                .detect_jamming = true,
+                .rssi_threshold = -90,
+                .callback = scheduler_subghz_callback,
+                .callback_context = scheduler,
+            };
+            subghz_scanner_configure(scheduler->subghz_internal, &subghz_config);
+            FURI_LOG_I(TAG, "SubGHz scanner allocated (on-demand)");
+        } else {
+            FURI_LOG_E(TAG, "Failed to allocate SubGHz scanner");
+        }
+    }
+
+    // BLE scanner - allocate only if enabled
+    if (scheduler->config.enable_ble && !scheduler->ble_internal) {
+        scheduler->ble_internal = ble_scanner_alloc();
+        if (scheduler->ble_internal) {
+            BleScannerConfig ble_config = {
+                .detect_trackers = true,
+                .detect_spam = true,
+                .detect_following = true,
+                .rssi_threshold = -85,
+                .scan_duration_ms = BLE_SCAN_DURATION_MS,
+                .callback = scheduler_ble_callback,
+                .callback_context = scheduler,
+            };
+            ble_scanner_configure(scheduler->ble_internal, &ble_config);
+            FURI_LOG_I(TAG, "BLE scanner allocated (on-demand)");
+        } else {
+            FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
+        }
+    }
+
+    // IR scanner - allocate only if enabled
+    if (scheduler->config.enable_ir && !scheduler->ir) {
+        scheduler->ir = ir_scanner_alloc();
+        if (scheduler->ir) {
+            IrScannerConfig ir_config = {
+                .detect_brute_force = true,
+                .detect_replay = true,
+                .brute_force_threshold = 20,
+                .replay_window_ms = 5000,
+                .callback = scheduler_ir_callback,
+                .callback_context = scheduler,
+            };
+            ir_scanner_configure(scheduler->ir, &ir_config);
+            FURI_LOG_I(TAG, "IR scanner allocated (on-demand)");
+        } else {
+            FURI_LOG_E(TAG, "Failed to allocate IR scanner");
+        }
+    }
+
+    // NFC scanner - allocate only if enabled
+    if (scheduler->config.enable_nfc && !scheduler->nfc) {
+        scheduler->nfc = flock_nfc_scanner_alloc();
+        if (scheduler->nfc) {
+            FlockNfcScannerConfig nfc_config = {
+                .detect_cards = true,
+                .detect_tags = true,
+                .detect_phones = true,
+                .continuous_poll = true,
+                .callback = scheduler_nfc_callback,
+                .callback_context = scheduler,
+            };
+            flock_nfc_scanner_configure(scheduler->nfc, &nfc_config);
+            FURI_LOG_I(TAG, "NFC scanner allocated (on-demand)");
+        } else {
+            FURI_LOG_E(TAG, "Failed to allocate NFC scanner");
+        }
+    }
 
     scheduler->running = true;
     scheduler->should_stop = false;

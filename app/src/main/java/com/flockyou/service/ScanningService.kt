@@ -634,6 +634,10 @@ class ScanningService : Service() {
     // Throttle cleanup job for periodic deduplicator cache cleanup
     private var throttleCleanupJob: Job? = null
 
+    // Periodic IPC refresh job - ensures UI stays updated even when no events occur
+    private var ipcRefreshJob: Job? = null
+    private val IPC_REFRESH_INTERVAL_MS = 5000L  // Refresh every 5 seconds
+
     // Battery monitoring for adaptive scanning
     private var batteryReceiver: BroadcastReceiver? = null
     private var currentBatteryPercent: Int = 100
@@ -698,6 +702,10 @@ class ScanningService : Service() {
                                 ipcClients.add(client)
                                 threadingMonitor.updateIpcClientCount(ipcClients.size)
                                 Log.d(TAG, "IPC client registered (total: ${ipcClients.size})")
+                                // Start IPC refresh if this is the first client
+                                if (ipcClients.size == 1 && ipcRefreshJob == null) {
+                                    startIpcRefreshJob()
+                                }
                             }
                         }
                     }
@@ -706,6 +714,10 @@ class ScanningService : Service() {
                             ipcClients.remove(client)
                             threadingMonitor.updateIpcClientCount(ipcClients.size)
                             Log.d(TAG, "IPC client unregistered (total: ${ipcClients.size})")
+                            // Stop IPC refresh if no clients remain
+                            if (ipcClients.isEmpty()) {
+                                stopIpcRefreshJob()
+                            }
                         }
                     }
                     ScanningServiceIpc.MSG_REQUEST_STATE -> {
@@ -1652,6 +1664,9 @@ class ScanningService : Service() {
         // Start periodic throttle cache cleanup for deduplicator
         startThrottleCleanup()
 
+        // Start periodic IPC refresh to keep UI updated
+        startIpcRefreshJob()
+
         // Start threading monitor for scanner performance tracking
         threadingMonitor.startMonitoring()
         threadingMonitor.updateIpcClientCount(ipcClients.size)
@@ -1929,6 +1944,9 @@ class ScanningService : Service() {
 
         // Stop throttle cleanup job
         stopThrottleCleanup()
+
+        // Stop IPC refresh job
+        stopIpcRefreshJob()
 
         // Stop threading monitor
         threadingMonitor.stopMonitoring()
@@ -4098,6 +4116,52 @@ class ScanningService : Service() {
         throttleCleanupJob?.cancel()
         throttleCleanupJob = null
         Log.d(TAG, "Throttle cleanup job stopped")
+    }
+
+    /**
+     * Start periodic IPC refresh job.
+     * Broadcasts all subsystem data to connected clients every few seconds.
+     * This ensures the UI stays updated even when no events are occurring.
+     */
+    private fun startIpcRefreshJob() {
+        ipcRefreshJob?.cancel()
+        ipcRefreshJob = serviceScope.launch {
+            while (isActive) {
+                delay(IPC_REFRESH_INTERVAL_MS)
+                if (ipcClients.isNotEmpty()) {
+                    broadcastAllSubsystemData()
+                }
+            }
+        }
+        Log.d(TAG, "IPC refresh job started")
+    }
+
+    /**
+     * Stop the IPC refresh job.
+     */
+    private fun stopIpcRefreshJob() {
+        ipcRefreshJob?.cancel()
+        ipcRefreshJob = null
+        Log.d(TAG, "IPC refresh job stopped")
+    }
+
+    /**
+     * Broadcast all subsystem data to connected IPC clients.
+     * Called periodically to ensure UI stays up-to-date.
+     */
+    private fun broadcastAllSubsystemData() {
+        broadcastStateToClients()
+        broadcastDetectorHealth()
+        broadcastScanStats()
+        broadcastSeenBleDevices()
+        broadcastSeenWifiNetworks()
+        broadcastCellularData()
+        broadcastSatelliteData()
+        broadcastRogueWifiData()
+        broadcastRfData()
+        broadcastUltrasonicData()
+        broadcastGnssData()
+        broadcastThreadingData()
     }
 
     /**

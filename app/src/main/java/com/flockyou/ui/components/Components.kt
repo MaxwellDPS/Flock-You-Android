@@ -576,12 +576,14 @@ private fun EnrichmentStatusRow(
     onPrioritizeEnrichment: ((Detection) -> Unit)?
 ) {
     // Determine enrichment state
-    val hasEnrichment = detection.fpScore != null && detection.analyzedAt != null
+    val hasBasicEnrichment = detection.fpScore != null && detection.analyzedAt != null
     val isLlmEnriched = detection.llmAnalyzed
-    val needsEnrichment = !hasEnrichment
+    // Detection needs LLM enrichment if it hasn't been LLM analyzed yet
+    // (even if it has basic rule-based analysis)
+    val needsLlmEnrichment = !isLlmEnriched
 
     // FP thresholds (matching FalsePositiveAnalyzer)
-    val isFalsePositive = hasEnrichment && (detection.fpScore ?: 0f) >= 0.4f
+    val isFalsePositive = hasBasicEnrichment && (detection.fpScore ?: 0f) >= 0.4f
     val fpConfidenceLevel = when {
         (detection.fpScore ?: 0f) >= 0.8f -> "High confidence"
         (detection.fpScore ?: 0f) >= 0.6f -> "Likely"
@@ -590,7 +592,8 @@ private fun EnrichmentStatusRow(
     }
 
     // Only show this row if there's something to display
-    if (!needsEnrichment && !isAnalyzing && !isEnrichmentPending) {
+    // Show analyzed state when LLM enriched AND not currently processing
+    if (!needsLlmEnrichment && !isAnalyzing && !isEnrichmentPending) {
         Spacer(modifier = Modifier.height(4.dp))
 
         // Show FP indicator if flagged as false positive
@@ -643,7 +646,7 @@ private fun EnrichmentStatusRow(
         }
 
         // Show a subtle "analyzed" indicator when LLM was used (not FP)
-        if (isLlmEnriched || hasEnrichment) {
+        if (isLlmEnriched || hasBasicEnrichment) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -683,7 +686,7 @@ private fun EnrichmentStatusRow(
         shape = RoundedCornerShape(6.dp),
         color = when {
             isAnalyzing || isEnrichmentPending -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            needsEnrichment -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            needsLlmEnrichment -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             else -> Color.Transparent
         }
     ) {
@@ -706,7 +709,7 @@ private fun EnrichmentStatusRow(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                needsEnrichment -> {
+                needsLlmEnrichment -> {
                     // Missing enrichment - show warning icon and prioritize button
                     Icon(
                         imageVector = Icons.Default.Schedule,

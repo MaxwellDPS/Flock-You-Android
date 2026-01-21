@@ -255,13 +255,28 @@ bool flock_usb_cdc_send(FlockUsbCdc* usb, const uint8_t* data, size_t length) {
     // We need to copy to non-const buffer as the API requires non-const
     size_t sent = 0;
     uint8_t tx_buf[64];
-    while (sent < length) {
+    uint32_t max_chunks = (length / 64) + 10;  // Safety limit to prevent infinite loop
+    uint32_t chunks_sent = 0;
+
+    while (sent < length && chunks_sent < max_chunks) {
         size_t to_send = length - sent;
         if (to_send > 64) to_send = 64; // CDC max packet size
 
         memcpy(tx_buf, data + sent, to_send);
         furi_hal_cdc_send(FLOCK_CDC_CHANNEL, tx_buf, to_send);
         sent += to_send;
+        chunks_sent++;
+
+        // Yield briefly after each chunk to prevent blocking the system
+        // and allow the USB hardware to drain its buffer
+        if (sent < length) {
+            furi_delay_us(100);  // 100us delay between chunks
+        }
+    }
+
+    if (sent < length) {
+        FURI_LOG_W(TAG, "TX incomplete: sent %zu of %zu bytes", sent, length);
+        return false;
     }
 
     FURI_LOG_D(TAG, "TX: %zu bytes via channel %d", length, FLOCK_CDC_CHANNEL);
