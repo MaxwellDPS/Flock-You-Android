@@ -50,7 +50,7 @@ fun UltrasonicDetectionScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     val ultrasonicStatus = uiState.ultrasonicStatus
-    val ultrasonicAnomalies = uiState.ultrasonicAnomalies
+    val ultrasonicAnomalies = viewModel.getFilteredUltrasonicAnomalies()
     val ultrasonicBeacons = uiState.ultrasonicBeacons
     val isScanning = uiState.isScanning
 

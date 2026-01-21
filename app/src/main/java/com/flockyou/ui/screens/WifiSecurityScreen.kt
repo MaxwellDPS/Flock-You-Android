@@ -52,7 +52,7 @@ fun WifiSecurityScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     val wifiStatus = uiState.rogueWifiStatus
-    val wifiAnomalies = uiState.rogueWifiAnomalies
+    val wifiAnomalies = viewModel.getFilteredRogueWifiAnomalies()
     val suspiciousNetworks = uiState.suspiciousNetworks
     val isScanning = uiState.isScanning
 

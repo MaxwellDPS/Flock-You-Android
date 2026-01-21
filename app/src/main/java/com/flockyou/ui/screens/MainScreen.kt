@@ -72,6 +72,18 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val prioritizedEnrichmentIds by viewModel.prioritizedEnrichmentIds.collectAsState()
+
+    // Filtered anomalies (excludes FP-marked detections)
+    val filteredCellularAnomalies = remember(uiState.cellularAnomalies, uiState.detections, uiState.hideFalsePositives, uiState.fpFilterThreshold) {
+        viewModel.getFilteredCellularAnomalies()
+    }
+    val filteredSatelliteAnomalies = remember(uiState.satelliteAnomalies, uiState.detections, uiState.hideFalsePositives, uiState.fpFilterThreshold) {
+        viewModel.getFilteredSatelliteAnomalies()
+    }
+    val filteredRogueWifiAnomalies = remember(uiState.rogueWifiAnomalies, uiState.detections, uiState.hideFalsePositives, uiState.fpFilterThreshold) {
+        viewModel.getFilteredRogueWifiAnomalies()
+    }
+
     val context = LocalContext.current
     var showFilterSheet by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -248,8 +260,8 @@ fun MainScreen(
                     icon = {
                         BadgedBox(
                             badge = {
-                                if (uiState.cellularAnomalies.isNotEmpty()) {
-                                    Badge { Text(uiState.cellularAnomalies.size.toString()) }
+                                if (filteredCellularAnomalies.isNotEmpty()) {
+                                    Badge { Text(filteredCellularAnomalies.size.toString()) }
                                 } else {
                                     // Show checkmark badge when no anomalies
                                     Badge(
@@ -364,11 +376,11 @@ fun MainScreen(
                         }
 
                         // Cellular status card (show when scanning or has anomalies)
-                        if (uiState.isScanning || uiState.cellularAnomalies.isNotEmpty()) {
+                        if (uiState.isScanning || filteredCellularAnomalies.isNotEmpty()) {
                             item(key = "cellular_status_card") {
                                 CellularStatusCard(
                                     cellStatus = uiState.cellStatus,
-                                    anomalies = uiState.cellularAnomalies,
+                                    anomalies = filteredCellularAnomalies,
                                     isMonitoring = uiState.cellularStatus == ScanningService.SubsystemStatus.Active
                                 )
                             }
@@ -390,10 +402,10 @@ fun MainScreen(
                                 onNavigateToUltrasonicDetection = onNavigateToUltrasonicDetection,
                                 onNavigateToSatelliteDetection = onNavigateToSatelliteDetection,
                                 onNavigateToWifiSecurity = onNavigateToWifiSecurity,
-                                wifiAnomalyCount = uiState.rogueWifiAnomalies.size,
+                                wifiAnomalyCount = filteredRogueWifiAnomalies.size,
                                 rfAnomalyCount = viewModel.getFilteredRfAnomalies().size,
                                 ultrasonicBeaconCount = uiState.ultrasonicBeacons.size,
-                                satelliteAnomalyCount = uiState.satelliteAnomalies.size
+                                satelliteAnomalyCount = filteredSatelliteAnomalies.size
                             )
                         }
 
@@ -634,10 +646,10 @@ fun MainScreen(
                             modifier = Modifier.fillMaxSize(),
                             cellStatus = uiState.cellStatus,
                             cellularStatus = uiState.cellularStatus,
-                            cellularAnomalies = uiState.cellularAnomalies,
+                            cellularAnomalies = filteredCellularAnomalies,
                             seenCellTowers = uiState.seenCellTowers,
                             satelliteState = uiState.satelliteState,
-                            satelliteAnomalies = uiState.satelliteAnomalies,
+                            satelliteAnomalies = filteredSatelliteAnomalies,
                             isScanning = uiState.isScanning,
                             onToggleScan = { viewModel.toggleScanning() },
                             onClearCellularHistory = { viewModel.clearCellularHistory() },
@@ -654,7 +666,8 @@ fun MainScreen(
                             isScanning = uiState.flipperIsScanning,
                             detectionCount = uiState.flipperDetectionCount,
                             wipsAlertCount = uiState.flipperWipsAlertCount,
-                            lastError = uiState.flipperLastError
+                            lastError = uiState.flipperLastError,
+                            advancedMode = uiState.advancedMode
                         )
                     }
                 }
@@ -2818,7 +2831,8 @@ fun FlipperTabContent(
     isScanning: Boolean,
     detectionCount: Int,
     wipsAlertCount: Int,
-    lastError: String?
+    lastError: String?,
+    advancedMode: Boolean = false
 ) {
     LazyColumn(
         modifier = modifier,
@@ -2859,6 +2873,15 @@ fun FlipperTabContent(
                     FlipperCapabilitiesCard(
                         flipperStatus = flipperStatus
                     )
+                }
+
+                // Advanced Mode: Detection Scheduler & Raw Data
+                if (advancedMode) {
+                    item(key = "flipper_advanced") {
+                        FlipperAdvancedInfoCard(
+                            flipperStatus = flipperStatus
+                        )
+                    }
                 }
             }
             FlipperConnectionState.DISCONNECTED -> {
@@ -3424,6 +3447,208 @@ private fun FlipperErrorCard(lastError: String?) {
                 color = MaterialTheme.colorScheme.primary
             )
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlipperAdvancedInfoCard(
+    flipperStatus: com.flockyou.scanner.flipper.FlipperStatusResponse?
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeveloperMode,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.tertiary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "ADVANCED INFO",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (flipperStatus != null) {
+                // Protocol Version
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Protocol Version",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "v${flipperStatus.protocolVersion}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Detection Scheduler Status
+                Text(
+                    text = "Scanner Status",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ScannerStatusChip("SubGHz", flipperStatus.subGhzReady, flipperStatus.subGhzDetectionCount)
+                    ScannerStatusChip("BLE", flipperStatus.bleReady, flipperStatus.bleScanCount)
+                    ScannerStatusChip("NFC", flipperStatus.nfcReady, flipperStatus.nfcDetectionCount)
+                    ScannerStatusChip("IR", flipperStatus.irReady, flipperStatus.irDetectionCount)
+                    ScannerStatusChip("WiFi", flipperStatus.wifiBoardConnected, flipperStatus.wifiScanCount)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Raw Detection Counts
+                Text(
+                    text = "Raw Detection Counts",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(12.dp)
+                ) {
+                    RawDataRow("WiFi Scans", flipperStatus.wifiScanCount)
+                    RawDataRow("Sub-GHz Detections", flipperStatus.subGhzDetectionCount)
+                    RawDataRow("BLE Scans", flipperStatus.bleScanCount)
+                    RawDataRow("IR Detections", flipperStatus.irDetectionCount)
+                    RawDataRow("NFC Detections", flipperStatus.nfcDetectionCount)
+                    RawDataRow("WIPS Alerts", flipperStatus.wipsAlertCount)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Uptime raw
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Uptime (raw)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${flipperStatus.uptimeSeconds}s",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            } else {
+                Text(
+                    text = "Waiting for status data...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerStatusChip(
+    name: String,
+    isReady: Boolean,
+    count: Int
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (isReady)
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+        else
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .background(
+                        if (isReady) Color(0xFF4CAF50) else Color(0xFF9E9E9E),
+                        RoundedCornerShape(3.dp)
+                    )
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = "($count)",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun RawDataRow(
+    label: String,
+    value: Int
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value.toString(),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 

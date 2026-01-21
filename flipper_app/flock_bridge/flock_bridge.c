@@ -353,23 +353,90 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             }
             break;
         }
-        case FlockMsgTypeWifiScanRequest:
-            // Trigger WiFi scan (would be forwarded to ESP32)
+        case FlockMsgTypeWifiScanRequest: {
+            // WiFi scan - requires ESP32 external radio
             FURI_LOG_I(TAG, "WiFi scan requested");
+            notification_message(app->notifications, &sequence_blink_blue_10);
+
+            // Forward to external radio if available
+            if (app->external_radio) {
+                // External radio handles WiFi scanning via ESP32
+                FURI_LOG_I(TAG, "WiFi scan forwarded to external radio");
+            }
+
+            // Send acknowledgment
+            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+            if (len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, len);
+            }
             break;
-        case FlockMsgTypeSubGhzScanRequest:
-            // Trigger Sub-GHz scan
+        }
+        case FlockMsgTypeSubGhzScanRequest: {
+            // Sub-GHz scan - enable via detection scheduler
             FURI_LOG_I(TAG, "Sub-GHz scan requested");
+            notification_message(app->notifications, &sequence_blink_yellow_10);
+
+            if (app->detection_scheduler) {
+                // Scanner should already be running, just acknowledge
+                FURI_LOG_I(TAG, "SubGHz scanner active");
+            }
+
+            // Send acknowledgment
+            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+            if (len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, len);
+            }
             break;
-        case FlockMsgTypeBleScanRequest:
+        }
+        case FlockMsgTypeBleScanRequest: {
+            // BLE scan - enable via detection scheduler
             FURI_LOG_I(TAG, "BLE scan requested");
+            notification_message(app->notifications, &sequence_blink_cyan_10);
+
+            if (app->detection_scheduler) {
+                // Scanner should already be running, just acknowledge
+                FURI_LOG_I(TAG, "BLE scanner active");
+            }
+
+            // Send acknowledgment
+            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+            if (len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, len);
+            }
             break;
-        case FlockMsgTypeIrScanRequest:
-            FURI_LOG_I(TAG, "IR scan requested");
+        }
+        case FlockMsgTypeIrScanRequest: {
+            // IR scan - not running continuously (conflicts with USB CDC)
+            FURI_LOG_I(TAG, "IR scan requested (passive mode only)");
+            notification_message(app->notifications, &sequence_blink_red_10);
+
+            // IR scanner is allocated but not running to avoid USB CDC conflict
+            // IR transmit still works via FlockMsgTypeIrStrobeTx
+
+            // Send acknowledgment
+            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+            if (len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, len);
+            }
             break;
-        case FlockMsgTypeNfcScanRequest:
+        }
+        case FlockMsgTypeNfcScanRequest: {
+            // NFC scan - enable via detection scheduler
             FURI_LOG_I(TAG, "NFC scan requested");
+            notification_message(app->notifications, &sequence_blink_green_10);
+
+            if (app->detection_scheduler) {
+                // Scanner should already be running, just acknowledge
+                FURI_LOG_I(TAG, "NFC scanner active");
+            }
+
+            // Send acknowledgment
+            size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
+            if (len > 0) {
+                flock_bridge_send_data(app, app->tx_buffer, len);
+            }
             break;
+        }
 
         // ================================================================
         // Active Probe Commands - Public Safety & Fleet

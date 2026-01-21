@@ -753,6 +753,185 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Returns cellular anomalies filtered to exclude those marked as false positives.
+     * Matches anomalies to detections by timestamp proximity and type.
+     */
+    fun getFilteredCellularAnomalies(): List<CellularMonitor.CellularAnomaly> {
+        val state = _uiState.value
+        if (!state.hideFalsePositives) {
+            return state.cellularAnomalies
+        }
+
+        // Get cellular detections that are marked as FP
+        val fpCellularDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.CELLULAR &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpCellularDetections.isEmpty()) {
+            return state.cellularAnomalies
+        }
+
+        // Filter out anomalies that match FP detections (by timestamp within 5 seconds and similar characteristics)
+        return state.cellularAnomalies.filter { anomaly ->
+            val matchesFpDetection = fpCellularDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                val cellIdMatch = detection.manufacturer?.contains(anomaly.cellId?.toString() ?: "") == true
+                timeDiff < 5000 && cellIdMatch
+            }
+            !matchesFpDetection
+        }
+    }
+
+    /**
+     * Returns GNSS anomalies filtered to exclude those marked as false positives.
+     */
+    fun getFilteredGnssAnomalies(): List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly> {
+        val state = _uiState.value
+        if (!state.hideFalsePositives) {
+            return state.gnssAnomalies
+        }
+
+        val fpGnssDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.GNSS &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpGnssDetections.isEmpty()) {
+            return state.gnssAnomalies
+        }
+
+        return state.gnssAnomalies.filter { anomaly ->
+            val matchesFpDetection = fpGnssDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                timeDiff < 5000
+            }
+            !matchesFpDetection
+        }
+    }
+
+    /**
+     * Returns satellite anomalies filtered to exclude those marked as false positives.
+     */
+    fun getFilteredSatelliteAnomalies(): List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly> {
+        val state = _uiState.value
+        if (!state.hideFalsePositives) {
+            return state.satelliteAnomalies
+        }
+
+        val fpSatelliteDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.SATELLITE &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpSatelliteDetections.isEmpty()) {
+            return state.satelliteAnomalies
+        }
+
+        return state.satelliteAnomalies.filter { anomaly ->
+            val matchesFpDetection = fpSatelliteDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                timeDiff < 5000
+            }
+            !matchesFpDetection
+        }
+    }
+
+    /**
+     * Returns ultrasonic anomalies filtered to exclude those marked as false positives.
+     */
+    fun getFilteredUltrasonicAnomalies(): List<UltrasonicDetector.UltrasonicAnomaly> {
+        val state = _uiState.value
+        if (!state.hideFalsePositives) {
+            return state.ultrasonicAnomalies
+        }
+
+        val fpUltrasonicDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.AUDIO &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpUltrasonicDetections.isEmpty()) {
+            return state.ultrasonicAnomalies
+        }
+
+        return state.ultrasonicAnomalies.filter { anomaly ->
+            val matchesFpDetection = fpUltrasonicDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                // Match by frequency stored in ssid field
+                val freqMatch = detection.ssid?.contains(anomaly.frequency.toString()) == true
+                timeDiff < 5000 && freqMatch
+            }
+            !matchesFpDetection
+        }
+    }
+
+    /**
+     * Returns rogue WiFi anomalies filtered to exclude those marked as false positives.
+     */
+    fun getFilteredRogueWifiAnomalies(): List<RogueWifiMonitor.WifiAnomaly> {
+        val state = _uiState.value
+        if (!state.hideFalsePositives) {
+            return state.rogueWifiAnomalies
+        }
+
+        val fpWifiDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.WIFI &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpWifiDetections.isEmpty()) {
+            return state.rogueWifiAnomalies
+        }
+
+        return state.rogueWifiAnomalies.filter { anomaly ->
+            val matchesFpDetection = fpWifiDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                // Match by BSSID/MAC or SSID
+                val bssidMatch = detection.macAddress?.equals(anomaly.bssid, ignoreCase = true) == true
+                val ssidMatch = detection.ssid?.equals(anomaly.ssid, ignoreCase = true) == true
+                timeDiff < 10000 && (bssidMatch || ssidMatch)
+            }
+            !matchesFpDetection
+        }
+    }
+
+    /**
+     * Returns RF anomalies filtered based on advanced mode AND false positive status.
+     */
+    fun getFilteredRfAnomaliesWithFp(): List<RfSignalAnalyzer.RfAnomaly> {
+        val state = _uiState.value
+
+        // First apply advanced mode filter
+        val advancedFiltered = if (state.advancedMode) {
+            state.rfAnomalies
+        } else {
+            state.rfAnomalies.filter { !it.isAdvancedOnly }
+        }
+
+        if (!state.hideFalsePositives) {
+            return advancedFiltered
+        }
+
+        val fpRfDetections = state.detections.filter { detection ->
+            detection.protocol == com.flockyou.data.model.DetectionProtocol.RF &&
+            (detection.fpScore ?: 0f) >= state.fpFilterThreshold
+        }
+
+        if (fpRfDetections.isEmpty()) {
+            return advancedFiltered
+        }
+
+        return advancedFiltered.filter { anomaly ->
+            val matchesFpDetection = fpRfDetections.any { detection ->
+                val timeDiff = kotlin.math.abs(anomaly.timestamp - detection.timestamp)
+                timeDiff < 5000
+            }
+            !matchesFpDetection
+        }
+    }
+
     // OUI Database Management
     fun setOuiAutoUpdate(enabled: Boolean) {
         viewModelScope.launch {

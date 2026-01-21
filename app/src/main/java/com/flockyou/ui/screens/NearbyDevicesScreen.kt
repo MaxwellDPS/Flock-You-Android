@@ -50,22 +50,22 @@ fun NearbyDevicesScreen(
     val cellStatus = uiState.cellStatus
     val cellularStatus = uiState.cellularStatus
     val seenCellTowers = uiState.seenCellTowers
-    val cellularAnomalies = uiState.cellularAnomalies
+    val cellularAnomalies = viewModel.getFilteredCellularAnomalies()
     val isScanning = uiState.isScanning
 
     // Satellite state
     val satelliteState = uiState.satelliteState
-    val satelliteAnomalies = uiState.satelliteAnomalies
+    val satelliteAnomalies = viewModel.getFilteredSatelliteAnomalies()
     val satelliteStatus = uiState.satelliteStatus
     
     // GNSS satellite monitoring data
     val gnssStatus = uiState.gnssStatus
     val gnssSatellites = uiState.gnssSatellites
-    val gnssAnomalies = uiState.gnssAnomalies
+    val gnssAnomalies = viewModel.getFilteredGnssAnomalies()
 
     // Ultrasonic detection data
     val ultrasonicStatus = uiState.ultrasonicStatus
-    val ultrasonicAnomalies = uiState.ultrasonicAnomalies
+    val ultrasonicAnomalies = viewModel.getFilteredUltrasonicAnomalies()
     val ultrasonicBeacons = uiState.ultrasonicBeacons
 
     val tabs = listOf("BLE", "WiFi", "Cell", "GNSS", "Audio", "Sat")

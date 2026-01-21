@@ -59,7 +59,7 @@ fun RfDetectionScreen(
     }
 
     val rfStatus = uiState.rfStatus
-    val rfAnomalies = viewModel.getFilteredRfAnomalies()
+    val rfAnomalies = viewModel.getFilteredRfAnomaliesWithFp()
     val detectedDrones = uiState.detectedDrones
     val isScanning = uiState.isScanning
     val advancedMode = uiState.advancedMode

@@ -378,6 +378,10 @@ class SatelliteMonitor(
     // SatelliteManager for API 31+ (Android 12+)
     // Note: SatelliteManager is in android.telephony.satellite package (API 31+)
     private var satelliteManagerSupported = false
+    private var satelliteManagerInstance: Any? = null  // Stored via reflection
+    private var currentModemState: SatelliteModemState = SatelliteModemState.UNKNOWN
+    private var satelliteEnabled: Boolean? = null
+    private var satelliteProvisioned: Boolean? = null
     private var lastRttMeasurementMs: Long? = null
     private var lastNrarfcn: Int? = null
     
@@ -1661,36 +1665,33 @@ class SatelliteMonitor(
 
                 if (satelliteManager != null) {
                     Log.i(TAG, "  SatelliteManager instance: AVAILABLE")
+                    satelliteManagerInstance = satelliteManager
 
-                    // Check if requestIsSupported method exists
-                    try {
-                        val methods = satelliteManagerClass.methods.map { it.name }
-                        Log.i(TAG, "  SatelliteManager methods: ${methods.filter { it.contains("upport") || it.contains("nable") }}")
-
-                        // Set supported based on SatelliteManager being available
-                        satelliteManagerSupported = true
-                        Log.i(TAG, "  => Setting satelliteManagerSupported = true (SatelliteManager available)")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "  Error inspecting SatelliteManager methods: ${e.message}")
-                        satelliteManagerSupported = hasSatelliteFeature || isPixel9Or10 || isSamsungS24Plus
+                    // List all available methods for debugging
+                    val methods = satelliteManagerClass.methods.map { it.name }.distinct().sorted()
+                    Log.i(TAG, "  Available SatelliteManager methods:")
+                    methods.forEach { method ->
+                        Log.d(TAG, "    - $method")
                     }
+
+                    satelliteManagerSupported = true
+
+                    // Try to query satellite status
+                    initializeSatelliteManagerCallbacks(satelliteManager, satelliteManagerClass)
+
                 } else {
                     Log.i(TAG, "  SatelliteManager instance: NULL")
-                    // Fall back to known device detection
                     satelliteManagerSupported = hasSatelliteFeature || isPixel9Or10 || isSamsungS24Plus
                 }
             } catch (e: ClassNotFoundException) {
                 Log.i(TAG, "  SatelliteManager class: NOT FOUND (expected on some builds)")
-                // Fall back to known device detection
                 satelliteManagerSupported = hasSatelliteFeature || isPixel9Or10 || isSamsungS24Plus
             } catch (e: Exception) {
                 Log.e(TAG, "  Error checking SatelliteManager: ${e.javaClass.simpleName}: ${e.message}")
-                // Fall back to system feature or known device
                 satelliteManagerSupported = hasSatelliteFeature || isPixel9Or10 || isSamsungS24Plus
             }
         } else {
             Log.i(TAG, "  API level ${Build.VERSION.SDK_INT} < 31, SatelliteManager not available")
-            // Fall back to known device detection only
             satelliteManagerSupported = isPixel9Or10
         }
 
@@ -1699,6 +1700,233 @@ class SatelliteMonitor(
 
         // Update state with satellite support info
         _satelliteState.update { it.copy(satelliteManagerSupported = satelliteManagerSupported) }
+    }
+
+    /**
+     * Initialize SatelliteManager callbacks to receive modem state updates
+     */
+    @SuppressLint("MissingPermission")
+    private fun initializeSatelliteManagerCallbacks(satelliteManager: Any, managerClass: Class<*>) {
+        val executor = context.mainExecutor
+
+        // Try to call requestIsEnabled to check if satellite is enabled
+        tryQuerySatelliteEnabled(satelliteManager, managerClass, executor)
+
+        // Try to call requestIsProvisioned to check provisioning status
+        tryQuerySatelliteProvisioned(satelliteManager, managerClass, executor)
+
+        // Try to call requestIsSupported
+        tryQuerySatelliteSupported(satelliteManager, managerClass, executor)
+
+        // Try to register for modem state changes
+        tryRegisterModemStateCallback(satelliteManager, managerClass, executor)
+
+        // Try to get satellite capabilities
+        tryQuerySatelliteCapabilities(satelliteManager, managerClass, executor)
+    }
+
+    private fun tryQuerySatelliteEnabled(manager: Any, managerClass: Class<*>, executor: java.util.concurrent.Executor) {
+        try {
+            // Look for requestIsEnabled or requestIsSatelliteEnabled method
+            val method = managerClass.methods.find {
+                it.name == "requestIsEnabled" || it.name == "requestIsSatelliteEnabled"
+            }
+            if (method != null) {
+                Log.i(TAG, "  Calling ${method.name}...")
+                // Create OutcomeReceiver using reflection
+                val outcomeReceiverClass = Class.forName("android.os.OutcomeReceiver")
+                val receiver = java.lang.reflect.Proxy.newProxyInstance(
+                    outcomeReceiverClass.classLoader,
+                    arrayOf(outcomeReceiverClass)
+                ) { _, proxyMethod, args ->
+                    when (proxyMethod.name) {
+                        "onResult" -> {
+                            val result = args?.get(0)
+                            Log.i(TAG, "  Satellite enabled: $result")
+                            satelliteEnabled = result as? Boolean
+                            updateModemStateInUI()
+                        }
+                        "onError" -> {
+                            val error = args?.get(0)
+                            Log.w(TAG, "  requestIsEnabled error: $error")
+                        }
+                    }
+                    null
+                }
+                method.invoke(manager, executor, receiver)
+            } else {
+                Log.d(TAG, "  requestIsEnabled method not found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error querying satellite enabled: ${e.message}")
+        }
+    }
+
+    private fun tryQuerySatelliteProvisioned(manager: Any, managerClass: Class<*>, executor: java.util.concurrent.Executor) {
+        try {
+            val method = managerClass.methods.find {
+                it.name == "requestIsProvisioned" || it.name == "requestIsSatelliteProvisioned"
+            }
+            if (method != null) {
+                Log.i(TAG, "  Calling ${method.name}...")
+                val outcomeReceiverClass = Class.forName("android.os.OutcomeReceiver")
+                val receiver = java.lang.reflect.Proxy.newProxyInstance(
+                    outcomeReceiverClass.classLoader,
+                    arrayOf(outcomeReceiverClass)
+                ) { _, proxyMethod, args ->
+                    when (proxyMethod.name) {
+                        "onResult" -> {
+                            val result = args?.get(0)
+                            Log.i(TAG, "  Satellite provisioned: $result")
+                            satelliteProvisioned = result as? Boolean
+                            updateModemStateInUI()
+                        }
+                        "onError" -> {
+                            val error = args?.get(0)
+                            Log.w(TAG, "  requestIsProvisioned error: $error")
+                        }
+                    }
+                    null
+                }
+                method.invoke(manager, executor, receiver)
+            } else {
+                Log.d(TAG, "  requestIsProvisioned method not found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error querying satellite provisioned: ${e.message}")
+        }
+    }
+
+    private fun tryQuerySatelliteSupported(manager: Any, managerClass: Class<*>, executor: java.util.concurrent.Executor) {
+        try {
+            val method = managerClass.methods.find {
+                it.name == "requestIsSupported" || it.name == "requestIsSatelliteSupported"
+            }
+            if (method != null) {
+                Log.i(TAG, "  Calling ${method.name}...")
+                val outcomeReceiverClass = Class.forName("android.os.OutcomeReceiver")
+                val receiver = java.lang.reflect.Proxy.newProxyInstance(
+                    outcomeReceiverClass.classLoader,
+                    arrayOf(outcomeReceiverClass)
+                ) { _, proxyMethod, args ->
+                    when (proxyMethod.name) {
+                        "onResult" -> {
+                            val result = args?.get(0)
+                            Log.i(TAG, "  Satellite supported (API): $result")
+                            if (result == true || result == java.lang.Boolean.TRUE) {
+                                satelliteManagerSupported = true
+                                updateModemStateInUI()
+                            }
+                        }
+                        "onError" -> {
+                            val error = args?.get(0)
+                            Log.w(TAG, "  requestIsSupported error: $error")
+                        }
+                    }
+                    null
+                }
+                method.invoke(manager, executor, receiver)
+            } else {
+                Log.d(TAG, "  requestIsSupported method not found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error querying satellite supported: ${e.message}")
+        }
+    }
+
+    private fun tryRegisterModemStateCallback(manager: Any, managerClass: Class<*>, executor: java.util.concurrent.Executor) {
+        try {
+            // Look for registerForModemStateChanged or registerForSatelliteModemStateChanged
+            val method = managerClass.methods.find {
+                it.name.contains("registerFor") && it.name.contains("ModemState")
+            }
+            if (method != null) {
+                Log.i(TAG, "  Found modem state callback method: ${method.name}")
+                // TODO: Implement callback registration when we understand the callback interface
+            } else {
+                Log.d(TAG, "  No modem state callback method found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error registering modem state callback: ${e.message}")
+        }
+    }
+
+    private fun tryQuerySatelliteCapabilities(manager: Any, managerClass: Class<*>, executor: java.util.concurrent.Executor) {
+        try {
+            val method = managerClass.methods.find {
+                it.name == "requestCapabilities" || it.name == "requestSatelliteCapabilities"
+            }
+            if (method != null) {
+                Log.i(TAG, "  Calling ${method.name}...")
+                val outcomeReceiverClass = Class.forName("android.os.OutcomeReceiver")
+                val receiver = java.lang.reflect.Proxy.newProxyInstance(
+                    outcomeReceiverClass.classLoader,
+                    arrayOf(outcomeReceiverClass)
+                ) { _, proxyMethod, args ->
+                    when (proxyMethod.name) {
+                        "onResult" -> {
+                            val result = args?.get(0)
+                            Log.i(TAG, "  Satellite capabilities: $result")
+                            if (result != null) {
+                                parseSatelliteCapabilities(result)
+                            }
+                        }
+                        "onError" -> {
+                            val error = args?.get(0)
+                            Log.w(TAG, "  requestCapabilities error: $error")
+                        }
+                    }
+                    null
+                }
+                method.invoke(manager, executor, receiver)
+            } else {
+                Log.d(TAG, "  requestCapabilities method not found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error querying satellite capabilities: ${e.message}")
+        }
+    }
+
+    private fun parseSatelliteCapabilities(capabilitiesObj: Any) {
+        try {
+            val capClass = capabilitiesObj.javaClass
+            Log.i(TAG, "  Parsing capabilities from ${capClass.simpleName}")
+
+            // Try to extract capability information using reflection
+            capClass.methods.forEach { method ->
+                if (method.parameterCount == 0 && (method.name.startsWith("is") || method.name.startsWith("get") || method.name.startsWith("supports"))) {
+                    try {
+                        val value = method.invoke(capabilitiesObj)
+                        Log.i(TAG, "    ${method.name}: $value")
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "  Error parsing capabilities: ${e.message}")
+        }
+    }
+
+    private fun updateModemStateInUI() {
+        // Determine modem state based on available information
+        val modemState = when {
+            satelliteEnabled == true -> SatelliteModemState.IDLE
+            satelliteEnabled == false -> SatelliteModemState.DISABLED
+            satelliteProvisioned == false -> SatelliteModemState.NOT_CONNECTED
+            else -> SatelliteModemState.UNKNOWN
+        }
+
+        currentModemState = modemState
+
+        _satelliteState.update { state ->
+            state.copy(
+                modemState = modemState,
+                satelliteManagerSupported = satelliteManagerSupported
+            )
+        }
+
+        Log.i(TAG, "  Updated modem state: $modemState (enabled=$satelliteEnabled, provisioned=$satelliteProvisioned)")
     }
     
     /**

@@ -55,14 +55,14 @@ fun SatelliteDetectionScreen(
     val uiState by viewModel.uiState.collectAsState()
 
     val satelliteState = uiState.satelliteState
-    val satelliteAnomalies = uiState.satelliteAnomalies
+    val satelliteAnomalies = viewModel.getFilteredSatelliteAnomalies()
     val satelliteStatus = uiState.satelliteStatus
     val isScanning = uiState.isScanning
 
     // GNSS satellite monitoring data
     val gnssStatus = uiState.gnssStatus
     val gnssSatellites = uiState.gnssSatellites
-    val gnssAnomalies = uiState.gnssAnomalies
+    val gnssAnomalies = viewModel.getFilteredGnssAnomalies()
     val gnssEvents = uiState.gnssEvents
     val gnssMeasurements = uiState.gnssMeasurements
 
