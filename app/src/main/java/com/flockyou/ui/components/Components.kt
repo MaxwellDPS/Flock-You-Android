@@ -566,6 +566,186 @@ fun StatItem(
 }
 
 /**
+ * Enrichment status row showing AI analysis state and prioritize button
+ */
+@Composable
+private fun EnrichmentStatusRow(
+    detection: Detection,
+    isAnalyzing: Boolean,
+    isEnrichmentPending: Boolean,
+    onPrioritizeEnrichment: ((Detection) -> Unit)?
+) {
+    // Determine enrichment state
+    val hasEnrichment = detection.fpScore != null && detection.analyzedAt != null
+    val isLlmEnriched = detection.llmAnalyzed
+    val needsEnrichment = !hasEnrichment
+
+    // FP thresholds (matching FalsePositiveAnalyzer)
+    val isFalsePositive = hasEnrichment && (detection.fpScore ?: 0f) >= 0.4f
+    val fpConfidenceLevel = when {
+        (detection.fpScore ?: 0f) >= 0.8f -> "High confidence"
+        (detection.fpScore ?: 0f) >= 0.6f -> "Likely"
+        (detection.fpScore ?: 0f) >= 0.4f -> "Possibly"
+        else -> null
+    }
+
+    // Only show this row if there's something to display
+    if (!needsEnrichment && !isAnalyzing && !isEnrichmentPending) {
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Show FP indicator if flagged as false positive
+        if (isFalsePositive && fpConfidenceLevel != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VerifiedUser,
+                        contentDescription = "False positive",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "$fpConfidenceLevel false positive",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    detection.fpReason?.let { reason ->
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "• ${reason.take(40)}${if (reason.length > 40) "..." else ""}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (isLlmEnriched) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "AI analyzed",
+                            tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        // Show a subtle "analyzed" indicator when LLM was used (not FP)
+        if (isLlmEnriched || hasEnrichment) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (isLlmEnriched) Icons.Default.AutoAwesome else Icons.Default.CheckCircle,
+                    contentDescription = "Analyzed",
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (isLlmEnriched) "AI analyzed" else "Analyzed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                // Show FP score if analyzed but not flagged as FP
+                detection.fpScore?.let { score ->
+                    if (score > 0f && score < 0.4f) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "• FP: ${(score * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = when {
+            isAnalyzing || isEnrichmentPending -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            needsEnrichment -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            else -> Color.Transparent
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            when {
+                isAnalyzing || isEnrichmentPending -> {
+                    // Currently being analyzed or queued for analysis
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isAnalyzing) "Analyzing..." else "Queued for analysis",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                needsEnrichment -> {
+                    // Missing enrichment - show warning icon and prioritize button
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = "Pending analysis",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Pending AI analysis",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    if (onPrioritizeEnrichment != null) {
+                        TextButton(
+                            onClick = { onPrioritizeEnrichment(detection) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VerticalAlignTop,
+                                contentDescription = "Prioritize",
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Prioritize",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Detection list item card
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -577,6 +757,8 @@ fun DetectionCard(
     advancedMode: Boolean = false,
     onAnalyzeClick: ((Detection) -> Unit)? = null,
     isAnalyzing: Boolean = false,
+    onPrioritizeEnrichment: ((Detection) -> Unit)? = null,
+    isEnrichmentPending: Boolean = false,
     ouiLookupViewModel: OuiLookupViewModel = hiltViewModel()
 ) {
     val threatColor = detection.threatLevel.toColor()
@@ -831,6 +1013,14 @@ fun DetectionCard(
                     }
                 }
             }
+
+            // Enrichment status indicator
+            EnrichmentStatusRow(
+                detection = detection,
+                isAnalyzing = isAnalyzing,
+                isEnrichmentPending = isEnrichmentPending,
+                onPrioritizeEnrichment = onPrioritizeEnrichment
+            )
 
             // Advanced mode: Show additional technical details
             if (advancedMode) {

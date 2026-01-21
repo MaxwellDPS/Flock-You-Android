@@ -51,14 +51,16 @@ class GnssSatelliteMonitor(
 
         // Spoofing detection thresholds
         const val MIN_SATELLITES_FOR_FIX = 4
-        const val SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD = 3.0  // dB-Hz - too uniform = spoofing
+        const val GOOD_FIX_SATELLITES = 10  // When fix is this good, suppress low-confidence anomalies
+        const val SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD = 5.0  // dB-Hz - increased from 3.0 to reduce false positives
         const val MAX_VALID_CN0_DBH = 55.0  // Above this is suspicious
         const val MIN_VALID_CN0_DBH = 10.0  // Below this is noise
         const val JAMMING_CN0_DROP_THRESHOLD = 15.0  // Sudden drop in dB-Hz
         const val SPOOFING_ELEVATION_THRESHOLD = 5.0  // Satellites claiming <5° elevation suspiciously strong
 
-        // Multipath detection
+        // Multipath detection - more conservative to avoid false positives
         const val MULTIPATH_SNR_VARIANCE_THRESHOLD = 8.0  // High variance = multipath
+        const val MULTIPATH_MIN_RATIO = 0.6f  // >60% of measurements must show multipath (was 50%)
 
         // Timing thresholds
         const val MAX_CLOCK_DRIFT_NS = 1_000_000L  // 1ms max drift between measurements
@@ -597,16 +599,29 @@ class GnssSatelliteMonitor(
 
         _measurements.value = measurementData
 
-        // Check for severe multipath
+        // Check for severe multipath - but suppress if we have a good fix
+        // Multipath is expected in urban/indoor environments and doesn't affect fix quality
         val severeMultipath = multipathIndicators.count {
             it == GnssMeasurement.MULTIPATH_INDICATOR_DETECTED
         }
-        if (severeMultipath > measurements.size / 2 && measurements.size >= MIN_SATELLITES_FOR_FIX) {
+        val multipathRatio = if (measurements.isNotEmpty()) severeMultipath.toFloat() / measurements.size else 0f
+        val currentStatus = _gnssStatus.value
+        val hasGoodFix = currentStatus != null &&
+            currentStatus.satellitesUsedInFix >= GOOD_FIX_SATELLITES &&
+            currentStatus.spoofingRiskLevel == SpoofingRiskLevel.NONE
+
+        // Only report multipath if:
+        // 1. More than 60% of measurements show multipath (increased from 50%)
+        // 2. We have enough satellites to be meaningful
+        // 3. We DON'T have a good fix (multipath with good fix = normal urban environment)
+        if (multipathRatio > MULTIPATH_MIN_RATIO &&
+            measurements.size >= MIN_SATELLITES_FOR_FIX &&
+            !hasGoodFix) {
             reportAnomaly(
                 type = GnssAnomalyType.MULTIPATH_SEVERE,
                 description = "Severe multipath interference detected",
-                technicalDetails = "$severeMultipath of ${measurements.size} satellites showing multipath",
-                confidence = AnomalyConfidence.MEDIUM,
+                technicalDetails = "$severeMultipath of ${measurements.size} satellites showing multipath (${String.format("%.0f", multipathRatio * 100)}%)",
+                confidence = AnomalyConfidence.LOW,  // Reduced from MEDIUM - multipath is very common
                 contributingFactors = listOf("Urban canyon or indoor environment likely")
             )
         }
@@ -736,12 +751,19 @@ class GnssSatelliteMonitor(
         }
 
         // Signal uniformity anomaly (spoofing indicator) - enriched
-        if (analysis.cn0TooUniform && !status.jammingDetected) {
+        // Only report if we have OTHER spoofing indicators too - uniformity alone is not suspicious enough
+        val hasGoodFix = status.satellitesUsedInFix >= GOOD_FIX_SATELLITES &&
+            status.spoofingRiskLevel == SpoofingRiskLevel.NONE
+        val hasOtherSpoofingIndicators = analysis.spoofingIndicators.size > 1 ||
+            analysis.lowElevHighSignalCount > 0 ||
+            status.spoofingRiskLevel != SpoofingRiskLevel.NONE
+
+        if (analysis.cn0TooUniform && !status.jammingDetected && !hasGoodFix && hasOtherSpoofingIndicators) {
             reportAnomaly(
                 type = GnssAnomalyType.SIGNAL_UNIFORMITY,
                 description = "Signal uniformity suspicious - variance: ${String.format("%.2f", analysis.cn0Variance)}",
                 technicalDetails = buildGnssTechnicalDetails(analysis),
-                confidence = AnomalyConfidence.MEDIUM,
+                confidence = AnomalyConfidence.LOW,  // Reduced from MEDIUM - uniformity alone is weak evidence
                 contributingFactors = analysis.spoofingIndicators
             )
         }

@@ -53,9 +53,9 @@ class GnssDetectionHandler @Inject constructor() {
         private const val JAMMING_HIGH_THRESHOLD = 70f
         private const val JAMMING_MEDIUM_THRESHOLD = 40f
 
-        // C/N0 thresholds
-        private const val CN0_VARIANCE_SUSPICIOUS = 3.0  // dB-Hz - too uniform suggests spoofing
-        private const val CN0_DEVIATION_SIGNIFICANT = 2.0  // standard deviations from baseline
+        // C/N0 thresholds - increased to reduce false positives
+        private const val CN0_VARIANCE_SUSPICIOUS = 5.0  // dB-Hz - too uniform suggests spoofing (was 3.0)
+        private const val CN0_DEVIATION_SIGNIFICANT = 2.5  // standard deviations from baseline (was 2.0)
 
         // Geometry thresholds
         private const val GEOMETRY_POOR_THRESHOLD = 0.4f

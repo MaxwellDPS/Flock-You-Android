@@ -220,6 +220,7 @@ struct FlockBridgeApp {
     uint8_t tx_buffer[512];   // TX buffer for outgoing messages
     uint8_t rx_buffer[512];   // RX buffer for incoming messages
     size_t rx_buffer_len;
+    uint32_t rx_buffer_timestamp;  // Tick when partial data arrived (for timeout)
 
     // Notifications
     NotificationApp* notifications;

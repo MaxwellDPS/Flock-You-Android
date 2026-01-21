@@ -409,7 +409,17 @@ class RogueWifiMonitor(
         val channelCongestion = mutableMapOf<Int, Int>()
         val suspiciousFound = mutableListOf<SuspiciousNetwork>()
 
-        for (result in results) {
+        // Filter out invalid results (RSSI of 0 is invalid, valid range is typically -100 to -20 dBm)
+        val validResults = results.filter { result ->
+            val rssi = result.level
+            rssi != 0 && rssi in -120..-10
+        }
+
+        if (validResults.size < results.size) {
+            Log.d(TAG, "Filtered ${results.size - validResults.size} WiFi results with invalid RSSI values")
+        }
+
+        for (result in validResults) {
             val bssid = result.BSSID?.uppercase() ?: continue
             @Suppress("DEPRECATION")
             val ssid = result.SSID ?: ""
@@ -641,34 +651,126 @@ class RogueWifiMonitor(
                     continue
                 }
 
-                // We have multiple distinct devices - check for evil twin
+                // Check if this looks like a mesh network (multiple nodes from same ecosystem)
+                // Mesh networks have:
+                // 1. Similar OUI prefixes (often differ only slightly)
+                // 2. Multiple APs with consistent presence over time
+                // 3. All BSSIDs seen frequently (not a new/suspicious AP)
+                val isMeshNetwork = isLikelyMeshNetwork(ssid, apDetails)
+                if (isMeshNetwork) {
+                    Log.d(TAG, "SSID '$ssid' appears to be a mesh network with ${apDetails.size} nodes - not flagging as evil twin")
+                    continue
+                }
+
+                // We have multiple distinct devices that don't appear to be a mesh - check for evil twin
                 val signals = apDetails.map { it.rssi }
                 val maxDiff = (signals.maxOrNull() ?: 0) - (signals.minOrNull() ?: 0)
 
-                if (maxDiff > EVIL_TWIN_SIGNAL_DIFF_THRESHOLD) {
+                // Increase threshold to reduce false positives - multiple legitimate APs in a building
+                // can have 15-20 dBm variance. True evil twins typically have larger differences
+                // because they're trying to overpower the legitimate AP from a different location.
+                val adjustedThreshold = if (deviceGroups.size >= 3) {
+                    // 3+ device groups is likely a mesh or enterprise deployment
+                    EVIL_TWIN_SIGNAL_DIFF_THRESHOLD + 15 // 30 dBm
+                } else {
+                    EVIL_TWIN_SIGNAL_DIFF_THRESHOLD + 5 // 20 dBm
+                }
+
+                if (maxDiff > adjustedThreshold) {
                     // Different signal strengths from different devices - possible evil twin
                     val strongestAp = apDetails.maxByOrNull { it.rssi }
 
-                    reportAnomaly(
-                        type = WifiAnomalyType.EVIL_TWIN,
-                        description = "Multiple APs advertising same SSID with different signal strengths",
-                        technicalDetails = "SSID '$ssid' seen from ${deviceGroups.size} different devices " +
-                            "(${apDetails.size} total BSSIDs). Signal variance: ${maxDiff}dBm suggests " +
-                            "different physical locations/devices. Dual-band APs from the same router were excluded.",
-                        ssid = ssid,
-                        bssid = strongestAp?.bssid,
-                        rssi = strongestAp?.rssi,
-                        confidence = AnomalyConfidence.MEDIUM,
-                        contributingFactors = listOf(
-                            "${deviceGroups.size} distinct devices with same SSID",
-                            "Signal difference: ${maxDiff}dBm",
-                            "BSSIDs: ${bssids.take(3).joinToString(", ")}"
-                        ),
-                        relatedNetworks = bssids.toList()
-                    )
+                    // Check if the strongest AP is one we've seen many times (trusted)
+                    val strongestHistory = strongestAp?.bssid?.let { networkHistory[it] }
+                    val isStrongestTrusted = (strongestHistory?.seenCount ?: 0) >= 5
+
+                    // Only report if the suspicious AP is new/rarely seen
+                    if (!isStrongestTrusted) {
+                        reportAnomaly(
+                            type = WifiAnomalyType.EVIL_TWIN,
+                            description = "Multiple APs advertising same SSID with different signal strengths",
+                            technicalDetails = "SSID '$ssid' seen from ${deviceGroups.size} different devices " +
+                                "(${apDetails.size} total BSSIDs). Signal variance: ${maxDiff}dBm suggests " +
+                                "different physical locations/devices. Mesh networks and dual-band APs were excluded.",
+                            ssid = ssid,
+                            bssid = strongestAp?.bssid,
+                            rssi = strongestAp?.rssi,
+                            confidence = AnomalyConfidence.MEDIUM,
+                            contributingFactors = listOf(
+                                "${deviceGroups.size} distinct devices with same SSID",
+                                "Signal difference: ${maxDiff}dBm",
+                                "BSSIDs: ${bssids.take(3).joinToString(", ")}"
+                            ),
+                            relatedNetworks = bssids.toList()
+                        )
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Determine if an SSID with multiple BSSIDs is likely a mesh network.
+     *
+     * Mesh networks are characterized by:
+     * 1. Multiple APs with the same SSID (by design)
+     * 2. APs that have been seen consistently over time (not new/suspicious)
+     * 3. OUIs that are similar or from known mesh router manufacturers
+     * 4. Presence on multiple frequency bands
+     */
+    private fun isLikelyMeshNetwork(ssid: String, apDetails: List<ApDetails>): Boolean {
+        if (apDetails.size < 3) return false  // Mesh typically has 3+ nodes
+
+        // Check if most APs have been seen multiple times (established network)
+        val allEstablished = apDetails.all { ap ->
+            val history = networkHistory[ap.bssid]
+            (history?.seenCount ?: 0) >= 3
+        }
+
+        // Check OUI similarity - mesh networks often have similar OUIs
+        val ouis = apDetails.map { it.bssid.take(8) }.toSet()
+        val uniqueOuiCount = ouis.size
+
+        // Check if OUIs are "related" (differ in specific ways that suggest same manufacturer line)
+        val hasRelatedOuis = areOuisRelated(ouis.toList())
+
+        // Check frequency band coverage - mesh networks typically cover multiple bands
+        val bands = apDetails.map { getFrequencyBand(it.frequency) }.toSet()
+        val hasMultipleBands = bands.size >= 2
+
+        // Heuristic: Likely mesh if:
+        // - All APs established (seen 3+ times each) OR
+        // - OUIs are related (from same manufacturer family) OR
+        // - Has multiple bands AND 3+ APs with related OUIs
+        return allEstablished ||
+               (hasRelatedOuis && apDetails.size >= 3) ||
+               (hasMultipleBands && uniqueOuiCount <= 2)
+    }
+
+    /**
+     * Check if a set of OUIs appear to be from related devices (same manufacturer family).
+     * Mesh router systems sometimes use slightly different OUI prefixes for different model years
+     * or different components, but they're all from the same vendor ecosystem.
+     */
+    private fun areOuisRelated(ouis: List<String>): Boolean {
+        if (ouis.size < 2) return true
+
+        // Extract the first 4 characters (vendor-like prefix)
+        val vendorPrefixes = ouis.map { it.take(5) }.toSet()
+
+        // If vendor prefixes are very similar (only 1-2 unique), likely same manufacturer
+        if (vendorPrefixes.size <= 2) return true
+
+        // Check for known mesh router OUI patterns
+        // Many mesh systems have OUIs that share the first 4-6 hex characters
+        val normalizedOuis = ouis.map { it.replace(":", "").uppercase() }
+
+        // Count how many OUIs share the first 4 hex digits
+        val firstFourGroups = normalizedOuis.groupBy { it.take(4) }
+        val largestGroup = firstFourGroups.values.maxOfOrNull { it.size } ?: 0
+
+        // If most OUIs share first 4 digits, they're likely related
+        return largestGroup >= (ouis.size * 0.6)
     }
 
     private data class ApDetails(

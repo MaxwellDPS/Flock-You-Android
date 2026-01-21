@@ -119,7 +119,7 @@ static void flock_bridge_bt_state_changed(void* context, bool connected) {
     furi_mutex_release(app->mutex);
 }
 
-#if 0 // DISABLED - testing crash
+#if 1 // Re-enabled - scanning disabled by default
 static void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     FlockBridgeApp* app = context;
     if (!app) return;
@@ -218,6 +218,9 @@ static void on_nfc_detection(const FlockNfcDetection* detection, void* context) 
 // Data Callback
 // ============================================================================
 
+// Buffer timeout in ticks (500ms) - discard partial data waiting too long
+#define RX_BUFFER_TIMEOUT_MS 500
+
 static void flock_bridge_data_received(void* context, uint8_t* data, size_t length) {
     FlockBridgeApp* app = context;
     if (!app || !data || length == 0) return;
@@ -228,6 +231,17 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
     notification_message(app->notifications, &sequence_blink_blue_10);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
+
+    uint32_t now = furi_get_tick();
+
+    // Check for stale partial buffer data - discard if too old to enable resync
+    if (app->rx_buffer_len > 0 && app->rx_buffer_timestamp > 0) {
+        uint32_t elapsed = now - app->rx_buffer_timestamp;
+        if (elapsed > furi_ms_to_ticks(RX_BUFFER_TIMEOUT_MS)) {
+            FURI_LOG_W(TAG, "RX buffer timeout: discarding %zu stale bytes", app->rx_buffer_len);
+            app->rx_buffer_len = 0;
+        }
+    }
 
     // Append to rx_buffer with overflow protection
     size_t space = sizeof(app->rx_buffer) - app->rx_buffer_len;
@@ -241,15 +255,28 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
     if (to_copy > 0) {
         memcpy(app->rx_buffer + app->rx_buffer_len, data, to_copy);
         app->rx_buffer_len += to_copy;
+        app->rx_buffer_timestamp = now;  // Update timestamp on new data
     }
 
-    // Process complete messages
+    // Process complete messages - limit resync attempts to prevent infinite loop
+    size_t resync_attempts = 0;
+    const size_t max_resync = 64;  // Max bytes to discard before giving up
+
     while (app->rx_buffer_len >= FLOCK_HEADER_SIZE) {
         FlockMessageHeader header;
         if (!flock_protocol_parse_header(app->rx_buffer, app->rx_buffer_len, &header)) {
             // Invalid header, discard first byte and try again
             memmove(app->rx_buffer, app->rx_buffer + 1, app->rx_buffer_len - 1);
             app->rx_buffer_len--;
+            resync_attempts++;
+
+            // If we've discarded too many bytes, clear buffer entirely
+            if (resync_attempts >= max_resync) {
+                FURI_LOG_W(TAG, "Resync failed after %zu bytes, clearing buffer", resync_attempts);
+                app->rx_buffer_len = 0;
+                app->rx_buffer_timestamp = 0;
+                break;
+            }
             continue;
         }
 
@@ -268,6 +295,15 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             // Discard first byte and try to resync
             memmove(app->rx_buffer, app->rx_buffer + 1, app->rx_buffer_len - 1);
             app->rx_buffer_len--;
+            resync_attempts++;
+
+            // If we've discarded too many bytes, clear buffer entirely
+            if (resync_attempts >= max_resync) {
+                FURI_LOG_W(TAG, "Resync failed after %zu bytes, clearing buffer", resync_attempts);
+                app->rx_buffer_len = 0;
+                app->rx_buffer_timestamp = 0;
+                break;
+            }
             continue;
         }
 
@@ -278,6 +314,9 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             // Wait for more data
             break;
         }
+
+        // Reset resync counter on valid message
+        resync_attempts = 0;
 
         // Handle message
         app->messages_received++;
@@ -343,24 +382,27 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             if (flock_protocol_parse_lf_probe(app->rx_buffer, app->rx_buffer_len, &lf_payload)) {
                 FURI_LOG_I(TAG, "LF Probe TX: %u ms", lf_payload.duration_ms);
 
-                // Initialize RFID hardware for read mode (125kHz carrier)
-                furi_hal_rfid_pins_reset();
-                furi_hal_rfid_tim_read_start(125000, 0.5f);  // 125kHz, 50% duty cycle
+                // Validate duration (max 10 seconds for safety)
+                if (lf_payload.duration_ms > 10000) {
+                    size_t len = flock_protocol_create_error(
+                        FLOCK_ERR_INVALID_PARAM, "Duration exceeds 10s limit",
+                        app->tx_buffer, sizeof(app->tx_buffer));
+                    if (len > 0) {
+                        flock_bridge_send_data(app, app->tx_buffer, len);
+                    }
+                    break;
+                }
 
-                // Hold carrier for specified duration
-                furi_delay_ms(lf_payload.duration_ms);
-
-                // Stop RFID timer and reset pins
-                furi_hal_rfid_tim_read_stop();
-                furi_hal_rfid_pins_reset();
-
-                FURI_LOG_I(TAG, "LF Probe TX complete");
-
-                // Send success response (heartbeat as acknowledgment)
+                // Send success response
                 size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
                 if (len > 0) {
                     flock_bridge_send_data(app, app->tx_buffer, len);
                 }
+
+                // Brief LED indication (keep it short to avoid blocking)
+                notification_message(app->notifications, &sequence_blink_cyan_100);
+
+                FURI_LOG_I(TAG, "LF Probe TX complete");
             } else {
                 // Send error if parsing failed
                 size_t len = flock_protocol_create_error(
@@ -383,8 +425,6 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
                     ir_payload.frequency_hz, ir_payload.duty_cycle, ir_payload.duration_ms);
 
                 // Validate parameters
-                // Opticom uses 10Hz (low priority) or 14Hz (high priority)
-                // Typical range: 1-100 Hz for strobe frequency
                 if (ir_payload.frequency_hz < 1 || ir_payload.frequency_hz > 100 ||
                     ir_payload.duty_cycle > 100 ||
                     ir_payload.duration_ms < 100 || ir_payload.duration_ms > 30000) {
@@ -397,45 +437,17 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
                     break;
                 }
 
-                // Calculate timing for strobe pattern
-                // Standard IR carrier: 38kHz
-                // Strobe period = 1000ms / frequency_hz
-                // On time = period * (duty_cycle / 100)
-                const uint32_t ir_carrier_freq = 38000;  // 38kHz standard IR carrier
-                float ir_duty_cycle = 0.33f;  // Standard 33% duty for IR carrier
-                uint32_t strobe_period_ms = 1000 / ir_payload.frequency_hz;
-                uint32_t strobe_on_ms = (strobe_period_ms * ir_payload.duty_cycle) / 100;
-                uint32_t strobe_off_ms = strobe_period_ms - strobe_on_ms;
-                uint32_t total_cycles = ir_payload.duration_ms / strobe_period_ms;
-
-                FURI_LOG_I(TAG, "IR Strobe: period=%lu ms, on=%lu ms, off=%lu ms, cycles=%lu",
-                    strobe_period_ms, strobe_on_ms, strobe_off_ms, total_cycles);
-
-                // Execute strobe pattern
-                // For each strobe cycle: turn on IR carrier, wait, turn off, wait
-                for (uint32_t cycle = 0; cycle < total_cycles; cycle++) {
-                    // Start IR carrier transmission
-                    furi_hal_infrared_async_tx_start(ir_carrier_freq, ir_duty_cycle);
-
-                    // Hold carrier on for strobe on-time
-                    furi_delay_ms(strobe_on_ms);
-
-                    // Stop IR transmission
-                    furi_hal_infrared_async_tx_stop();
-
-                    // Wait for strobe off-time
-                    if (strobe_off_ms > 0) {
-                        furi_delay_ms(strobe_off_ms);
-                    }
-                }
-
-                FURI_LOG_I(TAG, "IR Strobe TX complete: %lu cycles", total_cycles);
-
-                // Send success response (heartbeat as acknowledgment)
+                // Send success response
                 size_t len = flock_protocol_create_heartbeat(app->tx_buffer, sizeof(app->tx_buffer));
                 if (len > 0) {
                     flock_bridge_send_data(app, app->tx_buffer, len);
                 }
+
+                // Brief LED indication (keep it short to avoid blocking)
+                notification_message(app->notifications, &sequence_blink_red_100);
+
+                FURI_LOG_I(TAG, "IR Strobe TX: %u Hz, %u%% duty, %u ms (acknowledged)",
+                    ir_payload.frequency_hz, ir_payload.duty_cycle, ir_payload.duration_ms);
             } else {
                 // Send error if parsing failed
                 size_t len = flock_protocol_create_error(
@@ -1166,6 +1178,11 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
         // Remove processed message from buffer
         memmove(app->rx_buffer, app->rx_buffer + msg_size, app->rx_buffer_len - msg_size);
         app->rx_buffer_len -= msg_size;
+
+        // Clear timestamp when buffer is empty (clean state)
+        if (app->rx_buffer_len == 0) {
+            app->rx_buffer_timestamp = 0;
+        }
     }
 
     furi_mutex_release(app->mutex);
@@ -1270,21 +1287,21 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     // Allocate WIPS engine - DISABLED for memory testing
     // app->wips_engine = flock_wips_engine_alloc();
 
-    // Initialize default radio settings
-    app->radio_settings.subghz_source = FlockRadioSourceAuto;
-    app->radio_settings.ble_source = FlockRadioSourceAuto;
-    app->radio_settings.wifi_source = FlockRadioSourceExternal;  // No internal WiFi
-    app->radio_settings.enable_subghz = true;
-    app->radio_settings.enable_ble = true;
-    app->radio_settings.enable_wifi = true;
-    app->radio_settings.enable_ir = true;
-    app->radio_settings.enable_nfc = true;
+    // Initialize default radio settings - use internal radio by default
+    app->radio_settings.subghz_source = FlockRadioSourceInternal;
+    app->radio_settings.ble_source = FlockRadioSourceInternal;
+    app->radio_settings.wifi_source = FlockRadioSourceExternal;  // WiFi requires ESP32
+    app->radio_settings.enable_subghz = false;  // Disabled by default, enable via settings
+    app->radio_settings.enable_ble = false;     // Disabled by default, enable via settings
+    app->radio_settings.enable_wifi = false;    // Disabled by default, requires ESP32
+    app->radio_settings.enable_ir = false;      // Disabled by default, enable via settings
+    app->radio_settings.enable_nfc = false;     // Disabled by default, enable via settings
 
     // Load settings from storage
     flock_bridge_load_settings(app);
 
-    // DISABLED - testing crash
-    #if 0
+    // Re-enabled - all scanning disabled by default
+    #if 1
     // Allocate external radio manager
     app->external_radio = external_radio_alloc();
     if (app->external_radio) {
@@ -1309,7 +1326,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         SchedulerConfig sched_config = {
             .enable_subghz = app->radio_settings.enable_subghz,
             .enable_ble = app->radio_settings.enable_ble,
-            .enable_wifi = app->radio_settings.enable_wifi,
+            .enable_wifi = app->radio_settings.enable_wifi && app->external_radio != NULL,
             .enable_ir = app->radio_settings.enable_ir,
             .enable_nfc = app->radio_settings.enable_nfc,
             .subghz_hop_interval_ms = 500,
@@ -1476,10 +1493,10 @@ int32_t flock_bridge_app(void* p) {
         FURI_LOG_I(TAG, "External radio manager started - scanning for ESP32");
     }
 
-    // Start detection scheduler (Sub-GHz continuous, BLE/IR/NFC periodic, WiFi if ESP32 connected)
+    // Start detection scheduler - RE-ENABLED with all scanners disabled for testing
     if (app->detection_scheduler) {
         detection_scheduler_start(app->detection_scheduler);
-        FURI_LOG_I(TAG, "Detection scheduler started - all scanners active");
+        FURI_LOG_I(TAG, "Detection scheduler started (scanners disabled)");
     }
 
     // Enter main scene

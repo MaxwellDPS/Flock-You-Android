@@ -263,19 +263,17 @@ class TestScanRequests:
 class TestActiveProbes:
     """Test active probe command handling."""
 
-    def test_lf_probe_not_implemented(self, test_client):
-        """Test LF probe returns not-implemented error."""
-        success, message = test_client.send_lf_probe(1000)
-        # Currently returns NOT_IMPLEMENTED
-        assert success is False
-        assert "NOT_IMPLEMENTED" in message
+    def test_lf_probe_implemented(self, test_client):
+        """Test LF probe executes successfully."""
+        success, message = test_client.send_lf_probe(100)  # Short duration for test
+        # LF probe is implemented - emits 125kHz carrier
+        assert success is True, f"LF probe failed: {message}"
 
-    def test_ir_strobe_not_implemented(self, test_client):
-        """Test IR strobe returns not-implemented error."""
-        success, message = test_client.send_ir_strobe(14, 50, 1000)
-        # Currently returns NOT_IMPLEMENTED
-        assert success is False
-        assert "NOT_IMPLEMENTED" in message
+    def test_ir_strobe_implemented(self, test_client):
+        """Test IR strobe executes successfully."""
+        success, message = test_client.send_ir_strobe(14, 50, 500)  # Short duration for test
+        # IR strobe is implemented - uses LED strobe pattern
+        assert success is True, f"IR strobe failed: {message}"
 
     def test_wifi_probe_request(self, flipper_connection):
         """Test WiFi probe request handling."""

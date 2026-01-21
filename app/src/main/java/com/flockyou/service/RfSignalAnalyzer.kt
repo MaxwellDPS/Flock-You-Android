@@ -401,8 +401,14 @@ class RfSignalAnalyzer(
     private fun analyzeWifiScanInternal(results: List<ScanResult>) {
         val now = System.currentTimeMillis()
 
+        // Filter out invalid results (RSSI of 0 is invalid, valid range is typically -100 to -20 dBm)
+        val validResults = results.filter { result ->
+            val rssi = result.level
+            rssi != 0 && rssi in -120..-10
+        }
+
         // Build snapshot
-        val snapshot = buildSnapshot(results, now)
+        val snapshot = buildSnapshot(validResults, now)
         signalHistory.add(snapshot)
         if (signalHistory.size > SIGNAL_HISTORY_SIZE) {
             signalHistory.removeAt(0)
@@ -419,10 +425,10 @@ class RfSignalAnalyzer(
         checkForJammer(snapshot)
 
         // Check for drones
-        checkForDrones(results)
+        checkForDrones(validResults)
 
         // Check for surveillance area
-        checkForSurveillanceArea(results, snapshot)
+        checkForSurveillanceArea(validResults, snapshot)
 
         // Check for spectrum anomalies
         checkForSpectrumAnomalies(snapshot)
@@ -430,7 +436,7 @@ class RfSignalAnalyzer(
         // Update status
         updateStatus(snapshot)
 
-        lastScanNetworkCount = results.size
+        lastScanNetworkCount = validResults.size
         lastScanTimestamp = now
     }
 

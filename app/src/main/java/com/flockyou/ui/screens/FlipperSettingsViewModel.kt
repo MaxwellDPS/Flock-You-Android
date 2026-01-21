@@ -98,6 +98,7 @@ class FlipperSettingsViewModel @Inject constructor(
                 FlipperConnectionState.DISCONNECTED -> ConnectionState.Disconnected
                 FlipperConnectionState.CONNECTING -> ConnectionState.Connecting
                 FlipperConnectionState.DISCOVERING_SERVICES -> ConnectionState.Connecting
+                FlipperConnectionState.LAUNCHING_FAP -> ConnectionState.Connecting
                 FlipperConnectionState.CONNECTED, FlipperConnectionState.READY -> {
                     val typeString = when (type) {
                         FlipperClient.ConnectionType.USB -> "USB"

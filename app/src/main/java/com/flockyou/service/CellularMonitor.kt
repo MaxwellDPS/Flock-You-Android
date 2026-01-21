@@ -66,8 +66,12 @@ class CellularMonitor(
 
         // Carriers known to have aggressive handoffs (reduce FPs)
         private val AGGRESSIVE_HANDOFF_CARRIERS = setOf(
-            "T-Mobile", "Metro", "Sprint" // These carriers hand off more frequently
+            "T-Mobile", "Metro", "Sprint", "T-Mobile USA" // These carriers hand off more frequently
         )
+
+        // 5G-specific thresholds - 5G has more frequent handoffs due to smaller cells and beam management
+        private const val NR_5G_STATIONARY_HANDOFF_GRACE_PERIOD_MS = 120_000L // 2 minutes grace period for new 5G cells
+        private const val NR_5G_MINIMUM_IMSI_SCORE_TO_REPORT = 40 // Higher threshold for 5G (was implicit 0)
     }
     
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
@@ -729,10 +733,16 @@ class CellularMonitor(
 
         // 3. Cell tower changed - check context with enriched analysis
         if (current.cellId != previous.cellId && current.cellId != null) {
+            // Check if this is a 5G handoff - these are MUCH more frequent and normal
+            val is5GHandoff = current.networkType == TelephonyManager.NETWORK_TYPE_NR &&
+                previous.networkType == TelephonyManager.NETWORK_TYPE_NR
+            val isSameCarrier = current.mcc == previous.mcc && current.mnc == previous.mnc
+            val isAggressiveHandoffCarrier = telephonyManager.networkOperatorName in AGGRESSIVE_HANDOFF_CARRIERS
+
             // Record timeline event first
             addTimelineEvent(
                 type = if (currentCellTrusted) CellularEventType.RETURNED_TO_TRUSTED else CellularEventType.CELL_HANDOFF,
-                title = if (currentCellTrusted) "Returned to Known Cell" else "Cell Handoff",
+                title = if (currentCellTrusted) "Returned to Known Cell" else if (is5GHandoff) "5G Cell Handoff" else "Cell Handoff",
                 description = "Cell changed: ${previous.cellId ?: "?"} → ${current.cellId} (${analysis.movementType.displayName}, ${String.format("%.0f", analysis.distanceMeters)}m)",
                 cellId = current.cellId.toString(),
                 networkType = getNetworkTypeName(current.networkType),
@@ -741,15 +751,35 @@ class CellularMonitor(
 
             // Use enriched movement analysis for better detection
             if (isStationary && !currentCellTrusted) {
-                // Stationary + new cell = suspicious
-                contributingFactors.add("Cell changed while ${analysis.movementType.displayName.lowercase()}")
-                contributingFactors.add("New cell tower (trust: ${analysis.cellTrustScore}%)")
-                totalScore += AnomalyType.STATIONARY_CELL_CHANGE.baseScore + 20
+                // 5G networks do frequent handoffs even while stationary - this is NORMAL behavior
+                // Only flag if:
+                // 1. IMSI catcher score is significant (>= 40%)
+                // 2. OR there are multiple other suspicious factors
+                // 3. AND it's NOT a same-carrier 5G handoff on an aggressive handoff carrier
+                val shouldSuppress5GHandoff = is5GHandoff && isSameCarrier &&
+                    (isAggressiveHandoffCarrier || analysis.imsiCatcherScore < NR_5G_MINIMUM_IMSI_SCORE_TO_REPORT)
 
-                // Check for impossible movement (potential IMSI catcher mobility)
-                if (analysis.impossibleSpeed) {
-                    contributingFactors.add("IMPOSSIBLE movement: ${String.format("%.0f", analysis.speedKmh)} km/h")
-                    totalScore += 25
+                if (shouldSuppress5GHandoff) {
+                    // Normal 5G handoff - don't report but log for debug
+                    Log.d(TAG, "Suppressing 5G handoff alert: same carrier, IMSI=${analysis.imsiCatcherScore}%")
+                } else {
+                    // Stationary + new cell = suspicious (but less so for 5G)
+                    contributingFactors.add("Cell changed while ${analysis.movementType.displayName.lowercase()}")
+                    contributingFactors.add("New cell tower (trust: ${analysis.cellTrustScore}%)")
+
+                    // Reduce score penalty for 5G same-carrier handoffs
+                    val baseHandoffScore = if (is5GHandoff && isSameCarrier) {
+                        AnomalyType.STATIONARY_CELL_CHANGE.baseScore // 50 points, no bonus
+                    } else {
+                        AnomalyType.STATIONARY_CELL_CHANGE.baseScore + 20 // 70 points for non-5G
+                    }
+                    totalScore += baseHandoffScore
+
+                    // Check for impossible movement (potential IMSI catcher mobility)
+                    if (analysis.impossibleSpeed) {
+                        contributingFactors.add("IMPOSSIBLE movement: ${String.format("%.0f", analysis.speedKmh)} km/h")
+                        totalScore += 25
+                    }
                 }
             } else if (isStationary && currentCellTrusted) {
                 // Stationary but returned to known cell - probably normal

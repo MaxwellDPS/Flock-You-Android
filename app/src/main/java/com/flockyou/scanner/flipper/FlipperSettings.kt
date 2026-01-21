@@ -125,9 +125,9 @@ class FlipperSettingsRepository @Inject constructor(
             wipsKarmaDetection = preferences[PreferencesKeys.WIPS_KARMA] ?: true,
             wipsRogueApDetection = preferences[PreferencesKeys.WIPS_ROGUE_AP] ?: true,
 
-            wifiScanIntervalSeconds = preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] ?: 30,
-            subGhzScanIntervalSeconds = preferences[PreferencesKeys.SUBGHZ_SCAN_INTERVAL] ?: 15,
-            bleScanIntervalSeconds = preferences[PreferencesKeys.BLE_SCAN_INTERVAL] ?: 20,
+            wifiScanIntervalSeconds = preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] ?: 20,
+            subGhzScanIntervalSeconds = preferences[PreferencesKeys.SUBGHZ_SCAN_INTERVAL] ?: 10,
+            bleScanIntervalSeconds = preferences[PreferencesKeys.BLE_SCAN_INTERVAL] ?: 15,
             heartbeatIntervalSeconds = preferences[PreferencesKeys.HEARTBEAT_INTERVAL] ?: 5,
 
             strongSignalThresholdDbm = preferences[PreferencesKeys.STRONG_SIGNAL_THRESHOLD] ?: -50,

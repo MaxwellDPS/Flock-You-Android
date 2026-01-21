@@ -71,6 +71,8 @@ fun MainScreen(
     onNavigateToServiceHealth: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val prioritizedEnrichmentIds by viewModel.prioritizedEnrichmentIds.collectAsState()
+    val context = LocalContext.current
     var showFilterSheet by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
@@ -185,6 +187,25 @@ fun MainScreen(
                             imageVector = Icons.Default.Map,
                             contentDescription = "Map"
                         )
+                    }
+                    // Export debug info button - only shown in advanced mode
+                    if (uiState.advancedMode) {
+                        IconButton(
+                            onClick = {
+                                val debugInfo = viewModel.exportAllDebugInfo()
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You Debug Export")
+                                    putExtra(Intent.EXTRA_TEXT, debugInfo)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Export Debug Info"))
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BugReport,
+                                contentDescription = "Export Debug Info"
+                            )
+                        }
                     }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(
@@ -511,14 +532,50 @@ fun MainScreen(
                             }
                         }
 
-                        // Section header
+                        // FP filter toggle and section header
                         item(key = "section_header") {
-                            Text(
-                                text = "DETECTION HISTORY",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "DETECTION HISTORY",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+
+                                    // FP filter toggle
+                                    val fpCount = viewModel.getFalsePositiveCount()
+                                    if (fpCount > 0 || !uiState.hideFalsePositives) {
+                                        FilterChip(
+                                            selected = !uiState.hideFalsePositives,
+                                            onClick = { viewModel.toggleHideFalsePositives() },
+                                            label = {
+                                                Text(
+                                                    text = if (uiState.hideFalsePositives)
+                                                        "Show FPs ($fpCount hidden)"
+                                                    else
+                                                        "Showing all",
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = if (uiState.hideFalsePositives)
+                                                        Icons.Default.VisibilityOff
+                                                    else
+                                                        Icons.Default.Visibility,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         when {
@@ -562,7 +619,9 @@ fun MainScreen(
                                         onAnalyzeClick = if (viewModel.isAiAnalysisAvailable()) {
                                             { viewModel.analyzeDetection(it) }
                                         } else null,
-                                        isAnalyzing = uiState.analyzingDetectionId == detection.id
+                                        isAnalyzing = uiState.analyzingDetectionId == detection.id,
+                                        onPrioritizeEnrichment = { viewModel.prioritizeEnrichment(it) },
+                                        isEnrichmentPending = prioritizedEnrichmentIds.contains(detection.id)
                                     )
                                 }
                             }
@@ -1294,15 +1353,30 @@ fun DetectionDetailSheet(
                                 }
                             }
 
-                            // Analyzed timestamp
+                            // Analysis method and timestamp
                             detection.analyzedAt?.let { timestamp ->
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Analyzed: ${dateFormat.format(Date(timestamp))}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Rule,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (detection.llmAnalyzed) "AI analysis" else "Rule-based",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "• ${dateFormat.format(Date(timestamp))}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -2795,7 +2869,8 @@ fun FlipperTabContent(
             }
             FlipperConnectionState.CONNECTING,
             FlipperConnectionState.CONNECTED,
-            FlipperConnectionState.DISCOVERING_SERVICES -> {
+            FlipperConnectionState.DISCOVERING_SERVICES,
+            FlipperConnectionState.LAUNCHING_FAP -> {
                 // Show connecting state
                 item(key = "flipper_connecting") {
                     FlipperConnectingCard()
@@ -2871,6 +2946,7 @@ private fun FlipperConnectionCard(
                             FlipperConnectionState.CONNECTING -> "Connecting..."
                             FlipperConnectionState.CONNECTED -> "Handshaking..."
                             FlipperConnectionState.DISCOVERING_SERVICES -> "Discovering services..."
+                            FlipperConnectionState.LAUNCHING_FAP -> "Launching Flock Bridge app..."
                             FlipperConnectionState.ERROR -> lastError ?: "Connection error"
                             FlipperConnectionState.DISCONNECTED -> "Not connected"
                         },

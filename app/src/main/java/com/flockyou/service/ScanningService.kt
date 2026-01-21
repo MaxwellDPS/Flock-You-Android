@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.first
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
+import com.flockyou.worker.BackgroundAnalysisWorker
 
 private const val WAKE_LOCK_TAG = "FlockYou:ScanningWakeLock"
 
@@ -69,9 +70,9 @@ class ScanningService : Service() {
 
         // Default values (can be overridden by settings)
         // Aggressive burst scan pattern: 25s on, 5s cooldown to prevent thermal throttling
-        private const val DEFAULT_WIFI_SCAN_INTERVAL = 30000L  // 30 seconds between WiFi scans
+        private const val DEFAULT_WIFI_SCAN_INTERVAL = 25000L  // 25 seconds between WiFi scans (more frequent)
         private const val DEFAULT_BLE_SCAN_DURATION = 25000L   // 25 seconds of low-latency scanning
-        private const val DEFAULT_BLE_COOLDOWN = 5000L         // 5 seconds cooldown to prevent thermal throttle
+        private const val DEFAULT_BLE_COOLDOWN = 4000L         // 4 seconds cooldown for faster cycle
         private const val DEFAULT_INACTIVE_TIMEOUT = 60000L
         private const val DEFAULT_SEEN_DEVICE_TIMEOUT = 300000L
 
@@ -371,6 +372,7 @@ class ScanningService : Service() {
         val throttledWifiScans: Int = 0,
         val bleDevicesSeen: Int = 0,
         val wifiNetworksSeen: Int = 0,
+        val detectionsCreated: Int = 0,
         val lastBleSuccessTime: Long? = null,
         val lastWifiSuccessTime: Long? = null
     )
@@ -1997,12 +1999,20 @@ class ScanningService : Service() {
         // - Settings-based filtering (enabled patterns, thresholds)
         // - IMSI catcher score calculation
         // - AI prompt generation for cellular anomalies
+        // Track processed anomaly IDs to prevent duplicates from flow replays
+        val processedCellularAnomalyIds = mutableSetOf<String>()
+
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
                 cellularAnomalies.value = anomalies
                 broadcastCellularData()
 
                 for (anomaly in anomalies) {
+                    // Skip if already processed in this session
+                    if (anomaly.id in processedCellularAnomalyIds) {
+                        continue
+                    }
+
                     // Send broadcast for automation apps
                     sendCellularAnomalyBroadcast(anomaly)
 
@@ -2010,11 +2020,13 @@ class ScanningService : Service() {
                     // The handler implements settings-based filtering and IMSI score calculation
                     val detection = processCellularWithHandler(anomaly)
                     detection?.let { det ->
-                        // Check if we already have this detection (use unique SSID)
-                        val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
+                        // Check if we already have this detection (use anomaly ID)
+                        val detWithId = det.copy(macAddress = anomaly.id)
+                        val existing = repository.getDetectionByMacAddress(anomaly.id)
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det)
+                                insertDetectionWithAnalysis(detWithId)
+                                processedCellularAnomalyIds.add(anomaly.id)
 
                                 // Alert and vibrate for high-severity anomalies
                                 if (det.threatLevel == ThreatLevel.CRITICAL ||
@@ -2034,6 +2046,9 @@ class ScanningService : Service() {
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error saving cellular detection: ${e.message}", e)
                             }
+                        } else {
+                            // Already in database, mark as processed
+                            processedCellularAnomalyIds.add(anomaly.id)
                         }
                     }
                 }
@@ -2267,7 +2282,7 @@ class ScanningService : Service() {
 
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det)
+                                insertDetectionWithAnalysis(det)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
                                     anomaly.severity == ThreatLevel.HIGH) {
@@ -2359,7 +2374,7 @@ class ScanningService : Service() {
                         val existing = det.macAddress?.let { repository.getDetectionByMacAddress(it) }
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det)
+                                insertDetectionWithAnalysis(det)
                                 alertUser(det)
                                 lastDetection.value = det
                                 detectionCount.value = repository.getTotalDetectionCount()
@@ -2392,7 +2407,7 @@ class ScanningService : Service() {
                         val existing = repository.getDetectionBySsid(det.deviceName ?: "")
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det)
+                                insertDetectionWithAnalysis(det)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
                                     anomaly.severity == ThreatLevel.HIGH) {
@@ -2506,7 +2521,7 @@ class ScanningService : Service() {
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det)
+                                insertDetectionWithAnalysis(det)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
                                     anomaly.severity == ThreatLevel.HIGH) {
@@ -2609,12 +2624,20 @@ class ScanningService : Service() {
         }
 
         // Collect anomalies and convert to detections
+        // Track processed anomaly IDs to prevent duplicates from flow replays
+        val processedGnssAnomalyIds = mutableSetOf<String>()
+
         gnssAnomalyJob = serviceScope.launch {
             gnssSatelliteMonitor?.anomalies?.collect { anomalies ->
                 Companion.gnssAnomalies.value = anomalies
                 broadcastGnssData()
 
                 for (anomaly in anomalies) {
+                    // Skip if already processed in this session
+                    if (anomaly.id in processedGnssAnomalyIds) {
+                        continue
+                    }
+
                     // Send broadcast for automation apps
                     sendGnssAnomalyBroadcast(anomaly)
 
@@ -2624,7 +2647,8 @@ class ScanningService : Service() {
                         val existing = repository.getDetectionByMacAddress(anomaly.id)
                         if (existing == null) {
                             try {
-                                repository.insertDetection(det.copy(macAddress = anomaly.id))
+                                insertDetectionWithAnalysis(det.copy(macAddress = anomaly.id))
+                                processedGnssAnomalyIds.add(anomaly.id)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
                                     anomaly.severity == ThreatLevel.HIGH) {
@@ -2641,6 +2665,9 @@ class ScanningService : Service() {
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error saving GNSS detection: ${e.message}", e)
                             }
+                        } else {
+                            // Already in database, mark as processed
+                            processedGnssAnomalyIds.add(anomaly.id)
                         }
                     }
                 }
@@ -2950,10 +2977,10 @@ class ScanningService : Service() {
     private var lastSuccessfulWifiScanTime: Long = 0L
     private var wifiScanAttemptsSinceSuccess: Int = 0
 
-    // Minimum interval between WiFi scan attempts (slightly under Android's limit)
+    // Minimum interval between WiFi scan attempts (aggressive but respecting Android's limits)
     // Foreground: ~30 seconds is safe (4 scans / 2 min = 1 scan / 30 sec)
-    // We use 25 seconds to have some margin for timing variations
-    private val MIN_WIFI_SCAN_INTERVAL_MS = 25_000L
+    // We use 20 seconds for more frequent scanning, accepting some throttle risk
+    private val MIN_WIFI_SCAN_INTERVAL_MS = 20_000L
 
     // Adaptive backoff: increase interval after consecutive throttles
     private val MAX_WIFI_SCAN_INTERVAL_MS = 120_000L  // 2 minutes max backoff
@@ -3460,6 +3487,9 @@ class ScanningService : Service() {
             if (isNew) {
                 // New detection
                 detectionCount.value++
+                scanStats.value = scanStats.value.copy(
+                    detectionsCreated = scanStats.value.detectionsCreated + 1
+                )
                 lastDetection.value = detectionWithFp
                 broadcastLastDetection()
                 broadcastStateToClients()
@@ -3686,6 +3716,27 @@ class ScanningService : Service() {
             latitude = currentLocation?.latitude,
             longitude = currentLocation?.longitude
         )
+    }
+
+    /**
+     * Insert a detection and trigger immediate LLM analysis.
+     * This ensures detections are enriched as they come in rather than waiting for batch processing.
+     */
+    private suspend fun insertDetectionWithAnalysis(detection: Detection) {
+        repository.insertDetection(detection)
+
+        // Trigger immediate LLM analysis for this detection
+        try {
+            BackgroundAnalysisWorker.triggerForDetections(
+                this@ScanningService,
+                listOf(detection.id)
+            )
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Triggered immediate LLM analysis for detection: ${detection.id}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to trigger immediate LLM analysis: ${e.message}")
+        }
     }
 
     private fun alertUser(detection: Detection) {

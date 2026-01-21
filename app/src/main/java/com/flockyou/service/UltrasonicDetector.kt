@@ -59,12 +59,12 @@ class UltrasonicDetector(
 
         // Detection thresholds
         private const val FFT_SIZE = 4096 // Good frequency resolution (~10.7 Hz per bin)
-        private const val DETECTION_THRESHOLD_DB = -40.0 // dB above noise floor
+        private const val DETECTION_THRESHOLD_DB = 20.0 // Signal must be this many dB above noise floor
         private const val BEACON_DURATION_THRESHOLD_MS = 500L // Must persist for 500ms
         private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between alerts
         // Default timing values (can be overridden by updateScanTiming)
         private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
-        private const val DEFAULT_SCAN_INTERVAL_MS = 30_000L // Scan every 30 seconds
+        private const val DEFAULT_SCAN_INTERVAL_MS = 20_000L // Scan every 20 seconds (more frequent)
 
         // Frequency tolerance for matching (Hz)
         private const val FREQUENCY_TOLERANCE = 100
@@ -419,7 +419,7 @@ class UltrasonicDetector(
 
                         // Check for ultrasonic content
                         for (bin in frequencyBins) {
-                            if (bin.isUltrasonic && bin.amplitudeDb > noiseFloorDb + DETECTION_THRESHOLD_DB) {
+                            if (bin.isUltrasonic && (bin.amplitudeDb - noiseFloorDb) > DETECTION_THRESHOLD_DB) {
                                 val freqKey = (bin.frequency / 100) * 100 // Round to nearest 100Hz
                                 detectedFrequencies.getOrPut(freqKey) { mutableListOf() }
                                     .add(bin.amplitudeDb)

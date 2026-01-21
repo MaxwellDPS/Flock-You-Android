@@ -468,15 +468,107 @@ class SatelliteDetectionHandler @Inject constructor(
      */
     private fun mapAnomalyTypeToPattern(type: SatelliteAnomalyType): SatellitePattern? {
         return when (type) {
-            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> SatellitePattern.UNEXPECTED_SATELLITE
-            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> SatellitePattern.FORCED_HANDOFF
-            SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> SatellitePattern.SUSPICIOUS_NTN_PARAMS
+            // Unexpected connections
+            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
+            SatelliteAnomalyType.NTN_IN_FULL_TERRESTRIAL_COVERAGE,
+            SatelliteAnomalyType.COVERAGE_HOLE_IMPOSSIBLE,
+            SatelliteAnomalyType.NTN_CAMPING_PERSISTENT -> SatellitePattern.UNEXPECTED_SATELLITE
+
+            // Forced handoffs
+            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF,
+            SatelliteAnomalyType.HANDOVER_TIMING_IMPOSSIBLE,
+            SatelliteAnomalyType.FORCED_NTN_AFTER_CALL,
+            SatelliteAnomalyType.HANDOVER_BACK_BLOCKED -> SatellitePattern.FORCED_HANDOFF
+
+            // Suspicious NTN parameters
+            SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS,
+            SatelliteAnomalyType.UNEXPECTED_MODEM_STATE,
+            SatelliteAnomalyType.CAPABILITY_MISMATCH,
+            SatelliteAnomalyType.MIB_SIB_INCONSISTENT,
+            SatelliteAnomalyType.PLMN_NOT_NTN_REGISTERED,
+            SatelliteAnomalyType.CELL_ID_FORMAT_WRONG,
+            SatelliteAnomalyType.PAGING_CYCLE_TERRESTRIAL,
+            SatelliteAnomalyType.DRX_TOO_SHORT,
+            SatelliteAnomalyType.RACH_PROCEDURE_WRONG,
+            SatelliteAnomalyType.MEASUREMENT_GAP_MISSING,
+            SatelliteAnomalyType.GNSS_ASSISTANCE_REJECTED,
+            SatelliteAnomalyType.HARQ_RETRANSMISSION_TIMING_WRONG,
+            SatelliteAnomalyType.SIGNAL_TOO_STRONG,
+            SatelliteAnomalyType.WRONG_POLARIZATION,
+            SatelliteAnomalyType.BANDWIDTH_MISMATCH,
+            SatelliteAnomalyType.MULTIPATH_IN_CLEAR_SKY,
+            SatelliteAnomalyType.SUBCARRIER_SPACING_WRONG,
+            SatelliteAnomalyType.ENCRYPTION_DOWNGRADE,
+            SatelliteAnomalyType.IDENTITY_REQUEST_FLOOD,
+            SatelliteAnomalyType.REPLAY_ATTACK_DETECTED,
+            SatelliteAnomalyType.CERTIFICATE_MISMATCH,
+            SatelliteAnomalyType.NULL_CIPHER_OFFERED,
+            SatelliteAnomalyType.AUTH_REJECT_LOOP,
+            SatelliteAnomalyType.SUPI_CONCEALMENT_DISABLED,
+            SatelliteAnomalyType.GEOFENCE_VIOLATION,
+            SatelliteAnomalyType.INDOOR_SATELLITE_CONNECTION,
+            SatelliteAnomalyType.ALTITUDE_INCOMPATIBLE,
+            SatelliteAnomalyType.URBAN_CANYON_SATELLITE,
+            SatelliteAnomalyType.GNSS_POSITION_COVERAGE_MISMATCH,
+            SatelliteAnomalyType.SIMULTANEOUS_GNSS_JAMMING,
+            SatelliteAnomalyType.CELLULAR_NTN_GEOMETRY_IMPOSSIBLE,
+            SatelliteAnomalyType.WIFI_SATELLITE_CONFLICT,
+            SatelliteAnomalyType.NTN_TRACKING_PATTERN,
+            SatelliteAnomalyType.SELECTIVE_NTN_ROUTING,
+            SatelliteAnomalyType.PEER_DEVICE_DIVERGENCE,
+            SatelliteAnomalyType.MODEM_STATE_TRANSITION_IMPOSSIBLE,
+            SatelliteAnomalyType.CAPABILITY_ANNOUNCEMENT_WRONG,
+            SatelliteAnomalyType.BASEBAND_FIRMWARE_TAMPERED,
+            SatelliteAnomalyType.ANTENNA_CONFIGURATION_WRONG,
+            SatelliteAnomalyType.POWER_CLASS_MISMATCH,
+            SatelliteAnomalyType.SIMULTANEOUS_BAND_CONFLICT,
+            SatelliteAnomalyType.SKYLO_MODEM_MISSING,
+            SatelliteAnomalyType.IRIDIUM_CONSTELLATION_MISMATCH,
+            SatelliteAnomalyType.GLOBALSTAR_BAND_WRONG,
+            SatelliteAnomalyType.AST_SPACEMOBILE_PREMATURE,
+            SatelliteAnomalyType.PROVIDER_CAPABILITY_MISMATCH,
+            SatelliteAnomalyType.SMS_ROUTING_SUSPICIOUS,
+            SatelliteAnomalyType.DATAGRAM_SIZE_EXCEEDED,
+            SatelliteAnomalyType.STORE_FORWARD_MISSING,
+            SatelliteAnomalyType.SOS_REDIRECT_SUSPICIOUS,
+            SatelliteAnomalyType.E911_LOCATION_INJECTION,
+            SatelliteAnomalyType.EMERGENCY_CALL_BLOCKED,
+            SatelliteAnomalyType.FAKE_EMERGENCY_ALERT,
+            SatelliteAnomalyType.SATELLITE_ID_REUSE -> SatellitePattern.SUSPICIOUS_NTN_PARAMS
+
+            // Unknown network
             SatelliteAnomalyType.UNKNOWN_SATELLITE_NETWORK -> SatellitePattern.UNKNOWN_SATELLITE_NETWORK
+
+            // Satellite in coverage
             SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> SatellitePattern.SATELLITE_IN_COVERAGE
+
+            // Rapid switching
             SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING -> SatellitePattern.RAPID_SATELLITE_SWITCHING
-            SatelliteAnomalyType.NTN_BAND_MISMATCH -> SatellitePattern.NTN_BAND_MISMATCH
-            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> SatellitePattern.TIMING_ANOMALY
-            SatelliteAnomalyType.EPHEMERIS_MISMATCH -> SatellitePattern.TIMING_ANOMALY
+
+            // Band mismatch
+            SatelliteAnomalyType.NTN_BAND_MISMATCH,
+            SatelliteAnomalyType.NRARFCN_NTN_BAND_INVALID -> SatellitePattern.NTN_BAND_MISMATCH
+
+            // Timing anomalies
+            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY,
+            SatelliteAnomalyType.EPHEMERIS_MISMATCH,
+            SatelliteAnomalyType.RTT_ORBIT_MISMATCH,
+            SatelliteAnomalyType.DOPPLER_SHIFT_MISMATCH,
+            SatelliteAnomalyType.PROPAGATION_DELAY_VARIANCE_WRONG,
+            SatelliteAnomalyType.TIMING_ADVANCE_TOO_SMALL,
+            SatelliteAnomalyType.SATELLITE_BELOW_HORIZON,
+            SatelliteAnomalyType.WRONG_ORBITAL_PLANE,
+            SatelliteAnomalyType.PASS_DURATION_EXCEEDED,
+            SatelliteAnomalyType.ELEVATION_ANGLE_IMPOSSIBLE,
+            SatelliteAnomalyType.TLE_POSITION_MISMATCH,
+            SatelliteAnomalyType.CARRIER_FREQUENCY_DRIFT_WRONG,
+            SatelliteAnomalyType.GNSS_NTN_TIME_CONFLICT,
+            SatelliteAnomalyType.TIME_OF_DAY_VISIBILITY_ANOMALY,
+            SatelliteAnomalyType.STARLINK_ORBITAL_PARAMS_WRONG,
+            SatelliteAnomalyType.MESSAGE_LATENCY_WRONG,
+            SatelliteAnomalyType.ACK_TIMING_TERRESTRIAL -> SatellitePattern.TIMING_ANOMALY
+
+            // Downgrade
             SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> SatellitePattern.DOWNGRADE_TO_SATELLITE
         }
     }
@@ -486,16 +578,44 @@ class SatelliteDetectionHandler @Inject constructor(
      */
     private fun mapAnomalyTypeToDetectionMethod(type: SatelliteAnomalyType): DetectionMethod {
         return when (type) {
-            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
-            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> DetectionMethod.SAT_FORCED_HANDOFF
-            SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> DetectionMethod.SAT_SUSPICIOUS_NTN
-            SatelliteAnomalyType.UNKNOWN_SATELLITE_NETWORK -> DetectionMethod.SAT_SUSPICIOUS_NTN
-            SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
-            SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING -> DetectionMethod.SAT_FORCED_HANDOFF
-            SatelliteAnomalyType.NTN_BAND_MISMATCH -> DetectionMethod.SAT_SUSPICIOUS_NTN
-            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> DetectionMethod.SAT_TIMING_ANOMALY
-            SatelliteAnomalyType.EPHEMERIS_MISMATCH -> DetectionMethod.SAT_TIMING_ANOMALY
+            // Unexpected connections
+            SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
+            SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA,
+            SatelliteAnomalyType.NTN_IN_FULL_TERRESTRIAL_COVERAGE,
+            SatelliteAnomalyType.COVERAGE_HOLE_IMPOSSIBLE,
+            SatelliteAnomalyType.NTN_CAMPING_PERSISTENT -> DetectionMethod.SAT_UNEXPECTED_CONNECTION
+
+            // Forced handoff
+            SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF,
+            SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING,
+            SatelliteAnomalyType.HANDOVER_TIMING_IMPOSSIBLE,
+            SatelliteAnomalyType.FORCED_NTN_AFTER_CALL,
+            SatelliteAnomalyType.HANDOVER_BACK_BLOCKED -> DetectionMethod.SAT_FORCED_HANDOFF
+
+            // Timing anomalies
+            SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY,
+            SatelliteAnomalyType.EPHEMERIS_MISMATCH,
+            SatelliteAnomalyType.RTT_ORBIT_MISMATCH,
+            SatelliteAnomalyType.DOPPLER_SHIFT_MISMATCH,
+            SatelliteAnomalyType.PROPAGATION_DELAY_VARIANCE_WRONG,
+            SatelliteAnomalyType.TIMING_ADVANCE_TOO_SMALL,
+            SatelliteAnomalyType.SATELLITE_BELOW_HORIZON,
+            SatelliteAnomalyType.WRONG_ORBITAL_PLANE,
+            SatelliteAnomalyType.PASS_DURATION_EXCEEDED,
+            SatelliteAnomalyType.ELEVATION_ANGLE_IMPOSSIBLE,
+            SatelliteAnomalyType.TLE_POSITION_MISMATCH,
+            SatelliteAnomalyType.CARRIER_FREQUENCY_DRIFT_WRONG,
+            SatelliteAnomalyType.GNSS_NTN_TIME_CONFLICT,
+            SatelliteAnomalyType.TIME_OF_DAY_VISIBILITY_ANOMALY,
+            SatelliteAnomalyType.STARLINK_ORBITAL_PARAMS_WRONG,
+            SatelliteAnomalyType.MESSAGE_LATENCY_WRONG,
+            SatelliteAnomalyType.ACK_TIMING_TERRESTRIAL -> DetectionMethod.SAT_TIMING_ANOMALY
+
+            // Downgrade
             SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> DetectionMethod.SAT_DOWNGRADE
+
+            // Everything else maps to suspicious NTN
+            else -> DetectionMethod.SAT_SUSPICIOUS_NTN
         }
     }
 
@@ -654,6 +774,7 @@ class SatelliteDetectionHandler @Inject constructor(
         }
 
         val typeName = when (context.anomaly.type) {
+            // Core anomaly types
             SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> "Unexpected Satellite"
             SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> "Forced Satellite Handoff"
             SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> "Suspicious NTN"
@@ -664,6 +785,105 @@ class SatelliteDetectionHandler @Inject constructor(
             SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> "Satellite Timing Anomaly"
             SatelliteAnomalyType.EPHEMERIS_MISMATCH -> "Satellite Position Mismatch"
             SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> "Network Downgrade to Satellite"
+            SatelliteAnomalyType.RTT_ORBIT_MISMATCH -> "RTT/Orbit Mismatch"
+            SatelliteAnomalyType.UNEXPECTED_MODEM_STATE -> "Unexpected Modem State"
+            SatelliteAnomalyType.CAPABILITY_MISMATCH -> "Capability Mismatch"
+            SatelliteAnomalyType.NRARFCN_NTN_BAND_INVALID -> "Invalid NTN Band"
+
+            // Timing & Latency anomalies
+            SatelliteAnomalyType.DOPPLER_SHIFT_MISMATCH -> "Doppler Shift Mismatch"
+            SatelliteAnomalyType.PROPAGATION_DELAY_VARIANCE_WRONG -> "Propagation Delay Anomaly"
+            SatelliteAnomalyType.TIMING_ADVANCE_TOO_SMALL -> "Timing Advance Too Small"
+            SatelliteAnomalyType.HARQ_RETRANSMISSION_TIMING_WRONG -> "HARQ Timing Anomaly"
+            SatelliteAnomalyType.HANDOVER_TIMING_IMPOSSIBLE -> "Impossible Handover Timing"
+            SatelliteAnomalyType.MESSAGE_LATENCY_WRONG -> "Message Latency Anomaly"
+            SatelliteAnomalyType.ACK_TIMING_TERRESTRIAL -> "Terrestrial ACK Timing"
+
+            // Orbital & Ephemeris anomalies
+            SatelliteAnomalyType.SATELLITE_BELOW_HORIZON -> "Satellite Below Horizon"
+            SatelliteAnomalyType.WRONG_ORBITAL_PLANE -> "Wrong Orbital Plane"
+            SatelliteAnomalyType.PASS_DURATION_EXCEEDED -> "Pass Duration Exceeded"
+            SatelliteAnomalyType.ELEVATION_ANGLE_IMPOSSIBLE -> "Impossible Elevation Angle"
+            SatelliteAnomalyType.TLE_POSITION_MISMATCH -> "TLE Position Mismatch"
+            SatelliteAnomalyType.CARRIER_FREQUENCY_DRIFT_WRONG -> "Carrier Frequency Drift"
+            SatelliteAnomalyType.GNSS_NTN_TIME_CONFLICT -> "GNSS/NTN Time Conflict"
+            SatelliteAnomalyType.TIME_OF_DAY_VISIBILITY_ANOMALY -> "Visibility Anomaly"
+
+            // Signal & RF anomalies
+            SatelliteAnomalyType.SIGNAL_TOO_STRONG -> "Signal Too Strong"
+            SatelliteAnomalyType.WRONG_POLARIZATION -> "Wrong Polarization"
+            SatelliteAnomalyType.BANDWIDTH_MISMATCH -> "Bandwidth Mismatch"
+            SatelliteAnomalyType.MULTIPATH_IN_CLEAR_SKY -> "Multipath in Clear Sky"
+            SatelliteAnomalyType.SUBCARRIER_SPACING_WRONG -> "Subcarrier Spacing Wrong"
+
+            // Protocol & Network anomalies
+            SatelliteAnomalyType.MIB_SIB_INCONSISTENT -> "MIB/SIB Inconsistent"
+            SatelliteAnomalyType.PLMN_NOT_NTN_REGISTERED -> "PLMN Not NTN Registered"
+            SatelliteAnomalyType.CELL_ID_FORMAT_WRONG -> "Cell ID Format Wrong"
+            SatelliteAnomalyType.PAGING_CYCLE_TERRESTRIAL -> "Paging Cycle Terrestrial"
+            SatelliteAnomalyType.DRX_TOO_SHORT -> "DRX Too Short"
+            SatelliteAnomalyType.RACH_PROCEDURE_WRONG -> "RACH Procedure Wrong"
+            SatelliteAnomalyType.MEASUREMENT_GAP_MISSING -> "Measurement Gap Missing"
+            SatelliteAnomalyType.GNSS_ASSISTANCE_REJECTED -> "GNSS Assistance Rejected"
+
+            // Security anomalies
+            SatelliteAnomalyType.ENCRYPTION_DOWNGRADE -> "Encryption Downgrade"
+            SatelliteAnomalyType.IDENTITY_REQUEST_FLOOD -> "Identity Request Flood"
+            SatelliteAnomalyType.REPLAY_ATTACK_DETECTED -> "Replay Attack Detected"
+            SatelliteAnomalyType.CERTIFICATE_MISMATCH -> "Certificate Mismatch"
+            SatelliteAnomalyType.NULL_CIPHER_OFFERED -> "Null Cipher Offered"
+            SatelliteAnomalyType.AUTH_REJECT_LOOP -> "Auth Reject Loop"
+            SatelliteAnomalyType.SUPI_CONCEALMENT_DISABLED -> "SUPI Concealment Disabled"
+
+            // Coverage & Location anomalies
+            SatelliteAnomalyType.NTN_IN_FULL_TERRESTRIAL_COVERAGE -> "NTN in Terrestrial Coverage"
+            SatelliteAnomalyType.COVERAGE_HOLE_IMPOSSIBLE -> "Impossible Coverage Hole"
+            SatelliteAnomalyType.GEOFENCE_VIOLATION -> "Geofence Violation"
+            SatelliteAnomalyType.INDOOR_SATELLITE_CONNECTION -> "Indoor Satellite Connection"
+            SatelliteAnomalyType.ALTITUDE_INCOMPATIBLE -> "Altitude Incompatible"
+            SatelliteAnomalyType.URBAN_CANYON_SATELLITE -> "Urban Canyon Satellite"
+            SatelliteAnomalyType.GNSS_POSITION_COVERAGE_MISMATCH -> "GNSS Position Mismatch"
+
+            // Cross-system anomalies
+            SatelliteAnomalyType.SIMULTANEOUS_GNSS_JAMMING -> "GNSS Jamming Detected"
+            SatelliteAnomalyType.CELLULAR_NTN_GEOMETRY_IMPOSSIBLE -> "Impossible Cell Geometry"
+            SatelliteAnomalyType.WIFI_SATELLITE_CONFLICT -> "WiFi/Satellite Conflict"
+
+            // Behavioral anomalies
+            SatelliteAnomalyType.NTN_CAMPING_PERSISTENT -> "Persistent NTN Camping"
+            SatelliteAnomalyType.FORCED_NTN_AFTER_CALL -> "Forced NTN After Call"
+            SatelliteAnomalyType.HANDOVER_BACK_BLOCKED -> "Handover Back Blocked"
+            SatelliteAnomalyType.NTN_TRACKING_PATTERN -> "NTN Tracking Pattern"
+            SatelliteAnomalyType.SELECTIVE_NTN_ROUTING -> "Selective NTN Routing"
+            SatelliteAnomalyType.PEER_DEVICE_DIVERGENCE -> "Peer Device Divergence"
+
+            // Hardware/Modem anomalies
+            SatelliteAnomalyType.MODEM_STATE_TRANSITION_IMPOSSIBLE -> "Impossible Modem Transition"
+            SatelliteAnomalyType.CAPABILITY_ANNOUNCEMENT_WRONG -> "Capability Announcement Wrong"
+            SatelliteAnomalyType.BASEBAND_FIRMWARE_TAMPERED -> "Baseband Firmware Tampered"
+            SatelliteAnomalyType.ANTENNA_CONFIGURATION_WRONG -> "Antenna Config Wrong"
+            SatelliteAnomalyType.POWER_CLASS_MISMATCH -> "Power Class Mismatch"
+            SatelliteAnomalyType.SIMULTANEOUS_BAND_CONFLICT -> "Band Conflict"
+
+            // Provider-specific anomalies
+            SatelliteAnomalyType.STARLINK_ORBITAL_PARAMS_WRONG -> "Starlink Orbital Params Wrong"
+            SatelliteAnomalyType.SKYLO_MODEM_MISSING -> "Skylo Modem Missing"
+            SatelliteAnomalyType.IRIDIUM_CONSTELLATION_MISMATCH -> "Iridium Constellation Mismatch"
+            SatelliteAnomalyType.GLOBALSTAR_BAND_WRONG -> "Globalstar Band Wrong"
+            SatelliteAnomalyType.AST_SPACEMOBILE_PREMATURE -> "AST SpaceMobile Premature"
+            SatelliteAnomalyType.PROVIDER_CAPABILITY_MISMATCH -> "Provider Capability Mismatch"
+
+            // Message/Data anomalies
+            SatelliteAnomalyType.SMS_ROUTING_SUSPICIOUS -> "Suspicious SMS Routing"
+            SatelliteAnomalyType.DATAGRAM_SIZE_EXCEEDED -> "Datagram Size Exceeded"
+            SatelliteAnomalyType.STORE_FORWARD_MISSING -> "Store/Forward Missing"
+            SatelliteAnomalyType.SATELLITE_ID_REUSE -> "Satellite ID Reuse"
+
+            // Emergency anomalies
+            SatelliteAnomalyType.SOS_REDIRECT_SUSPICIOUS -> "Suspicious SOS Redirect"
+            SatelliteAnomalyType.E911_LOCATION_INJECTION -> "E911 Location Injection"
+            SatelliteAnomalyType.EMERGENCY_CALL_BLOCKED -> "Emergency Call Blocked"
+            SatelliteAnomalyType.FAKE_EMERGENCY_ALERT -> "Fake Emergency Alert"
         }
 
         return "$emoji $typeName"

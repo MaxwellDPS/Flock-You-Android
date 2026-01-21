@@ -48,6 +48,10 @@ data class Detection(
     val seenCount: Int = 1, // Number of times this device has been seen
     val lastSeenTimestamp: Long = System.currentTimeMillis(), // When device was last seen
 
+    // Detection source tracking
+    @ColumnInfo(name = "detectionSource", defaultValue = "UNKNOWN")
+    val detectionSource: DetectionSource = DetectionSource.UNKNOWN,
+
     // False positive analysis fields (computed in background)
     @ColumnInfo(name = "fpScore", defaultValue = "NULL")
     val fpScore: Float? = null,              // 0.0-1.0, null if not analyzed
@@ -245,6 +249,24 @@ enum class ThreatLevel(val displayName: String, val description: String) {
     MEDIUM("Medium", "Likely surveillance equipment"),
     LOW("Low", "Possible surveillance device"),
     INFO("Info", "Device of interest - may not be surveillance")
+}
+
+/**
+ * Source of the detection - where the scan data originated from
+ */
+enum class DetectionSource(val displayName: String) {
+    NATIVE_WIFI("Android WiFi Scanner"),
+    NATIVE_BLE("Android BLE Scanner"),
+    FLIPPER_WIFI("Flipper Zero WiFi"),
+    FLIPPER_BLE("Flipper Zero BLE"),
+    FLIPPER_SUBGHZ("Flipper Zero Sub-GHz"),
+    FLIPPER_IR("Flipper Zero IR"),
+    FLIPPER_NFC("Flipper Zero NFC"),
+    FLIPPER_WIPS("Flipper Zero WIPS"),
+    CELLULAR("Cellular Network"),
+    GNSS("GNSS/Satellite"),
+    AUDIO("Audio Analysis"),
+    UNKNOWN("Unknown Source")
 }
 
 /**

@@ -100,10 +100,10 @@ fun RfDetectionScreen(
                     if (advancedMode) {
                         IconButton(
                             onClick = {
-                                val debugInfo = viewModel.exportRfDebugInfo()
+                                val debugInfo = viewModel.exportAllDebugInfo()
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You RF Debug Export")
+                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You Debug Export")
                                     putExtra(Intent.EXTRA_TEXT, debugInfo)
                                 }
                                 context.startActivity(Intent.createChooser(shareIntent, "Export Debug Info"))

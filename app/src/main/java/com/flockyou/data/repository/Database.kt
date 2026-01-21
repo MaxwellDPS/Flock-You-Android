@@ -94,6 +94,18 @@ class Converters {
             Log.w(TAG, "Invalid ThreatLevel '$value', using default LOW")
             ThreatLevel.LOW
         }
+
+    @TypeConverter
+    fun fromDetectionSource(value: DetectionSource): String = value.name
+
+    @TypeConverter
+    fun toDetectionSource(value: String): DetectionSource =
+        try {
+            DetectionSource.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid DetectionSource '$value', using default UNKNOWN")
+            DetectionSource.UNKNOWN
+        }
 }
 
 /**
@@ -548,7 +560,7 @@ object DatabaseKeyManager {
  * Room database for storing detections.
  * Uses SQLCipher for encryption to protect sensitive detection data.
  */
-@Database(entities = [Detection::class, OuiEntry::class], version = 7, exportSchema = false)
+@Database(entities = [Detection::class, OuiEntry::class], version = 8, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
@@ -609,6 +621,13 @@ abstract class FlockYouDatabase : RoomDatabase() {
             }
         }
 
+        // Migration from version 7 to 8 - adds detectionSource field for tracking scan origin (Flipper vs native)
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE detections ADD COLUMN detectionSource TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            }
+        }
+
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Load SQLCipher native library
@@ -630,7 +649,7 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     "flockyou_database_encrypted"  // New name to avoid conflicts with old unencrypted DB
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance

@@ -3,6 +3,7 @@ package com.flockyou.scanner.flipper
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DetectionMethod
 import com.flockyou.data.model.DetectionProtocol
+import com.flockyou.data.model.DetectionSource
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.SignalStrength
 import com.flockyou.data.model.SurveillancePattern
@@ -71,7 +72,8 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = threatLevel,
-            rawData = "channel:${network.channel},security:${network.security.name},hidden:${network.hidden},source:flipper",
+            detectionSource = DetectionSource.FLIPPER_WIFI,
+            rawData = "channel:${network.channel},security:${network.security.name},hidden:${network.hidden}",
             lastSeenTimestamp = timestamp
         )
     }
@@ -95,8 +97,7 @@ class FlipperDetectionAdapter {
             "modulation" to detection.modulation.name,
             "duration_ms" to detection.durationMs.toString(),
             "protocol_id" to detection.protocolId.toString(),
-            "protocol_name" to detection.protocolName,
-            "source" to "flipper"
+            "protocol_name" to detection.protocolName
         )
 
         // Add tracker signature info if matched
@@ -154,6 +155,7 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = threatLevel,
+            detectionSource = DetectionSource.FLIPPER_SUBGHZ,
             rawData = metadata.entries.joinToString(",") { "${it.key}:${it.value}" },
             lastSeenTimestamp = timestamp
         )
@@ -245,7 +247,6 @@ class FlipperDetectionAdapter {
             "connectable" to device.isConnectable.toString(),
             "manufacturer_id" to device.manufacturerId.toString(),
             "service_uuids" to device.serviceUuids.joinToString(","),
-            "source" to "flipper",
             "beacon_protocol" to beaconType.displayName
         )
 
@@ -318,6 +319,7 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = threatLevel,
+            detectionSource = DetectionSource.FLIPPER_BLE,
             serviceUuids = device.serviceUuids.joinToString(",").takeIf { it.isNotEmpty() },
             rawData = metadata.entries.joinToString(",") { "${it.key}:${it.value}" },
             lastSeenTimestamp = timestamp
@@ -400,7 +402,8 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = ThreatLevel.LOW,
-            rawData = "protocol_id:${detection.protocolId},protocol_name:${detection.protocolName},address:${detection.address},command:${detection.command},is_repeat:${detection.isRepeat},source:flipper",
+            detectionSource = DetectionSource.FLIPPER_IR,
+            rawData = "protocol_id:${detection.protocolId},protocol_name:${detection.protocolName},address:${detection.address},command:${detection.command},is_repeat:${detection.isRepeat}",
             lastSeenTimestamp = timestamp
         )
     }
@@ -424,7 +427,8 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = ThreatLevel.LOW,
-            rawData = "uid:${detection.uidString},nfc_type:${detection.nfcType.name},sak:${detection.sak},type_name:${detection.typeName},source:flipper",
+            detectionSource = DetectionSource.FLIPPER_NFC,
+            rawData = "uid:${detection.uidString},nfc_type:${detection.nfcType.name},sak:${detection.sak},type_name:${detection.typeName}",
             lastSeenTimestamp = timestamp
         )
     }
@@ -462,7 +466,8 @@ class FlipperDetectionAdapter {
             latitude = latitude,
             longitude = longitude,
             threatLevel = threatLevel,
-            rawData = "alert_type:${event.type.name},ssid:${event.ssid},bssid:${event.bssid},description:${event.description},severity:${event.severity.name},source:flipper_wips",
+            detectionSource = DetectionSource.FLIPPER_WIPS,
+            rawData = "alert_type:${event.type.name},ssid:${event.ssid},bssid:${event.bssid},description:${event.description},severity:${event.severity.name}",
             lastSeenTimestamp = event.timestamp
         )
     }

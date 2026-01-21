@@ -66,6 +66,7 @@ struct DetectionScheduler {
 // Internal Callbacks - Forward to user callbacks
 // ============================================================================
 
+__attribute__((unused))
 static void scheduler_subghz_callback(
     const FlockSubGhzDetection* detection,
     SubGhzSignalType signal_type,
@@ -86,6 +87,7 @@ static void scheduler_subghz_callback(
         detection->protocol_name, detection->frequency, signal_type);
 }
 
+__attribute__((unused))
 static void scheduler_ble_callback(
     const BleDeviceExtended* device,
     void* context) {
@@ -151,6 +153,7 @@ static void scheduler_wifi_deauth_callback(
         deauth->bssid[3], deauth->bssid[4], deauth->bssid[5], deauth->count);
 }
 
+__attribute__((unused))
 static void scheduler_ir_callback(
     const FlockIrDetection* detection,
     IrSignalType signal_type,
@@ -170,6 +173,7 @@ static void scheduler_ir_callback(
     FURI_LOG_D(TAG, "IR: %s (type: %d)", detection->protocol_name, signal_type);
 }
 
+__attribute__((unused))
 static void scheduler_nfc_callback(
     const FlockNfcDetectionExtended* detection,
     void* context) {
@@ -526,25 +530,35 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->config.radio_sources.wifi_source = RadioSourceExternal;  // No internal WiFi
 
     // Allocate internal scanners with null checks
+    // RE-ENABLED - Testing SubGHz scanner
     scheduler->subghz_internal = subghz_scanner_alloc();
     if (!scheduler->subghz_internal) {
         FURI_LOG_E(TAG, "Failed to allocate SubGhz scanner");
     }
+    FURI_LOG_I(TAG, "SubGHz scanner allocated");
 
-    scheduler->ble_internal = ble_scanner_alloc();
-    if (!scheduler->ble_internal) {
-        FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
-    }
+    // DISABLED - BLE scanner causes crashes (conflicts with BT serial)
+    // scheduler->ble_internal = ble_scanner_alloc();
+    // if (!scheduler->ble_internal) {
+    //     FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
+    // }
+    scheduler->ble_internal = NULL;
+    FURI_LOG_I(TAG, "BLE scanner DISABLED (causes crashes)");
 
-    scheduler->ir = ir_scanner_alloc();
-    if (!scheduler->ir) {
-        FURI_LOG_E(TAG, "Failed to allocate IR scanner");
-    }
+    // DISABLED - IR scanner causes crashes
+    // scheduler->ir = ir_scanner_alloc();
+    // if (!scheduler->ir) {
+    //     FURI_LOG_E(TAG, "Failed to allocate IR scanner");
+    // }
+    scheduler->ir = NULL;
+    FURI_LOG_I(TAG, "IR scanner DISABLED (causes crashes)");
 
+    // RE-ENABLED - Testing NFC scanner
     scheduler->nfc = flock_nfc_scanner_alloc();
     if (!scheduler->nfc) {
         FURI_LOG_E(TAG, "Failed to allocate NFC scanner");
     }
+    FURI_LOG_I(TAG, "NFC scanner allocated");
 
     // Configure internal scanner callbacks
     if (scheduler->subghz_internal) {

@@ -243,6 +243,19 @@ private fun SatelliteStatusContent(
             item {
                 SatelliteCapabilitiesCard(capabilities = satelliteState.capabilities)
             }
+
+            // Comprehensive API data card
+            item {
+                SatelliteApiDataCard(state = satelliteState)
+            }
+        }
+
+        // Always show API support status
+        item {
+            SatelliteApiSupportCard(
+                state = satelliteState,
+                isScanning = isScanning
+            )
         }
 
         // Device support card
@@ -1189,6 +1202,15 @@ private fun SatelliteConnectionDetail(
 private fun SatelliteFullTechnicalCard(state: SatelliteConnectionState) {
     var expanded by remember { mutableStateOf(true) }
 
+    // Get orbit color based on estimation
+    val orbitColor = when (state.estimatedOrbit) {
+        SatelliteMonitor.OrbitType.LEO -> Color(0xFF4CAF50)
+        SatelliteMonitor.OrbitType.MEO -> Color(0xFF2196F3)
+        SatelliteMonitor.OrbitType.GEO -> Color(0xFFFF9800)
+        SatelliteMonitor.OrbitType.SPOOFED -> Color(0xFFF44336)
+        SatelliteMonitor.OrbitType.UNKNOWN -> Color(0xFF9E9E9E)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = { expanded = !expanded }
@@ -1225,34 +1247,40 @@ private fun SatelliteFullTechnicalCard(state: SatelliteConnectionState) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Key metrics always visible
+            // Key metrics always visible - now showing real-time measurements
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 SatelliteTechMetric(
                     icon = Icons.Default.Speed,
-                    label = "Latency",
-                    value = when (state.provider) {
+                    label = "RTT",
+                    value = state.measuredRttMs?.let { "${it}ms" } ?: when (state.provider) {
                         SatelliteProvider.STARLINK -> "~30ms"
                         SatelliteProvider.SKYLO -> "~50ms"
-                        else -> "Variable"
+                        else -> "Measuring..."
                     }
                 )
                 SatelliteTechMetric(
                     icon = Icons.Default.Public,
-                    label = "Orbit",
-                    value = when (state.provider) {
-                        SatelliteProvider.STARLINK -> "540km"
-                        SatelliteProvider.IRIDIUM -> "780km"
-                        SatelliteProvider.INMARSAT -> "35,786km"
-                        else -> "LEO"
-                    }
+                    label = "Orbit Est.",
+                    value = state.estimatedOrbit.displayName,
+                    valueColor = orbitColor
                 )
                 SatelliteTechMetric(
                     icon = Icons.Default.Router,
                     label = "Standard",
                     value = "3GPP R17"
+                )
+            }
+
+            // RTT/Orbit validation status
+            if (state.measuredRttMs != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                RttOrbitValidationStatus(
+                    measuredRttMs = state.measuredRttMs,
+                    estimatedOrbit = state.estimatedOrbit,
+                    provider = state.provider
                 )
             }
 
@@ -1275,6 +1303,27 @@ private fun SatelliteFullTechnicalCard(state: SatelliteConnectionState) {
                     SatelliteTechRow("NTN Band", if (state.isNTNBand) "Valid (L/S-band)" else "Checking...")
                     state.frequency?.let { freq ->
                         SatelliteTechRow("Frequency", "${freq} MHz")
+                    }
+
+                    // NRARFCN information
+                    state.nrarfcn?.let { nrarfcn ->
+                        SatelliteTechRow(
+                            "NR ARFCN",
+                            nrarfcn.toString(),
+                            valueColor = if (SatelliteMonitor.Companion.NTNBands.isValidNtnArfcn(nrarfcn)) {
+                                Color(0xFF4CAF50)
+                            } else {
+                                Color(0xFFFF9800)
+                            }
+                        )
+                        SatelliteMonitor.Companion.NTNBands.getNtnBandFromArfcn(nrarfcn)?.let { band ->
+                            SatelliteTechRow("NTN Band", band)
+                        }
+                    }
+
+                    // Modem state
+                    if (state.modemState != SatelliteMonitor.SatelliteModemState.UNKNOWN) {
+                        SatelliteTechRow("Modem State", formatModemState(state.modemState))
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1315,10 +1364,77 @@ private fun SatelliteFullTechnicalCard(state: SatelliteConnectionState) {
 }
 
 @Composable
+private fun RttOrbitValidationStatus(
+    measuredRttMs: Long,
+    estimatedOrbit: SatelliteMonitor.OrbitType,
+    provider: SatelliteProvider
+) {
+    val expectedOrbit = when (provider) {
+        SatelliteProvider.STARLINK, SatelliteProvider.SKYLO,
+        SatelliteProvider.GLOBALSTAR, SatelliteProvider.AST_SPACEMOBILE,
+        SatelliteProvider.LYNK, SatelliteProvider.IRIDIUM -> SatelliteMonitor.OrbitType.LEO
+        SatelliteProvider.INMARSAT -> SatelliteMonitor.OrbitType.GEO
+        SatelliteProvider.UNKNOWN -> SatelliteMonitor.OrbitType.UNKNOWN
+    }
+
+    val isValid = when {
+        estimatedOrbit == SatelliteMonitor.OrbitType.SPOOFED -> false
+        expectedOrbit == SatelliteMonitor.OrbitType.UNKNOWN -> true
+        expectedOrbit == estimatedOrbit -> true
+        expectedOrbit == SatelliteMonitor.OrbitType.LEO &&
+            estimatedOrbit == SatelliteMonitor.OrbitType.GEO -> false
+        else -> true
+    }
+
+    val (bgColor, textColor, message) = when {
+        estimatedOrbit == SatelliteMonitor.OrbitType.SPOOFED -> Triple(
+            Color(0xFFF44336).copy(alpha = 0.1f),
+            Color(0xFFF44336),
+            "RTT too fast for satellite - possible spoofing"
+        )
+        !isValid -> Triple(
+            Color(0xFFFF9800).copy(alpha = 0.1f),
+            Color(0xFFFF9800),
+            "RTT mismatch: Expected ${expectedOrbit.displayName}, measured ${estimatedOrbit.displayName}"
+        )
+        else -> Triple(
+            Color(0xFF4CAF50).copy(alpha = 0.1f),
+            Color(0xFF4CAF50),
+            "RTT validates ${estimatedOrbit.displayName} (${measuredRttMs}ms)"
+        )
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = bgColor
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isValid) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = textColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor
+            )
+        }
+    }
+}
+
+@Composable
 private fun SatelliteTechMetric(
     icon: ImageVector,
     label: String,
-    value: String
+    value: String,
+    valueColor: Color? = null
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1338,13 +1454,18 @@ private fun SatelliteTechMetric(
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            color = valueColor ?: MaterialTheme.colorScheme.onSurface
         )
     }
 }
 
 @Composable
-private fun SatelliteTechRow(label: String, value: String) {
+private fun SatelliteTechRow(
+    label: String,
+    value: String,
+    valueColor: Color? = null
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1360,7 +1481,8 @@ private fun SatelliteTechRow(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace
+            fontFamily = FontFamily.Monospace,
+            color = valueColor ?: MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -1457,6 +1579,382 @@ private fun SatelliteCapabilityChip(
             }
         )
     )
+}
+
+/**
+ * Card showing all raw API data from satellite connection
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SatelliteApiDataCard(state: SatelliteConnectionState) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DataObject,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Raw API Data",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Always visible summary
+            Text(
+                text = "Connection State & NTN Parameters",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Connection State Section
+                    Text(
+                        text = "CONNECTION STATE",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    ApiDataRow("isConnected", state.isConnected.toString())
+                    ApiDataRow("connectionType", state.connectionType.name)
+                    ApiDataRow("networkName", state.networkName ?: "null")
+                    ApiDataRow("operatorName", state.operatorName ?: "null")
+                    ApiDataRow("radioTechnology", formatRadioTech(state.radioTechnology))
+                    ApiDataRow("signalStrength", state.signalStrength?.toString() ?: "null")
+                    ApiDataRow("frequency", state.frequency?.let { "${it} MHz" } ?: "null")
+                    ApiDataRow("isNTNBand", state.isNTNBand.toString())
+                    ApiDataRow("lastUpdate", SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+                        .format(Date(state.lastUpdate)))
+                    ApiDataRow("provider", state.provider.name)
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // NTN Enhanced Data Section
+                    Text(
+                        text = "NTN ENHANCED DATA",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    ApiDataRow("modemState", state.modemState.name)
+                    ApiDataRow("nrarfcn", state.nrarfcn?.toString() ?: "null")
+                    ApiDataRow("measuredRttMs", state.measuredRttMs?.let { "${it} ms" } ?: "null")
+                    ApiDataRow("estimatedOrbit", state.estimatedOrbit.name)
+                    ApiDataRow("satelliteManagerSupported", state.satelliteManagerSupported.toString())
+
+                    // NTN Signal Strength
+                    state.ntnSignalStrength?.let { signal ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "NTN SIGNAL STRENGTH",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ApiDataRow("level", "${signal.level}/4")
+                        ApiDataRow("dbm", signal.dbm?.let { "${it} dBm" } ?: "null")
+                    }
+
+                    // NRARFCN Band Info
+                    state.nrarfcn?.let { nrarfcn ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "NR ARFCN ANALYSIS",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ApiDataRow("nrarfcn", nrarfcn.toString())
+                        ApiDataRow("isValidNtnArfcn",
+                            SatelliteMonitor.Companion.NTNBands.isValidNtnArfcn(nrarfcn).toString())
+                        SatelliteMonitor.Companion.NTNBands.getNtnBandFromArfcn(nrarfcn)?.let { band ->
+                            ApiDataRow("ntnBand", band)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Capabilities Section
+                    Text(
+                        text = "CAPABILITIES",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    ApiDataRow("supportsSMS", state.capabilities.supportsSMS.toString())
+                    ApiDataRow("supportsMMS", state.capabilities.supportsMMS.toString())
+                    ApiDataRow("supportsVoice", state.capabilities.supportsVoice.toString())
+                    ApiDataRow("supportsData", state.capabilities.supportsData.toString())
+                    ApiDataRow("supportsEmergency", state.capabilities.supportsEmergency.toString())
+                    ApiDataRow("supportsLocationSharing", state.capabilities.supportsLocationSharing.toString())
+                    ApiDataRow("maxMessageLength", state.capabilities.maxMessageLength?.toString() ?: "null")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiDataRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 1.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            fontFamily = FontFamily.Monospace,
+            color = when {
+                value == "null" -> Color(0xFF9E9E9E)
+                value == "true" -> Color(0xFF4CAF50)
+                value == "false" -> Color(0xFFF44336)
+                else -> MaterialTheme.colorScheme.onSurface
+            }
+        )
+    }
+}
+
+/**
+ * Card showing API support status and Android version requirements
+ */
+@Composable
+private fun SatelliteApiSupportCard(
+    state: SatelliteConnectionState?,
+    isScanning: Boolean
+) {
+    val apiLevel = android.os.Build.VERSION.SDK_INT
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Api,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Android API Support",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // API Level
+            ApiSupportRow(
+                feature = "Device API Level",
+                value = "API $apiLevel (Android ${getAndroidVersionName(apiLevel)})",
+                supported = true
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // SatelliteManager (API 31+)
+            ApiSupportRow(
+                feature = "SatelliteManager",
+                value = if (apiLevel >= 31) "Available (API 31+)" else "Requires API 31+",
+                supported = apiLevel >= 31
+            )
+
+            // CellInfoNr NRARFCN (API 29+)
+            ApiSupportRow(
+                feature = "CellInfoNr (NRARFCN)",
+                value = if (apiLevel >= 29) "Available (API 29+)" else "Requires API 29+",
+                supported = apiLevel >= 29
+            )
+
+            // TelephonyCallback (API 31+)
+            ApiSupportRow(
+                feature = "TelephonyCallback",
+                value = if (apiLevel >= 31) "Available (API 31+)" else "Requires API 31+",
+                supported = apiLevel >= 31
+            )
+
+            // Satellite Modem State
+            if (state != null) {
+                ApiSupportRow(
+                    feature = "Satellite Modem Detected",
+                    value = if (state.satelliteManagerSupported) "Yes" else "No",
+                    supported = state.satelliteManagerSupported
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Data collection status
+            Text(
+                text = "Data Collection Status",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            val dataPoints = listOf(
+                "Connection State" to (state?.isConnected != null),
+                "Signal Strength" to (state?.signalStrength != null),
+                "Network Name" to (state?.networkName != null),
+                "Operator Name" to (state?.operatorName != null),
+                "Frequency" to (state?.frequency != null),
+                "NRARFCN" to (state?.nrarfcn != null),
+                "RTT Measurement" to (state?.measuredRttMs != null),
+                "Modem State" to (state?.modemState != SatelliteMonitor.SatelliteModemState.UNKNOWN),
+                "NTN Signal" to (state?.ntnSignalStrength != null)
+            )
+
+            dataPoints.forEach { (name, available) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (available) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                                )
+                        )
+                        Text(
+                            text = if (available) "Available" else "N/A",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (available) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                        )
+                    }
+                }
+            }
+
+            if (!isScanning) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFFFC107).copy(alpha = 0.1f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Start scanning to collect satellite data",
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFFFC107)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiSupportRow(
+    feature: String,
+    value: String,
+    supported: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = feature,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = if (supported) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = if (supported) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (supported) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+            )
+        }
+    }
+}
+
+private fun getAndroidVersionName(apiLevel: Int): String {
+    return when (apiLevel) {
+        26 -> "8.0 Oreo"
+        27 -> "8.1 Oreo"
+        28 -> "9 Pie"
+        29 -> "10"
+        30 -> "11"
+        31 -> "12"
+        32 -> "12L"
+        33 -> "13"
+        34 -> "14"
+        35 -> "15"
+        else -> if (apiLevel > 35) "$apiLevel+" else "$apiLevel"
+    }
 }
 
 @Composable
@@ -1579,12 +2077,18 @@ private fun SatelliteDetectionInfoCard() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SatelliteAnomaliesContent(
     anomalies: List<SatelliteAnomaly>,
     onClear: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    // Group anomalies by category
+    val anomaliesByCategory = remember(anomalies) {
+        anomalies.groupBy { getAnomalyCategory(it.type) }
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -1612,14 +2116,26 @@ private fun SatelliteAnomaliesContent(
                             color = Color(0xFF4CAF50)
                         )
                         Text(
-                            text = "Satellite connections appear normal",
+                            text = "Comprehensive NTN monitoring active",
                             style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Monitoring 70+ anomaly types across 12 categories",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
+
+            // Show detection capabilities even when no anomalies
+            item {
+                DetectionCapabilitiesCard()
+            }
         } else {
+            // Header with count
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1648,6 +2164,12 @@ private fun SatelliteAnomaliesContent(
                 }
             }
 
+            // Category summary card
+            item {
+                AnomalyCategorySummaryCard(anomaliesByCategory = anomaliesByCategory)
+            }
+
+            // Individual anomaly cards
             items(
                 items = anomalies.sortedByDescending { it.timestamp },
                 key = { "${it.type}-${it.timestamp}" }
@@ -1658,6 +2180,145 @@ private fun SatelliteAnomaliesContent(
 
         item {
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * Card showing detection capabilities when no anomalies are present
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetectionCapabilitiesCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Detection Categories",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AnomalyCategory.entries.forEach { category ->
+                    AssistChip(
+                        onClick = { },
+                        label = { Text(category.displayName, style = MaterialTheme.typography.labelSmall) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = category.icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = category.color
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = category.color.copy(alpha = 0.1f)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Detection includes: RTT/orbit validation, Doppler shift analysis, TLE orbital tracking, signal strength analysis, protocol validation, encryption monitoring, location correlation, behavioral patterns, and more.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Summary card showing anomaly counts by category
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AnomalyCategorySummaryCard(
+    anomaliesByCategory: Map<AnomalyCategory, List<SatelliteAnomaly>>
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Analytics,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Anomalies by Category",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                anomaliesByCategory
+                    .entries
+                    .sortedByDescending { it.value.size }
+                    .forEach { (category, categoryAnomalies) ->
+                        val highSeverityCount = categoryAnomalies.count {
+                            it.severity == AnomalySeverity.CRITICAL || it.severity == AnomalySeverity.HIGH
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = category.color.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = category.icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = category.color
+                                )
+                                Column {
+                                    Text(
+                                        text = category.displayName,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = category.color
+                                    )
+                                    Text(
+                                        text = "${categoryAnomalies.size} detected" +
+                                            if (highSeverityCount > 0) " ($highSeverityCount critical)" else "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+            }
         }
     }
 }
@@ -1676,6 +2337,7 @@ private fun SatelliteAnomalyFullCard(
         AnomalySeverity.INFO -> Color(0xFF2196F3)
     }
 
+    val category = getAnomalyCategory(anomaly.type)
     var expanded by remember { mutableStateOf(false) }
 
     Card(
@@ -1698,12 +2360,22 @@ private fun SatelliteAnomalyFullCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(severityColor)
-                    )
+                    // Category icon with severity indicator
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = category.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = category.color
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(severityColor)
+                        )
+                    }
 
                     Column {
                         Text(
@@ -1711,11 +2383,26 @@ private fun SatelliteAnomalyFullCard(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = dateFormat.format(Date(anomaly.timestamp)),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = category.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = category.color
+                            )
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = dateFormat.format(Date(anomaly.timestamp)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
@@ -2108,8 +2795,212 @@ private fun formatRadioTech(tech: Int): String {
     }
 }
 
+private fun formatModemState(state: SatelliteMonitor.SatelliteModemState): String {
+    return when (state) {
+        SatelliteMonitor.SatelliteModemState.UNKNOWN -> "Unknown"
+        SatelliteMonitor.SatelliteModemState.IDLE -> "Idle"
+        SatelliteMonitor.SatelliteModemState.LISTENING -> "Listening"
+        SatelliteMonitor.SatelliteModemState.NOT_CONNECTED -> "Not Connected"
+        SatelliteMonitor.SatelliteModemState.CONNECTED -> "Connected"
+        SatelliteMonitor.SatelliteModemState.DATAGRAM_TRANSFERRING -> "Transferring"
+        SatelliteMonitor.SatelliteModemState.DATAGRAM_RETRYING -> "Retrying"
+        SatelliteMonitor.SatelliteModemState.DISABLED -> "Disabled"
+    }
+}
+
+/**
+ * Anomaly detection categories for grouping and display
+ */
+enum class AnomalyCategory(
+    val displayName: String,
+    val icon: ImageVector,
+    val color: Color
+) {
+    TIMING(
+        "Timing & Latency",
+        Icons.Default.Speed,
+        Color(0xFF2196F3)
+    ),
+    ORBITAL(
+        "Orbital & Ephemeris",
+        Icons.Default.Public,
+        Color(0xFF9C27B0)
+    ),
+    SIGNAL(
+        "Signal & RF",
+        Icons.Default.SignalCellular4Bar,
+        Color(0xFF4CAF50)
+    ),
+    PROTOCOL(
+        "Protocol & Network",
+        Icons.Default.Router,
+        Color(0xFF00BCD4)
+    ),
+    SECURITY(
+        "Security",
+        Icons.Default.Security,
+        Color(0xFFF44336)
+    ),
+    COVERAGE(
+        "Coverage & Location",
+        Icons.Default.Map,
+        Color(0xFFFF9800)
+    ),
+    CORRELATION(
+        "Cross-System",
+        Icons.Default.CompareArrows,
+        Color(0xFF795548)
+    ),
+    BEHAVIORAL(
+        "Behavioral",
+        Icons.Default.Psychology,
+        Color(0xFFE91E63)
+    ),
+    HARDWARE(
+        "Hardware/Modem",
+        Icons.Default.Memory,
+        Color(0xFF607D8B)
+    ),
+    PROVIDER(
+        "Provider-Specific",
+        Icons.Outlined.Satellite,
+        Color(0xFF3F51B5)
+    ),
+    MESSAGE(
+        "Message/Data",
+        Icons.Default.Sms,
+        Color(0xFF009688)
+    ),
+    EMERGENCY(
+        "Emergency Services",
+        Icons.Default.Emergency,
+        Color(0xFFD32F2F)
+    ),
+    CORE(
+        "Core Detection",
+        Icons.Default.Warning,
+        Color(0xFFFF5722)
+    )
+}
+
+private fun getAnomalyCategory(type: SatelliteAnomalyType): AnomalyCategory {
+    return when (type) {
+        // Timing & Latency
+        SatelliteAnomalyType.RTT_ORBIT_MISMATCH,
+        SatelliteAnomalyType.DOPPLER_SHIFT_MISMATCH,
+        SatelliteAnomalyType.PROPAGATION_DELAY_VARIANCE_WRONG,
+        SatelliteAnomalyType.TIMING_ADVANCE_TOO_SMALL,
+        SatelliteAnomalyType.HARQ_RETRANSMISSION_TIMING_WRONG,
+        SatelliteAnomalyType.HANDOVER_TIMING_IMPOSSIBLE,
+        SatelliteAnomalyType.MESSAGE_LATENCY_WRONG,
+        SatelliteAnomalyType.ACK_TIMING_TERRESTRIAL,
+        SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> AnomalyCategory.TIMING
+
+        // Orbital & Ephemeris
+        SatelliteAnomalyType.EPHEMERIS_MISMATCH,
+        SatelliteAnomalyType.SATELLITE_BELOW_HORIZON,
+        SatelliteAnomalyType.WRONG_ORBITAL_PLANE,
+        SatelliteAnomalyType.PASS_DURATION_EXCEEDED,
+        SatelliteAnomalyType.ELEVATION_ANGLE_IMPOSSIBLE,
+        SatelliteAnomalyType.TLE_POSITION_MISMATCH,
+        SatelliteAnomalyType.CARRIER_FREQUENCY_DRIFT_WRONG,
+        SatelliteAnomalyType.GNSS_NTN_TIME_CONFLICT,
+        SatelliteAnomalyType.TIME_OF_DAY_VISIBILITY_ANOMALY -> AnomalyCategory.ORBITAL
+
+        // Signal & RF
+        SatelliteAnomalyType.SIGNAL_TOO_STRONG,
+        SatelliteAnomalyType.WRONG_POLARIZATION,
+        SatelliteAnomalyType.BANDWIDTH_MISMATCH,
+        SatelliteAnomalyType.MULTIPATH_IN_CLEAR_SKY,
+        SatelliteAnomalyType.SUBCARRIER_SPACING_WRONG,
+        SatelliteAnomalyType.NTN_BAND_MISMATCH,
+        SatelliteAnomalyType.NRARFCN_NTN_BAND_INVALID -> AnomalyCategory.SIGNAL
+
+        // Protocol & Network
+        SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS,
+        SatelliteAnomalyType.MIB_SIB_INCONSISTENT,
+        SatelliteAnomalyType.PLMN_NOT_NTN_REGISTERED,
+        SatelliteAnomalyType.CELL_ID_FORMAT_WRONG,
+        SatelliteAnomalyType.PAGING_CYCLE_TERRESTRIAL,
+        SatelliteAnomalyType.DRX_TOO_SHORT,
+        SatelliteAnomalyType.RACH_PROCEDURE_WRONG,
+        SatelliteAnomalyType.MEASUREMENT_GAP_MISSING,
+        SatelliteAnomalyType.GNSS_ASSISTANCE_REJECTED -> AnomalyCategory.PROTOCOL
+
+        // Security
+        SatelliteAnomalyType.ENCRYPTION_DOWNGRADE,
+        SatelliteAnomalyType.IDENTITY_REQUEST_FLOOD,
+        SatelliteAnomalyType.REPLAY_ATTACK_DETECTED,
+        SatelliteAnomalyType.CERTIFICATE_MISMATCH,
+        SatelliteAnomalyType.NULL_CIPHER_OFFERED,
+        SatelliteAnomalyType.AUTH_REJECT_LOOP,
+        SatelliteAnomalyType.SUPI_CONCEALMENT_DISABLED -> AnomalyCategory.SECURITY
+
+        // Coverage & Location
+        SatelliteAnomalyType.SATELLITE_IN_COVERED_AREA,
+        SatelliteAnomalyType.NTN_IN_FULL_TERRESTRIAL_COVERAGE,
+        SatelliteAnomalyType.COVERAGE_HOLE_IMPOSSIBLE,
+        SatelliteAnomalyType.GEOFENCE_VIOLATION,
+        SatelliteAnomalyType.INDOOR_SATELLITE_CONNECTION,
+        SatelliteAnomalyType.ALTITUDE_INCOMPATIBLE,
+        SatelliteAnomalyType.URBAN_CANYON_SATELLITE,
+        SatelliteAnomalyType.GNSS_POSITION_COVERAGE_MISMATCH -> AnomalyCategory.COVERAGE
+
+        // Cross-System Correlation
+        SatelliteAnomalyType.SIMULTANEOUS_GNSS_JAMMING,
+        SatelliteAnomalyType.CELLULAR_NTN_GEOMETRY_IMPOSSIBLE,
+        SatelliteAnomalyType.WIFI_SATELLITE_CONFLICT -> AnomalyCategory.CORRELATION
+
+        // Behavioral
+        SatelliteAnomalyType.NTN_CAMPING_PERSISTENT,
+        SatelliteAnomalyType.FORCED_NTN_AFTER_CALL,
+        SatelliteAnomalyType.HANDOVER_BACK_BLOCKED,
+        SatelliteAnomalyType.NTN_TRACKING_PATTERN,
+        SatelliteAnomalyType.SELECTIVE_NTN_ROUTING,
+        SatelliteAnomalyType.PEER_DEVICE_DIVERGENCE,
+        SatelliteAnomalyType.RAPID_SATELLITE_SWITCHING -> AnomalyCategory.BEHAVIORAL
+
+        // Hardware/Modem
+        SatelliteAnomalyType.UNEXPECTED_MODEM_STATE,
+        SatelliteAnomalyType.MODEM_STATE_TRANSITION_IMPOSSIBLE,
+        SatelliteAnomalyType.CAPABILITY_ANNOUNCEMENT_WRONG,
+        SatelliteAnomalyType.BASEBAND_FIRMWARE_TAMPERED,
+        SatelliteAnomalyType.ANTENNA_CONFIGURATION_WRONG,
+        SatelliteAnomalyType.POWER_CLASS_MISMATCH,
+        SatelliteAnomalyType.SIMULTANEOUS_BAND_CONFLICT,
+        SatelliteAnomalyType.CAPABILITY_MISMATCH -> AnomalyCategory.HARDWARE
+
+        // Provider-Specific
+        SatelliteAnomalyType.UNKNOWN_SATELLITE_NETWORK,
+        SatelliteAnomalyType.STARLINK_ORBITAL_PARAMS_WRONG,
+        SatelliteAnomalyType.SKYLO_MODEM_MISSING,
+        SatelliteAnomalyType.IRIDIUM_CONSTELLATION_MISMATCH,
+        SatelliteAnomalyType.GLOBALSTAR_BAND_WRONG,
+        SatelliteAnomalyType.AST_SPACEMOBILE_PREMATURE,
+        SatelliteAnomalyType.PROVIDER_CAPABILITY_MISMATCH -> AnomalyCategory.PROVIDER
+
+        // Message/Data
+        SatelliteAnomalyType.SMS_ROUTING_SUSPICIOUS,
+        SatelliteAnomalyType.DATAGRAM_SIZE_EXCEEDED,
+        SatelliteAnomalyType.STORE_FORWARD_MISSING,
+        SatelliteAnomalyType.SATELLITE_ID_REUSE -> AnomalyCategory.MESSAGE
+
+        // Emergency Services
+        SatelliteAnomalyType.SOS_REDIRECT_SUSPICIOUS,
+        SatelliteAnomalyType.E911_LOCATION_INJECTION,
+        SatelliteAnomalyType.EMERGENCY_CALL_BLOCKED,
+        SatelliteAnomalyType.FAKE_EMERGENCY_ALERT -> AnomalyCategory.EMERGENCY
+
+        // Core Detection
+        SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION,
+        SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF,
+        SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> AnomalyCategory.CORE
+    }
+}
+
 private fun formatAnomalyType(type: SatelliteAnomalyType): String {
     return when (type) {
+        // Core anomaly types
         SatelliteAnomalyType.UNEXPECTED_SATELLITE_CONNECTION -> "Unexpected Satellite"
         SatelliteAnomalyType.FORCED_SATELLITE_HANDOFF -> "Forced Handoff"
         SatelliteAnomalyType.SUSPICIOUS_NTN_PARAMETERS -> "Suspicious Parameters"
@@ -2120,6 +3011,105 @@ private fun formatAnomalyType(type: SatelliteAnomalyType): String {
         SatelliteAnomalyType.TIMING_ADVANCE_ANOMALY -> "Timing Anomaly"
         SatelliteAnomalyType.EPHEMERIS_MISMATCH -> "Ephemeris Mismatch"
         SatelliteAnomalyType.DOWNGRADE_TO_SATELLITE -> "Network Downgrade"
+        SatelliteAnomalyType.RTT_ORBIT_MISMATCH -> "RTT/Orbit Mismatch"
+        SatelliteAnomalyType.UNEXPECTED_MODEM_STATE -> "Modem State Anomaly"
+        SatelliteAnomalyType.CAPABILITY_MISMATCH -> "Capability Mismatch"
+        SatelliteAnomalyType.NRARFCN_NTN_BAND_INVALID -> "Invalid NTN Band"
+
+        // Timing & Latency anomalies
+        SatelliteAnomalyType.DOPPLER_SHIFT_MISMATCH -> "Doppler Mismatch"
+        SatelliteAnomalyType.PROPAGATION_DELAY_VARIANCE_WRONG -> "Propagation Delay"
+        SatelliteAnomalyType.TIMING_ADVANCE_TOO_SMALL -> "TA Too Small"
+        SatelliteAnomalyType.HARQ_RETRANSMISSION_TIMING_WRONG -> "HARQ Timing"
+        SatelliteAnomalyType.HANDOVER_TIMING_IMPOSSIBLE -> "Handover Timing"
+        SatelliteAnomalyType.MESSAGE_LATENCY_WRONG -> "Message Latency"
+        SatelliteAnomalyType.ACK_TIMING_TERRESTRIAL -> "ACK Timing"
+
+        // Orbital & Ephemeris anomalies
+        SatelliteAnomalyType.SATELLITE_BELOW_HORIZON -> "Below Horizon"
+        SatelliteAnomalyType.WRONG_ORBITAL_PLANE -> "Orbital Plane"
+        SatelliteAnomalyType.PASS_DURATION_EXCEEDED -> "Pass Duration"
+        SatelliteAnomalyType.ELEVATION_ANGLE_IMPOSSIBLE -> "Elevation Angle"
+        SatelliteAnomalyType.TLE_POSITION_MISMATCH -> "TLE Position"
+        SatelliteAnomalyType.CARRIER_FREQUENCY_DRIFT_WRONG -> "Frequency Drift"
+        SatelliteAnomalyType.GNSS_NTN_TIME_CONFLICT -> "Time Conflict"
+        SatelliteAnomalyType.TIME_OF_DAY_VISIBILITY_ANOMALY -> "Visibility"
+
+        // Signal & RF anomalies
+        SatelliteAnomalyType.SIGNAL_TOO_STRONG -> "Signal Too Strong"
+        SatelliteAnomalyType.WRONG_POLARIZATION -> "Polarization"
+        SatelliteAnomalyType.BANDWIDTH_MISMATCH -> "Bandwidth"
+        SatelliteAnomalyType.MULTIPATH_IN_CLEAR_SKY -> "Multipath"
+        SatelliteAnomalyType.SUBCARRIER_SPACING_WRONG -> "Subcarrier Spacing"
+
+        // Protocol & Network anomalies
+        SatelliteAnomalyType.MIB_SIB_INCONSISTENT -> "MIB/SIB"
+        SatelliteAnomalyType.PLMN_NOT_NTN_REGISTERED -> "PLMN Invalid"
+        SatelliteAnomalyType.CELL_ID_FORMAT_WRONG -> "Cell ID Format"
+        SatelliteAnomalyType.PAGING_CYCLE_TERRESTRIAL -> "Paging Cycle"
+        SatelliteAnomalyType.DRX_TOO_SHORT -> "DRX Too Short"
+        SatelliteAnomalyType.RACH_PROCEDURE_WRONG -> "RACH Procedure"
+        SatelliteAnomalyType.MEASUREMENT_GAP_MISSING -> "Measurement Gap"
+        SatelliteAnomalyType.GNSS_ASSISTANCE_REJECTED -> "GNSS Rejected"
+
+        // Security anomalies
+        SatelliteAnomalyType.ENCRYPTION_DOWNGRADE -> "Encryption Downgrade"
+        SatelliteAnomalyType.IDENTITY_REQUEST_FLOOD -> "Identity Flood"
+        SatelliteAnomalyType.REPLAY_ATTACK_DETECTED -> "Replay Attack"
+        SatelliteAnomalyType.CERTIFICATE_MISMATCH -> "Certificate"
+        SatelliteAnomalyType.NULL_CIPHER_OFFERED -> "Null Cipher"
+        SatelliteAnomalyType.AUTH_REJECT_LOOP -> "Auth Reject Loop"
+        SatelliteAnomalyType.SUPI_CONCEALMENT_DISABLED -> "SUPI Exposed"
+
+        // Coverage & Location anomalies
+        SatelliteAnomalyType.NTN_IN_FULL_TERRESTRIAL_COVERAGE -> "NTN in Coverage"
+        SatelliteAnomalyType.COVERAGE_HOLE_IMPOSSIBLE -> "Coverage Hole"
+        SatelliteAnomalyType.GEOFENCE_VIOLATION -> "Geofence"
+        SatelliteAnomalyType.INDOOR_SATELLITE_CONNECTION -> "Indoor Connection"
+        SatelliteAnomalyType.ALTITUDE_INCOMPATIBLE -> "Altitude"
+        SatelliteAnomalyType.URBAN_CANYON_SATELLITE -> "Urban Canyon"
+        SatelliteAnomalyType.GNSS_POSITION_COVERAGE_MISMATCH -> "Position Mismatch"
+
+        // Cross-system anomalies
+        SatelliteAnomalyType.SIMULTANEOUS_GNSS_JAMMING -> "GNSS Jamming"
+        SatelliteAnomalyType.CELLULAR_NTN_GEOMETRY_IMPOSSIBLE -> "Cell Geometry"
+        SatelliteAnomalyType.WIFI_SATELLITE_CONFLICT -> "WiFi Conflict"
+
+        // Behavioral anomalies
+        SatelliteAnomalyType.NTN_CAMPING_PERSISTENT -> "Persistent Camping"
+        SatelliteAnomalyType.FORCED_NTN_AFTER_CALL -> "Forced After Call"
+        SatelliteAnomalyType.HANDOVER_BACK_BLOCKED -> "Handover Blocked"
+        SatelliteAnomalyType.NTN_TRACKING_PATTERN -> "Tracking Pattern"
+        SatelliteAnomalyType.SELECTIVE_NTN_ROUTING -> "Selective Routing"
+        SatelliteAnomalyType.PEER_DEVICE_DIVERGENCE -> "Peer Divergence"
+
+        // Hardware/Modem anomalies
+        SatelliteAnomalyType.MODEM_STATE_TRANSITION_IMPOSSIBLE -> "Modem Transition"
+        SatelliteAnomalyType.CAPABILITY_ANNOUNCEMENT_WRONG -> "Capability Wrong"
+        SatelliteAnomalyType.BASEBAND_FIRMWARE_TAMPERED -> "Firmware Tampered"
+        SatelliteAnomalyType.ANTENNA_CONFIGURATION_WRONG -> "Antenna Config"
+        SatelliteAnomalyType.POWER_CLASS_MISMATCH -> "Power Class"
+        SatelliteAnomalyType.SIMULTANEOUS_BAND_CONFLICT -> "Band Conflict"
+
+        // Provider-specific anomalies
+        SatelliteAnomalyType.STARLINK_ORBITAL_PARAMS_WRONG -> "Starlink Params"
+        SatelliteAnomalyType.SKYLO_MODEM_MISSING -> "Skylo Missing"
+        SatelliteAnomalyType.IRIDIUM_CONSTELLATION_MISMATCH -> "Iridium Mismatch"
+        SatelliteAnomalyType.GLOBALSTAR_BAND_WRONG -> "Globalstar Band"
+        SatelliteAnomalyType.AST_SPACEMOBILE_PREMATURE -> "AST Premature"
+        SatelliteAnomalyType.PROVIDER_CAPABILITY_MISMATCH -> "Provider Capability"
+
+        // Message/Data anomalies
+        SatelliteAnomalyType.SMS_ROUTING_SUSPICIOUS -> "SMS Routing"
+        SatelliteAnomalyType.DATAGRAM_SIZE_EXCEEDED -> "Datagram Size"
+        SatelliteAnomalyType.STORE_FORWARD_MISSING -> "Store/Forward"
+        SatelliteAnomalyType.SATELLITE_ID_REUSE -> "Satellite ID Reuse"
+
+        // Emergency anomalies
+        SatelliteAnomalyType.SOS_REDIRECT_SUSPICIOUS -> "SOS Redirect"
+        SatelliteAnomalyType.E911_LOCATION_INJECTION -> "E911 Injection"
+        SatelliteAnomalyType.EMERGENCY_CALL_BLOCKED -> "Emergency Blocked"
+        SatelliteAnomalyType.FAKE_EMERGENCY_ALERT -> "Fake Alert"
     }
 }
 

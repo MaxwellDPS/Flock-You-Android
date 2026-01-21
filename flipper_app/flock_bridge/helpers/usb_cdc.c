@@ -288,6 +288,7 @@ void flock_usb_cdc_set_callback(
 bool flock_bridge_send_data(FlockBridgeApp* app, const uint8_t* data, size_t length) {
     if (!app || !data || length == 0) return false;
 
+    // Mutex is FuriMutexTypeRecursive, so safe to acquire even if caller holds it
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
     bool result = false;

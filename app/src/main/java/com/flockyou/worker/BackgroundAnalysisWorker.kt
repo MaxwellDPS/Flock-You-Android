@@ -8,6 +8,7 @@ import com.flockyou.BuildConfig
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.ai.FalsePositiveAnalyzer
 import com.flockyou.ai.FalsePositiveResult
+import com.flockyou.ai.FpAnalysisMethod
 import com.flockyou.ai.LlmEngine
 import com.flockyou.ai.LlmEngineManager
 import com.flockyou.data.AiSettingsRepository
@@ -485,7 +486,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
 
     /**
      * Analyze detections using the FalsePositiveAnalyzer.
-     * Results are automatically cached by the analyzer.
+     * Results are saved to the database for persistence.
      */
     private suspend fun analyzeDetections(
         detections: List<Detection>
@@ -503,7 +504,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
 
         for (detection in detections) {
             try {
-                // Analyze for false positive - this caches the result internally
+                // Analyze for false positive
                 val fpResult = falsePositiveAnalyzer.analyzeForFalsePositive(
                     detection = detection,
                     contextInfo = null, // Background analysis doesn't have context
@@ -512,10 +513,20 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
 
                 results[detection.id] = fpResult
 
+                // Persist the analysis result to the database
+                val updatedDetection = detection.copy(
+                    fpScore = fpResult.confidence,
+                    fpReason = fpResult.primaryReason,
+                    fpCategory = fpResult.allReasons.firstOrNull()?.category?.name,
+                    analyzedAt = System.currentTimeMillis(),
+                    llmAnalyzed = fpResult.analysisMethod == FpAnalysisMethod.LLM_ENHANCED
+                )
+                detectionRepository.updateDetection(updatedDetection)
+
                 if (BuildConfig.DEBUG) {
                     Log.v(TAG, "Analyzed ${detection.id}: FP=${fpResult.isFalsePositive}, " +
                             "confidence=${(fpResult.confidence * 100).toInt()}%, " +
-                            "method=${fpResult.analysisMethod}")
+                            "method=${fpResult.analysisMethod} - saved to DB")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to analyze detection ${detection.id}: ${e.message}")

@@ -34,8 +34,8 @@ enum class BatteryAdaptiveMode(
         id = "performance",
         displayName = "Performance",
         description = "Maximum scan frequency for best detection. High battery usage.",
-        intervalMultiplier = 0.7f,
-        durationMultiplier = 1.2f,
+        intervalMultiplier = 0.5f,  // More aggressive scanning
+        durationMultiplier = 1.3f,
         disableNonEssential = false,
         batteryThreshold = 0
     ),
@@ -87,7 +87,7 @@ enum class BatteryAdaptiveMode(
 }
 
 data class ScanSettings(
-    val wifiScanIntervalSeconds: Int = 35,
+    val wifiScanIntervalSeconds: Int = 25,   // Reduced from 35s for more frequent scanning
     val bleScanDurationSeconds: Int = 10,
     val inactiveTimeoutSeconds: Int = 60,
     val seenDeviceTimeoutMinutes: Int = 5,
@@ -95,15 +95,15 @@ data class ScanSettings(
     val enableWifiScanning: Boolean = true,
     val trackSeenDevices: Boolean = true,
     // RF detection timing
-    val rfScanIntervalSeconds: Int = 30,
+    val rfScanIntervalSeconds: Int = 15,     // Reduced from 30s for more frequent scanning
     // Ultrasonic detection timing
-    val ultrasonicScanIntervalSeconds: Int = 30,
+    val ultrasonicScanIntervalSeconds: Int = 20,  // Reduced from 30s for more frequent scanning
     val ultrasonicScanDurationSeconds: Int = 5,
     // GNSS/Satellite detection timing
-    val gnssScanIntervalSeconds: Int = 5,
-    val satelliteScanIntervalSeconds: Int = 10,
+    val gnssScanIntervalSeconds: Int = 3,    // Reduced from 5s for more frequent scanning
+    val satelliteScanIntervalSeconds: Int = 5,   // Reduced from 10s for more frequent scanning
     // Cellular detection timing
-    val cellularScanIntervalSeconds: Int = 5,
+    val cellularScanIntervalSeconds: Int = 3,    // Reduced from 5s for more frequent scanning
     // Battery-adaptive mode settings
     val batteryAdaptiveMode: String = "balanced",
     val autoBatteryAdaptive: Boolean = true // When true, automatically adjust based on battery level
@@ -129,7 +129,7 @@ data class ScanSettings(
      */
     fun getEffectiveWifiInterval(batteryPercent: Int): Int {
         val mode = getEffectiveMode(batteryPercent)
-        return (wifiScanIntervalSeconds * mode.intervalMultiplier).toInt().coerceIn(30, 300)
+        return (wifiScanIntervalSeconds * mode.intervalMultiplier).toInt().coerceIn(15, 300)
     }
 
     /**
@@ -177,19 +177,19 @@ class ScanSettingsRepository @Inject constructor(
     
     val settings: Flow<ScanSettings> = context.dataStore.data.map { preferences ->
         ScanSettings(
-            wifiScanIntervalSeconds = preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] ?: 35,
+            wifiScanIntervalSeconds = preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] ?: 25,
             bleScanDurationSeconds = preferences[PreferencesKeys.BLE_SCAN_DURATION] ?: 10,
             inactiveTimeoutSeconds = preferences[PreferencesKeys.INACTIVE_TIMEOUT] ?: 60,
             seenDeviceTimeoutMinutes = preferences[PreferencesKeys.SEEN_DEVICE_TIMEOUT] ?: 5,
             enableBleScanning = preferences[PreferencesKeys.ENABLE_BLE] ?: true,
             enableWifiScanning = preferences[PreferencesKeys.ENABLE_WIFI] ?: true,
             trackSeenDevices = preferences[PreferencesKeys.TRACK_SEEN_DEVICES] ?: true,
-            rfScanIntervalSeconds = preferences[PreferencesKeys.RF_SCAN_INTERVAL] ?: 30,
-            ultrasonicScanIntervalSeconds = preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] ?: 30,
+            rfScanIntervalSeconds = preferences[PreferencesKeys.RF_SCAN_INTERVAL] ?: 15,
+            ultrasonicScanIntervalSeconds = preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] ?: 20,
             ultrasonicScanDurationSeconds = preferences[PreferencesKeys.ULTRASONIC_SCAN_DURATION] ?: 5,
-            gnssScanIntervalSeconds = preferences[PreferencesKeys.GNSS_SCAN_INTERVAL] ?: 5,
-            satelliteScanIntervalSeconds = preferences[PreferencesKeys.SATELLITE_SCAN_INTERVAL] ?: 10,
-            cellularScanIntervalSeconds = preferences[PreferencesKeys.CELLULAR_SCAN_INTERVAL] ?: 5,
+            gnssScanIntervalSeconds = preferences[PreferencesKeys.GNSS_SCAN_INTERVAL] ?: 3,
+            satelliteScanIntervalSeconds = preferences[PreferencesKeys.SATELLITE_SCAN_INTERVAL] ?: 5,
+            cellularScanIntervalSeconds = preferences[PreferencesKeys.CELLULAR_SCAN_INTERVAL] ?: 3,
             batteryAdaptiveMode = preferences[PreferencesKeys.BATTERY_ADAPTIVE_MODE] ?: "balanced",
             autoBatteryAdaptive = preferences[PreferencesKeys.AUTO_BATTERY_ADAPTIVE] ?: true
         )
@@ -197,7 +197,7 @@ class ScanSettingsRepository @Inject constructor(
     
     suspend fun updateWifiScanInterval(seconds: Int) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] = seconds.coerceIn(30, 120)
+            preferences[PreferencesKeys.WIFI_SCAN_INTERVAL] = seconds.coerceIn(20, 120)
         }
     }
     
@@ -239,13 +239,13 @@ class ScanSettingsRepository @Inject constructor(
 
     suspend fun updateRfScanInterval(seconds: Int) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.RF_SCAN_INTERVAL] = seconds.coerceIn(10, 120)
+            preferences[PreferencesKeys.RF_SCAN_INTERVAL] = seconds.coerceIn(5, 120)
         }
     }
 
     suspend fun updateUltrasonicScanInterval(seconds: Int) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] = seconds.coerceIn(15, 120)
+            preferences[PreferencesKeys.ULTRASONIC_SCAN_INTERVAL] = seconds.coerceIn(10, 120)
         }
     }
 

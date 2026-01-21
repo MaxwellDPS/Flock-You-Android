@@ -39,6 +39,10 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Satellite modem access for NTN/Starlink detection (Android 12+) -->
+    <uses-permission android:name="android.permission.ACCESS_SATELLITE"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- Internet for maps -->
     <uses-permission android:name="android.permission.INTERNET" />
 
