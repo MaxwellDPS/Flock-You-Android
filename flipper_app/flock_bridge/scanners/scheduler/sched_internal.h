@@ -8,13 +8,13 @@
 #pragma once
 
 #include "detection_scheduler.h"
-#include "subghz_scanner.h"
-#include "ble_scanner.h"
-#include "ir_scanner.h"
-#include "nfc_scanner.h"
-#include "wifi_scanner.h"
-#include "../helpers/bt_serial.h"
-#include "../helpers/usb_cdc.h"
+#include "../subghz/subghz_scanner.h"
+#include "../ble/ble_scanner.h"
+#include "../ir/ir_scanner.h"
+#include "../nfc/nfc_scanner.h"
+#include "../wifi/wifi_scanner.h"
+#include "../../helpers/bt_serial.h"
+#include "../../helpers/usb_cdc.h"
 #include <furi.h>
 
 // Time-multiplex BLE scan settings

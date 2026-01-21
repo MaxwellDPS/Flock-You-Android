@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../protocol/flock_protocol.h"
-#include "../helpers/external_radio.h"
+#include "../../protocol/flock_protocol.h"
+#include "../../helpers/external_radio.h"
 #include <furi.h>
 #include <furi_hal.h>
 

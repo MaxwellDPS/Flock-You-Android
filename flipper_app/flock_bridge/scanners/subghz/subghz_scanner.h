@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../protocol/flock_protocol.h"
+#include "../../protocol/flock_protocol.h"
 #include <furi.h>
 #include <furi_hal.h>
 

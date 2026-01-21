@@ -11,7 +11,7 @@
 #include "helpers/wips_engine.h"
 #include "helpers/external_radio.h"
 #include "protocol/flock_protocol.h"
-#include "scanners/detection_scheduler.h"
+#include "scanners/scheduler/detection_scheduler.h"
 #include <furi_hal_power.h>
 
 #define TAG "FlockBridge"

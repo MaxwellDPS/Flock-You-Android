@@ -5,7 +5,7 @@
  */
 
 #include "handlers.h"
-#include "../scanners/detection_scheduler.h"
+#include "../scanners/scheduler/detection_scheduler.h"
 #include <furi.h>
 #include <storage/storage.h>
 

@@ -5,7 +5,7 @@
  */
 
 #include "sched_internal.h"
-#include "../helpers/external_radio.h"
+#include "../../helpers/external_radio.h"
 #include <string.h>
 
 #define TAG "SchedThread"

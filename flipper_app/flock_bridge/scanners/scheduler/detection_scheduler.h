@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../flock_bridge_app.h"
-#include "../protocol/flock_protocol.h"
-#include "../helpers/external_radio.h"
+#include "../../flock_bridge_app.h"
+#include "../../protocol/flock_protocol.h"
+#include "../../helpers/external_radio.h"
 
 // ============================================================================
 // Detection Scheduler

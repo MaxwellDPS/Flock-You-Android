@@ -11,31 +11,63 @@ FAP_OUTPUT_DIR = dist
 # Source files
 SOURCES = \
 	flock_bridge.c \
-	handlers/active_probes.c \
 	handlers/detection_callbacks.c \
 	handlers/msg_handler.c \
 	handlers/settings.c \
+	handlers/probes/subghz/replay.c \
+	handlers/probes/lf/probe.c \
+	handlers/probes/ir/strobe.c \
+	handlers/probes/wifi/probe.c \
+	handlers/probes/ble/scan.c \
+	handlers/probes/zigbee/beacon.c \
+	handlers/probes/nrf24/inject.c \
+	handlers/probes/gpio/pulse.c \
+	handlers/probes/access/wiegand.c \
+	handlers/probes/access/magspoof.c \
+	handlers/probes/access/ibutton.c \
 	helpers/usb_cdc.c \
 	helpers/bt_serial.c \
 	helpers/wips_engine.c \
+	helpers/wips_detectors.c \
 	helpers/external_radio.c \
-	protocol/flock_protocol.c \
-	scanners/detection_scheduler.c \
-	scanners/ble_scanner.c \
-	scanners/subghz_scanner.c \
-	scanners/wifi_scanner.c \
-	scanners/ir_scanner.c \
-	scanners/nfc_scanner.c
+	helpers/external_radio_protocol.c \
+	protocol/proto_serialize.c \
+	protocol/proto_parse.c \
+	protocol/proto_parse_probes.c \
+	scanners/scheduler/detection_scheduler.c \
+	scanners/scheduler/sched_callbacks.c \
+	scanners/scheduler/sched_thread.c \
+	scanners/ble/ble_scanner.c \
+	scanners/ble/ble_tracker_detect.c \
+	scanners/subghz/subghz_scanner.c \
+	scanners/subghz/subghz_decoder.c \
+	scanners/wifi/wifi_scanner.c \
+	scanners/wifi/wifi_deauth_detect.c \
+	scanners/ir/ir_scanner.c \
+	scanners/nfc/nfc_scanner.c
 
 HEADERS = \
 	flock_bridge_app.h \
 	handlers/handlers.h \
+	handlers/probes/probes.h \
 	helpers/usb_cdc.h \
 	helpers/bt_serial.h \
 	helpers/wips_engine.h \
+	helpers/wips_engine_internal.h \
 	helpers/external_radio.h \
+	helpers/external_radio_internal.h \
 	protocol/flock_protocol.h \
-	scanners/detection_scheduler.h
+	scanners/scanners.h \
+	scanners/scheduler/detection_scheduler.h \
+	scanners/scheduler/sched_internal.h \
+	scanners/ble/ble_scanner.h \
+	scanners/ble/ble_scanner_internal.h \
+	scanners/subghz/subghz_scanner.h \
+	scanners/subghz/subghz_internal.h \
+	scanners/wifi/wifi_scanner.h \
+	scanners/wifi/wifi_scanner_internal.h \
+	scanners/ir/ir_scanner.h \
+	scanners/nfc/nfc_scanner.h
 
 # Default target
 .PHONY: all
