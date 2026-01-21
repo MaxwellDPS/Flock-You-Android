@@ -1433,67 +1433,75 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     // Load settings from storage
     flock_bridge_load_settings(app);
 
-    // Re-enabled - all scanning disabled by default
-    #if 1
-    // Allocate external radio manager
-    app->external_radio = external_radio_alloc();
-    if (app->external_radio) {
-        ExternalRadioConfig ext_config = {
-            .serial_id = FuriHalSerialIdUsart,
-            .baud_rate = 115200,
-            .callback_context = app,
-        };
-        external_radio_configure(app->external_radio, &ext_config);
-    }
+    // Check if any scanners are enabled
+    bool any_scanner_enabled = app->radio_settings.enable_subghz ||
+                               app->radio_settings.enable_ble ||
+                               app->radio_settings.enable_wifi ||
+                               app->radio_settings.enable_ir ||
+                               app->radio_settings.enable_nfc;
 
-    // Allocate detection scheduler
-    app->detection_scheduler = detection_scheduler_alloc();
-    if (app->detection_scheduler) {
-        // Set external radio manager
-        detection_scheduler_set_external_radio(app->detection_scheduler, app->external_radio);
-
-        // Apply radio settings to scheduler
-        flock_bridge_apply_radio_settings(app);
-
-        // Configure scheduler with callbacks
-        SchedulerConfig sched_config = {
-            .enable_subghz = app->radio_settings.enable_subghz,
-            .enable_ble = app->radio_settings.enable_ble,
-            .enable_wifi = app->radio_settings.enable_wifi && app->external_radio != NULL,
-            .enable_ir = app->radio_settings.enable_ir,
-            .enable_nfc = app->radio_settings.enable_nfc,
-            .subghz_hop_interval_ms = 500,
-            .subghz_continuous = true,  // Sub-GHz runs during all downtime
-            .ble_scan_duration_ms = 2000,
-            .ble_scan_interval_ms = 10000,  // BLE scan every 10 seconds
-            .ble_detect_trackers = true,
-            .wifi_scan_interval_ms = 10000,
-            .wifi_channel = 0,  // Channel hop
-            .wifi_monitor_probes = true,
-            .wifi_detect_deauths = true,
-            .subghz_callback = on_subghz_detection,
-            .ble_callback = on_ble_detection,
-            .ir_callback = on_ir_detection,
-            .nfc_callback = on_nfc_detection,
-            .callback_context = app,
-        };
-        detection_scheduler_configure(app->detection_scheduler, &sched_config);
-
-        // Set BT serial for time-multiplexed BLE scanning
-        // This allows BLE scanning even when connected via Bluetooth
-        if (app->bt_serial) {
-            detection_scheduler_set_bt_serial(app->detection_scheduler, app->bt_serial);
+    // Only allocate detection scheduler if at least one scanner is enabled
+    // This saves significant memory when scanners are disabled
+    if (any_scanner_enabled) {
+        // Allocate external radio manager
+        app->external_radio = external_radio_alloc();
+        if (app->external_radio) {
+            ExternalRadioConfig ext_config = {
+                .serial_id = FuriHalSerialIdUsart,
+                .baud_rate = 115200,
+                .callback_context = app,
+            };
+            external_radio_configure(app->external_radio, &ext_config);
         }
 
-        // Mark scanners as ready
-        app->subghz_ready = true;
-        app->ble_ready = true;
-        app->ir_ready = true;
-        app->nfc_ready = true;
+        // Allocate detection scheduler
+        app->detection_scheduler = detection_scheduler_alloc();
+        if (app->detection_scheduler) {
+            // Set external radio manager
+            detection_scheduler_set_external_radio(app->detection_scheduler, app->external_radio);
+
+            // Apply radio settings to scheduler
+            flock_bridge_apply_radio_settings(app);
+
+            // Configure scheduler with callbacks
+            SchedulerConfig sched_config = {
+                .enable_subghz = app->radio_settings.enable_subghz,
+                .enable_ble = app->radio_settings.enable_ble,
+                .enable_wifi = app->radio_settings.enable_wifi && app->external_radio != NULL,
+                .enable_ir = app->radio_settings.enable_ir,
+                .enable_nfc = app->radio_settings.enable_nfc,
+                .subghz_hop_interval_ms = 500,
+                .subghz_continuous = true,  // Sub-GHz runs during all downtime
+                .ble_scan_duration_ms = 2000,
+                .ble_scan_interval_ms = 10000,  // BLE scan every 10 seconds
+                .ble_detect_trackers = true,
+                .wifi_scan_interval_ms = 10000,
+                .wifi_channel = 0,  // Channel hop
+                .wifi_monitor_probes = true,
+                .wifi_detect_deauths = true,
+                .subghz_callback = on_subghz_detection,
+                .ble_callback = on_ble_detection,
+                .ir_callback = on_ir_detection,
+                .nfc_callback = on_nfc_detection,
+                .callback_context = app,
+            };
+            detection_scheduler_configure(app->detection_scheduler, &sched_config);
+
+            // Set BT serial for time-multiplexed BLE scanning
+            if (app->bt_serial) {
+                detection_scheduler_set_bt_serial(app->detection_scheduler, app->bt_serial);
+            }
+
+            // Mark scanners as ready
+            app->subghz_ready = true;
+            app->ble_ready = true;
+            app->ir_ready = true;
+            app->nfc_ready = true;
+        }
+        FURI_LOG_I(TAG, "Detection scanners initialized");
+    } else {
+        FURI_LOG_I(TAG, "All scanners disabled - skipping detection scheduler allocation");
     }
-    #endif
-    // Scanners enabled
-    FURI_LOG_I(TAG, "Detection scanners initialized");
 
     // Initialize state
     g_app = app;
