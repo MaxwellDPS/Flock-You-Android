@@ -234,10 +234,11 @@ IrScanner* ir_scanner_alloc(void) {
     scanner->config.brute_force_threshold = 20;  // 20 codes/second
     scanner->config.replay_window_ms = 5000;     // 5 second window
 
-    // Create IR worker
-    scanner->worker = infrared_worker_alloc();
+    // IR worker is allocated lazily in ir_scanner_start() to avoid
+    // conflicts with USB CDC initialization
+    scanner->worker = NULL;
 
-    FURI_LOG_I(TAG, "IR scanner allocated");
+    FURI_LOG_I(TAG, "IR scanner allocated (worker deferred)");
     return scanner;
 }
 
@@ -271,6 +272,17 @@ bool ir_scanner_start(IrScanner* scanner) {
     FURI_LOG_I(TAG, "Starting IR scanner");
 
     furi_mutex_acquire(scanner->mutex, FuriWaitForever);
+
+    // Lazy allocation of IR worker (deferred from alloc to avoid USB CDC conflicts)
+    if (!scanner->worker) {
+        FURI_LOG_I(TAG, "Allocating IR worker (lazy)");
+        scanner->worker = infrared_worker_alloc();
+        if (!scanner->worker) {
+            FURI_LOG_E(TAG, "Failed to allocate IR worker");
+            furi_mutex_release(scanner->mutex);
+            return false;
+        }
+    }
 
     // Set callback
     infrared_worker_rx_set_received_signal_callback(

@@ -93,6 +93,7 @@ static volatile FlockBridgeApp* g_app = NULL;
 // Bluetooth Connection State Callback
 // ============================================================================
 
+__attribute__((unused))
 static void flock_bridge_bt_state_changed(void* context, bool connected) {
     FlockBridgeApp* app = context;
     if (!app) return;
@@ -1274,15 +1275,16 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         flock_usb_cdc_set_callback(app->usb_cdc, flock_bridge_data_received, app);
     }
 
-    // Allocate Bluetooth Serial
-    app->bt_serial = flock_bt_serial_alloc();
-    if (app->bt_serial) {
-        flock_bt_serial_set_callback(app->bt_serial, flock_bridge_data_received, app);
-        flock_bt_serial_set_state_callback(app->bt_serial, flock_bridge_bt_state_changed, app);
-        FURI_LOG_I(TAG, "Bluetooth Serial allocated");
-    } else {
-        FURI_LOG_E(TAG, "Failed to allocate Bluetooth Serial");
-    }
+    // Bluetooth Serial - NOT ALLOCATED to allow BLE scanning
+    // BT serial uses the same Bluetooth stack as BLE scanner, so we skip allocation
+    // app->bt_serial = flock_bt_serial_alloc();
+    // if (app->bt_serial) {
+    //     flock_bt_serial_set_callback(app->bt_serial, flock_bridge_data_received, app);
+    //     flock_bt_serial_set_state_callback(app->bt_serial, flock_bridge_bt_state_changed, app);
+    //     FURI_LOG_I(TAG, "Bluetooth Serial allocated");
+    // }
+    app->bt_serial = NULL;
+    FURI_LOG_I(TAG, "Bluetooth Serial DISABLED (using USB + BLE scanning)");
 
     // Allocate WIPS engine - DISABLED for memory testing
     // app->wips_engine = flock_wips_engine_alloc();
@@ -1476,16 +1478,17 @@ int32_t flock_bridge_app(void* p) {
         }
     }
 
-    // Start Bluetooth Serial
-    if (app->bt_serial) {
-        if (flock_bt_serial_start(app->bt_serial)) {
-            FURI_LOG_I(TAG, "Bluetooth Serial started - advertising");
-            // Note: bt_connected will be set to true when a device actually connects
-            // via the bt_status_callback in bt_serial.c
-        } else {
-            FURI_LOG_E(TAG, "Failed to start Bluetooth Serial");
-        }
-    }
+    // Bluetooth Serial - DISABLED to allow BLE scanning
+    // BT serial conflicts with internal BLE scanner (both use Bluetooth stack)
+    // Uncomment below to enable BT serial (but BLE scanning will be disabled)
+    // if (app->bt_serial) {
+    //     if (flock_bt_serial_start(app->bt_serial)) {
+    //         FURI_LOG_I(TAG, "Bluetooth Serial started - advertising");
+    //     } else {
+    //         FURI_LOG_E(TAG, "Failed to start Bluetooth Serial");
+    //     }
+    // }
+    FURI_LOG_I(TAG, "Bluetooth Serial DISABLED (using USB + BLE scanning)");
 
     // Start external radio manager (will auto-detect ESP32)
     if (app->external_radio) {

@@ -52,7 +52,7 @@ class GnssSatelliteMonitor(
         // Spoofing detection thresholds
         const val MIN_SATELLITES_FOR_FIX = 4
         const val GOOD_FIX_SATELLITES = 10  // When fix is this good, suppress low-confidence anomalies
-        const val SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD = 5.0  // dB-Hz - increased from 3.0 to reduce false positives
+        const val SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD = 6.0  // dB-Hz - increased from 5.0 to reduce false positives
         const val MAX_VALID_CN0_DBH = 55.0  // Above this is suspicious
         const val MIN_VALID_CN0_DBH = 10.0  // Below this is noise
         const val JAMMING_CN0_DROP_THRESHOLD = 15.0  // Sudden drop in dB-Hz
@@ -752,11 +752,14 @@ class GnssSatelliteMonitor(
 
         // Signal uniformity anomaly (spoofing indicator) - enriched
         // Only report if we have OTHER spoofing indicators too - uniformity alone is not suspicious enough
-        val hasGoodFix = status.satellitesUsedInFix >= GOOD_FIX_SATELLITES &&
-            status.spoofingRiskLevel == SpoofingRiskLevel.NONE
+        // Suppress if we have a good fix: either high satellite count alone, OR moderate count with no risk
+        val hasGoodFix = status.satellitesUsedInFix >= 15 ||  // Very strong fix suppresses regardless
+            (status.satellitesUsedInFix >= GOOD_FIX_SATELLITES &&
+             status.spoofingRiskLevel == SpoofingRiskLevel.NONE)
         val hasOtherSpoofingIndicators = analysis.spoofingIndicators.size > 1 ||
             analysis.lowElevHighSignalCount > 0 ||
-            status.spoofingRiskLevel != SpoofingRiskLevel.NONE
+            (status.spoofingRiskLevel != SpoofingRiskLevel.NONE &&
+             status.spoofingRiskLevel != SpoofingRiskLevel.LOW)  // LOW risk doesn't count
 
         if (analysis.cn0TooUniform && !status.jammingDetected && !hasGoodFix && hasOtherSpoofingIndicators) {
             reportAnomaly(

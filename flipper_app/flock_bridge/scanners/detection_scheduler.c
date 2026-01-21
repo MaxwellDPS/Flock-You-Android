@@ -278,14 +278,19 @@ static int32_t scheduler_thread_func(void* context) {
         use_internal_ble, use_external_ble, use_wifi);
 
     // Start passive scanners (IR and NFC can run alongside everything)
-    if (scheduler->config.enable_ir && scheduler->ir) {
-        ir_scanner_start(scheduler->ir);
-        FURI_LOG_I(TAG, "IR scanner started (passive)");
-    }
-
+    // Note: IR scanner start is delayed to avoid conflict with USB CDC init
     if (scheduler->config.enable_nfc && scheduler->nfc) {
         flock_nfc_scanner_start(scheduler->nfc);
         FURI_LOG_I(TAG, "NFC scanner started (passive)");
+    }
+
+    // IR scanner - NOT auto-started (conflicts with USB CDC when running)
+    // IR scanning conflicts with USB CDC. The IR hardware can still be used
+    // for one-shot transmissions via FlockMsgTypeIrStrobeTx command.
+    // To enable continuous IR scanning, disable USB CDC and use BT serial.
+    if (scheduler->ir) {
+        FURI_LOG_I(TAG, "IR scanner allocated but NOT started (USB CDC conflict)");
+        FURI_LOG_I(TAG, "IR TX commands still work via FlockMsgTypeIrStrobeTx");
     }
 
     // Start internal Sub-GHz at first frequency
@@ -529,36 +534,45 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->config.radio_sources.ble_source = RadioSourceAuto;
     scheduler->config.radio_sources.wifi_source = RadioSourceExternal;  // No internal WiFi
 
-    // Allocate internal scanners with null checks
-    // RE-ENABLED - Testing SubGHz scanner
+    // ========================================================================
+    // Allocate internal scanners
+    // NOTE: BLE and IR scanners are disabled due to hardware conflicts
+    // - BLE scanner conflicts with BT serial (both use Bluetooth stack)
+    // - IR scanner conflicts with infrared hardware during USB CDC init
+    // SubGHz and NFC scanners work correctly in parallel with USB CDC
+    // ========================================================================
+
+    // SubGHz scanner - ENABLED
     scheduler->subghz_internal = subghz_scanner_alloc();
     if (!scheduler->subghz_internal) {
         FURI_LOG_E(TAG, "Failed to allocate SubGhz scanner");
+    } else {
+        FURI_LOG_I(TAG, "SubGHz scanner allocated");
     }
-    FURI_LOG_I(TAG, "SubGHz scanner allocated");
 
-    // DISABLED - BLE scanner causes crashes (conflicts with BT serial)
-    // scheduler->ble_internal = ble_scanner_alloc();
-    // if (!scheduler->ble_internal) {
-    //     FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
-    // }
-    scheduler->ble_internal = NULL;
-    FURI_LOG_I(TAG, "BLE scanner DISABLED (causes crashes)");
+    // BLE scanner - ENABLED (BT serial is disabled to allow this)
+    scheduler->ble_internal = ble_scanner_alloc();
+    if (!scheduler->ble_internal) {
+        FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
+    } else {
+        FURI_LOG_I(TAG, "BLE scanner allocated");
+    }
 
-    // DISABLED - IR scanner causes crashes
-    // scheduler->ir = ir_scanner_alloc();
-    // if (!scheduler->ir) {
-    //     FURI_LOG_E(TAG, "Failed to allocate IR scanner");
-    // }
-    scheduler->ir = NULL;
-    FURI_LOG_I(TAG, "IR scanner DISABLED (causes crashes)");
+    // IR scanner - ENABLED (allocation only, started with delay in thread)
+    scheduler->ir = ir_scanner_alloc();
+    if (!scheduler->ir) {
+        FURI_LOG_E(TAG, "Failed to allocate IR scanner");
+    } else {
+        FURI_LOG_I(TAG, "IR scanner allocated (will start delayed)");
+    }
 
-    // RE-ENABLED - Testing NFC scanner
+    // NFC scanner - ENABLED
     scheduler->nfc = flock_nfc_scanner_alloc();
     if (!scheduler->nfc) {
         FURI_LOG_E(TAG, "Failed to allocate NFC scanner");
+    } else {
+        FURI_LOG_I(TAG, "NFC scanner allocated");
     }
-    FURI_LOG_I(TAG, "NFC scanner allocated");
 
     // Configure internal scanner callbacks
     if (scheduler->subghz_internal) {

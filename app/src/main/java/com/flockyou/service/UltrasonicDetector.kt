@@ -59,8 +59,9 @@ class UltrasonicDetector(
 
         // Detection thresholds
         private const val FFT_SIZE = 4096 // Good frequency resolution (~10.7 Hz per bin)
-        private const val DETECTION_THRESHOLD_DB = 20.0 // Signal must be this many dB above noise floor
+        private const val DETECTION_THRESHOLD_DB = 25.0 // Signal must be this many dB above noise floor (increased from 20)
         private const val BEACON_DURATION_THRESHOLD_MS = 500L // Must persist for 500ms
+        private const val MIN_DETECTIONS_FOR_ANOMALY = 2 // Require multiple detections before reporting
         private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between alerts
         // Default timing values (can be overridden by updateScanTiming)
         private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
@@ -567,6 +568,9 @@ class UltrasonicDetector(
 
             // Update or create beacon detection
             val existing = activeBeacons[freq]
+            val beacon: BeaconDetection
+            val shouldReportAnomaly: Boolean
+
             if (existing != null) {
                 existing.lastDetected = now
                 existing.detectionCount++
@@ -587,8 +591,11 @@ class UltrasonicDetector(
                         }
                     }
                 }
+                beacon = existing
+                // Report anomaly when detection count reaches threshold (only once)
+                shouldReportAnomaly = existing.detectionCount == MIN_DETECTIONS_FOR_ANOMALY
             } else {
-                // New beacon detected
+                // New beacon detected - create but don't report anomaly yet (wait for persistence)
                 val initialAmplitudeHistory = mutableListOf(avgAmplitude)
                 val initialLocationHistory = mutableListOf<LocationEntry>()
                 currentLatitude?.let { lat ->
@@ -597,7 +604,7 @@ class UltrasonicDetector(
                     }
                 }
 
-                val beacon = BeaconDetection(
+                beacon = BeaconDetection(
                     frequency = freq,
                     firstDetected = now,
                     lastDetected = now,
@@ -610,18 +617,30 @@ class UltrasonicDetector(
                 )
                 activeBeacons[freq] = beacon
 
-                // Build enriched analysis for new beacon
+                addTimelineEvent(
+                    type = UltrasonicEventType.BEACON_DETECTED,
+                    title = "📢 Potential Beacon: ${freq}Hz",
+                    description = "${possibleSource} - waiting for confirmation",
+                    frequency = freq,
+                    threatLevel = ThreatLevel.INFO  // Low severity until confirmed
+                )
+
+                // Don't report anomaly yet - wait for multiple detections
+                shouldReportAnomaly = false
+            }
+
+            // Report anomaly only after the beacon has been detected multiple times
+            if (shouldReportAnomaly) {
                 val analysis = buildBeaconAnalysis(beacon)
 
                 addTimelineEvent(
                     type = UltrasonicEventType.BEACON_DETECTED,
-                    title = "📢 Beacon Detected: ${freq}Hz",
+                    title = "📢 Confirmed Beacon: ${freq}Hz",
                     description = "${possibleSource} (${String.format("%.0f", analysis.trackingLikelihood)}% tracking likelihood)",
                     frequency = freq,
                     threatLevel = if (isKnownBeacon) ThreatLevel.HIGH else ThreatLevel.MEDIUM
                 )
 
-                // Report anomaly for new beacon with enriched analysis
                 val anomalyType = when {
                     possibleSource.contains("SilverPush") || possibleSource.contains("Alphonso") ->
                         UltrasonicAnomalyType.ADVERTISING_BEACON
@@ -635,7 +654,6 @@ class UltrasonicDetector(
                         UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
                 }
 
-                // Determine confidence from enriched analysis
                 val confidence = when {
                     analysis.trackingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
                     analysis.trackingLikelihood >= 60 || isKnownBeacon -> AnomalyConfidence.HIGH

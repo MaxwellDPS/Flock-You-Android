@@ -639,6 +639,11 @@ class ScanningService : Service() {
     private var currentBatteryPercent: Int = 100
     private var isCharging: Boolean = false
 
+    // Track processed anomaly IDs to prevent duplicates from StateFlow replays
+    // These persist across function calls to prevent duplicates when monitors restart
+    private val processedGnssAnomalyIds = mutableSetOf<String>()
+    private val processedCellularAnomalyIds = mutableSetOf<String>()
+
     // Detector callback implementation for handling errors and health updates
     private val detectorCallbackImpl = object : DetectorCallback {
         override fun onError(detectorName: String, error: String, recoverable: Boolean) {
@@ -1999,8 +2004,7 @@ class ScanningService : Service() {
         // - Settings-based filtering (enabled patterns, thresholds)
         // - IMSI catcher score calculation
         // - AI prompt generation for cellular anomalies
-        // Track processed anomaly IDs to prevent duplicates from flow replays
-        val processedCellularAnomalyIds = mutableSetOf<String>()
+        // Note: processedCellularAnomalyIds is now a class-level property to persist across restarts
 
         cellularAnomalyJob = serviceScope.launch {
             cellularMonitor?.anomalies?.collect { anomalies ->
@@ -2624,8 +2628,7 @@ class ScanningService : Service() {
         }
 
         // Collect anomalies and convert to detections
-        // Track processed anomaly IDs to prevent duplicates from flow replays
-        val processedGnssAnomalyIds = mutableSetOf<String>()
+        // Note: processedGnssAnomalyIds is now a class-level property to persist across restarts
 
         gnssAnomalyJob = serviceScope.launch {
             gnssSatelliteMonitor?.anomalies?.collect { anomalies ->
