@@ -49,74 +49,200 @@ class RogueWifiMonitor(
         private const val FOLLOWING_LOCATION_THRESHOLD = 0.001 // ~100m in lat/lon
 
         // Hidden camera OUI prefixes (common IoT camera manufacturers)
+        // Based on FCC filings, security research, and real-world detections
         private val HIDDEN_CAMERA_OUIS = setOf(
-            "00:18:AE", // Shenzhen TVT (many hidden cameras)
-            "00:12:17", // Cisco-Linksys (repurposed for cameras)
-            "00:1C:B3", // Apple (disguised tracking devices)
-            "00:0C:43", // Ralink (cheap IoT cameras)
-            "00:26:86", // Quantenna (streaming devices)
+            // === Hikvision (world's largest surveillance camera maker) ===
             "B4:A3:82", // Hangzhou Hikvision
             "44:19:B6", // Hangzhou Hikvision
             "54:C4:15", // Hangzhou Hikvision
             "28:57:BE", // Hangzhou Hikvision
+            "C0:56:E3", // Hangzhou Hikvision
+            "4C:BD:8F", // Hangzhou Hikvision
+            "18:68:CB", // Hangzhou Hikvision
+            "C4:2F:90", // Hangzhou Hikvision
+
+            // === Dahua (second largest, also Chinese state-linked) ===
             "E0:50:8B", // Zhejiang Dahua
             "3C:EF:8C", // Zhejiang Dahua
             "4C:11:BF", // Zhejiang Dahua
             "A0:BD:1D", // Zhejiang Dahua
-            "AC:B7:4D", // LIFI Labs (covert cameras)
-            "00:62:6E", // Shenzhen (various IoT)
+            "90:02:A9", // Zhejiang Dahua
+            "B0:A7:32", // Zhejiang Dahua
+
+            // === Known spy/covert camera manufacturers ===
+            "00:18:AE", // Shenzhen TVT (common in hidden cameras)
             "7C:DD:90", // Shenzhen Ogemray (spy cameras)
-            "D4:D2:52", // Shenzhen Bilian (mini cameras)
-            "B0:B9:8A", // Netgear (repurposed routers)
+            "D4:D2:52", // Shenzhen Bilian (mini/pinhole cameras)
             "E8:AB:FA", // Shenzhen Reecam (nanny cams)
+            "AC:B7:4D", // LIFI Labs (covert cameras)
+            "00:62:6E", // Shenzhen various IoT/cameras
+            "EC:71:DB", // Shenzhen iComm (hidden cameras)
+            "48:02:2A", // Shenzhen B-Link (mini cameras)
+
+            // === Common IP camera chipset manufacturers ===
+            "00:0C:43", // Ralink (cheap IoT cameras, ESP8266 clones)
+            "00:26:86", // Quantenna (streaming devices)
+            "5C:CF:7F", // Espressif (ESP8266/ESP32 - very common in DIY/cheap cams)
+            "60:01:94", // Espressif
+            "A4:7B:9D", // Espressif
+            "24:0A:C4", // Espressif
+            "84:F3:EB", // Espressif
+
+            // === Reolink (common in Airbnb/hotel hidden cams) ===
+            "EC:71:DB", // Reolink
+            "9C:8E:CD", // Reolink
+
+            // === YI/Xiaomi cameras (common, often unauthorized placement) ===
+            "78:8B:2A", // Xiaomi/YI
+            "64:09:80", // Xiaomi/YI
+            "F8:A4:5F", // Xiaomi/YI
+
+            // === Amcrest/Foscam (common in covert setups) ===
+            "9C:8E:CD", // Amcrest
+            "00:62:6E", // Foscam
+            "C0:25:67", // Amcrest/Foscam OEM
+
+            // === Wyze (legitimate but often placed without consent) ===
+            "2C:AA:8E", // Wyze Labs
+            "D0:3F:27", // Wyze Labs
+
+            // === Generic/white-label camera modules ===
+            "00:12:17", // Cisco-Linksys (repurposed for cameras)
+            "B0:B9:8A", // Netgear (repurposed routers)
             "00:E0:64", // Samsung (various IoT)
+            "00:1C:B3"  // Apple (rare - disguised tracking devices)
         )
 
         // Suspicious SSID patterns for hidden cameras/surveillance
+        // Based on real-world camera default SSIDs and common naming conventions
         private val HIDDEN_CAMERA_SSID_PATTERNS = listOf(
-            Regex("(?i)^(hd|ip)?cam(era)?[-_]?[0-9]*$"),
-            Regex("(?i)^spy[-_]?cam.*"),
-            Regex("(?i)^nanny[-_]?cam.*"),
-            Regex("(?i)^hidden[-_]?.*"),
-            Regex("(?i)^covert[-_]?.*"),
-            Regex("(?i)^mini[-_]?cam.*"),
-            Regex("(?i)^wifi[-_]?cam[-_]?[0-9]*"),
-            Regex("(?i)^smart[-_]?cam.*"),
-            Regex("(?i)^home[-_]?cam.*"),
-            Regex("(?i)^security[-_]?cam.*"),
-            Regex("(?i)^baby[-_]?monitor.*"),
-            Regex("(?i)^(yi|wyze|blink|ring|arlo|nest)[-_]?.*"),
-            Regex("(?i)^ezviz.*"),
-            Regex("(?i)^hikvision.*"),
-            Regex("(?i)^dahua.*"),
-            Regex("(?i)^amcrest.*"),
-            Regex("(?i)^reolink.*"),
-            Regex("(?i)^foscam.*"),
-            Regex("(?i)^wansview.*"),
-            // Generic IoT/Setup patterns
-            Regex("(?i)^setup[-_]?[0-9a-f]+"),
-            Regex("(?i)^config[-_]?[0-9a-f]+"),
-            Regex("(?i)^direct[-_]?.*"),
+            // === Generic camera naming patterns ===
+            Regex("(?i)^(hd|ip|wifi)?[-_]?cam(era)?[-_]?[0-9a-f]*$"),
+            Regex("(?i)^(spy|nanny|hidden|covert|mini|pinhole)[-_]?cam.*"),
+            Regex("(?i)^(smart|home|security|indoor|outdoor)[-_]?cam.*"),
+            Regex("(?i)^baby[-_]?(monitor|cam).*"),
+            Regex("(?i)^pet[-_]?(cam|monitor).*"),
+
+            // === Brand-specific default SSIDs ===
+            // These brands are commonly found in unauthorized surveillance
+            Regex("(?i)^(yi|wyze|blink|ring|arlo|nest|eufy)[-_]?.*"),
+            Regex("(?i)^(ezviz|hikvision|hik)[-_]?.*"),
+            Regex("(?i)^(dahua|dh|ipc)[-_]?.*"),
+            Regex("(?i)^(amcrest|foscam|wansview|reolink)[-_]?.*"),
+            Regex("(?i)^(vivotek|axis|bosch|honeywell)[-_]?cam.*"),
+            Regex("(?i)^(tenvis|sricam|escam|vstarcam)[-_]?.*"),
+
+            // === Common default SSID formats from cheap cameras ===
+            Regex("(?i)^ipc[-_]?[0-9a-f]{6,}$"),       // IPCamera defaults
+            Regex("(?i)^camera[-_]?[0-9a-f]{4,}$"),   // Generic defaults
+            Regex("(?i)^p2p[-_]?[0-9a-f]+$"),          // P2P camera protocol
+            Regex("(?i)^hd[-_]?ipc[-_]?[0-9]+$"),      // HD IP Camera
+            Regex("(?i)^wificam[-_]?[0-9a-f]*$"),      // WiFi camera defaults
+            Regex("(?i)^ufo[-_]?cam.*"),               // UFO-style hidden cams
+            Regex("(?i)^cctv[-_]?[0-9]+$"),            // CCTV naming
+
+            // === Setup/Configuration mode SSIDs (camera in setup) ===
+            Regex("(?i)^setup[-_]?[0-9a-f]+$"),
+            Regex("(?i)^config[-_]?[0-9a-f]+$"),
+            Regex("(?i)^direct[-_]?[0-9a-f]*$"),
+            Regex("(?i)^(device|iot)[-_]?setup.*"),
+            Regex("(?i)^smartlife[-_]?[0-9a-f]+$"),    // Tuya/SmartLife cameras
+            Regex("(?i)^tuya[-_]?.*"),
+
+            // === Streaming/P2P protocol SSIDs ===
+            Regex("(?i)^(tutk|p2p|yoosee)[-_]?[0-9a-f]*$"),
+            Regex("(?i)^gk[-_]?[0-9a-f]{8,}$"),       // GK chipset cameras
+
+            // === Specific hidden camera product SSIDs ===
+            Regex("(?i)^(clock|smoke|outlet|charger)[-_]?cam.*"),  // Disguised cameras
+            Regex("(?i)^(usb|adapter|hub)[-_]?[0-9a-f]+$"),        // USB charger cams
+            Regex("(?i)^mirror[-_]?(cam|[0-9]+).*")                 // Mirror cameras
         )
 
         // Surveillance van / mobile surveillance patterns
+        // NOTE: Real surveillance operations use BLAND, generic names - not "FBI_Van"!
+        // These patterns catch both obvious names AND suspiciously generic mobile hotspots
         private val SURVEILLANCE_VAN_PATTERNS = listOf(
+            // === Obvious surveillance naming (less common in real ops) ===
             Regex("(?i)^(unmarked|surveillance|recon|intel|tactical)[-_]?.*"),
-            Regex("(?i)^mobile[-_]?command.*"),
-            Regex("(?i)^field[-_]?(ops|unit|team).*"),
-            Regex("(?i)^van[-_]?[0-9]+$"),
-            Regex("(?i)^unit[-_]?[0-9]+$"),
-            Regex("(?i)^(swat|ert|hrt|srt)[-_]?.*"),
-            Regex("(?i)^cctv[-_]?van.*"),
-            Regex("(?i)^monitoring[-_]?(unit|van).*"),
+            Regex("(?i)^mobile[-_]?(command|ops|unit|station).*"),
+            Regex("(?i)^field[-_]?(ops|unit|team|office).*"),
+            Regex("(?i)^(swat|ert|hrt|srt|tac)[-_]?.*"),
+            Regex("(?i)^cctv[-_]?(van|mobile).*"),
+            Regex("(?i)^monitoring[-_]?(unit|van|station).*"),
+
+            // === Fleet vehicle patterns (Sierra Wireless, Cradlepoint defaults) ===
+            Regex("(?i)^(van|unit|car|truck)[-_]?[0-9]{1,4}$"),
+            Regex("(?i)^(vehicle|veh|fleet)[-_]?[0-9]{1,4}$"),
+            Regex("(?i)^mp70[-_]?[0-9a-f]+$"),              // Sierra Wireless MP70
+            Regex("(?i)^ibr[-_]?[0-9]+.*"),                  // Cradlepoint IBR series
+            Regex("(?i)^airlink[-_]?.*"),                    // Sierra Wireless AirLink
+            Regex("(?i)^cradlepoint[-_]?.*"),                // Cradlepoint routers
+
+            // === Government/Agency patterns ===
+            Regex("(?i)^(dhs|fbi|atf|dea|ice|usms|usss)[-_]?.*"),
+            Regex("(?i)^(fed|federal|govt|gov)[-_]?(van|unit|mobile).*"),
+            Regex("(?i)^le[-_]?(van|unit|[0-9]+)$"),         // Law Enforcement
+            Regex("(?i)^(county|city|state|muni)[-_]?(pd|police|unit).*"),
+
+            // === Private investigation patterns ===
+            Regex("(?i)^(pi|investigat|surveil)[-_]?[0-9]*$"),
+            Regex("(?i)^(stakeout|obs|observation)[-_]?.*"),
+
+            // === Suspiciously generic hotspot names (real surveillance) ===
+            // These are harder to detect but common in actual operations
+            Regex("(?i)^(work|service|utility|maint)[-_]?(van|truck|vehicle)[0-9]*$"),
+            Regex("(?i)^(plumber|electric|cable|repair)[-_]?[0-9]+$")
         )
 
         // Common legitimate networks to reduce false positives
+        // These are known public WiFi networks that should NOT trigger alerts
         private val COMMON_LEGITIMATE_SSIDS = setOf(
-            "xfinitywifi", "attwifi", "google starbucks", "starbucks",
-            "mcdonalds free wifi", "boingo", "t-mobile", "tmobile",
-            "verizon", "spectrum", "cox wifi", "optimum wifi",
-            "eduroam", "govwifi", "amtrak", "southwest wifi"
+            // === ISP/Carrier hotspots ===
+            "xfinitywifi", "xfinity", "attwifi", "att wifi",
+            "t-mobile", "tmobile", "t-mobile hotspot",
+            "verizon", "verizon wifi", "vzwifi",
+            "spectrum", "spectrum wifi", "spectrum mobile",
+            "cox wifi", "cox hotspot",
+            "optimum wifi", "optimumwifi",
+            "centurylink", "frontier",
+
+            // === Coffee shops / restaurants ===
+            "starbucks", "starbucks wifi", "google starbucks",
+            "mcdonalds", "mcdonalds free wifi", "mcd-free-wifi",
+            "dunkin", "dunkin donuts",
+            "peets", "peets coffee",
+            "panera", "panera bread",
+            "chipotle", "chick-fil-a",
+
+            // === Retail stores ===
+            "walmart wifi", "target wifi", "best buy",
+            "home depot", "lowes", "costco",
+            "kroger", "safeway", "whole foods",
+            "apple store", "microsoft store",
+
+            // === Hotels ===
+            "marriott", "hilton", "hyatt", "ihg",
+            "holiday inn", "hampton inn", "courtyard",
+            "guest", "guest wifi", "hotel wifi",
+
+            // === Travel ===
+            "boingo", "boingo hotspot", "boingo wireless",
+            "amtrak", "amtrak wifi",
+            "southwest wifi", "delta wifi", "american wifi", "united wifi",
+            "jetblue", "gogo inflight",
+            "airport wifi", "airport free wifi",
+
+            // === Education ===
+            "eduroam", "university wifi", "campus wifi",
+            "library wifi", "public library",
+
+            // === Government ===
+            "govwifi", "gov wifi", "cityofwifi",
+
+            // === Generic guest/public patterns ===
+            "free wifi", "free public wifi", "public wifi",
+            "guest network", "visitor wifi", "visitors"
         )
     }
 
@@ -1149,12 +1275,55 @@ class RogueWifiMonitor(
 
     private fun getManufacturerFromOui(oui: String): String {
         return when (oui.uppercase()) {
-            "00:18:AE" -> "Shenzhen TVT"
-            "B4:A3:82", "44:19:B6", "54:C4:15", "28:57:BE" -> "Hikvision"
-            "E0:50:8B", "3C:EF:8C", "4C:11:BF", "A0:BD:1D" -> "Dahua"
-            "7C:DD:90" -> "Shenzhen Ogemray"
-            "D4:D2:52" -> "Shenzhen Bilian"
-            "E8:AB:FA" -> "Shenzhen Reecam"
+            // === Hikvision (Chinese state-linked, world's largest) ===
+            "B4:A3:82", "44:19:B6", "54:C4:15", "28:57:BE",
+            "C0:56:E3", "4C:BD:8F", "18:68:CB", "C4:2F:90" -> "Hikvision"
+
+            // === Dahua (Chinese state-linked, second largest) ===
+            "E0:50:8B", "3C:EF:8C", "4C:11:BF", "A0:BD:1D",
+            "90:02:A9", "B0:A7:32" -> "Dahua"
+
+            // === Known spy/covert camera manufacturers ===
+            "00:18:AE" -> "Shenzhen TVT (Hidden Cameras)"
+            "7C:DD:90" -> "Shenzhen Ogemray (Spy Cameras)"
+            "D4:D2:52" -> "Shenzhen Bilian (Mini Cameras)"
+            "E8:AB:FA" -> "Shenzhen Reecam (Nanny Cams)"
+            "AC:B7:4D" -> "LIFI Labs (Covert Cameras)"
+            "EC:71:DB" -> "Shenzhen iComm (IP Cameras)"
+            "48:02:2A" -> "Shenzhen B-Link (Mini Cameras)"
+
+            // === Espressif (IoT chipsets - common in cheap cameras) ===
+            "5C:CF:7F", "60:01:94", "A4:7B:9D", "24:0A:C4", "84:F3:EB" -> "Espressif (IoT Chip)"
+
+            // === Common consumer camera brands ===
+            "2C:AA:8E", "D0:3F:27" -> "Wyze Labs"
+            "78:8B:2A", "64:09:80", "F8:A4:5F" -> "Xiaomi/YI Camera"
+            "9C:8E:CD", "C0:25:67" -> "Amcrest/Foscam"
+            "00:62:6E" -> "Foscam"
+
+            // === Fleet/Surveillance vehicle equipment ===
+            "00:0E:8E", "00:11:75", "00:14:3E", "00:A0:D5" -> "Sierra Wireless (Fleet Router)"
+            "00:30:44", "00:10:8B", "EC:F4:51" -> "Cradlepoint (Fleet Router)"
+            "00:40:9D" -> "Digi International (Fleet)"
+            "00:07:F9" -> "CalAmp (Vehicle Tracking)"
+
+            // === LTE/Cellular modems (common in surveillance) ===
+            "50:29:4D", "86:25:19" -> "Quectel (LTE Modem)"
+            "00:14:2D", "D8:C7:71" -> "Telit (LTE Modem)"
+            "D4:CA:6E" -> "u-blox (GPS/Cellular)"
+
+            // === Nordic Semiconductor (used in body cameras, trackers) ===
+            "C0:A5:3E", "F0:5C:D5" -> "Nordic Semiconductor (BLE)"
+
+            // === Common consumer electronics ===
+            "B0:B9:8A" -> "Netgear"
+            "00:E0:64" -> "Samsung"
+            "00:12:17" -> "Cisco-Linksys"
+            "00:1C:B3" -> "Apple"
+
+            // === Raspberry Pi (DIY surveillance) ===
+            "B8:27:EB", "DC:A6:32", "E4:5F:01" -> "Raspberry Pi (DIY Device)"
+
             else -> "Unknown"
         }
     }

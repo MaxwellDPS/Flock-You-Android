@@ -14,10 +14,32 @@
 // - BLE spam detection (Flipper attacks)
 // - "Following" detection via device history tracking
 //
-// NOTE: The Flipper Zero SDK does not expose full BLE scanning functions.
-// For complete BLE device discovery with advertisement parsing, external
-// hardware (ESP32 with BLE support) is required. The internal scanner
-// provides basic RSSI-level detection on BLE advertising channels.
+// IMPORTANT - Flipper Zero BLE Scanning Limitations:
+// ==================================================
+// The Flipper Zero SDK does NOT expose BLE scanning (observer/central mode)
+// to FAPs. The BLE stack is peripheral-only for external applications.
+//
+// This scanner provides TWO modes of operation:
+//
+// 1. RF Test Mode (Internal, Limited)
+//    Uses furi_hal_bt_start_packet_rx() on BLE advertising channels to
+//    detect BLE activity via packet counts and RSSI. This provides basic
+//    activity detection but CANNOT parse advertisement data.
+//    - Works: Activity detection, presence of nearby BLE devices
+//    - Does NOT work: Device identification, tracker detection, names
+//
+// 2. External Hardware (Full Capability)
+//    An ESP32 or nRF module connected via UART provides full BLE scanning.
+//    When the external module sends ExtRadioRespBleDevice responses, call
+//    ble_scanner_handle_external_device() to process the data.
+//    - Works: Full tracker detection (AirTag, Tile, etc.), spam detection,
+//      device names, following detection
+//
+// To enable external BLE scanning:
+// 1. Configure ExternalRadioManager with an on_data callback
+// 2. In the callback, route ExtRadioRespBleDevice to:
+//    ble_scanner_handle_external_device(scanner, data, len)
+// 3. Or use scheduler_external_radio_callback() which handles routing
 
 typedef struct BleScanner BleScanner;
 
@@ -185,3 +207,23 @@ void ble_scanner_process_advertisement(
     int8_t rssi,
     const uint8_t* adv_data,
     size_t adv_data_len);
+
+/**
+ * Handle BLE device data from external radio module.
+ *
+ * Call this when ExtRadioRespBleDevice is received from an external
+ * ESP32/nRF module. The data format is:
+ * - Bytes 0-5: MAC address
+ * - Byte 6: Address type (0=public, 1=random)
+ * - Byte 7: RSSI (signed int8)
+ * - Bytes 8-9: Advertisement data length (big-endian)
+ * - Bytes 10+: Advertisement data
+ *
+ * @param scanner BleScanner instance
+ * @param data    Raw packet data from external radio
+ * @param len     Length of data
+ */
+void ble_scanner_handle_external_device(
+    BleScanner* scanner,
+    const uint8_t* data,
+    size_t len);

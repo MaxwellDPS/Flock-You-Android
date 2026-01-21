@@ -284,6 +284,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- Flipper Alert Quick Action Receiver -->
+        <receiver
+            android:name=".scanner.flipper.FlipperAlertBroadcastReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.flockyou.ACTION_DISMISS_FLIPPER_DETECTION" />
+                <action android:name="com.flockyou.ACTION_MARK_FLIPPER_FP" />
+            </intent-filter>
+        </receiver>
+
         <!-- ================================================================== -->
         <!-- NUKE/EMERGENCY WIPE SYSTEM RECEIVERS                              -->
         <!-- ================================================================== -->

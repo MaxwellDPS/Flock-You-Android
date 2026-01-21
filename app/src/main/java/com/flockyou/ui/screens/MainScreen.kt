@@ -5,8 +5,16 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.*
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -37,12 +45,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import com.flockyou.data.FlipperUiSettings
+import com.flockyou.data.FlipperViewMode
 import com.flockyou.scanner.flipper.FlipperClient
 import com.flockyou.scanner.flipper.FlipperConnectionState
+import com.flockyou.scanner.flipper.FlipperOnboardingSettings
 import com.flockyou.service.CellularMonitor
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextAlign
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
@@ -72,6 +86,7 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val prioritizedEnrichmentIds by viewModel.prioritizedEnrichmentIds.collectAsState()
+    val flipperUiSettings by viewModel.flipperUiSettings.collectAsState()
 
     // Filtered anomalies (excludes FP-marked detections)
     val filteredCellularAnomalies = remember(uiState.cellularAnomalies, uiState.detections, uiState.hideFalsePositives, uiState.fpFilterThreshold) {
@@ -198,6 +213,13 @@ fun MainScreen(
                         Icon(
                             imageVector = Icons.Default.Map,
                             contentDescription = "Map"
+                        )
+                    }
+                    // Simple/Advanced mode toggle - visible on home and history tabs
+                    if (uiState.selectedTab == 0 || uiState.selectedTab == 1) {
+                        AdvancedModeToggle(
+                            advancedMode = uiState.advancedMode,
+                            onToggle = { viewModel.setAdvancedMode(!uiState.advancedMode) }
                         )
                     }
                     // Export debug info button - only shown in advanced mode
@@ -457,6 +479,33 @@ fun MainScreen(
                         // History tab - Detection list with filters
                         val filteredDetections = viewModel.getFilteredDetections()
 
+                        // Track expanded detection IDs (persists during scroll)
+                        val expandedDetectionIds = remember { mutableStateMapOf<String, Boolean>() }
+
+                        // Track last action for undo
+                        var lastMarkedDetection by remember { mutableStateOf<Detection?>(null) }
+                        var lastActionType by remember { mutableStateOf<String?>(null) }
+
+                        // Handle undo action
+                        LaunchedEffect(lastMarkedDetection, lastActionType) {
+                            if (lastMarkedDetection != null && lastActionType != null) {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = when (lastActionType) {
+                                        "reviewed" -> "Marked as reviewed"
+                                        "false_positive" -> "Marked as false positive"
+                                        else -> "Updated"
+                                    },
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    lastMarkedDetection?.let { viewModel.undoMarkDetection(it) }
+                                }
+                                lastMarkedDetection = null
+                                lastActionType = null
+                            }
+                        }
+
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(16.dp),
@@ -624,10 +673,24 @@ fun MainScreen(
                                     items = filteredDetections,
                                     key = { it.id }
                                 ) { detection ->
-                                    DetectionCard(
+                                    SwipeableDetectionCard(
                                         detection = detection,
                                         onClick = { selectedDetection = detection },
+                                        onMarkReviewed = { det ->
+                                            viewModel.markAsReviewed(det)
+                                            lastMarkedDetection = det
+                                            lastActionType = "reviewed"
+                                        },
+                                        onMarkFalsePositive = { det ->
+                                            viewModel.markAsFalsePositive(det)
+                                            lastMarkedDetection = det
+                                            lastActionType = "false_positive"
+                                        },
                                         advancedMode = uiState.advancedMode,
+                                        isExpanded = expandedDetectionIds[detection.id] == true,
+                                        onExpandToggle = {
+                                            expandedDetectionIds[detection.id] = !(expandedDetectionIds[detection.id] ?: false)
+                                        },
                                         onAnalyzeClick = if (viewModel.isAiAnalysisAvailable()) {
                                             { viewModel.analyzeDetection(it) }
                                         } else null,
@@ -667,7 +730,36 @@ fun MainScreen(
                             detectionCount = uiState.flipperDetectionCount,
                             wipsAlertCount = uiState.flipperWipsAlertCount,
                             lastError = uiState.flipperLastError,
-                            advancedMode = uiState.advancedMode
+                            advancedMode = uiState.advancedMode,
+                            scanSchedulerStatus = uiState.flipperScanSchedulerStatus,
+                            // UX improvement parameters
+                            autoReconnectState = uiState.flipperAutoReconnectState,
+                            discoveredDevices = uiState.flipperDiscoveredDevices,
+                            recentDevices = uiState.flipperRecentDevices,
+                            isScanningForDevices = uiState.flipperIsScanningForDevices,
+                            connectionRssi = uiState.flipperConnectionRssi,
+                            showDevicePicker = uiState.flipperShowDevicePicker,
+                            // Callbacks
+                            flipperUiSettings = flipperUiSettings,
+                            onConnect = { viewModel.showFlipperDevicePicker() },
+                            onDisconnect = { viewModel.disconnectFlipper() },
+                            onTogglePause = { viewModel.toggleFlipperPause() },
+                            onTriggerManualScan = { scanType -> viewModel.triggerFlipperManualScan(scanType) },
+                            onViewModeChange = { viewModel.setFlipperViewMode(it) },
+                            onStatusCardExpandedChange = { viewModel.setFlipperStatusCardExpanded(it) },
+                            onSchedulerCardExpandedChange = { viewModel.setFlipperSchedulerCardExpanded(it) },
+                            onStatsCardExpandedChange = { viewModel.setFlipperStatsCardExpanded(it) },
+                            onCapabilitiesCardExpandedChange = { viewModel.setFlipperCapabilitiesCardExpanded(it) },
+                            onAdvancedCardExpandedChange = { viewModel.setFlipperAdvancedCardExpanded(it) },
+                            // Device picker callbacks
+                            onShowDevicePicker = { viewModel.showFlipperDevicePicker() },
+                            onHideDevicePicker = { viewModel.hideFlipperDevicePicker() },
+                            onStartDeviceScan = { viewModel.startFlipperDeviceScan() },
+                            onStopDeviceScan = { viewModel.stopFlipperDeviceScan() },
+                            onSelectDiscoveredDevice = { viewModel.connectToDiscoveredFlipper(it) },
+                            onSelectRecentDevice = { viewModel.connectToRecentFlipper(it) },
+                            onRemoveRecentDevice = { viewModel.removeFlipperFromHistory(it) },
+                            onCancelAutoReconnect = { viewModel.cancelFlipperAutoReconnect() }
                         )
                     }
                 }
@@ -2845,19 +2937,87 @@ fun FlipperTabContent(
     detectionCount: Int,
     wipsAlertCount: Int,
     lastError: String?,
-    advancedMode: Boolean = false
+    advancedMode: Boolean = false,
+    scanSchedulerStatus: com.flockyou.scanner.flipper.ScanSchedulerStatus = com.flockyou.scanner.flipper.ScanSchedulerStatus(),
+    onboardingSettings: FlipperOnboardingSettings = FlipperOnboardingSettings(),
+    showSetupWizard: Boolean = false,
+    // UX improvement parameters
+    autoReconnectState: com.flockyou.scanner.flipper.AutoReconnectState = com.flockyou.scanner.flipper.AutoReconnectState(),
+    discoveredDevices: List<com.flockyou.scanner.flipper.DiscoveredFlipperDevice> = emptyList(),
+    recentDevices: List<com.flockyou.scanner.flipper.RecentFlipperDevice> = emptyList(),
+    isScanningForDevices: Boolean = false,
+    connectionRssi: Int? = null,
+    showDevicePicker: Boolean = false,
+    // Callbacks
+    onConnect: () -> Unit = {},
+    onDisconnect: () -> Unit = {},
+    onTogglePause: () -> Unit = {},
+    onTriggerManualScan: (com.flockyou.scanner.flipper.FlipperScanType) -> Unit = {},
+    onShowSetupWizard: () -> Unit = {},
+    onDismissSetupWizard: () -> Unit = {},
+    onCompleteSetupWizard: () -> Unit = {},
+    onLearnMore: () -> Unit = {},
+    onTroubleshooting: () -> Unit = {},
+    // Device picker callbacks
+    onShowDevicePicker: () -> Unit = {},
+    onHideDevicePicker: () -> Unit = {},
+    onStartDeviceScan: () -> Unit = {},
+    onStopDeviceScan: () -> Unit = {},
+    onSelectDiscoveredDevice: (com.flockyou.scanner.flipper.DiscoveredFlipperDevice) -> Unit = {},
+    onSelectRecentDevice: (com.flockyou.scanner.flipper.RecentFlipperDevice) -> Unit = {},
+    onRemoveRecentDevice: (String) -> Unit = {},
+    onCancelAutoReconnect: () -> Unit = {},
+    // Additional UI settings parameters (for compatibility)
+    flipperUiSettings: com.flockyou.data.FlipperUiSettings = com.flockyou.data.FlipperUiSettings(),
+    onViewModeChange: (com.flockyou.data.FlipperViewMode) -> Unit = {},
+    onStatusCardExpandedChange: (Boolean) -> Unit = {},
+    onSchedulerCardExpandedChange: (Boolean) -> Unit = {},
+    onStatsCardExpandedChange: (Boolean) -> Unit = {},
+    onCapabilitiesCardExpandedChange: (Boolean) -> Unit = {},
+    onAdvancedCardExpandedChange: (Boolean) -> Unit = {}
 ) {
+    // Show setup wizard for first-time users
+    if (showSetupWizard && !onboardingSettings.hasCompletedSetupWizard && connectionState == FlipperConnectionState.DISCONNECTED) {
+        FlipperSetupWizard(
+            onComplete = onCompleteSetupWizard,
+            onDismiss = onDismissSetupWizard,
+            onConnect = onConnect,
+            modifier = modifier
+        )
+        return
+    }
+
+    // Device picker bottom sheet
+    if (showDevicePicker) {
+        FlipperDevicePickerBottomSheet(
+            discoveredDevices = discoveredDevices,
+            recentDevices = recentDevices,
+            isScanning = isScanningForDevices,
+            onDismiss = onHideDevicePicker,
+            onStartScan = onStartDeviceScan,
+            onStopScan = onStopDeviceScan,
+            onSelectDiscovered = onSelectDiscoveredDevice,
+            onSelectRecent = onSelectRecentDevice,
+            onRemoveRecent = onRemoveRecentDevice
+        )
+    }
+
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Connection Status Card
+        // Connection Status Card with controls
         item(key = "flipper_connection") {
-            FlipperConnectionCard(
+            FlipperConnectionCardEnhanced(
                 connectionState = connectionState,
                 connectionType = connectionType,
-                lastError = lastError
+                lastError = lastError,
+                autoReconnectState = autoReconnectState,
+                connectionRssi = connectionRssi,
+                onConnect = onShowDevicePicker,
+                onDisconnect = onDisconnect,
+                onCancelAutoReconnect = onCancelAutoReconnect
             )
         }
 
@@ -2869,6 +3029,13 @@ fun FlipperTabContent(
                     FlipperStatusCard(
                         flipperStatus = flipperStatus,
                         isScanning = isScanning
+                    )
+                }
+
+                // Scan Scheduler Status Card
+                item(key = "flipper_scheduler") {
+                    FlipperScanSchedulerCard(
+                        scanSchedulerStatus = scanSchedulerStatus
                     )
                 }
 
@@ -2898,9 +3065,15 @@ fun FlipperTabContent(
                 }
             }
             FlipperConnectionState.DISCONNECTED -> {
-                // Show connection prompt when disconnected
+                // Show enhanced disconnected card with helpful empty state
                 item(key = "flipper_disconnected") {
-                    FlipperDisconnectedCard()
+                    FlipperDisconnectedCardEnhanced(
+                        hasEverConnected = onboardingSettings.hasEverConnected,
+                        onConnect = onConnect,
+                        onShowSetupWizard = onShowSetupWizard,
+                        onLearnMore = onLearnMore,
+                        onTroubleshooting = onTroubleshooting
+                    )
                 }
             }
             FlipperConnectionState.CONNECTING,
@@ -2915,7 +3088,7 @@ fun FlipperTabContent(
             FlipperConnectionState.ERROR -> {
                 // Show error state with retry option
                 item(key = "flipper_error") {
-                    FlipperErrorCard(lastError = lastError)
+                    FlipperErrorCard(lastError = lastError, onRetry = onConnect)
                 }
             }
         }
@@ -2926,7 +3099,9 @@ fun FlipperTabContent(
 private fun FlipperConnectionCard(
     connectionState: FlipperConnectionState,
     connectionType: FlipperClient.ConnectionType,
-    lastError: String?
+    lastError: String?,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2990,7 +3165,7 @@ private fun FlipperConnectionCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                // Connection type badge
+                // Connection type badge when connected
                 if (connectionState == FlipperConnectionState.READY) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -3014,6 +3189,52 @@ private fun FlipperConnectionCard(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
+                    }
+                }
+            }
+
+            // Connection control buttons
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                when (connectionState) {
+                    FlipperConnectionState.READY -> {
+                        OutlinedButton(
+                            onClick = onDisconnect,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LinkOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Disconnect")
+                        }
+                    }
+                    FlipperConnectionState.DISCONNECTED,
+                    FlipperConnectionState.ERROR -> {
+                        Button(onClick = onConnect) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Connect")
+                        }
+                    }
+                    else -> {
+                        // Connecting states - show a loading indicator
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
                     }
                 }
             }
@@ -3260,6 +3481,492 @@ private fun MiniStatItem(
     }
 }
 
+/**
+ * Format a timestamp as relative time (e.g., "12s ago", "2m ago")
+ */
+@Composable
+private fun formatRelativeTime(timestampMs: Long?): String {
+    if (timestampMs == null) return "Never"
+
+    // Use remember with a key that updates every second
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            now = System.currentTimeMillis()
+        }
+    }
+
+    val diff = now - timestampMs
+    return when {
+        diff < 1000 -> "Just now"
+        diff < 60_000 -> "${diff / 1000}s ago"
+        diff < 3600_000 -> "${diff / 60_000}m ago"
+        diff < 86400_000 -> "${diff / 3600_000}h ago"
+        else -> "${diff / 86400_000}d ago"
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlipperScanSchedulerCard(
+    scanSchedulerStatus: com.flockyou.scanner.flipper.ScanSchedulerStatus,
+    onTogglePause: () -> Unit = {},
+    onTriggerManualScan: (com.flockyou.scanner.flipper.FlipperScanType) -> Unit = {}
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (scanSchedulerStatus.isPaused)
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+            else
+                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Header with pause/resume button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (scanSchedulerStatus.isPaused)
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (scanSchedulerStatus.isPaused) "SCANNING PAUSED" else "SCAN SCHEDULER",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (scanSchedulerStatus.isPaused)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.secondary
+                        )
+                        if (scanSchedulerStatus.isPaused) {
+                            Text(
+                                text = "Connection active, scans stopped",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Pause/Resume button
+                IconButton(
+                    onClick = onTogglePause,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = if (scanSchedulerStatus.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (scanSchedulerStatus.isPaused) "Resume scanning" else "Pause scanning",
+                        tint = if (scanSchedulerStatus.isPaused)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Active scan loops with scan now buttons and timestamps
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // WiFi scan
+                ScanLoopChipWithControls(
+                    label = "WiFi",
+                    isActive = scanSchedulerStatus.wifiScanActive && !scanSchedulerStatus.isPaused,
+                    isScanning = scanSchedulerStatus.isWifiScanning,
+                    intervalSeconds = scanSchedulerStatus.wifiScanIntervalSeconds,
+                    lastScanTime = scanSchedulerStatus.lastWifiScanTime,
+                    cooldownUntil = scanSchedulerStatus.wifiScanCooldownUntil,
+                    isPaused = scanSchedulerStatus.isPaused,
+                    onScanNow = { onTriggerManualScan(com.flockyou.scanner.flipper.FlipperScanType.WIFI) }
+                )
+                // Sub-GHz scan
+                ScanLoopChipWithControls(
+                    label = "Sub-GHz",
+                    isActive = scanSchedulerStatus.subGhzScanActive && !scanSchedulerStatus.isPaused,
+                    isScanning = scanSchedulerStatus.isSubGhzScanning,
+                    intervalSeconds = scanSchedulerStatus.subGhzScanIntervalSeconds,
+                    lastScanTime = scanSchedulerStatus.lastSubGhzScanTime,
+                    cooldownUntil = scanSchedulerStatus.subGhzScanCooldownUntil,
+                    isPaused = scanSchedulerStatus.isPaused,
+                    onScanNow = { onTriggerManualScan(com.flockyou.scanner.flipper.FlipperScanType.SUB_GHZ) }
+                )
+                // BLE scan
+                ScanLoopChipWithControls(
+                    label = "BLE",
+                    isActive = scanSchedulerStatus.bleScanActive && !scanSchedulerStatus.isPaused,
+                    isScanning = scanSchedulerStatus.isBleScanning,
+                    intervalSeconds = scanSchedulerStatus.bleScanIntervalSeconds,
+                    lastScanTime = scanSchedulerStatus.lastBleScanTime,
+                    cooldownUntil = scanSchedulerStatus.bleScanCooldownUntil,
+                    isPaused = scanSchedulerStatus.isPaused,
+                    onScanNow = { onTriggerManualScan(com.flockyou.scanner.flipper.FlipperScanType.BLE) }
+                )
+            }
+
+            // Additional info (NFC, IR, WIPS)
+            if (scanSchedulerStatus.wipsEnabled || scanSchedulerStatus.nfcScanEnabled || scanSchedulerStatus.irScanEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (scanSchedulerStatus.nfcScanEnabled) {
+                        ScanLoopChipWithControls(
+                            label = "NFC",
+                            isActive = true,
+                            isScanning = scanSchedulerStatus.isNfcScanning,
+                            intervalSeconds = null,
+                            lastScanTime = scanSchedulerStatus.lastNfcScanTime,
+                            cooldownUntil = scanSchedulerStatus.nfcScanCooldownUntil,
+                            isPaused = scanSchedulerStatus.isPaused,
+                            isOnDemand = true,
+                            onScanNow = { onTriggerManualScan(com.flockyou.scanner.flipper.FlipperScanType.NFC) }
+                        )
+                    }
+                    if (scanSchedulerStatus.irScanEnabled) {
+                        ScanLoopChipWithControls(
+                            label = "IR",
+                            isActive = true,
+                            isScanning = scanSchedulerStatus.isIrScanning,
+                            intervalSeconds = null,
+                            lastScanTime = scanSchedulerStatus.lastIrScanTime,
+                            cooldownUntil = scanSchedulerStatus.irScanCooldownUntil,
+                            isPaused = scanSchedulerStatus.isPaused,
+                            isOnDemand = true,
+                            onScanNow = { onTriggerManualScan(com.flockyou.scanner.flipper.FlipperScanType.IR) }
+                        )
+                    }
+                    if (scanSchedulerStatus.wipsEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FeatureChip("WIPS", true)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Active monitoring",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Sub-GHz frequency range info
+            if (scanSchedulerStatus.subGhzScanActive && !scanSchedulerStatus.isPaused) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Sub-GHz range: ${scanSchedulerStatus.subGhzFrequencyStart / 1_000_000}-${scanSchedulerStatus.subGhzFrequencyEnd / 1_000_000} MHz",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Heartbeat status
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PulsingDot(
+                    isActive = scanSchedulerStatus.heartbeatActive,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Heartbeat: ${scanSchedulerStatus.heartbeatIntervalSeconds}s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanLoopChipWithControls(
+    label: String,
+    isActive: Boolean,
+    isScanning: Boolean,
+    intervalSeconds: Int?,
+    lastScanTime: Long?,
+    cooldownUntil: Long,
+    isPaused: Boolean,
+    isOnDemand: Boolean = false,
+    onScanNow: () -> Unit
+) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(100)
+            now = System.currentTimeMillis()
+        }
+    }
+
+    val isOnCooldown = now < cooldownUntil
+
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = when {
+            isPaused -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            isScanning -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+            isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Pulsing indicator
+            PulsingDot(
+                isActive = isActive && !isPaused,
+                isScanning = isScanning,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Label and interval
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = when {
+                        isPaused -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        isActive -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (intervalSeconds != null) {
+                        Text(
+                            text = "Every ${intervalSeconds}s",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = " | ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    } else if (isOnDemand) {
+                        Text(
+                            text = "On-demand",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = " | ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                    Text(
+                        text = formatRelativeTime(lastScanTime),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (lastScanTime != null)
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+            }
+
+            // Scan now button
+            IconButton(
+                onClick = onScanNow,
+                enabled = !isOnCooldown && !isScanning,
+                modifier = Modifier.size(32.dp)
+            ) {
+                if (isScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Scan now",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (isOnCooldown)
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        else
+                            MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PulsingDot(
+    isActive: Boolean,
+    isScanning: Boolean = false,
+    color: Color = MaterialTheme.colorScheme.primary
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+
+    // Pulsing animation for actively scanning state
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+
+    // Breathing animation for idle active state
+    val breatheAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breatheAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .graphicsLayer {
+                if (isScanning) {
+                    scaleX = pulseScale
+                    scaleY = pulseScale
+                    alpha = pulseAlpha
+                } else if (isActive) {
+                    alpha = breatheAlpha
+                }
+            }
+            .background(
+                color = if (isActive) color else color.copy(alpha = 0.3f),
+                shape = CircleShape
+            )
+    )
+}
+
+// Keep the original ScanLoopChip for backward compatibility
+@Composable
+private fun ScanLoopChip(
+    label: String,
+    isActive: Boolean,
+    intervalSeconds: Int
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (isActive)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+        else
+            MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PulsingDot(
+                isActive = isActive,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isActive)
+                    MaterialTheme.colorScheme.primary
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isActive) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "${intervalSeconds}s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeatureChip(
+    label: String,
+    isEnabled: Boolean
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (isEnabled)
+            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f)
+        else
+            MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isEnabled) Icons.Default.Check else Icons.Default.Close,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = if (isEnabled)
+                    MaterialTheme.colorScheme.tertiary
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isEnabled)
+                    MaterialTheme.colorScheme.tertiary
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FlipperCapabilitiesCard(
@@ -3342,7 +4049,9 @@ private fun CapabilityChip(
 }
 
 @Composable
-private fun FlipperDisconnectedCard() {
+private fun FlipperDisconnectedCard(
+    onConnect: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -3375,12 +4084,275 @@ private fun FlipperDisconnectedCard() {
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Go to Settings → Flipper Zero to connect",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
+            Button(onClick = onConnect) {
+                Icon(
+                    imageVector = Icons.Default.Link,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Connect Flipper")
+            }
+        }
+    }
+}
+
+/**
+ * Enhanced disconnected card with better empty state UX, helpful tips, and action buttons.
+ */
+@Composable
+private fun FlipperDisconnectedCardEnhanced(
+    hasEverConnected: Boolean,
+    onConnect: () -> Unit,
+    onShowSetupWizard: () -> Unit,
+    onLearnMore: () -> Unit,
+    onTroubleshooting: () -> Unit
+) {
+    var showTip by remember { mutableStateOf(true) }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Main disconnected state card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Larger illustration with device icon
+                Surface(
+                    modifier = Modifier.size(100.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SmartToy,
+                            contentDescription = "Flipper Zero",
+                            modifier = Modifier.size(56.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = if (hasEverConnected) "Flipper Zero Disconnected" else "Connect Your Flipper Zero",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // More helpful description based on user's experience
+                Text(
+                    text = if (hasEverConnected) {
+                        "Your Flipper Zero is not connected. Reconnect to resume extended RF scanning and surveillance detection."
+                    } else {
+                        "Unlock powerful surveillance detection capabilities by connecting your Flipper Zero. Scan WiFi networks, detect RF transmitters, find Bluetooth trackers, and more."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Feature highlights (only for first-time users)
+                if (!hasEverConnected) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        FlipperFeatureHighlight(
+                            icon = Icons.Default.Wifi,
+                            label = "WiFi"
+                        )
+                        FlipperFeatureHighlight(
+                            icon = Icons.Default.SettingsInputAntenna,
+                            label = "Sub-GHz"
+                        )
+                        FlipperFeatureHighlight(
+                            icon = Icons.Default.Bluetooth,
+                            label = "BLE"
+                        )
+                        FlipperFeatureHighlight(
+                            icon = Icons.Default.Nfc,
+                            label = "NFC"
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+
+                // Primary action button
+                Button(
+                    onClick = onConnect,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (hasEverConnected) "Reconnect" else "Connect Flipper Zero",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Secondary actions
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!hasEverConnected) {
+                        OutlinedButton(
+                            onClick = onShowSetupWizard,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.School,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Setup Guide")
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = onTroubleshooting,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Help,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Troubleshoot")
+                    }
+                }
+            }
+        }
+
+        // Quick tip card (dismissable)
+        AnimatedVisibility(
+            visible = showTip,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lightbulb,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = "Tip: Make sure Flock Bridge is running",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Launch the Flock Bridge app on your Flipper Zero before connecting. For USB connections, it will auto-launch if installed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                    IconButton(
+                        onClick = { showTip = false },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Dismiss tip",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+            }
+        }
+
+        // Learn more link
+        TextButton(
+            onClick = onLearnMore,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text("Learn more about Flipper Zero integration")
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Default.OpenInNew,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun FlipperFeatureHighlight(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Surface(
+            modifier = Modifier.size(44.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -3420,7 +4392,10 @@ private fun FlipperConnectingCard() {
 }
 
 @Composable
-private fun FlipperErrorCard(lastError: String?) {
+private fun FlipperErrorCard(
+    lastError: String?,
+    onRetry: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -3454,11 +4429,15 @@ private fun FlipperErrorCard(lastError: String?) {
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Go to Settings → Flipper Zero to retry",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Button(onClick = onRetry) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Retry Connection")
+            }
         }
     }
 }
@@ -3674,4 +4653,559 @@ private fun formatUptime(seconds: Long): String {
         minutes > 0 -> "${minutes}m ${secs}s"
         else -> "${secs}s"
     }
+}
+
+// ============================================================================
+// Flipper UX Improvements - Device Picker & Enhanced Connection Card
+// ============================================================================
+
+/**
+ * Enhanced connection card with signal strength indicator and auto-reconnect state.
+ */
+@Composable
+private fun FlipperConnectionCardEnhanced(
+    connectionState: FlipperConnectionState,
+    connectionType: FlipperClient.ConnectionType,
+    lastError: String?,
+    autoReconnectState: com.flockyou.scanner.flipper.AutoReconnectState,
+    connectionRssi: Int?,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onCancelAutoReconnect: () -> Unit
+) {
+    // Pulsing animation for reconnecting state
+    val pulseAlpha = if (autoReconnectState.isReconnecting) {
+        val infiniteTransition = rememberInfiniteTransition(label = "reconnect_pulse")
+        infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(800, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse_alpha"
+        ).value
+    } else {
+        1f
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                autoReconnectState.isReconnecting -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                connectionState == FlipperConnectionState.READY -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                connectionState == FlipperConnectionState.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                connectionState in listOf(
+                    FlipperConnectionState.CONNECTING,
+                    FlipperConnectionState.CONNECTED,
+                    FlipperConnectionState.DISCOVERING_SERVICES
+                ) -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Icon with optional pulse animation for reconnecting
+                Box {
+                    Icon(
+                        imageVector = when {
+                            autoReconnectState.isReconnecting -> Icons.Default.Sync
+                            connectionState == FlipperConnectionState.READY -> Icons.Default.CheckCircle
+                            connectionState == FlipperConnectionState.ERROR -> Icons.Default.Error
+                            connectionState in listOf(
+                                FlipperConnectionState.CONNECTING,
+                                FlipperConnectionState.CONNECTED,
+                                FlipperConnectionState.DISCOVERING_SERVICES
+                            ) -> Icons.Default.Sync
+                            else -> Icons.Default.UsbOff
+                        },
+                        contentDescription = null,
+                        tint = when {
+                            autoReconnectState.isReconnecting -> MaterialTheme.colorScheme.tertiary.copy(alpha = pulseAlpha)
+                            connectionState == FlipperConnectionState.READY -> MaterialTheme.colorScheme.primary
+                            connectionState == FlipperConnectionState.ERROR -> MaterialTheme.colorScheme.error
+                            connectionState in listOf(
+                                FlipperConnectionState.CONNECTING,
+                                FlipperConnectionState.CONNECTED,
+                                FlipperConnectionState.DISCOVERING_SERVICES
+                            ) -> MaterialTheme.colorScheme.secondary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Flipper Zero",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = when {
+                            autoReconnectState.isReconnecting ->
+                                "Reconnecting... (${autoReconnectState.attemptNumber}/${autoReconnectState.maxAttempts})"
+                            connectionState == FlipperConnectionState.READY ->
+                                "Connected via ${connectionType.name}"
+                            connectionState == FlipperConnectionState.CONNECTING -> "Connecting..."
+                            connectionState == FlipperConnectionState.CONNECTED -> "Handshaking..."
+                            connectionState == FlipperConnectionState.DISCOVERING_SERVICES -> "Discovering services..."
+                            connectionState == FlipperConnectionState.LAUNCHING_FAP -> "Launching Flock Bridge app..."
+                            connectionState == FlipperConnectionState.ERROR -> lastError ?: "Connection error"
+                            connectionState == FlipperConnectionState.DISCONNECTED -> "Not connected"
+                            else -> "Unknown state"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Signal strength indicator (only for Bluetooth when connected)
+                if (connectionState == FlipperConnectionState.READY && connectionType == FlipperClient.ConnectionType.BLUETOOTH) {
+                    SignalStrengthIndicator(rssi = connectionRssi)
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+
+                // Connection type badge when connected
+                if (connectionState == FlipperConnectionState.READY) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (connectionType == FlipperClient.ConnectionType.USB)
+                                    Icons.Default.Usb else Icons.Default.Bluetooth,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = connectionType.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Connection control buttons
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                when {
+                    autoReconnectState.isReconnecting -> {
+                        // Show cancel button during auto-reconnect
+                        OutlinedButton(
+                            onClick = onCancelAutoReconnect,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Cancel")
+                        }
+                    }
+                    connectionState == FlipperConnectionState.READY -> {
+                        OutlinedButton(
+                            onClick = onDisconnect,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LinkOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Disconnect")
+                        }
+                    }
+                    connectionState == FlipperConnectionState.DISCONNECTED ||
+                    connectionState == FlipperConnectionState.ERROR -> {
+                        Button(onClick = onConnect) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Scan for Devices")
+                        }
+                    }
+                    else -> {
+                        // Connecting states - show a loading indicator
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Signal strength indicator based on RSSI.
+ */
+@Composable
+private fun SignalStrengthIndicator(rssi: Int?) {
+    val signalLevel = when {
+        rssi == null -> 0
+        rssi >= -50 -> 4  // Excellent
+        rssi >= -60 -> 3  // Good
+        rssi >= -70 -> 2  // Fair
+        rssi >= -80 -> 1  // Weak
+        else -> 0         // Very weak
+    }
+
+    val barColor = when (signalLevel) {
+        4 -> Color(0xFF4CAF50)  // Green
+        3 -> Color(0xFF8BC34A)  // Light Green
+        2 -> Color(0xFFFFC107)  // Amber
+        1 -> Color(0xFFFF9800)  // Orange
+        else -> Color(0xFFF44336)  // Red
+    }
+
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        for (i in 1..4) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height((8 + i * 4).dp)
+                    .background(
+                        if (i <= signalLevel) barColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+        }
+    }
+
+    // Show RSSI value in tooltip or small text
+    rssi?.let {
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "${it}dBm",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * Bottom sheet dialog for scanning and selecting Flipper devices.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FlipperDevicePickerBottomSheet(
+    discoveredDevices: List<com.flockyou.scanner.flipper.DiscoveredFlipperDevice>,
+    recentDevices: List<com.flockyou.scanner.flipper.RecentFlipperDevice>,
+    isScanning: Boolean,
+    onDismiss: () -> Unit,
+    onStartScan: () -> Unit,
+    onStopScan: () -> Unit,
+    onSelectDiscovered: (com.flockyou.scanner.flipper.DiscoveredFlipperDevice) -> Unit,
+    onSelectRecent: (com.flockyou.scanner.flipper.RecentFlipperDevice) -> Unit,
+    onRemoveRecent: (String) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Connect to Flipper",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Recent Devices Section
+            if (recentDevices.isNotEmpty()) {
+                Text(
+                    text = "RECENT DEVICES",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                recentDevices.forEach { device ->
+                    RecentDeviceItem(
+                        device = device,
+                        onSelect = { onSelectRecent(device) },
+                        onRemove = { onRemoveRecent(device.address) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Bluetooth Scan Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "NEARBY DEVICES",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isScanning) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(onClick = onStopScan) {
+                            Text("Stop")
+                        }
+                    }
+                } else {
+                    TextButton(onClick = onStartScan) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Scan")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Discovered devices list
+            if (discoveredDevices.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.BluetoothSearching,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (isScanning) "Scanning for Flipper devices..." else "No devices found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (!isScanning) {
+                            Text(
+                                text = "Make sure your Flipper is powered on",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
+            } else {
+                discoveredDevices.forEach { device ->
+                    DiscoveredDeviceItem(
+                        device = device,
+                        onSelect = { onSelectDiscovered(device) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // USB connection option
+            Divider()
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "OTHER OPTIONS",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onDismiss, // USB connects automatically when plugged in
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Usb,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "USB Connection",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Connect Flipper via USB cable",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * List item for a recently connected device.
+ */
+@Composable
+private fun RecentDeviceItem(
+    device: com.flockyou.scanner.flipper.RecentFlipperDevice,
+    onSelect: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onSelect,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (device.connectionType == "BLUETOOTH")
+                    Icons.Default.Bluetooth else Icons.Default.Usb,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = device.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = device.address,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            IconButton(onClick = onRemove) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Remove",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+}
+
+/**
+ * List item for a discovered Bluetooth device.
+ */
+@Composable
+private fun DiscoveredDeviceItem(
+    device: com.flockyou.scanner.flipper.DiscoveredFlipperDevice,
+    onSelect: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onSelect,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Bluetooth,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = device.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = device.address,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            // Signal strength
+            SignalStrengthIndicator(rssi = device.rssi)
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
 }

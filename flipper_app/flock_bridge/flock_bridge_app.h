@@ -65,16 +65,10 @@ typedef struct {
 
 typedef enum {
     FlockBridgeViewMenu,        // Main navigation menu (submenu)
-    FlockBridgeViewMain,        // Info/detail widget display
-    FlockBridgeViewStatus,
-    FlockBridgeViewWifiScan,
-    FlockBridgeViewSubGhzScan,
-    FlockBridgeViewBleScan,
-    FlockBridgeViewIrScan,
-    FlockBridgeViewNfcScan,
-    FlockBridgeViewWips,
-    FlockBridgeViewSettings,
-    FlockBridgeViewConnection,
+    FlockBridgeViewMain,        // Info/detail widget display (shared by scanner scenes)
+    FlockBridgeViewStatus,      // Status display widget
+    FlockBridgeViewSettings,    // Settings submenu
+    FlockBridgeViewPopup,       // Popup for alerts and confirmations
 } FlockBridgeView;
 
 // ============================================================================
@@ -128,8 +122,10 @@ struct FlockUsbCdc {
     FuriStreamBuffer* rx_stream;
     FuriStreamBuffer* tx_stream;
     FuriMutex* mutex;
+    FuriSemaphore* rx_semaphore;  // Semaphore to signal RX thread when data arrives
     bool connected;
     bool running;
+    bool paused;  // True when temporarily stopped for IR scanning
 
     // CLI VCP handle - must disable before taking CDC
     CliVcp* cli_vcp;

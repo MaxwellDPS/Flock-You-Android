@@ -151,6 +151,13 @@ enum class DetectionMethod(val displayName: String, val description: String) {
     PINEAPPLE_DETECTED("WiFi Pineapple", "Hak5 WiFi Pineapple pen testing device detected"),
     MITM_DETECTED("MITM Attack", "Potential man-in-the-middle attack detected"),
     PACKET_CAPTURE("Packet Capture", "Network packet capture device detected"),
+    // Flipper Zero and hacking tool detection methods
+    FLIPPER_ZERO_DETECTED("Flipper Zero", "Flipper Zero multi-tool hacking device detected via BLE"),
+    FLIPPER_BLE_SPAM("Flipper BLE Spam", "Flipper Zero BLE spam attack detected (popup flood)"),
+    FLIPPER_FAST_PAIR_SPAM("Fast Pair Spam", "Android Fast Pair spam attack detected"),
+    FLIPPER_APPLE_SPAM("Apple BLE Spam", "Apple device impersonation spam attack detected"),
+    HACKING_TOOL_DETECTED("Hacking Tool", "Security testing/hacking tool detected nearby"),
+    KARMA_ATTACK_DETECTED("Karma Attack", "WiFi Pineapple karma attack - AP responding to all probes"),
     // Law enforcement detection methods
     ACOUSTIC_SENSOR("Acoustic Sensor", "ShotSpotter or similar acoustic gunshot sensor"),
     FORENSIC_DEVICE("Forensic Device", "Mobile forensics device detected"),
@@ -225,6 +232,18 @@ enum class DeviceType(val displayName: String, val emoji: String) {
     WIFI_PINEAPPLE("WiFi Pineapple", "🍍"),
     PACKET_SNIFFER("Packet Sniffer", "🕵️"),
     MAN_IN_MIDDLE("MITM Device", "🔀"),
+    // Hacking tools
+    FLIPPER_ZERO("Flipper Zero", "🐬"),
+    FLIPPER_ZERO_SPAM("Flipper Zero (BLE Spam)", "🐬"),
+    HACKRF_SDR("HackRF/SDR Device", "📻"),
+    PROXMARK("Proxmark RFID Tool", "💳"),
+    USB_RUBBER_DUCKY("USB Rubber Ducky", "🦆"),
+    LAN_TURTLE("LAN Turtle", "🐢"),
+    BASH_BUNNY("Bash Bunny", "🐰"),
+    KEYCROC("Key Croc", "🐊"),
+    SHARK_JACK("Shark Jack", "🦈"),
+    SCREEN_CRAB("Screen Crab", "🦀"),
+    GENERIC_HACKING_TOOL("Hacking Tool", "🔧"),
     // Misc surveillance
     LICENSE_PLATE_READER("License Plate Reader", "🚘"),
     CCTV_CAMERA("CCTV Camera", "📹"),
@@ -281,7 +300,26 @@ fun rssiToSignalStrength(rssi: Int): SignalStrength = when {
 }
 
 /**
- * Converts threat score to ThreatLevel
+ * Converts threat score to ThreatLevel.
+ *
+ * IMPORTANT: This is a LEGACY function for backward compatibility.
+ * For proper threat assessment, use ThreatScoring.calculateThreat() which
+ * considers likelihood, impact factor, and confidence.
+ *
+ * Thresholds are calibrated to ensure severity matches actual threat probability:
+ * - CRITICAL (90-100): Confirmed active threat, immediate action needed
+ *   Examples: Active IMSI catcher with encryption downgrade, confirmed GPS spoofing
+ * - HIGH (70-89): High probability threat, investigate immediately
+ *   Examples: Encryption downgrade + unknown cell, tracker following for hours
+ * - MEDIUM (50-69): Moderate concern, monitor closely
+ *   Examples: Unknown cell in familiar area, new tracker nearby
+ * - LOW (30-49): Possible concern, log and watch
+ *   Examples: Single cell change while stationary, brief ultrasonic detection
+ * - INFO (0-29): Notable but not threatening
+ *   Examples: Known smart home device, normal network handoff
+ *
+ * @param score The calculated threat score (0-100)
+ * @return The corresponding ThreatLevel
  */
 fun scoreToThreatLevel(score: Int): ThreatLevel = when {
     score >= 90 -> ThreatLevel.CRITICAL
@@ -289,6 +327,133 @@ fun scoreToThreatLevel(score: Int): ThreatLevel = when {
     score >= 50 -> ThreatLevel.MEDIUM
     score >= 30 -> ThreatLevel.LOW
     else -> ThreatLevel.INFO
+}
+
+/**
+ * Calculate proper threat level from likelihood and device type.
+ *
+ * This is the PREFERRED method for determining threat level as it uses
+ * the proper formula: threat_score = likelihood * impact_factor * confidence
+ *
+ * This ensures:
+ * - 20% IMSI likelihood -> LOW/INFO severity, not HIGH
+ * - 30% spoofing likelihood -> LOW severity, not MEDIUM
+ * - Severity correlates with actual threat probability
+ *
+ * @param baseLikelihood Base probability (0-100) that this is a real threat
+ * @param deviceType The type of device detected
+ * @param rssi Signal strength in dBm
+ * @param hasMultipleIndicators Whether multiple confirming indicators exist
+ * @param hasCrossProtocolCorrelation Whether seen on multiple protocols
+ * @param isConsumerDevice Whether this is a known consumer IoT device
+ * @param seenCount Number of times this device has been detected
+ * @return Properly calculated ThreatLevel
+ */
+fun calculateThreatLevel(
+    baseLikelihood: Int,
+    deviceType: DeviceType,
+    rssi: Int = -70,
+    hasMultipleIndicators: Boolean = false,
+    hasCrossProtocolCorrelation: Boolean = false,
+    isConsumerDevice: Boolean = false,
+    seenCount: Int = 1
+): ThreatLevel {
+    // Use the ThreatScoring system for proper calculation
+    // Import: com.flockyou.detection.ThreatScoring
+    val impactFactor = getImpactFactorForDeviceType(deviceType)
+
+    // Calculate confidence based on available factors
+    var confidence = 0.5
+
+    // Signal strength adjustments
+    when {
+        rssi > -50 -> confidence += 0.1
+        rssi > -60 -> confidence += 0.05
+        rssi < -90 -> confidence -= 0.2
+        rssi < -80 -> confidence -= 0.1
+    }
+
+    // Multiple indicators boost
+    if (hasMultipleIndicators) confidence += 0.2
+    else confidence -= 0.3  // Single indicator penalty
+
+    // Cross-protocol correlation boost
+    if (hasCrossProtocolCorrelation) confidence += 0.3
+
+    // Consumer device penalty
+    if (isConsumerDevice) confidence -= 0.2
+
+    // Persistence boost
+    if (seenCount > 3) confidence += 0.2
+
+    // Clamp confidence
+    confidence = confidence.coerceIn(0.1, 1.0)
+
+    // Calculate final score: likelihood * impact * confidence
+    val score = (baseLikelihood * impactFactor * confidence).toInt().coerceIn(0, 100)
+
+    return scoreToThreatLevel(score)
+}
+
+/**
+ * Get impact factor for a device type.
+ * Higher impact = more potential harm if threat is real.
+ */
+private fun getImpactFactorForDeviceType(deviceType: DeviceType): Double = when (deviceType) {
+    // Maximum impact - intercepts all communications
+    DeviceType.STINGRAY_IMSI -> 2.0
+    DeviceType.CELLEBRITE_FORENSICS -> 2.0
+    DeviceType.GRAYKEY_DEVICE -> 2.0
+    DeviceType.MAN_IN_MIDDLE -> 2.0
+
+    // High impact - can cause physical harm
+    DeviceType.GNSS_SPOOFER -> 1.8
+    DeviceType.GNSS_JAMMER -> 1.8
+    DeviceType.RF_JAMMER -> 1.8
+    DeviceType.WIFI_PINEAPPLE -> 1.8
+    DeviceType.ROGUE_AP -> 1.7
+
+    // Hacking tools - context-dependent impact
+    DeviceType.FLIPPER_ZERO -> 1.5  // Can be legitimate or malicious
+    DeviceType.FLIPPER_ZERO_SPAM -> 1.9  // Active attack
+    DeviceType.HACKRF_SDR -> 1.6
+    DeviceType.PROXMARK -> 1.7  // RFID cloning capability
+    DeviceType.BASH_BUNNY -> 1.8
+    DeviceType.LAN_TURTLE -> 1.7
+    DeviceType.USB_RUBBER_DUCKY -> 1.8
+    DeviceType.KEYCROC -> 1.8
+    DeviceType.SHARK_JACK -> 1.7
+    DeviceType.SCREEN_CRAB -> 1.6
+    DeviceType.GENERIC_HACKING_TOOL -> 1.5
+
+    // Tracking/stalking concern
+    DeviceType.AIRTAG -> 1.5
+    DeviceType.TILE_TRACKER -> 1.5
+    DeviceType.SAMSUNG_SMARTTAG -> 1.5
+    DeviceType.GENERIC_BLE_TRACKER -> 1.5
+    DeviceType.TRACKING_DEVICE -> 1.5
+
+    // Privacy violations
+    DeviceType.HIDDEN_CAMERA -> 1.3
+    DeviceType.HIDDEN_TRANSMITTER -> 1.3
+    DeviceType.FLOCK_SAFETY_CAMERA -> 1.2
+    DeviceType.LICENSE_PLATE_READER -> 1.2
+    DeviceType.FACIAL_RECOGNITION -> 1.2
+
+    // Consumer IoT - lower impact
+    DeviceType.RING_DOORBELL -> 0.8
+    DeviceType.NEST_CAMERA -> 0.8
+    DeviceType.WYZE_CAMERA -> 0.8
+    DeviceType.AMAZON_SIDEWALK -> 0.7
+
+    // Traffic infrastructure - minimal impact
+    DeviceType.SPEED_CAMERA -> 0.6
+    DeviceType.RED_LIGHT_CAMERA -> 0.6
+    DeviceType.TOLL_READER -> 0.6
+    DeviceType.TRAFFIC_SENSOR -> 0.5
+
+    // Default for unknown types
+    else -> 1.0
 }
 
 /**

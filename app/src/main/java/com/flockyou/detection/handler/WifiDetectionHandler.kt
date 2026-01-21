@@ -593,118 +593,553 @@ Analyze this detection and provide:
     }
 
     /**
-     * Get description for a device type.
+     * Get description for a device type with real-world context.
      */
     private fun getDeviceTypeDescription(deviceType: DeviceType): String {
         return when (deviceType) {
             DeviceType.FLOCK_SAFETY_CAMERA -> """
 Flock Safety cameras are Automated License Plate Readers (ALPRs) that:
 - Capture license plates of all passing vehicles 24/7
-- Record vehicle make, model, color, and distinguishing features
-- Store data for up to 30 days (or longer with law enforcement agreements)
-- Can be used to track vehicle movements across a network of cameras
-- Often deployed by HOAs, businesses, and police departments"""
+- Record vehicle make, model, color, and distinguishing features (Vehicle Fingerprint)
+- Store data for 30 days default (some jurisdictions retain 2+ years)
+- Can track vehicle movements across a network of 5,000+ communities
+- Process 20+ billion monthly plate scans nationwide
+- 2,000+ law enforcement agencies have direct access to the database
+
+DEPLOYMENT PATTERNS:
+- Mounted on poles at HOA entrances, city intersections, school zones
+- Small rectangular box with IR illuminators (visible at night as red glow)
+- Solar-powered variants have visible panels
+- Often paired: one camera per direction of traffic
+
+REAL-WORLD CONFIRMATION:
+- Check deflock.me for known camera locations in your area
+- Look for small box camera on pole/post nearby (distinctive shape)
+- IR illuminators may be visible as faint red glow at night
+- May see "Flock Safety" branding on equipment"""
 
             DeviceType.AXON_POLICE_TECH -> """
-Axon produces police technology including:
-- Body cameras that can auto-activate during incidents
-- Signal devices that trigger nearby cameras to start recording
-- Evidence management systems for law enforcement
-- TASER devices with connectivity features"""
+Axon Enterprise (formerly TASER International) products detected:
+
+AXON BODY CAMERAS (Body 2/3/4):
+- WiFi used for: Firmware updates, evidence upload to Evidence.com
+- Auto-activation: Triggered by gun draw, TASER deployment, vehicle door open
+- Can stream live video to command center (Axon Respond)
+
+AXON FLEET (In-Car Cameras):
+- Dash cameras with automatic incident recording
+- Syncs with body cameras when officer exits vehicle
+- WiFi for bulk evidence upload at station
+
+AXON INTERVIEW:
+- Interview room recording systems
+- WiFi for streaming and upload
+
+REAL-WORLD CONFIRMATION:
+- Strong signal suggests officer/vehicle within 30-50 feet
+- May indicate active police presence or parked cruiser nearby
+- Axon Signal devices auto-activate all nearby body cameras"""
 
             DeviceType.MOTOROLA_POLICE_TECH -> """
-Motorola Solutions provides police technology including:
-- Body cameras (V300, V500 series)
-- In-car video systems
-- Radio equipment (APX, ASTRO)
-- CommandCentral software suite"""
+Motorola Solutions police technology detected:
+
+APX RADIOS (APX 6000/7000/8000/NEXT):
+- Used by: Most US police, fire, EMS departments
+- WiFi for: Firmware updates, configuration, key loading
+- Capabilities: Encrypted P25 voice, GPS tracking, emergency alerts
+
+BODY CAMERAS (V300/V500 Series):
+- WiFi for evidence upload to CommandCentral
+- May have automatic activation triggers
+
+VIGILANT ALPR:
+- Motorola's competitor to Flock Safety
+- Similar capabilities for license plate tracking
+
+REAL-WORLD CONFIRMATION:
+- APX radios are standard police equipment
+- Detection may indicate officer on foot patrol nearby
+- Fleet vehicles often have multiple Motorola devices"""
+
+            DeviceType.L3HARRIS_SURVEILLANCE -> """
+L3Harris Technologies surveillance/communications equipment detected.
+
+THIS IS HIGHLY UNUSUAL TO DETECT. L3Harris makes:
+- StingRay/Hailstorm/Kingfish cell site simulators (IMSI catchers)
+- Tactical radio systems (XG-75/XG-100)
+- Advanced SIGINT and electronic warfare equipment
+
+IF YOU SEE THIS:
+- StingRay SSIDs in the wild are EXTREMELY RARE (operational security)
+- Real cell site simulators don't typically broadcast WiFi
+- May indicate training exercise, equipment testing, or malfunction
+- Could also be a hoax/honeypot SSID
+
+REAL-WORLD CONFIRMATION:
+- Look for suspicious vehicles with antennas
+- Note if cellular service is degraded in the area
+- Document time/location - this is significant if real"""
+
+            DeviceType.CELLEBRITE_FORENSICS -> """
+Cellebrite UFED (Universal Forensic Extraction Device) detected:
+
+WHAT IT DOES:
+- Extracts data from locked mobile phones
+- Can recover: Deleted messages, app data, passwords, photos
+- Bypasses screen locks on many devices
+- Used by: Police, FBI, border agents, corporate security
+
+COST: $15,000-$30,000 per unit (police departments only)
+
+IF DETECTED NEARBY:
+- May indicate forensic examination in progress
+- Could be at police station, border crossing, or mobile unit
+- Presence near you = potential device seizure risk
+
+REAL-WORLD CONFIRMATION:
+- Typically used in controlled environments (stations, labs)
+- Mobile deployment is less common but possible
+- Strong signal suggests very close proximity"""
 
             DeviceType.HIDDEN_CAMERA -> """
-Hidden camera WiFi networks may indicate:
-- Covert surveillance equipment
-- Spy cameras disguised as everyday objects
-- Unauthorized recording devices
-- IoT cameras in setup/configuration mode"""
+Hidden camera WiFi network detected. Common patterns include:
+
+CAMERA SSID PATTERNS:
+- IPCamera_*, IPC_*, WIFICAM_*, P2P_*, YI_*
+- Many cheap cameras use default SSIDs
+- Often 2.4GHz only with open network for initial setup
+
+MANUFACTURERS TO FLAG:
+- Wyze, Ring, Nest in inappropriate locations (hotel rooms, Airbnbs)
+- Generic Chinese cameras (Hikvision, Dahua, Reolink OEM)
+- "Nanny cam" or "spy cam" branded devices
+
+REAL-WORLD CONFIRMATION:
+- Scan room with phone camera for IR LEDs (appear as purple/white glow)
+- Check smoke detectors, clocks, outlets, picture frames
+- Use RF detector for hidden wireless transmitters
+- Look for tiny holes in walls, objects, or ceiling
+- Check behind mirrors and in decorative items"""
 
             DeviceType.SURVEILLANCE_VAN -> """
-Mobile surveillance hotspots may indicate:
-- Law enforcement surveillance vehicles
-- Private investigation equipment
-- Mobile command centers
-- Covert monitoring operations"""
+Mobile surveillance hotspot detected - possible surveillance vehicle.
 
-            DeviceType.ROGUE_AP -> """
-Rogue access points can be used for:
-- Man-in-the-middle attacks (intercepting traffic)
-- Evil twin attacks (impersonating legitimate networks)
-- WiFi Pineapple and similar penetration testing tools
-- Credential harvesting via fake captive portals"""
+REAL SURVEILLANCE VAN PATTERNS:
+- SSID appears at multiple of YOUR locations (follows you)
+- Strong signal from parking area or street
+- Generic/bland SSID names (NOT "FBI_Van" - that's a joke)
+- Consistent signal over extended period
+
+WHAT TO LOOK FOR:
+- Vans, SUVs, or work trucks parked with occupants
+- Vehicles with running engines (for equipment power)
+- Unusual antennas or equipment visible
+- Tinted windows, no company markings, or generic utility appearance
+
+REAL-WORLD CONFIRMATION:
+- Note if same SSID appears at home AND work
+- Check for vehicle parked where signal is strongest
+- Signal strength mapping can help locate source
+- Monitor over multiple days for patterns"""
+
+            DeviceType.ROGUE_AP, DeviceType.WIFI_PINEAPPLE -> """
+Rogue/Evil Twin access point detected. Attack types include:
+
+EVIL TWIN ATTACK:
+- Same SSID as known network but different BSSID (MAC)
+- Stronger signal than usual for that network
+- Open network mimicking a secured network
+- Certificate mismatch on captive portal
+
+KARMA ATTACK:
+- AP responds to ALL probe requests
+- Impersonates any network your device asks for
+- WiFi Pineapple is common tool for this
+
+DEAUTH ATTACK:
+- Kicks you off real AP to force connection to fake
+- Rapid disconnection patterns are the signature
+
+REAL-WORLD CONFIRMATION:
+- Compare BSSID to your known router's MAC address
+- Check if 'free WiFi' appeared where it shouldn't exist
+- Look for unusual device near where signal is strongest
+- Verify HTTPS certificates on sensitive sites
+
+IMMEDIATE ACTIONS:
+- Disconnect from suspicious network
+- Forget the network and reconnect to legitimate AP
+- Use cellular data for sensitive activities
+- Enable VPN before reconnecting to WiFi"""
+
+            DeviceType.MAN_IN_MIDDLE -> """
+Man-in-the-Middle (MITM) attack infrastructure detected.
+
+WHAT THIS MEANS:
+- Someone is positioned to intercept your network traffic
+- Can capture login credentials on non-HTTPS sites
+- Can perform SSL stripping attacks
+- May inject malicious content into web pages
+
+DETECTION SIGNS:
+- Certificate warnings on normally-secure sites
+- HTTPS downgraded to HTTP
+- Unusual redirects or login pages
+- Slower than expected network performance
+
+REAL-WORLD CONFIRMATION:
+- Check SSL certificates on banking/email sites
+- Look for certificate authority mismatches
+- Use a different network to verify
+- Check for ARP poisoning indicators"""
+
+            DeviceType.TRACKING_DEVICE -> """
+Network following your location detected - possible tracking device.
+
+FOLLOWING PATTERNS:
+- Same SSID/BSSID seen at 3+ of your distinct locations
+- Appears at both home and work
+- Signal strength varies but network persists
+- Movement correlation with your travel
+
+WHAT THIS COULD BE:
+- Surveillance team using mobile hotspot
+- Tracking device planted on vehicle
+- Coincidental neighbor/coworker (less likely if 3+ locations)
+- Commuter on same route (check timing patterns)
+
+REAL-WORLD CONFIRMATION:
+- Check vehicle thoroughly for hidden devices
+- Note signal strength variations to locate source
+- Vary your routine to test if network follows
+- Document all sighting locations and times"""
 
             else -> "This device type may be used for surveillance or tracking purposes."
         }
     }
 
     /**
-     * Get privacy implications for a device type.
+     * Get privacy implications for a device type with legal context.
      */
     private fun getPrivacyImplications(deviceType: DeviceType): String {
         return when (deviceType) {
             DeviceType.FLOCK_SAFETY_CAMERA -> """
-- Your vehicle's license plate will be captured and stored
-- Travel patterns can be reconstructed from camera network
-- Data may be shared with law enforcement without warrant
-- Historical location data can be queried by authorities"""
+DATA COLLECTED:
+- License plate number (100% capture rate at speeds up to 100mph)
+- Vehicle make, model, color, year
+- Distinguishing features: bumper stickers, damage, modifications
+- Direction of travel, timestamp, GPS coordinates
+
+DATA RETENTION & ACCESS:
+- Default: 30 days (configurable per customer)
+- Some jurisdictions retain data for 2+ years
+- 2,000+ law enforcement agencies have database access
+- HOAs can query their own camera data
+- No warrant required for law enforcement queries
+- Data shared across Flock's nationwide network
+
+LEGAL CONTEXT (US):
+- ALPR data is generally not protected by 4th Amendment
+- Several states have NO restrictions on retention/sharing
+- CA, VT, NH have some privacy protections
+- ICE has used ALPR data for immigration enforcement
+
+WHAT YOU CAN DO:
+- Check deflock.me for camera locations
+- Consider route planning to avoid clusters
+- Understand your state's ALPR laws"""
 
             DeviceType.AXON_POLICE_TECH, DeviceType.MOTOROLA_POLICE_TECH, DeviceType.BODY_CAMERA -> """
-- Indicates active police presence or equipment nearby
-- Body cameras may be recording audio and video
-- Your image/voice may be captured and stored
-- Recordings may be used as evidence or shared"""
+WHAT MAY BE RECORDED:
+- Video of your face, body, actions
+- Audio of your voice and conversations
+- Your location via officer's GPS
+- Timestamp and duration of encounter
+
+DATA HANDLING:
+- Uploaded to Evidence.com (Axon) or CommandCentral (Motorola)
+- Retention: 60 days to 7+ years depending on jurisdiction
+- Officers can review footage before writing reports
+- FOIA requests for footage often delayed or denied
+
+AUTOMATIC ACTIVATION:
+- Axon Signal triggers all nearby cameras when:
+  - Officer draws firearm
+  - Vehicle siren/lights activated
+  - TASER deployed
+  - Vehicle door opens (Axon Fleet)
+
+LEGAL CONTEXT:
+- You have RIGHT to record police in all US states
+- Officers cannot delete your recordings
+- BWC footage release policies vary by department"""
+
+            DeviceType.L3HARRIS_SURVEILLANCE, DeviceType.STINGRAY_IMSI -> """
+IF THIS IS A REAL CELL SITE SIMULATOR:
+- All phones within 1-2km are affected
+- Your IMSI (SIM ID) and IMEI (device ID) captured
+- Phone may be forced to 2G (weak/no encryption)
+- Calls, texts, and data can be intercepted
+- Your location tracked to within meters
+
+LEGAL CONTEXT:
+- Often used under NDA - hidden from courts
+- FBI requires dropping cases rather than revealing use
+- Some states now require warrants (WA, CA, NY, IL)
+- Frequently deployed at protests and gatherings
+
+PRIVACY IMPACT:
+- Mass surveillance affecting everyone nearby
+- No notification to affected individuals
+- Data retention policies are opaque
+- Cell service disruption in the area"""
+
+            DeviceType.CELLEBRITE_FORENSICS -> """
+WHAT CAN BE EXTRACTED:
+- All photos, videos, documents
+- Text messages (including deleted)
+- Call logs and voicemails
+- App data (Signal, WhatsApp, Telegram)
+- Passwords and authentication tokens
+- Location history and GPS logs
+- Social media content
+- Browser history and bookmarks
+
+LEGAL CONTEXT:
+- Border agents can search devices without warrant
+- Some jurisdictions allow at traffic stops
+- "Consent" may be coerced
+- Device seizure policies vary
+
+IF YOU'RE CONCERNED:
+- Know your rights regarding device searches
+- Consider travel mode / secondary device for border crossings
+- Full-disk encryption provides some protection
+- Newer iPhones resist some extraction methods"""
 
             DeviceType.HIDDEN_CAMERA -> """
-- Covert recording of your activities
-- Potential violation of privacy in private spaces
-- May capture sensitive personal information
-- Could be used for stalking or harassment"""
+PRIVACY VIOLATION:
+- Recording without consent is illegal in private spaces
+- May capture intimate/private moments
+- Footage may be shared or sold online
+- Can enable stalking or harassment
+
+WHERE TO CHECK:
+- Hotel rooms, Airbnbs, rental properties
+- Changing rooms, bathrooms
+- Behind mirrors, in smoke detectors
+- Clocks, picture frames, electrical outlets
+
+LEGAL CONTEXT:
+- Recording in private spaces without consent: ILLEGAL
+- Expectation of privacy laws vary by state
+- Hotels/landlords liable for hidden cameras
+- Report to police if found
+
+DETECTION METHODS:
+- Phone camera can see IR LEDs
+- RF detector for wireless transmission
+- Physical inspection of suspicious objects
+- Network scan (this app) for WiFi cameras"""
 
             DeviceType.SURVEILLANCE_VAN -> """
-- Targeted surveillance of specific area or person
-- May indicate law enforcement interest
-- Could be conducting electronic surveillance
-- Possible recording of wireless communications"""
+POTENTIAL CAPABILITIES:
+- Audio surveillance (parabolic/laser mics)
+- Video surveillance (telephoto, thermal)
+- Cell site simulator operation
+- WiFi/Bluetooth interception
+- License plate reading
 
-            DeviceType.ROGUE_AP -> """
-- Network traffic interception risk
-- Login credentials could be captured
-- Malware injection possible
-- Browser sessions could be hijacked"""
+WHO MIGHT BE OPERATING:
+- FBI, DEA, ATF, other federal agencies
+- State and local police
+- Private investigators
+- Corporate security
+- Stalkers (rare but possible)
+
+LEGAL CONTEXT:
+- Surveillance of public activities generally legal
+- Electronic surveillance requires warrant (with exceptions)
+- Private investigators have fewer restrictions
+- Documentation may support legal challenges
+
+WHAT TO DO:
+- Document vehicle details (plate, make/model, location)
+- Note times and duration of presence
+- Consult attorney if targeted surveillance suspected"""
+
+            DeviceType.ROGUE_AP, DeviceType.WIFI_PINEAPPLE, DeviceType.MAN_IN_MIDDLE -> """
+IMMEDIATE RISKS:
+- All unencrypted traffic can be read
+- Login credentials on HTTP sites captured
+- Session cookies stolen (account hijacking)
+- Malware/exploit injection possible
+- SSL stripping downgrades HTTPS to HTTP
+
+TARGETED DATA:
+- Banking/financial credentials
+- Email passwords
+- Social media logins
+- Corporate VPN credentials
+- Personal conversations
+
+LEGAL CONTEXT:
+- Unauthorized interception: Federal crime (Wiretap Act)
+- CFAA violations for unauthorized access
+- May be part of larger attack campaign
+
+IMMEDIATE MITIGATION:
+- Disconnect NOW from suspicious network
+- Use cellular data for sensitive activities
+- Change passwords from a secure connection
+- Enable 2FA on important accounts
+- Use VPN for all future WiFi connections"""
+
+            DeviceType.TRACKING_DEVICE -> """
+IF YOU'RE BEING FOLLOWED:
+- This is evidence of targeted surveillance
+- May indicate law enforcement interest
+- Could be stalking or harassment
+- Private investigation is possible
+
+DATA BEING COLLECTED:
+- Your daily routine and patterns
+- Home and work locations
+- Frequent stops and contacts
+- Travel times and routes
+
+LEGAL CONTEXT:
+- Police generally need warrant for GPS tracking (US v. Jones)
+- Stalking via tracking is criminal in all states
+- PI tracking laws vary by state
+- Employer tracking of company vehicles may be legal
+
+WHAT TO DO:
+- Document all sighting locations and times
+- Vary your routine to confirm tracking
+- Physically inspect vehicle for devices
+- Consult attorney or law enforcement if stalking suspected"""
 
             else -> "This device may collect data about your presence, activities, or communications."
         }
     }
 
     /**
-     * Get description for a manufacturer.
+     * Get description for a manufacturer with real-world context.
      */
     private fun getManufacturerDescription(manufacturer: String): String {
         return when {
-            manufacturer.contains("Flock", ignoreCase = true) ->
-                "Flock Safety manufactures ALPR cameras and gunshot detection systems."
-            manufacturer.contains("Axon", ignoreCase = true) ->
-                "Axon Enterprise produces body cameras, TASERs, and police technology."
-            manufacturer.contains("Motorola", ignoreCase = true) ->
-                "Motorola Solutions provides radio, video, and software for public safety."
-            manufacturer.contains("Quectel", ignoreCase = true) ->
-                "Quectel manufactures cellular modems used in many IoT and surveillance devices."
-            manufacturer.contains("Telit", ignoreCase = true) ->
-                "Telit produces cellular modules commonly used in surveillance equipment."
-            manufacturer.contains("Sierra", ignoreCase = true) ->
-                "Sierra Wireless manufactures cellular modems for IoT applications."
-            manufacturer.contains("Hikvision", ignoreCase = true) ->
-                "Hikvision is a major manufacturer of surveillance cameras and DVRs."
-            manufacturer.contains("Dahua", ignoreCase = true) ->
-                "Dahua Technology produces surveillance cameras and security systems."
-            else -> "This manufacturer produces equipment that may include surveillance capabilities."
+            manufacturer.contains("Flock", ignoreCase = true) -> """
+Flock Safety (Atlanta, GA) - Founded 2017
+- Leading ALPR camera manufacturer in the US
+- 5,000+ communities, 20+ billion monthly scans
+- Products: Falcon, Sparrow, Condor cameras; Raven gunshot detector
+- 2,000+ law enforcement agencies have data access
+- Also offers SafeList (vehicle hotlists) and FlockOS platform
+- Camera locations mapped at deflock.me"""
+
+            manufacturer.contains("Axon", ignoreCase = true) -> """
+Axon Enterprise (Scottsdale, AZ) - Formerly TASER International
+- Dominant body camera provider for US law enforcement
+- Products: Body 2/3/4 cameras, Fleet in-car, TASER devices
+- Evidence.com cloud platform stores billions of evidence files
+- Axon Signal auto-triggers cameras on firearm/TASER deployment
+- Expanding into AI transcription and redaction
+- Stock ticker: AXON (NASDAQ)"""
+
+            manufacturer.contains("Motorola", ignoreCase = true) -> """
+Motorola Solutions (Chicago, IL)
+- Major public safety technology provider
+- Products: APX radios, V300/V500 body cameras, WatchGuard dash cams
+- Vigilant ALPR platform (competitor to Flock)
+- CommandCentral evidence management
+- Radio encryption (P25) used by most US public safety
+- Stock ticker: MSI (NYSE)"""
+
+            manufacturer.contains("L3Harris", ignoreCase = true) -> """
+L3Harris Technologies (Melbourne, FL)
+- Defense and aerospace contractor
+- Manufactures StingRay/Hailstorm/Kingfish cell site simulators
+- Tactical radios (XG series) for law enforcement
+- Advanced SIGINT and surveillance equipment
+- Equipment typically classified or export-controlled
+- IMSI catcher detection is SIGNIFICANT if confirmed"""
+
+            manufacturer.contains("Cellebrite", ignoreCase = true) -> """
+Cellebrite (Israel/US)
+- Mobile forensics company
+- UFED: Can extract data from most phones, including deleted content
+- Used by law enforcement, border agents, military worldwide
+- Premium license: $15,000-$30,000+
+- Can bypass many screen locks and encryption
+- Detection suggests active forensic operation"""
+
+            manufacturer.contains("Grayshift", ignoreCase = true) -> """
+Grayshift (Atlanta, GA)
+- Founded by ex-Apple engineers
+- GrayKey: iPhone unlocking and extraction device
+- Can crack passcodes on modern iPhones
+- Exclusively sold to law enforcement
+- $15,000-$30,000 per unit
+- Detection near you is HIGHLY unusual"""
+
+            manufacturer.contains("Quectel", ignoreCase = true) -> """
+Quectel Wireless Solutions (China)
+- World's largest LTE/5G modem manufacturer
+- Modems used in: Flock cameras, fleet trackers, IoT devices
+- OUI 50:29:4D commonly found in surveillance equipment
+- Module presence doesn't confirm surveillance alone
+- Very common in legitimate IoT devices too"""
+
+            manufacturer.contains("Telit", ignoreCase = true) -> """
+Telit Cinterion (Italy/US)
+- Cellular IoT module manufacturer
+- Used in: Fleet tracking, surveillance equipment, industrial IoT
+- Common in both legitimate and surveillance applications
+- Detection requires additional context"""
+
+            manufacturer.contains("Sierra", ignoreCase = true) -> """
+Sierra Wireless (Canada) - Now Semtech
+- Vehicle/fleet cellular routers
+- Very common in: Police vehicles, ambulances, utility trucks
+- Products: AirLink, MP70 series
+- Cradlepoint is similar (police vehicle routers)
+- Detection often indicates nearby fleet vehicle"""
+
+            manufacturer.contains("Hikvision", ignoreCase = true) -> """
+Hikvision (Hangzhou, China)
+- World's largest surveillance camera manufacturer
+- Partially state-owned by Chinese government
+- Banned for US government purchases (NDAA)
+- Common in: Commercial surveillance, some residential
+- Known for security vulnerabilities
+- OUIs: B4:A3:82, 44:19:B6, 54:C4:15, 28:57:BE"""
+
+            manufacturer.contains("Dahua", ignoreCase = true) -> """
+Dahua Technology (Hangzhou, China)
+- Second largest surveillance camera manufacturer
+- Also banned for US government (NDAA)
+- Used in commercial and residential surveillance
+- Known for remote access vulnerabilities
+- OUIs: E0:50:8B, 3C:EF:8C, 4C:11:BF, A0:BD:1D"""
+
+            manufacturer.contains("Nordic", ignoreCase = true) -> """
+Nordic Semiconductor (Norway)
+- BLE/Bluetooth chip manufacturer
+- Chips used in: Axon body cameras, fitness trackers, IoT
+- Very common - detection alone is not concerning
+- Context (SSID, behavior) determines significance"""
+
+            manufacturer.contains("Cradlepoint", ignoreCase = true) -> """
+Cradlepoint (Boise, ID) - Now Ericsson
+- Vehicle/mobile router manufacturer
+- Very common in: Police vehicles, mobile command, fleet
+- Products: IBR series, NetCloud platform
+- Detection suggests nearby fleet vehicle
+- Check for parked vehicles with antennas"""
+
+            else -> "This manufacturer produces equipment that may include surveillance capabilities. " +
+                    "Consider the context (SSID, signal strength, location) to assess risk."
         }
     }
 

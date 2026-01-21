@@ -12,6 +12,16 @@ import kotlinx.coroutines.flow.*
 import java.util.*
 
 /**
+ * Represents a discovered Bluetooth device during scanning.
+ */
+data class DiscoveredFlipperDevice(
+    val address: String,
+    val name: String,
+    val rssi: Int,
+    val lastSeen: Long = System.currentTimeMillis()
+)
+
+/**
  * Bluetooth LE client for communicating with Flipper Zero.
  * Uses BLE Serial protocol over custom service UUID.
  * Automatically launches the Flock Bridge FAP if not running.
@@ -24,7 +34,7 @@ class FlipperBluetoothClient(private val context: Context) {
 
         // Flipper Zero BLE Serial Service UUIDs
         // Uses Nordic UART Service (NUS) - this is what Flipper's ble_profile_serial uses when FAP is running
-        val SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+        val SERVICE_UUID: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
         // TX from Android perspective = RX on Flipper (we write to this)
         private val TX_CHAR_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
         // RX from Android perspective = TX on Flipper (we receive notifications from this)
@@ -43,6 +53,10 @@ class FlipperBluetoothClient(private val context: Context) {
 
         private const val MAX_MTU = 244
         private const val CONNECTION_TIMEOUT_MS = 15_000L
+        private const val SCAN_TIMEOUT_MS = 10_000L
+
+        // Flipper device name patterns
+        private val FLIPPER_NAME_PATTERNS = listOf("Flipper", "flipper", "FLIPPER")
     }
 
     private val bluetoothManager: BluetoothManager? = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -85,6 +99,20 @@ class FlipperBluetoothClient(private val context: Context) {
 
     private val _flipperStatus = MutableStateFlow<FlipperStatusResponse?>(null)
     val flipperStatus: StateFlow<FlipperStatusResponse?> = _flipperStatus.asStateFlow()
+
+    // Device scanning state
+    private val _discoveredDevices = MutableStateFlow<List<DiscoveredFlipperDevice>>(emptyList())
+    val discoveredDevices: StateFlow<List<DiscoveredFlipperDevice>> = _discoveredDevices.asStateFlow()
+
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _currentRssi = MutableStateFlow<Int?>(null)
+    val currentRssi: StateFlow<Int?> = _currentRssi.asStateFlow()
+
+    private var bleScanner: android.bluetooth.le.BluetoothLeScanner? = null
+    private var scanCallback: android.bluetooth.le.ScanCallback? = null
+    private var rssiReadJob: Job? = null
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -138,6 +166,13 @@ class FlipperBluetoothClient(private val context: Context) {
         ) {
             if (characteristic.uuid == RX_CHAR_UUID) {
                 handleReceivedData(characteristic.value)
+            }
+        }
+
+        override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                _currentRssi.value = rssi
+                Log.d(TAG, "RSSI read: $rssi dBm")
             }
         }
     }
@@ -439,6 +474,178 @@ class FlipperBluetoothClient(private val context: Context) {
         return withTimeoutOrNull(2000) { _flipperStatus.first { it != null } }
     }
     fun sendHeartbeat(): Boolean = send(FlipperProtocol.createHeartbeat())
+
+    // ========== Bluetooth Device Scanning ==========
+
+    /**
+     * Start scanning for Flipper Zero devices via Bluetooth LE.
+     * Results are emitted to discoveredDevices flow.
+     * @param timeoutMs How long to scan in milliseconds (default 10s)
+     */
+    fun startDeviceScan(timeoutMs: Long = SCAN_TIMEOUT_MS) {
+        if (!isBluetoothAvailable()) {
+            Log.w(TAG, "Bluetooth not available for device scan")
+            return
+        }
+
+        if (_isScanning.value) {
+            Log.d(TAG, "Already scanning for devices")
+            return
+        }
+
+        bleScanner = bluetoothAdapter?.bluetoothLeScanner
+        if (bleScanner == null) {
+            Log.e(TAG, "BLE scanner not available")
+            return
+        }
+
+        // Clear previous results
+        _discoveredDevices.value = emptyList()
+        _isScanning.value = true
+
+        // Create scan callback
+        scanCallback = object : android.bluetooth.le.ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+                val device = result.device
+                val name = device.name ?: return // Skip devices without names
+
+                // Filter for Flipper devices
+                if (!isFlipperDevice(name)) return
+
+                val discovered = DiscoveredFlipperDevice(
+                    address = device.address,
+                    name = name,
+                    rssi = result.rssi,
+                    lastSeen = System.currentTimeMillis()
+                )
+
+                // Update or add to list
+                val currentList = _discoveredDevices.value.toMutableList()
+                val existingIndex = currentList.indexOfFirst { it.address == discovered.address }
+                if (existingIndex >= 0) {
+                    currentList[existingIndex] = discovered
+                } else {
+                    currentList.add(discovered)
+                }
+                _discoveredDevices.value = currentList.sortedByDescending { it.rssi }
+
+                Log.d(TAG, "Found Flipper device: ${discovered.name} (${discovered.address}) RSSI: ${discovered.rssi}")
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                Log.e(TAG, "BLE scan failed with error code: $errorCode")
+                _isScanning.value = false
+            }
+        }
+
+        // Configure scan settings
+        val scanSettings = android.bluetooth.le.ScanSettings.Builder()
+            .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+            .build()
+
+        try {
+            bleScanner?.startScan(null, scanSettings, scanCallback)
+            Log.i(TAG, "Started BLE device scan")
+
+            // Auto-stop after timeout
+            scope.launch {
+                delay(timeoutMs)
+                stopDeviceScan()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start BLE scan", e)
+            _isScanning.value = false
+        }
+    }
+
+    /**
+     * Stop scanning for Bluetooth devices.
+     */
+    fun stopDeviceScan() {
+        if (!_isScanning.value) return
+
+        try {
+            scanCallback?.let { callback ->
+                bleScanner?.stopScan(callback)
+            }
+            Log.i(TAG, "Stopped BLE device scan")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping BLE scan", e)
+        } finally {
+            _isScanning.value = false
+            scanCallback = null
+        }
+    }
+
+    /**
+     * Check if a device name matches Flipper Zero patterns.
+     */
+    private fun isFlipperDevice(name: String?): Boolean {
+        if (name == null) return false
+        return FLIPPER_NAME_PATTERNS.any { pattern -> name.contains(pattern, ignoreCase = true) }
+    }
+
+    /**
+     * Clear discovered devices list.
+     */
+    fun clearDiscoveredDevices() {
+        _discoveredDevices.value = emptyList()
+    }
+
+    // ========== Connection Quality (RSSI) ==========
+
+    /**
+     * Start periodic RSSI reading for connection quality indication.
+     * @param intervalMs How often to read RSSI (default 2000ms)
+     */
+    fun startRssiMonitoring(intervalMs: Long = 2000L) {
+        rssiReadJob?.cancel()
+        rssiReadJob = scope.launch {
+            while (_connectionState.value == FlipperConnectionState.READY) {
+                readRssi()
+                delay(intervalMs)
+            }
+            _currentRssi.value = null
+        }
+    }
+
+    /**
+     * Stop RSSI monitoring.
+     */
+    fun stopRssiMonitoring() {
+        rssiReadJob?.cancel()
+        rssiReadJob = null
+        _currentRssi.value = null
+    }
+
+    /**
+     * Request a single RSSI reading from the connected device.
+     */
+    private fun readRssi() {
+        val g = gatt ?: return
+        if (_connectionState.value != FlipperConnectionState.READY) return
+
+        try {
+            g.readRemoteRssi()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read RSSI", e)
+        }
+    }
+
+    /**
+     * Get signal strength as a level (0-4) based on RSSI.
+     */
+    fun getSignalLevel(rssi: Int? = _currentRssi.value): Int {
+        return when {
+            rssi == null -> 0
+            rssi >= -50 -> 4  // Excellent
+            rssi >= -60 -> 3  // Good
+            rssi >= -70 -> 2  // Fair
+            rssi >= -80 -> 1  // Weak
+            else -> 0         // Very weak
+        }
+    }
 }
 
 enum class FlipperWipsEventType {

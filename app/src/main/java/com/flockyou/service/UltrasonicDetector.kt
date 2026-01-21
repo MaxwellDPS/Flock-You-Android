@@ -60,9 +60,21 @@ class UltrasonicDetector(
         // Detection thresholds
         private const val FFT_SIZE = 4096 // Good frequency resolution (~10.7 Hz per bin)
         private const val DETECTION_THRESHOLD_DB = 30.0 // Signal must be this many dB above noise floor (increased to reduce FPs)
-        private const val BEACON_DURATION_THRESHOLD_MS = 500L // Must persist for 500ms
-        private const val MIN_DETECTIONS_TO_CONFIRM = 3 // Require multiple detections before showing in UI
+        private const val BEACON_DURATION_THRESHOLD_MS = 5_000L // Must persist for 5 seconds (true beacons are persistent)
+        private const val MIN_DETECTIONS_TO_CONFIRM = 5 // Require multiple detections before showing in UI
         private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between alerts
+
+        // Tracking likelihood thresholds for alert severity
+        private const val TRACKING_LIKELIHOOD_HIGH = 80f    // HIGH alert - definite tracking beacon
+        private const val TRACKING_LIKELIHOOD_MEDIUM = 60f  // MEDIUM alert - likely tracking
+        private const val TRACKING_LIKELIHOOD_LOW = 40f     // LOW alert - possible, needs monitoring
+        // Below 40% = INFO only, don't create anomaly record
+
+        // False positive reduction thresholds
+        private const val FREQUENCY_STABILITY_TOLERANCE_HZ = 10 // True beacons are precise (+/-10Hz)
+        private const val AMPLITUDE_STABILITY_THRESHOLD = 3.0   // dB variance threshold for steady signal
+        private const val MIN_PERSISTENCE_FOR_ALERT_MS = 5_000L // Must persist 5+ seconds
+        private const val MAX_CONCURRENT_BEACONS_FOR_NOISE = 4  // If 5+ detected, likely noise burst
         // Default timing values (can be overridden by updateScanTiming)
         private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
         private const val DEFAULT_SCAN_INTERVAL_MS = 20_000L // Scan every 20 seconds (more frequent)
@@ -135,7 +147,14 @@ class UltrasonicDetector(
         val longitude: Double?,
         // Enhanced fields for enrichment
         var amplitudeHistory: MutableList<Double> = mutableListOf(),
-        var locationHistory: MutableList<LocationEntry> = mutableListOf()
+        var locationHistory: MutableList<LocationEntry> = mutableListOf(),
+        // Frequency stability tracking (true beacons are precise +/-10Hz)
+        var frequencyHistory: MutableList<Int> = mutableListOf(),
+        // Environmental context
+        var environmentalContext: EnvironmentalContext = EnvironmentalContext.UNKNOWN,
+        // Cross-location tracking (same beacon at multiple user locations = suspicious)
+        var seenAtHomeLocation: Boolean = false,
+        var seenAtOtherLocations: Int = 0
     )
 
     data class LocationEntry(
@@ -143,6 +162,77 @@ class UltrasonicDetector(
         val latitude: Double,
         val longitude: Double
     )
+
+    /**
+     * Environmental context for threat assessment
+     */
+    enum class EnvironmentalContext(val displayName: String, val baseThreatMultiplier: Float) {
+        HOME("Home Location", 0.5f),           // Your own devices - lower threat
+        WORK("Work Location", 0.6f),           // Expected beacons - moderate
+        RETAIL("Retail Store", 0.7f),          // Expect beacons - moderate unless following
+        OUTDOOR_RANDOM("Random Outdoor", 1.2f), // Higher threat - unexpected
+        UNKNOWN("Unknown Location", 1.0f)       // Default multiplier
+    }
+
+    /**
+     * False positive source categories
+     *
+     * Real-world sources of ultrasonic frequencies that are NOT tracking beacons:
+     * - CRT monitors/TVs: 15.75 kHz horizontal scan (fading out)
+     * - LCD backlight PWM: 20-25 kHz range
+     * - Switching power supplies: 20-100 kHz
+     * - HVAC ultrasonic humidifiers: 20+ kHz
+     * - Dog/pest deterrents: 18-25 kHz
+     * - Older hard drives: High-frequency whine
+     * - Tinnitus: User may perceive sounds that aren't there
+     */
+    enum class FalsePositiveSource(val displayName: String, val frequencyRanges: List<IntRange>, val description: String) {
+        CRT_MONITOR(
+            "CRT Monitor/TV (15.75 kHz)",
+            listOf(15700..15800),
+            "CRT horizontal scan at 15.75 kHz. Fading out as CRTs become rare."
+        ),
+        LCD_BACKLIGHT(
+            "LCD Backlight PWM",
+            listOf(20000..25000),
+            "LCD backlight pulse-width modulation can generate ultrasonic frequencies."
+        ),
+        SWITCHING_POWER(
+            "Switching Power Supply",
+            listOf(20000..100000),
+            "Laptop chargers, USB adapters, and other switching power supplies emit ultrasonic noise."
+        ),
+        HVAC_HUMIDIFIER(
+            "HVAC Ultrasonic Humidifier",
+            listOf(20000..25000),
+            "Ultrasonic humidifiers in HVAC systems generate constant ultrasonic frequencies."
+        ),
+        DOG_PEST_DETERRENT(
+            "Dog/Pest Deterrent",
+            listOf(18000..25000),
+            "Ultrasonic pest/dog deterrent devices emit continuous or pulsed tones in this range."
+        ),
+        HARD_DRIVE(
+            "Hard Drive (older)",
+            listOf(17000..20000),
+            "Older mechanical hard drives can produce high-frequency whine."
+        ),
+        FLUORESCENT_LIGHTS(
+            "Fluorescent Lights",
+            listOf(20000..40000),
+            "Fluorescent light ballasts can generate ultrasonic frequencies."
+        ),
+        ELECTRONICS(
+            "Electronics (TV/Monitor)",
+            listOf(17500..18500, 19800..20200),
+            "General electronics including TVs and monitors may emit spurious ultrasonic frequencies."
+        ),
+        NATURAL(
+            "Natural Sources (keys, whistles)",
+            listOf(17500..22000),
+            "Metal keys jingling, dog whistles, and other natural sources can produce brief ultrasonic bursts."
+        )
+    }
 
     /**
      * Amplitude profile classification
@@ -156,14 +246,70 @@ class UltrasonicDetector(
 
     /**
      * Known beacon type classification
+     *
+     * Real-world ultrasonic tracking systems:
+     * - SilverPush (India): ~18 kHz, FSK modulation, 2-5 second beacons
+     * - Alphonso (US): ~18.5 kHz, PSK modulation, always-on ACR
+     * - LISNR (US): ~19.5 kHz, CHIRP modulation, higher bandwidth
+     * - Shopkick: ~20 kHz, retail presence in Target, Macy's, Best Buy
+     * - Signal360: ~19 kHz, malls and airports
+     * - Samba TV / Inscape: ~20-21 kHz, built into Samsung, Vizio, LG smart TVs
      */
-    enum class KnownBeaconType(val displayName: String, val company: String) {
-        SILVERPUSH("SilverPush", "SilverPush Technologies"),
-        ALPHONSO("Alphonso", "Alphonso Inc"),
-        SIGNAL360("Signal360", "Signal360"),
-        LISNR("LISNR", "LISNR"),
-        SHOPKICK("Shopkick", "Shopkick/SK Telecom"),
-        UNKNOWN("Unknown", "Unknown Source")
+    enum class KnownBeaconType(val displayName: String, val company: String, val frequencyHz: Int, val description: String) {
+        SILVERPUSH(
+            "SilverPush",
+            "SilverPush Technologies (India)",
+            18000,
+            "Cross-device ad tracking. SDK was in 200+ apps (2015-2017). FSK modulation, 2-5 second beacons."
+        ),
+        ALPHONSO(
+            "Alphonso",
+            "Alphonso Inc (US)",
+            18500,
+            "Automated Content Recognition. Found in 1,000+ apps. Always-on background listening. FTC investigated 2018."
+        ),
+        SIGNAL360(
+            "Signal360",
+            "Signal360 (US)",
+            19000,
+            "Location-based advertising. Deployed in malls and airports."
+        ),
+        LISNR(
+            "LISNR",
+            "LISNR Inc (US)",
+            19500,
+            "Ultrasonic data transfer. Higher bandwidth. Legitimate uses (payments, ticketing) but also enables tracking."
+        ),
+        SHOPKICK(
+            "Shopkick",
+            "Shopkick/SK Telecom",
+            20000,
+            "Retail presence detection. Deployed in Target, Macy's, Best Buy, Walmart, CVS. Usually opt-in for rewards."
+        ),
+        SAMBA_TV(
+            "Samba TV / Inscape",
+            "Samba TV / Vizio",
+            20200,
+            "Smart TV ACR. Built into Samsung, Vizio, LG, Sony smart TVs. Tracks everything you watch including streaming, cable, gaming."
+        ),
+        ZAPR(
+            "Zapr",
+            "Zapr Media Labs (India)",
+            17500,
+            "TV content recognition for targeted advertising."
+        ),
+        TVISION(
+            "TVision",
+            "TVision Insights",
+            19800,
+            "TV viewership measurement. Tracks what you watch and for how long."
+        ),
+        UNKNOWN(
+            "Unknown",
+            "Unknown Source",
+            0,
+            "Unknown ultrasonic source. May be tracking or environmental noise."
+        )
     }
 
     /**
@@ -203,6 +349,7 @@ class UltrasonicDetector(
         // Environmental Context
         val noiseFloorDb: Double,
         val snrDb: Double,                        // Signal-to-noise ratio
+        val environmentalContext: EnvironmentalContext = EnvironmentalContext.UNKNOWN,
 
         // Risk Assessment
         val trackingLikelihood: Float,            // 0-100%
@@ -213,7 +360,21 @@ class UltrasonicDetector(
         val fpIndicators: List<String> = emptyList(),
         val concurrentBeaconCount: Int = 0,       // How many beacons detected at same time
         val isLikelyAmbientNoise: Boolean = false,
-        val isLikelyDeviceArtifact: Boolean = false
+        val isLikelyDeviceArtifact: Boolean = false,
+
+        // Frequency Stability Analysis (true beacons are stable +/-10Hz)
+        val frequencyStabilityHz: Float = 0f,     // Standard deviation of frequency readings
+        val isFrequencyStable: Boolean = false,   // True if stable within tolerance
+
+        // Modulation Pattern Analysis
+        val hasKnownModulationPattern: Boolean = false,
+        val modulationPatternType: String? = null,
+
+        // Enriched Description Fields
+        val probableSourceDescription: String = "",
+        val whatItDoes: String = "",
+        val recommendedAction: String = "",
+        val isFollowingAcrossLocations: Boolean = false
     )
 
     data class UltrasonicAnomaly(
@@ -589,6 +750,11 @@ class UltrasonicDetector(
                 if (existing.amplitudeHistory.size > 50) {
                     existing.amplitudeHistory.removeAt(0)
                 }
+                // Track frequency history for stability analysis (true beacons are stable +/-10Hz)
+                existing.frequencyHistory.add(freq)
+                if (existing.frequencyHistory.size > 30) {
+                    existing.frequencyHistory.removeAt(0)
+                }
                 // Track location history for cross-location detection
                 currentLatitude?.let { lat ->
                     currentLongitude?.let { lon ->
@@ -605,6 +771,7 @@ class UltrasonicDetector(
                 // New beacon detected - create but don't report anomaly yet (wait for persistence)
                 val initialAmplitudeHistory = mutableListOf(avgAmplitude)
                 val initialLocationHistory = mutableListOf<LocationEntry>()
+                val initialFrequencyHistory = mutableListOf(freq)
                 currentLatitude?.let { lat ->
                     currentLongitude?.let { lon ->
                         initialLocationHistory.add(LocationEntry(now, lat, lon))
@@ -620,7 +787,8 @@ class UltrasonicDetector(
                     latitude = currentLatitude,
                     longitude = currentLongitude,
                     amplitudeHistory = initialAmplitudeHistory,
-                    locationHistory = initialLocationHistory
+                    locationHistory = initialLocationHistory,
+                    frequencyHistory = initialFrequencyHistory
                 )
                 activeBeacons[freq] = beacon
 
@@ -639,49 +807,79 @@ class UltrasonicDetector(
             // Report anomaly only after the beacon has been detected multiple times
             if (shouldReportAnomaly) {
                 val analysis = buildBeaconAnalysis(beacon)
+                val detectionDuration = beacon.lastDetected - beacon.firstDetected
 
-                // Suppress if FP likelihood is too high (likely noise)
-                if (analysis.falsePositiveLikelihood > 60f) {
-                    Log.d(TAG, "Suppressing beacon ${freq}Hz - FP likelihood ${analysis.falsePositiveLikelihood}%")
-                    // Still add to timeline but with low severity
+                // ===== ENTERPRISE-GRADE ALERT GATING =====
+                // Gate 1: Duration-based filtering (true beacons persist > 5 seconds)
+                val hasSufficientDuration = detectionDuration >= MIN_PERSISTENCE_FOR_ALERT_MS
+
+                // Gate 2: Tracking likelihood threshold gating
+                // Below 40% = INFO only, don't create anomaly record
+                val meetsTrackingThreshold = analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_LOW
+
+                // Gate 3: False positive suppression
+                val isLikelyFalsePositive = analysis.falsePositiveLikelihood > 60f
+
+                // Gate 4: Frequency stability check (true beacons are stable)
+                val hasStableFrequency = analysis.isFrequencyStable
+
+                // Combined gating decision
+                val shouldCreateAnomaly = hasSufficientDuration &&
+                    meetsTrackingThreshold &&
+                    !isLikelyFalsePositive &&
+                    (hasStableFrequency || analysis.matchedSource != KnownBeaconType.UNKNOWN)
+
+                // Log gating decisions for debugging
+                Log.d(TAG, "Beacon ${freq}Hz gating: duration=${detectionDuration}ms (need $MIN_PERSISTENCE_FOR_ALERT_MS), " +
+                    "likelihood=${analysis.trackingLikelihood}% (need $TRACKING_LIKELIHOOD_LOW%), " +
+                    "fpLikelihood=${analysis.falsePositiveLikelihood}%, " +
+                    "freqStable=${analysis.isFrequencyStable}, " +
+                    "decision=$shouldCreateAnomaly")
+
+                if (!hasSufficientDuration) {
+                    // Too short duration - likely transient noise
+                    Log.d(TAG, "Suppressing beacon ${freq}Hz - insufficient duration (${detectionDuration}ms < ${MIN_PERSISTENCE_FOR_ALERT_MS}ms)")
                     addTimelineEvent(
                         type = UltrasonicEventType.BEACON_DETECTED,
-                        title = "⚠️ Possible Noise: ${freq}Hz",
-                        description = "Likely false positive (${String.format("%.0f", analysis.falsePositiveLikelihood)}% FP likelihood)",
+                        title = "Transient signal: ${freq}Hz",
+                        description = "Brief detection (${detectionDuration/1000}s) - monitoring for persistence",
                         frequency = freq,
                         threatLevel = ThreatLevel.INFO
                     )
-                } else {
+                } else if (!meetsTrackingThreshold) {
+                    // Below 40% tracking likelihood - INFO only, no anomaly record
+                    Log.d(TAG, "Suppressing beacon ${freq}Hz - tracking likelihood too low (${analysis.trackingLikelihood}% < $TRACKING_LIKELIHOOD_LOW%)")
                     addTimelineEvent(
                         type = UltrasonicEventType.BEACON_DETECTED,
-                        title = "📢 Confirmed Beacon: ${freq}Hz",
-                        description = "${possibleSource} (${String.format("%.0f", analysis.trackingLikelihood)}% tracking likelihood)",
+                        title = "Low-confidence signal: ${freq}Hz",
+                        description = "Tracking likelihood ${String.format("%.0f", analysis.trackingLikelihood)}% - likely environmental noise",
                         frequency = freq,
-                        threatLevel = if (isKnownBeacon) ThreatLevel.HIGH else ThreatLevel.MEDIUM
+                        threatLevel = ThreatLevel.INFO
                     )
+                } else if (isLikelyFalsePositive) {
+                    // High false positive likelihood
+                    Log.d(TAG, "Suppressing beacon ${freq}Hz - FP likelihood ${analysis.falsePositiveLikelihood}%")
+                    addTimelineEvent(
+                        type = UltrasonicEventType.BEACON_DETECTED,
+                        title = "Possible noise: ${freq}Hz",
+                        description = buildFalsePositiveDescription(analysis),
+                        frequency = freq,
+                        threatLevel = ThreatLevel.INFO
+                    )
+                } else if (shouldCreateAnomaly) {
+                    // ===== CREATE ANOMALY RECORD =====
+                    val anomalyType = determineAnomalyType(possibleSource, isKnownBeacon, analysis)
 
-                    val anomalyType = when {
-                        possibleSource.contains("SilverPush") || possibleSource.contains("Alphonso") ->
-                            UltrasonicAnomalyType.ADVERTISING_BEACON
-                        possibleSource.contains("Retail") ->
-                            UltrasonicAnomalyType.RETAIL_BEACON
-                        possibleSource.contains("Cross-Device") ->
-                            UltrasonicAnomalyType.CROSS_DEVICE_TRACKING
-                        isKnownBeacon ->
-                            UltrasonicAnomalyType.TRACKING_BEACON
-                        else ->
-                            UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
-                    }
-
-                    // Reduce confidence if FP likelihood is elevated
+                    // Determine confidence based on tracking likelihood thresholds
                     val baseConfidence = when {
-                        analysis.trackingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
-                        analysis.trackingLikelihood >= 60 || isKnownBeacon -> AnomalyConfidence.HIGH
-                        analysis.trackingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
-                        else -> AnomalyConfidence.LOW
+                        analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_HIGH -> AnomalyConfidence.CRITICAL
+                        analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_MEDIUM -> AnomalyConfidence.HIGH
+                        analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_LOW -> AnomalyConfidence.MEDIUM
+                        else -> AnomalyConfidence.LOW  // Should not reach here due to gating
                     }
+
+                    // Adjust confidence based on FP likelihood
                     val confidence = if (analysis.falsePositiveLikelihood > 40f) {
-                        // Downgrade confidence if FP indicators are present
                         when (baseConfidence) {
                             AnomalyConfidence.CRITICAL -> AnomalyConfidence.HIGH
                             AnomalyConfidence.HIGH -> AnomalyConfidence.MEDIUM
@@ -689,9 +887,24 @@ class UltrasonicDetector(
                         }
                     } else baseConfidence
 
+                    // Determine threat level for timeline
+                    val timelineThreatLevel = when {
+                        analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_HIGH -> ThreatLevel.HIGH
+                        analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_MEDIUM -> ThreatLevel.MEDIUM
+                        else -> ThreatLevel.LOW
+                    }
+
+                    addTimelineEvent(
+                        type = UltrasonicEventType.BEACON_DETECTED,
+                        title = "Confirmed: ${analysis.probableSourceDescription}",
+                        description = "${analysis.whatItDoes}. ${analysis.recommendedAction}",
+                        frequency = freq,
+                        threatLevel = timelineThreatLevel
+                    )
+
                     reportAnomaly(
                         type = anomalyType,
-                        description = "Ultrasonic tracking beacon detected at ${freq}Hz - tracking likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%",
+                        description = buildEnrichedDescription(analysis, freq),
                         technicalDetails = buildBeaconTechnicalDetails(analysis),
                         frequency = freq,
                         amplitudeDb = peakAmplitude,
@@ -979,40 +1192,7 @@ class UltrasonicDetector(
     }
 
     /**
-     * Attribute beacon source based on frequency and characteristics
-     */
-    private fun attributeBeaconSource(freq: Int, amplitude: Double, profile: AmplitudeProfile): Pair<KnownBeaconType, Float> {
-        // Match against known beacon frequencies
-        return when {
-            abs(freq - 18000) <= FREQUENCY_TOLERANCE -> {
-                // SilverPush typically uses 18kHz
-                KnownBeaconType.SILVERPUSH to 85f
-            }
-            abs(freq - 18500) <= FREQUENCY_TOLERANCE -> {
-                // Alphonso typically uses 18.5kHz
-                KnownBeaconType.ALPHONSO to 85f
-            }
-            abs(freq - 19000) <= FREQUENCY_TOLERANCE -> {
-                // Signal360 uses 19kHz range
-                KnownBeaconType.SIGNAL360 to 70f
-            }
-            abs(freq - 19500) <= FREQUENCY_TOLERANCE -> {
-                // LISNR uses 19.5kHz
-                KnownBeaconType.LISNR to 70f
-            }
-            abs(freq - 20000) <= FREQUENCY_TOLERANCE -> {
-                // Shopkick uses 20kHz
-                KnownBeaconType.SHOPKICK to 65f
-            }
-            else -> {
-                // Unknown source
-                KnownBeaconType.UNKNOWN to 30f
-            }
-        }
-    }
-
-    /**
-     * Determine source category
+     * Determine source category based on beacon type and frequency
      */
     private fun getSourceCategory(source: KnownBeaconType, freq: Int): SourceCategory {
         return when (source) {
@@ -1021,10 +1201,14 @@ class UltrasonicDetector(
             KnownBeaconType.SIGNAL360 -> SourceCategory.ANALYTICS
             KnownBeaconType.LISNR -> SourceCategory.TRACKING
             KnownBeaconType.SHOPKICK -> SourceCategory.RETAIL
+            KnownBeaconType.SAMBA_TV -> SourceCategory.ADVERTISING  // Smart TV ACR
+            KnownBeaconType.ZAPR -> SourceCategory.ADVERTISING      // TV attribution
+            KnownBeaconType.TVISION -> SourceCategory.ANALYTICS     // TV viewership
             KnownBeaconType.UNKNOWN -> {
                 when {
-                    freq in 19500..20500 -> SourceCategory.RETAIL
-                    freq >= 20500 -> SourceCategory.TRACKING
+                    freq in 17000..18500 -> SourceCategory.ADVERTISING  // Ad tracking band
+                    freq in 19500..20500 -> SourceCategory.RETAIL       // Retail beacon band
+                    freq >= 20500 -> SourceCategory.TRACKING            // Higher freq = more suspicious
                     else -> SourceCategory.UNKNOWN
                 }
             }
@@ -1050,11 +1234,12 @@ class UltrasonicDetector(
     }
 
     /**
-     * Build comprehensive beacon analysis
+     * Build comprehensive beacon analysis with enterprise-grade heuristics
      */
     private fun buildBeaconAnalysis(beacon: BeaconDetection): BeaconAnalysis {
         val amplitudes = beacon.amplitudeHistory
         val locations = beacon.locationHistory
+        val frequencies = beacon.frequencyHistory
 
         // Amplitude analysis
         val avgAmplitude = if (amplitudes.isNotEmpty()) amplitudes.average() else beacon.peakAmplitudeDb
@@ -1064,14 +1249,28 @@ class UltrasonicDetector(
 
         val profile = analyzeAmplitudeProfile(amplitudes)
 
-        // Source attribution
-        val (matchedSource, confidence) = attributeBeaconSource(beacon.frequency, avgAmplitude, profile)
+        // ===== FREQUENCY STABILITY ANALYSIS =====
+        // True beacons are precise (+/-10Hz), environmental noise drifts
+        val frequencyStability = if (frequencies.size > 2) {
+            val avgFreq = frequencies.average()
+            sqrt(frequencies.map { (it - avgFreq) * (it - avgFreq) }.average()).toFloat()
+        } else 0f
+        val isFrequencyStable = frequencyStability <= FREQUENCY_STABILITY_TOLERANCE_HZ
+
+        // Source attribution with enhanced fingerprinting
+        val (matchedSource, confidence) = attributeBeaconSourceEnhanced(beacon.frequency, avgAmplitude, profile, isFrequencyStable)
         val category = getSourceCategory(matchedSource, beacon.frequency)
+
+        // ===== MODULATION PATTERN DETECTION =====
+        val (hasKnownModulation, modulationType) = detectModulationPattern(amplitudes, matchedSource)
 
         // Cross-location analysis
         val distinctLocations = countDistinctLocations(locations)
         val followingUser = distinctLocations >= 2
         val detectionDuration = beacon.lastDetected - beacon.firstDetected
+
+        // Environmental context
+        val envContext = beacon.environmentalContext
 
         // Persistence score (how long has this been active)
         val persistenceScore = when {
@@ -1082,16 +1281,19 @@ class UltrasonicDetector(
             else -> 0.1f
         }
 
-        // Environmental context
+        // Signal-to-noise ratio
         val snrDb = avgAmplitude - noiseFloorDb
 
-        // Risk indicators
+        // ===== RISK INDICATORS =====
         val riskIndicators = mutableListOf<String>()
         if (matchedSource != KnownBeaconType.UNKNOWN) {
             riskIndicators.add("Matches ${matchedSource.company} beacon signature")
         }
         if (followingUser) {
-            riskIndicators.add("Detected at $distinctLocations different locations")
+            riskIndicators.add("CRITICAL: Detected at $distinctLocations different locations - beacon may be following you")
+        }
+        if (beacon.seenAtOtherLocations > 0 && beacon.seenAtHomeLocation) {
+            riskIndicators.add("CRITICAL: Same beacon detected at your home AND ${ beacon.seenAtOtherLocations} other locations")
         }
         if (persistenceScore > 0.5f) {
             riskIndicators.add("Persistent signal (${detectionDuration / 1000}s)")
@@ -1099,22 +1301,49 @@ class UltrasonicDetector(
         if (snrDb > 20) {
             riskIndicators.add("Strong signal (SNR: ${String.format("%.1f", snrDb)} dB)")
         }
-        if (profile == AmplitudeProfile.PULSING) {
-            riskIndicators.add("Pulsing pattern - typical of beacon encoding")
+        if (profile == AmplitudeProfile.PULSING || profile == AmplitudeProfile.MODULATED) {
+            riskIndicators.add("${profile.displayName} pattern - typical of beacon encoding")
         }
         if (beacon.detectionCount > 10) {
             riskIndicators.add("Repeatedly detected (${beacon.detectionCount} times)")
         }
+        if (isFrequencyStable) {
+            riskIndicators.add("Precise frequency (stable within +/-${FREQUENCY_STABILITY_TOLERANCE_HZ}Hz) - beacon characteristic")
+        }
+        if (hasKnownModulation) {
+            riskIndicators.add("Known modulation pattern detected: $modulationType")
+        }
 
-        // Calculate tracking likelihood
+        // ===== TRACKING LIKELIHOOD CALCULATION =====
         var trackingLikelihood = confidence * 0.4f
-        if (followingUser) trackingLikelihood += 20f
-        if (persistenceScore > 0.5f) trackingLikelihood += 15f
-        if (profile == AmplitudeProfile.PULSING) trackingLikelihood += 10f
-        if (snrDb > 20) trackingLikelihood += 10f
-        if (category == SourceCategory.TRACKING) trackingLikelihood += 10f
 
-        // ==================== FALSE POSITIVE HEURISTICS ====================
+        // Boost for cross-location detection (strongest indicator)
+        if (followingUser) trackingLikelihood += 25f
+        if (beacon.seenAtOtherLocations > 0 && beacon.seenAtHomeLocation) trackingLikelihood += 30f
+
+        // Boost for persistence
+        if (persistenceScore > 0.5f) trackingLikelihood += 15f
+        if (detectionDuration > MIN_PERSISTENCE_FOR_ALERT_MS) trackingLikelihood += 10f
+
+        // Boost for beacon-like characteristics
+        if (profile == AmplitudeProfile.PULSING) trackingLikelihood += 10f
+        if (profile == AmplitudeProfile.MODULATED) trackingLikelihood += 8f
+        if (snrDb > 20) trackingLikelihood += 10f
+        if (isFrequencyStable) trackingLikelihood += 12f
+        if (hasKnownModulation) trackingLikelihood += 15f
+
+        // Category-based adjustments
+        if (category == SourceCategory.TRACKING) trackingLikelihood += 10f
+        if (category == SourceCategory.ADVERTISING) trackingLikelihood += 5f
+
+        // Environmental context adjustments
+        trackingLikelihood *= envContext.baseThreatMultiplier
+        if (envContext == EnvironmentalContext.HOME && !followingUser) {
+            // Home location without cross-location = likely your own device
+            trackingLikelihood *= 0.5f
+        }
+
+        // ===== FALSE POSITIVE HEURISTICS =====
         val fpIndicators = mutableListOf<String>()
         var fpScore = 0f
 
@@ -1126,8 +1355,8 @@ class UltrasonicDetector(
         }
 
         // FP Indicator 1: Many beacons detected simultaneously (ambient noise pattern)
-        if (concurrentBeacons >= 5) {
-            fpScore += 30f
+        if (concurrentBeacons > MAX_CONCURRENT_BEACONS_FOR_NOISE) {
+            fpScore += 35f
             fpIndicators.add("Detected with $concurrentBeacons other frequencies simultaneously (noise burst pattern)")
         } else if (concurrentBeacons >= 3) {
             fpScore += 15f
@@ -1141,16 +1370,16 @@ class UltrasonicDetector(
         }
 
         // FP Indicator 3: Very short detection duration
-        if (detectionDuration < 10_000 && beacon.detectionCount <= 3) {
-            fpScore += 15f
-            fpIndicators.add("Very brief detection (<10s) - typical of noise spikes")
+        if (detectionDuration < MIN_PERSISTENCE_FOR_ALERT_MS && beacon.detectionCount <= 3) {
+            fpScore += 20f
+            fpIndicators.add("Very brief detection (<${MIN_PERSISTENCE_FOR_ALERT_MS/1000}s) - typical of noise spikes")
         }
 
-        // FP Indicator 4: High amplitude variance (unstable = noise)
+        // FP Indicator 4: High amplitude variance (unstable = noise, true beacons are consistent)
         if (amplitudeVariance > 50f) {
-            fpScore += 20f
+            fpScore += 25f
             fpIndicators.add("High amplitude variance (${String.format("%.1f", amplitudeVariance)}) - unstable signal")
-        } else if (amplitudeVariance > 25f) {
+        } else if (amplitudeVariance > AMPLITUDE_STABILITY_THRESHOLD * AMPLITUDE_STABILITY_THRESHOLD) {
             fpScore += 10f
             fpIndicators.add("Moderate amplitude variance - somewhat unstable")
         }
@@ -1161,36 +1390,62 @@ class UltrasonicDetector(
             fpIndicators.add("Unknown source with weak signal - likely background noise")
         }
 
-        // FP Indicator 6: No cross-location detection after extended time
+        // FP Indicator 6: Frequency instability (drifting = environmental noise)
+        if (!isFrequencyStable && frequencies.size > 2) {
+            fpScore += 20f
+            fpIndicators.add("Frequency drift (${String.format("%.1f", frequencyStability)}Hz variance) - true beacons are precise")
+        }
+
+        // FP Indicator 7: No cross-location detection after extended time
         if (!followingUser && detectionDuration > 120_000) {
             fpScore += 10f
             fpIndicators.add("Single location only after 2+ minutes - may be local interference")
         }
 
-        // FP Indicator 7: FLAT amplitude profile (constant level = electronic noise)
-        if (profile == AmplitudeProfile.STEADY && matchedSource == KnownBeaconType.UNKNOWN) {
-            fpScore += 15f
-            fpIndicators.add("Flat amplitude profile - typical of electronic interference")
+        // FP Indicator 8: ERRATIC amplitude profile (random = noise)
+        if (profile == AmplitudeProfile.ERRATIC) {
+            fpScore += 25f
+            fpIndicators.add("Erratic amplitude profile - characteristic of environmental noise")
         }
 
-        // FP Indicator 8: Frequency near common device harmonics
-        val isNearHarmonic = listOf(18000, 19000, 20000, 21000, 22000)
-            .any { abs(beacon.frequency - it) < 50 }
-        if (isNearHarmonic && matchedSource == KnownBeaconType.UNKNOWN) {
-            fpScore += 10f
-            fpIndicators.add("Frequency near common electronic harmonics")
+        // FP Indicator 9: FLAT amplitude profile with unknown source (electronic interference)
+        if (profile == AmplitudeProfile.STEADY && matchedSource == KnownBeaconType.UNKNOWN) {
+            fpScore += 15f
+            fpIndicators.add("Flat amplitude profile with unknown source - typical of electronic interference")
+        }
+
+        // FP Indicator 10: Frequency matches common false positive sources
+        val fpSourceMatch = identifyFalsePositiveSource(beacon.frequency)
+        if (fpSourceMatch != null && matchedSource == KnownBeaconType.UNKNOWN) {
+            fpScore += 15f
+            fpIndicators.add("Frequency matches ${fpSourceMatch.displayName} range")
         }
 
         // Reduce FP score if we have strong tracking indicators
-        if (followingUser) fpScore -= 25f
+        if (followingUser) fpScore -= 30f
+        if (beacon.seenAtOtherLocations > 0 && beacon.seenAtHomeLocation) fpScore -= 40f
         if (persistenceScore > 0.7f) fpScore -= 20f
-        if (matchedSource != KnownBeaconType.UNKNOWN && confidence > 70f) fpScore -= 30f
-        if (profile == AmplitudeProfile.PULSING) fpScore -= 15f
+        if (matchedSource != KnownBeaconType.UNKNOWN && confidence > 70f) fpScore -= 35f
+        if (profile == AmplitudeProfile.PULSING || profile == AmplitudeProfile.MODULATED) fpScore -= 15f
+        if (isFrequencyStable) fpScore -= 20f
+        if (hasKnownModulation) fpScore -= 25f
 
-        val isLikelyAmbientNoise = concurrentBeacons >= 5 || (concurrentBeacons >= 3 && matchedSource == KnownBeaconType.UNKNOWN)
-        val isLikelyDeviceArtifact = profile == AmplitudeProfile.STEADY &&
+        val isLikelyAmbientNoise = concurrentBeacons > MAX_CONCURRENT_BEACONS_FOR_NOISE ||
+            (concurrentBeacons >= 3 && matchedSource == KnownBeaconType.UNKNOWN)
+        val isLikelyDeviceArtifact = (profile == AmplitudeProfile.STEADY || profile == AmplitudeProfile.ERRATIC) &&
             matchedSource == KnownBeaconType.UNKNOWN &&
-            !followingUser
+            !followingUser &&
+            !isFrequencyStable
+
+        // ===== GENERATE ENRICHED DESCRIPTIONS =====
+        val probableSource = generateProbableSourceDescription(matchedSource, beacon.frequency, category)
+        val whatItDoes = generateWhatItDoesDescription(matchedSource, category, followingUser)
+        val recommendedAction = generateRecommendedAction(
+            trackingLikelihood.coerceIn(0f, 100f),
+            followingUser,
+            matchedSource,
+            envContext
+        )
 
         return BeaconAnalysis(
             peakAmplitudeDb = beacon.peakAmplitudeDb,
@@ -1208,14 +1463,709 @@ class UltrasonicDetector(
             detectionDurationMs = detectionDuration,
             noiseFloorDb = noiseFloorDb,
             snrDb = snrDb,
+            environmentalContext = envContext,
             trackingLikelihood = trackingLikelihood.coerceIn(0f, 100f),
             riskIndicators = riskIndicators,
             falsePositiveLikelihood = fpScore.coerceIn(0f, 100f),
             fpIndicators = fpIndicators,
             concurrentBeaconCount = concurrentBeacons,
             isLikelyAmbientNoise = isLikelyAmbientNoise,
-            isLikelyDeviceArtifact = isLikelyDeviceArtifact
+            isLikelyDeviceArtifact = isLikelyDeviceArtifact,
+            frequencyStabilityHz = frequencyStability,
+            isFrequencyStable = isFrequencyStable,
+            hasKnownModulationPattern = hasKnownModulation,
+            modulationPatternType = modulationType,
+            probableSourceDescription = probableSource,
+            whatItDoes = whatItDoes,
+            recommendedAction = recommendedAction,
+            isFollowingAcrossLocations = followingUser || (beacon.seenAtOtherLocations > 0 && beacon.seenAtHomeLocation)
         )
+    }
+
+    /**
+     * Enhanced source attribution with modulation pattern consideration
+     */
+    private fun attributeBeaconSourceEnhanced(
+        freq: Int,
+        amplitude: Double,
+        profile: AmplitudeProfile,
+        isFrequencyStable: Boolean
+    ): Pair<KnownBeaconType, Float> {
+        // Look up in TrackerDatabase first
+        val dbSignature = TrackerDatabase.findUltrasonicByFrequency(freq, FREQUENCY_TOLERANCE)
+        if (dbSignature != null) {
+            // Found in database - use database info
+            val baseConfidence = when (dbSignature.trackingPurpose) {
+                UltrasonicTrackingPurpose.AD_TRACKING -> 90f
+                UltrasonicTrackingPurpose.TV_ATTRIBUTION -> 85f
+                UltrasonicTrackingPurpose.CROSS_DEVICE_LINKING -> 90f
+                UltrasonicTrackingPurpose.RETAIL_ANALYTICS -> 75f
+                UltrasonicTrackingPurpose.LOCATION_VERIFICATION -> 70f
+                UltrasonicTrackingPurpose.PRESENCE_DETECTION -> 65f
+                else -> 60f
+            }
+
+            // Adjust confidence based on signal characteristics
+            var confidence = baseConfidence
+            if (isFrequencyStable) confidence += 10f
+            if (profile == AmplitudeProfile.PULSING || profile == AmplitudeProfile.MODULATED) confidence += 10f
+
+            val beaconType = when {
+                dbSignature.manufacturer.contains("SilverPush", ignoreCase = true) -> KnownBeaconType.SILVERPUSH
+                dbSignature.manufacturer.contains("Alphonso", ignoreCase = true) -> KnownBeaconType.ALPHONSO
+                dbSignature.manufacturer.contains("Signal360", ignoreCase = true) -> KnownBeaconType.SIGNAL360
+                dbSignature.manufacturer.contains("LISNR", ignoreCase = true) -> KnownBeaconType.LISNR
+                dbSignature.manufacturer.contains("Shopkick", ignoreCase = true) -> KnownBeaconType.SHOPKICK
+                else -> KnownBeaconType.UNKNOWN
+            }
+
+            return beaconType to confidence.coerceIn(0f, 100f)
+        }
+
+        // Fallback to frequency-based matching with enhanced beacon database
+        return when {
+            // Zapr: ~17.5kHz, TV attribution (India)
+            abs(freq - 17500) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 75f
+                if (isFrequencyStable) confidence += 10f
+                KnownBeaconType.ZAPR to confidence
+            }
+
+            // SilverPush: ~18kHz, FSK modulation, 2-5 second beacons
+            abs(freq - 18000) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 80f
+                if (profile == AmplitudeProfile.PULSING) confidence += 10f  // FSK modulation shows as pulsing
+                if (isFrequencyStable) confidence += 5f
+                KnownBeaconType.SILVERPUSH to confidence
+            }
+
+            // Alphonso: ~18.5kHz, PSK modulation, always-on ACR
+            abs(freq - 18500) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 80f
+                if (profile == AmplitudeProfile.MODULATED) confidence += 10f  // PSK modulation
+                if (isFrequencyStable) confidence += 5f
+                KnownBeaconType.ALPHONSO to confidence
+            }
+
+            // Signal360: ~19kHz, malls and airports
+            abs(freq - 19000) <= FREQUENCY_TOLERANCE -> {
+                KnownBeaconType.SIGNAL360 to if (isFrequencyStable) 75f else 65f
+            }
+
+            // LISNR: ~19.5kHz, CHIRP modulation, higher bandwidth
+            abs(freq - 19500) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 75f
+                if (profile == AmplitudeProfile.MODULATED) confidence += 15f  // CHIRP shows as modulated
+                if (isFrequencyStable) confidence += 5f
+                KnownBeaconType.LISNR to confidence
+            }
+
+            // TVision: ~19.8kHz, TV viewership measurement
+            abs(freq - 19800) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 70f
+                if (isFrequencyStable) confidence += 10f
+                KnownBeaconType.TVISION to confidence
+            }
+
+            // Shopkick: ~20kHz, retail presence (Target, Macy's, Best Buy, etc.)
+            abs(freq - 20000) <= FREQUENCY_TOLERANCE || abs(freq - 20100) <= FREQUENCY_TOLERANCE -> {
+                KnownBeaconType.SHOPKICK to if (isFrequencyStable) 70f else 60f
+            }
+
+            // Samba TV / Inscape: ~20.2-21.5kHz, smart TV ACR
+            abs(freq - 20200) <= FREQUENCY_TOLERANCE ||
+            abs(freq - 20800) <= FREQUENCY_TOLERANCE ||
+            abs(freq - 21500) <= FREQUENCY_TOLERANCE -> {
+                var confidence = 75f
+                if (isFrequencyStable) confidence += 10f
+                // Smart TV ACR is typically very stable
+                if (profile == AmplitudeProfile.STEADY) confidence += 5f
+                KnownBeaconType.SAMBA_TV to confidence
+            }
+
+            else -> {
+                // Unknown source - lower confidence unless strong beacon characteristics
+                var confidence = 25f
+                if (isFrequencyStable) confidence += 15f
+                if (profile == AmplitudeProfile.PULSING || profile == AmplitudeProfile.MODULATED) confidence += 10f
+                KnownBeaconType.UNKNOWN to confidence
+            }
+        }
+    }
+
+    /**
+     * Detect known modulation patterns from amplitude history
+     */
+    private fun detectModulationPattern(amplitudes: List<Double>, source: KnownBeaconType): Pair<Boolean, String?> {
+        if (amplitudes.size < 10) return false to null
+
+        val profile = analyzeAmplitudeProfile(amplitudes)
+
+        return when (source) {
+            KnownBeaconType.SILVERPUSH -> {
+                // SilverPush uses FSK modulation - shows as regular on/off pulsing
+                if (profile == AmplitudeProfile.PULSING) {
+                    true to "FSK (Frequency Shift Keying)"
+                } else false to null
+            }
+            KnownBeaconType.ALPHONSO -> {
+                // Alphonso uses PSK modulation - shows as phase-shifted patterns
+                if (profile == AmplitudeProfile.MODULATED || profile == AmplitudeProfile.PULSING) {
+                    true to "PSK (Phase Shift Keying)"
+                } else false to null
+            }
+            KnownBeaconType.LISNR -> {
+                // LISNR uses CHIRP modulation - frequency sweeps
+                if (profile == AmplitudeProfile.MODULATED) {
+                    true to "CHIRP (Frequency Sweep)"
+                } else false to null
+            }
+            else -> {
+                // Check for generic beacon patterns
+                if (profile == AmplitudeProfile.PULSING) {
+                    true to "Unknown Pulsed Modulation"
+                } else if (profile == AmplitudeProfile.MODULATED) {
+                    true to "Unknown Data Modulation"
+                } else false to null
+            }
+        }
+    }
+
+    /**
+     * Identify potential false positive sources based on frequency
+     */
+    private fun identifyFalsePositiveSource(freq: Int): FalsePositiveSource? {
+        return FalsePositiveSource.values().find { source ->
+            source.frequencyRanges.any { range -> freq in range }
+        }
+    }
+
+    /**
+     * Get enriched signature details from the TrackerDatabase
+     *
+     * Returns additional real-world context including:
+     * - Confirmation methods for users
+     * - Mitigation advice
+     * - Privacy impact classification
+     * - Legal status
+     * - Deployment locations
+     */
+    private fun getSignatureDetails(freq: Int): SignatureDetails? {
+        val signature = TrackerDatabase.findUltrasonicByFrequency(freq, FREQUENCY_TOLERANCE)
+            ?: return null
+
+        return SignatureDetails(
+            name = signature.name,
+            manufacturer = signature.manufacturer,
+            description = signature.description,
+            trackingPurpose = signature.trackingPurpose,
+            confirmationMethod = signature.confirmationMethod,
+            mitigationAdvice = signature.mitigationAdvice,
+            hasLegitimateUses = signature.hasLegitimateUses,
+            deploymentLocations = signature.deploymentLocations
+        )
+    }
+
+    /**
+     * Enriched signature details for display and LLM context
+     */
+    data class SignatureDetails(
+        val name: String,
+        val manufacturer: String,
+        val description: String,
+        val trackingPurpose: UltrasonicTrackingPurpose,
+        val confirmationMethod: String?,
+        val mitigationAdvice: String?,
+        val hasLegitimateUses: Boolean,
+        val deploymentLocations: List<String>
+    )
+
+    /**
+     * Calculate environmental context threat score
+     *
+     * Environmental Context Scoring:
+     * - At home + smart TV on: Likely Samba/Inscape (lower threat)
+     * - Retail store: Likely Shopkick (known, lower threat)
+     * - Random public place: Unknown source (higher threat)
+     * - Multiple locations: Following you (CRITICAL)
+     */
+    private fun calculateEnvironmentalThreatScore(
+        beacon: BeaconDetection,
+        envContext: EnvironmentalContext,
+        matchedSource: KnownBeaconType
+    ): Float {
+        var score = 50f  // Base score
+
+        // Environmental context adjustments
+        when (envContext) {
+            EnvironmentalContext.HOME -> {
+                // At home - likely your own devices
+                if (matchedSource == KnownBeaconType.UNKNOWN) {
+                    // Unknown beacon at home is suspicious
+                    score += 10f
+                } else {
+                    // Known source at home (e.g., smart TV ACR) - lower external threat
+                    score -= 15f
+                }
+            }
+            EnvironmentalContext.RETAIL -> {
+                // In retail store - beacons expected
+                if (matchedSource == KnownBeaconType.SHOPKICK) {
+                    // Shopkick in retail = expected
+                    score -= 20f
+                } else if (matchedSource == KnownBeaconType.UNKNOWN) {
+                    // Unknown beacon in retail - moderate
+                    score += 5f
+                }
+            }
+            EnvironmentalContext.OUTDOOR_RANDOM -> {
+                // Random outdoor location - higher threat
+                score += 20f
+                if (matchedSource == KnownBeaconType.UNKNOWN) {
+                    score += 10f
+                }
+            }
+            EnvironmentalContext.WORK -> {
+                // Work environment - moderate
+                score += 5f
+            }
+            EnvironmentalContext.UNKNOWN -> {
+                // Default - no adjustment
+            }
+        }
+
+        // Cross-location detection is the strongest indicator
+        if (beacon.seenAtHomeLocation && beacon.seenAtOtherLocations > 0) {
+            // Same beacon at home AND elsewhere = CRITICAL
+            score += 40f
+        }
+
+        val distinctLocations = countDistinctLocations(beacon.locationHistory)
+        if (distinctLocations >= 2) {
+            // Following user - major escalation
+            score += 30f
+        }
+
+        return score.coerceIn(0f, 100f)
+    }
+
+    /**
+     * Get confirmation instructions based on detected beacon type
+     *
+     * Real-world confirmation methods:
+     * - Check if you have Shopkick, SilverPush SDK apps installed
+     * - Note if detection happens near store entrance (Shopkick)
+     * - Check if detection correlates with TV commercials
+     * - Use another phone with ultrasonic app to cross-verify
+     * - Move away from suspected source - signal should drop
+     * - Record audio sample for later frequency analysis
+     */
+    fun getConfirmationInstructions(beacon: BeaconDetection): String {
+        val signatureDetails = getSignatureDetails(beacon.frequency)
+
+        // If we have specific confirmation method from database, use it
+        if (signatureDetails?.confirmationMethod != null) {
+            return signatureDetails.confirmationMethod
+        }
+
+        // Otherwise, generate based on source type
+        val analysis = buildBeaconAnalysis(beacon)
+
+        return when (analysis.matchedSource) {
+            KnownBeaconType.SILVERPUSH, KnownBeaconType.ALPHONSO, KnownBeaconType.ZAPR -> {
+                """CONFIRMATION STEPS:
+1. Check if detection correlates with TV commercials being on
+2. Mute the TV - detection should stop within seconds
+3. Use another phone with an ultrasonic detector app to cross-verify
+4. Check installed apps for SilverPush/Alphonso/Zapr SDKs (use app scanner)
+5. Record audio sample for later frequency analysis
+
+NOTE: These beacons are embedded in TV ads and tracked by apps with mic permission."""
+            }
+            KnownBeaconType.SHOPKICK -> {
+                """CONFIRMATION STEPS:
+1. Note if detection happens near store entrance
+2. Check if you have Shopkick app installed
+3. Move away from the store - signal should drop
+4. The beacon is stationary - if it follows you, something else is the source
+
+DEPLOYMENT: Target, Macy's, Best Buy, Walmart, CVS and other major retailers."""
+            }
+            KnownBeaconType.LISNR -> {
+                """CONFIRMATION STEPS:
+1. Are you at a ticketing event or using a payment app? May be legitimate.
+2. Move away from suspected source - signal should drop if stationary
+3. Check if you have apps that use LISNR for payments/check-in
+4. If in random location with no clear source - suspicious
+
+NOTE: LISNR has legitimate uses for payments and ticketing."""
+            }
+            KnownBeaconType.SAMBA_TV, KnownBeaconType.TVISION -> {
+                """CONFIRMATION STEPS:
+1. Is your smart TV on? This is likely coming from the TV itself.
+2. Check smart TV settings for ACR (Automatic Content Recognition):
+   - Samsung: Settings > Support > Terms & Policy > Viewing Information Services
+   - Vizio: Settings > System > Reset & Admin > Viewing Data
+   - LG: Settings > General > LivePlus
+   - Sony: Settings > Device Preferences > Samba Interactive TV
+3. Turn off the TV - detection should stop
+
+NOTE: This tracks everything you watch including streaming, cable, and HDMI inputs."""
+            }
+            else -> {
+                """CONFIRMATION STEPS:
+1. Move away from the location - does the signal drop?
+2. Use another phone with ultrasonic app to cross-verify
+3. Record audio sample for later frequency analysis
+4. Note if signal correlates with specific devices being on
+5. Check for ultrasonic pest deterrents, humidifiers, or other devices
+
+FALSE POSITIVE SOURCES:
+- Switching power supplies (laptop chargers)
+- LCD backlight PWM
+- HVAC ultrasonic humidifiers
+- Electronic interference"""
+            }
+        }
+    }
+
+    /**
+     * Generate human-readable probable source description
+     */
+    private fun generateProbableSourceDescription(source: KnownBeaconType, freq: Int, category: SourceCategory): String {
+        return when (source) {
+            KnownBeaconType.SILVERPUSH -> "SilverPush Advertising Beacon (${freq}Hz) - Cross-device ad tracking"
+            KnownBeaconType.ALPHONSO -> "Alphonso TV Tracking System (${freq}Hz) - Automated Content Recognition"
+            KnownBeaconType.SIGNAL360 -> "Signal360 Marketing Beacon (${freq}Hz) - Location-based advertising"
+            KnownBeaconType.LISNR -> "LISNR Cross-Device Tracker (${freq}Hz) - Ultrasonic data transfer"
+            KnownBeaconType.SHOPKICK -> "Shopkick Retail Beacon (${freq}Hz) - Store presence detection"
+            KnownBeaconType.SAMBA_TV -> "Samba TV / Inscape Smart TV ACR (${freq}Hz) - Viewing data collection"
+            KnownBeaconType.ZAPR -> "Zapr TV Attribution (${freq}Hz) - TV content recognition"
+            KnownBeaconType.TVISION -> "TVision Viewership (${freq}Hz) - TV viewing measurement"
+            KnownBeaconType.UNKNOWN -> {
+                when (category) {
+                    SourceCategory.RETAIL -> "Unknown Retail Beacon (${freq}Hz)"
+                    SourceCategory.ADVERTISING -> "Unknown Ad Beacon (${freq}Hz)"
+                    SourceCategory.TRACKING -> "Unknown Tracking Beacon (${freq}Hz)"
+                    SourceCategory.ANALYTICS -> "Unknown Analytics Beacon (${freq}Hz)"
+                    SourceCategory.UNKNOWN -> "Unknown Ultrasonic Source (${freq}Hz)"
+                }
+            }
+        }
+    }
+
+    /**
+     * Generate description of what the beacon does
+     *
+     * Uses real-world knowledge about ultrasonic tracking systems:
+     * - Cross-device tracking: Links phone, tablet, laptop, smart TV
+     * - De-anonymization: Can link anonymous browsing to real identity
+     * - Location history: Tracks store visits, time spent
+     * - Ad attribution: Knows which TV ad made you buy
+     * - Household mapping: Identifies all devices in home
+     */
+    private fun generateWhatItDoesDescription(source: KnownBeaconType, category: SourceCategory, followingUser: Boolean): String {
+        val baseDescription = when (source) {
+            KnownBeaconType.SILVERPUSH ->
+                "SilverPush cross-device ad tracking (India). SDK was in 200+ apps (2015-2017). " +
+                "Links your phone to TV ads using FSK modulation. Beacons last 2-5 seconds. " +
+                "PRIVACY IMPACT: Can de-anonymize your browsing by linking anonymous web activity to your phone's real identity."
+            KnownBeaconType.ALPHONSO ->
+                "Alphonso Automated Content Recognition (US). Found in 1,000+ apps including games. " +
+                "Always-on background listening fingerprints TV audio. FTC investigated in 2018. " +
+                "PRIVACY IMPACT: Tracks everything you watch, selling viewing data to advertisers."
+            KnownBeaconType.SIGNAL360 ->
+                "Signal360 proximity marketing. Deployed in malls and airports. " +
+                "Verifies your physical presence for location-based advertising."
+            KnownBeaconType.LISNR ->
+                "LISNR ultrasonic data transfer (US). Higher bandwidth than others. " +
+                "Used for proximity payments, ticketing, and cross-device linking. " +
+                "NOTE: Has legitimate uses (check-in, payments) but also enables tracking."
+            KnownBeaconType.SHOPKICK ->
+                "Shopkick retail presence detection. Deployed in Target, Macy's, Best Buy, Walmart, CVS. " +
+                "Usually opt-in for loyalty rewards. Tracks store visits and aisle presence."
+            KnownBeaconType.SAMBA_TV ->
+                "Samba TV / Inscape Automatic Content Recognition. Built into Samsung, Vizio, LG, Sony smart TVs. " +
+                "Tracks EVERYTHING you watch: streaming, cable, gaming, even HDMI inputs. " +
+                "PRIVACY IMPACT: Detailed viewing profile sold to advertisers. Vizio paid $2.2M FTC settlement in 2017."
+            KnownBeaconType.ZAPR ->
+                "Zapr TV content recognition (India). Tracks what TV shows you watch for targeted advertising. " +
+                "Links TV viewing to your mobile device for cross-device targeting."
+            KnownBeaconType.TVISION ->
+                "TVision viewership measurement. Tracks what you watch and for how long. " +
+                "Used for TV ratings and advertising analytics."
+            KnownBeaconType.UNKNOWN -> when (category) {
+                SourceCategory.RETAIL -> "Unknown retail beacon. May track your movement within stores, time spent in aisles."
+                SourceCategory.ADVERTISING -> "Unknown advertising beacon. May link your device to ads you've seen."
+                SourceCategory.TRACKING -> "Unknown tracking beacon. May track location or link to other devices."
+                SourceCategory.ANALYTICS -> "Unknown analytics beacon. May collect data about your device presence."
+                SourceCategory.UNKNOWN -> "Unknown ultrasonic source. Purpose unclear - may be tracking your device."
+            }
+        }
+
+        val followingWarning = if (followingUser) {
+            "\n\nCRITICAL: This beacon has been detected at MULTIPLE locations you've visited. " +
+            "This is highly unusual - the same beacon following you could indicate: " +
+            "(1) A hidden tracking device in your belongings/vehicle, or " +
+            "(2) Your phone has a tracking app with this beacon's SDK."
+        } else ""
+
+        return baseDescription + followingWarning
+    }
+
+    /**
+     * Generate recommended action based on analysis
+     *
+     * Real-world mitigation advice:
+     * - Check app permissions for microphone access
+     * - Revoke mic permission from apps that don't need it
+     * - Use privacy-focused app stores (F-Droid)
+     * - Consider ultrasonic blocking apps
+     * - Mute TV during commercials to block beacons
+     *
+     * Legal context:
+     * - FTC: Ruled SilverPush-style tracking can be deceptive
+     * - GDPR: Requires explicit consent for this tracking
+     * - CCPA: Must disclose and allow opt-out
+     */
+    private fun generateRecommendedAction(
+        trackingLikelihood: Float,
+        followingUser: Boolean,
+        source: KnownBeaconType,
+        context: EnvironmentalContext
+    ): String {
+        return when {
+            followingUser -> {
+                """URGENT: This beacon appears to be following you across locations.
+
+IMMEDIATE ACTIONS:
+1. Check your belongings for hidden tracking devices
+2. Inspect your vehicle (wheel wells, under seats, OBD port)
+3. Review installed apps - look for apps you don't recognize
+4. Check which apps have microphone permission (Settings > Privacy > Microphone)
+
+If you suspect stalking, contact local authorities. Document detection times and locations.
+
+To verify: Use another phone with an ultrasonic detector app to cross-check the signal."""
+            }
+            trackingLikelihood >= TRACKING_LIKELIHOOD_HIGH -> {
+                when (source) {
+                    KnownBeaconType.SILVERPUSH, KnownBeaconType.ALPHONSO ->
+                        """HIGH TRACKING LIKELIHOOD - Ad/TV Attribution System
+
+ACTIONS TO TAKE:
+1. Check app permissions: Settings > Privacy > Microphone
+2. Revoke mic access from apps that don't need it (especially games, flashlight apps, etc.)
+3. The FTC ruled this type of tracking can be deceptive - you may not have knowingly consented
+4. Consider using F-Droid or privacy-focused app stores
+5. Mute TV during commercials to prevent beacon reception
+
+CONFIRMATION: Check if this detection correlates with TV commercials being on."""
+
+                    KnownBeaconType.SHOPKICK ->
+                        """RETAIL TRACKING BEACON - Shopkick
+
+This beacon is deployed in Target, Macy's, Best Buy, Walmart, CVS and other retailers.
+
+ACTIONS TO TAKE:
+1. If you have Shopkick app: This is expected behavior for loyalty rewards
+2. If you DON'T have Shopkick: Another app may have embedded their SDK
+3. Check which apps have microphone permission
+4. The beacon only affects you if an app with the SDK has mic access
+
+CONFIRMATION: Note if detection happens near store entrance."""
+
+                    KnownBeaconType.LISNR ->
+                        """CROSS-DEVICE TRACKING BEACON - LISNR
+
+LISNR has legitimate uses (payments, ticketing) but also enables tracking.
+
+ACTIONS TO TAKE:
+1. If at a ticketing event or using payment app: May be legitimate
+2. Otherwise: Suspicious - check which apps have microphone access
+3. Revoke mic permission from untrusted apps
+4. Consider ultrasonic blocking apps if this persists
+
+CONFIRMATION: Move away from suspected source - signal should drop if stationary."""
+
+                    else ->
+                        """HIGH TRACKING LIKELIHOOD
+
+ACTIONS TO TAKE:
+1. Review app permissions: Settings > Privacy > Microphone
+2. Revoke mic access from apps that don't genuinely need it
+3. Use privacy-focused app stores (F-Droid)
+4. Record the audio for later frequency analysis if you want to investigate
+5. Move to a different location to see if beacon follows you
+
+Under GDPR/CCPA, this type of tracking requires consent/disclosure."""
+                }
+            }
+            trackingLikelihood >= TRACKING_LIKELIHOOD_MEDIUM -> {
+                when (context) {
+                    EnvironmentalContext.RETAIL ->
+                        """RETAIL BEACON DETECTED
+
+Common in stores for analytics and loyalty programs.
+
+ACTIONS (if you want to avoid):
+1. Disable microphone for shopping/retail apps
+2. The beacon cannot track you unless an app is actively listening
+3. Move away from the suspected source to verify signal drops
+
+No immediate action needed if you're comfortable with retail analytics."""
+
+                    EnvironmentalContext.HOME ->
+                        """BEACON DETECTED AT HOME
+
+Likely source: Smart TV, set-top box, or smart speaker.
+
+ACTIONS TO CHECK:
+1. Smart TV ACR settings: Look for 'Viewing Data', 'Samba Interactive TV', 'Smart Interactivity'
+2. Disable ACR if you don't want your viewing tracked
+3. Check if you have Vizio TV - they paid $2.2M FTC settlement for this
+4. Consider using external streaming device instead of smart TV apps
+
+If from Samba TV/Inscape: Lower external threat since it's your own device."""
+
+                    else ->
+                        """MODERATE TRACKING LIKELIHOOD
+
+MONITORING ADVICE:
+1. Continue monitoring - will alert if beacon follows to other locations
+2. Note the location and time of detection
+3. If detected at multiple locations: This becomes HIGH priority
+
+No immediate action required unless pattern emerges."""
+                }
+            }
+            else -> {
+                """LOW TRACKING LIKELIHOOD
+
+This detection is likely environmental noise or a false positive.
+
+POSSIBLE SOURCES:
+- Switching power supplies (laptop chargers)
+- LCD backlight PWM
+- HVAC ultrasonic humidifiers
+- Electronic interference
+
+MONITORING: Will alert if this beacon appears at other locations you visit."""
+            }
+        }
+    }
+
+    /**
+     * Determine anomaly type based on source and characteristics
+     */
+    private fun determineAnomalyType(possibleSource: String, isKnownBeacon: Boolean, analysis: BeaconAnalysis): UltrasonicAnomalyType {
+        return when {
+            // Cross-location detection is always the highest priority
+            analysis.followingUser || analysis.isFollowingAcrossLocations ->
+                UltrasonicAnomalyType.CROSS_DEVICE_TRACKING
+
+            // Ad tracking beacons (SilverPush, Alphonso, Zapr)
+            analysis.matchedSource == KnownBeaconType.SILVERPUSH ||
+                analysis.matchedSource == KnownBeaconType.ALPHONSO ||
+                analysis.matchedSource == KnownBeaconType.ZAPR ->
+                UltrasonicAnomalyType.ADVERTISING_BEACON
+
+            // Retail beacons (Shopkick)
+            analysis.matchedSource == KnownBeaconType.SHOPKICK ||
+                analysis.sourceCategory == SourceCategory.RETAIL ->
+                UltrasonicAnomalyType.RETAIL_BEACON
+
+            // Cross-device linking (LISNR)
+            analysis.matchedSource == KnownBeaconType.LISNR ->
+                UltrasonicAnomalyType.CROSS_DEVICE_TRACKING
+
+            // Smart TV ACR (Samba TV, Inscape, TVision)
+            analysis.matchedSource == KnownBeaconType.SAMBA_TV ||
+                analysis.matchedSource == KnownBeaconType.TVISION ->
+                UltrasonicAnomalyType.ADVERTISING_BEACON
+
+            // Known beacon from database
+            isKnownBeacon ->
+                UltrasonicAnomalyType.TRACKING_BEACON
+
+            // Unknown source
+            else ->
+                UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
+        }
+    }
+
+    /**
+     * Build enriched description for anomaly report
+     */
+    private fun buildEnrichedDescription(analysis: BeaconAnalysis, freq: Int): String {
+        val parts = mutableListOf<String>()
+
+        // Source identification
+        parts.add(analysis.probableSourceDescription)
+
+        // What it does
+        parts.add("")
+        parts.add("What it does: ${analysis.whatItDoes}")
+
+        // Tracking likelihood
+        val likelihoodLevel = when {
+            analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_HIGH -> "HIGH"
+            analysis.trackingLikelihood >= TRACKING_LIKELIHOOD_MEDIUM -> "MEDIUM"
+            else -> "LOW"
+        }
+        parts.add("")
+        parts.add("Tracking Likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}% ($likelihoodLevel)")
+
+        // Cross-location warning
+        if (analysis.isFollowingAcrossLocations) {
+            parts.add("")
+            parts.add("WARNING: This beacon has been detected at multiple locations you've visited!")
+        }
+
+        // False positive assessment
+        if (analysis.falsePositiveLikelihood > 20f) {
+            parts.add("")
+            parts.add("False Positive Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%")
+        }
+
+        // Recommended action
+        parts.add("")
+        parts.add("Recommended Action: ${analysis.recommendedAction}")
+
+        return parts.joinToString("\n")
+    }
+
+    /**
+     * Build false positive description for suppressed alerts
+     */
+    private fun buildFalsePositiveDescription(analysis: BeaconAnalysis): String {
+        val reasons = mutableListOf<String>()
+
+        if (analysis.isLikelyAmbientNoise) {
+            reasons.add("ambient noise pattern detected")
+        }
+        if (analysis.isLikelyDeviceArtifact) {
+            reasons.add("device artifact characteristics")
+        }
+        if (!analysis.isFrequencyStable) {
+            reasons.add("unstable frequency (drifting)")
+        }
+        if (analysis.amplitudeProfile == AmplitudeProfile.ERRATIC) {
+            reasons.add("erratic amplitude")
+        }
+
+        val fpSource = identifyFalsePositiveSource(analysis.frequencyHz)
+        if (fpSource != null) {
+            reasons.add("matches ${fpSource.displayName} range")
+        }
+
+        val reasonText = if (reasons.isNotEmpty()) {
+            reasons.joinToString(", ")
+        } else {
+            "multiple noise indicators"
+        }
+
+        return "Likely false positive (${String.format("%.0f", analysis.falsePositiveLikelihood)}% FP likelihood): $reasonText"
     }
 
     /**

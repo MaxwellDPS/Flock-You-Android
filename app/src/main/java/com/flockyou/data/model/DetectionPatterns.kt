@@ -14,7 +14,199 @@ import java.util.UUID
  * and emit WiFi for configuration/management
  */
 object DetectionPatterns {
-    
+
+    // ==================== CONSUMER TRACKER SPECIFICATIONS ====================
+    // Comprehensive real-world knowledge about Bluetooth trackers for stalking detection
+
+    /**
+     * Detailed specifications and stalking-relevant information for consumer trackers.
+     */
+    data class TrackerSpecification(
+        val manufacturerId: Int,
+        val manufacturerName: String,
+        val models: List<TrackerModel>,
+        val antiStalkingFeatures: AntiStalkingFeatures,
+        val confirmationMethods: List<String>,
+        val physicalCharacteristics: PhysicalCharacteristics,
+        val networkType: NetworkType,
+        val stalkingRisk: StalkingRisk
+    )
+
+    data class TrackerModel(
+        val name: String,
+        val range: String,
+        val soundLevel: String,
+        val hasUwb: Boolean,
+        val batteryType: String,
+        val batteryLife: String,
+        val dimensions: String,
+        val weight: String
+    )
+
+    data class AntiStalkingFeatures(
+        val alertsVictim: Boolean,
+        val alertPlatform: String,
+        val playsSoundAutomatically: Boolean,
+        val soundDelayHours: IntRange?,
+        val canBeScannedByOtherApps: Boolean,
+        val ownerInfoAccessible: Boolean,
+        val ownerInfoMethod: String?
+    )
+
+    data class PhysicalCharacteristics(
+        val shape: String,
+        val commonHidingSpots: List<String>,
+        val visualIdentifiers: String,
+        val nfcCapable: Boolean
+    )
+
+    enum class NetworkType {
+        APPLE_FIND_MY, TILE_NETWORK, SAMSUNG_SMARTTHINGS, STANDALONE_BLE, IBEACON_COMPATIBLE
+    }
+
+    enum class StalkingRisk(val level: Int, val description: String) {
+        CRITICAL(5, "Frequently used for stalking, hard to detect"),
+        HIGH(4, "Often misused, moderate detection difficulty"),
+        MEDIUM(3, "Can be misused, but has anti-stalking features"),
+        LOW(2, "Rarely used for stalking, easy to detect"),
+        MINIMAL(1, "Designed with anti-stalking as priority")
+    }
+
+    val trackerSpecifications = mapOf(
+        DeviceType.AIRTAG to TrackerSpecification(
+            manufacturerId = 0x004C, manufacturerName = "Apple",
+            models = listOf(TrackerModel("AirTag", "30ft BLE + UWB Precision Finding", "60dB", true, "CR2032", "~1 year", "31.9mm x 8mm", "11g")),
+            antiStalkingFeatures = AntiStalkingFeatures(true, "iOS (auto), Android (Tracker Detect app)", true, 8..24, true, true, "NFC tap shows partial phone number and serial"),
+            confirmationMethods = listOf("Use Apple 'Tracker Detect' app (free on Android)", "NFC tap AirTag to see owner info and serial", "Wait for automatic sound (8-24 hours)", "iPhone: 'AirTag Found Moving With You' notification", "Search: bags, car wheel wells, jacket pockets, phone cases", "iPhone 11+: Use Precision Finding"),
+            physicalCharacteristics = PhysicalCharacteristics("Circular disc, white/silver", listOf("Car wheel wells", "Bag pockets/lining", "Jacket pockets", "Phone cases", "Keychains", "Shoes", "OBD-II port area", "Under car seats", "Luggage"), "Apple logo, silver back, quarter-sized", true),
+            networkType = NetworkType.APPLE_FIND_MY, stalkingRisk = StalkingRisk.HIGH
+        ),
+        DeviceType.TILE_TRACKER to TrackerSpecification(
+            manufacturerId = 0x00C7, manufacturerName = "Tile (Life360)",
+            models = listOf(
+                TrackerModel("Tile Pro", "400ft", "Loudest", false, "CR2032", "~1 year", "42x42x6.5mm", "12g"),
+                TrackerModel("Tile Mate", "250ft", "Medium", false, "CR1632", "~3 years", "38x38x7.2mm", "7.5g"),
+                TrackerModel("Tile Slim", "250ft", "Medium", false, "Non-replaceable", "~3 years", "86x54x2.5mm (credit card)", "14g"),
+                TrackerModel("Tile Sticker", "150ft", "Quietest", false, "Non-replaceable", "~3 years", "27mm x 7.3mm", "5g")
+            ),
+            antiStalkingFeatures = AntiStalkingFeatures(false, "None (opt-in Scan and Secure only)", false, null, true, false, "No owner info - must contact Tile/police"),
+            confirmationMethods = listOf("Use Tile 'Scan and Secure' feature (opt-in)", "Tiles do NOT auto-alert like AirTags", "Press Tile button 3x to make it ring", "Tile Slim is credit-card sized - check wallets", "No NFC - cannot tap to identify"),
+            physicalCharacteristics = PhysicalCharacteristics("Square/Card/Circular", listOf("Wallets (Slim)", "Key rings", "Bag pockets", "Stuck to objects (Sticker)", "Car interior", "Coat linings"), "Tile 'T' logo, white/black, button on side", false),
+            networkType = NetworkType.TILE_NETWORK, stalkingRisk = StalkingRisk.CRITICAL
+        ),
+        DeviceType.SAMSUNG_SMARTTAG to TrackerSpecification(
+            manufacturerId = 0x0075, manufacturerName = "Samsung",
+            models = listOf(
+                TrackerModel("SmartTag", "390ft", "89dB", false, "CR2032", "~300 days", "39x39x9.9mm", "13g"),
+                TrackerModel("SmartTag+", "390ft + UWB", "89dB", true, "CR2032", "~165 days", "39x39x9.9mm", "13g"),
+                TrackerModel("SmartTag2", "390ft", "Medium", false, "CR2032", "~500 days", "45x45x9mm", "14.5g")
+            ),
+            antiStalkingFeatures = AntiStalkingFeatures(true, "Samsung Galaxy with SmartThings", true, 8..24, true, false, "Samsung provides to law enforcement with warrant"),
+            confirmationMethods = listOf("Galaxy: 'Unknown Tag Detected' auto-alerts", "Use SmartThings app to scan", "Non-Galaxy: 'SmartThings Find' app", "Press button to ring", "SmartTag+ AR finder on Galaxy"),
+            physicalCharacteristics = PhysicalCharacteristics("Rounded square with keyring hole", listOf("Keychains", "Bags/pockets", "Car interior", "Pet collars", "Luggage"), "Samsung logo, button on front", false),
+            networkType = NetworkType.SAMSUNG_SMARTTHINGS, stalkingRisk = StalkingRisk.MEDIUM
+        ),
+        DeviceType.GENERIC_BLE_TRACKER to TrackerSpecification(
+            manufacturerId = 0x0000, manufacturerName = "Various (Chipolo, Eufy, Pebblebee, etc.)",
+            models = listOf(
+                TrackerModel("Chipolo ONE Spot", "200ft + Find My", "120dB (loudest)", false, "CR2032", "~2 years", "37.9x6.4mm", "8g"),
+                TrackerModel("Eufy SmartTrack Link", "262ft + Find My", "Moderate", false, "CR2032", "~1 year", "37x37x6.5mm", "10g"),
+                TrackerModel("Pebblebee Clip/Card", "500ft", "Moderate", false, "USB rechargeable", "~6 months", "Varies", "~10g"),
+                TrackerModel("AliExpress Generic", "100-200ft", "Usually quiet", false, "CR2032", "6-12 months", "Varies", "5-15g")
+            ),
+            antiStalkingFeatures = AntiStalkingFeatures(true, "iOS (Find My compatible)", true, 8..24, true, false, "Contact manufacturer or law enforcement"),
+            confirmationMethods = listOf("Find My compatible: iPhone alerts", "Use manufacturer's app", "Press button to ring (if present)", "Generic AliExpress trackers often have NO anti-stalking"),
+            physicalCharacteristics = PhysicalCharacteristics("Varies: circular, square, card", listOf("Bags, car, clothes", "Pet collars", "Wallets (card type)"), "Brand logo, plastic, button for ring", false),
+            networkType = NetworkType.APPLE_FIND_MY, stalkingRisk = StalkingRisk.HIGH
+        )
+    )
+
+    // ==================== STALKING DETECTION HEURISTICS ====================
+
+    data class StalkingHeuristic(val name: String, val condition: String, val suspicionLevel: SuspicionLevel, val interpretation: String, val actionRequired: String)
+
+    enum class SuspicionLevel(val score: Int, val color: String) {
+        CRITICAL(100, "RED"), HIGH(75, "ORANGE"), MEDIUM(50, "YELLOW"), LOW(25, "BLUE"), MINIMAL(10, "GREEN")
+    }
+
+    val stalkingHeuristics = listOf(
+        StalkingHeuristic("Multiple Locations", "Same tracker at 3+ distinct locations", SuspicionLevel.CRITICAL, "Tracker is FOLLOWING you.", "Document and contact authorities."),
+        StalkingHeuristic("Extended Presence", "Same tracker 30+ min while moving", SuspicionLevel.HIGH, "Tracker moving with you, hidden in belongings.", "Search belongings and vehicle."),
+        StalkingHeuristic("Possession Signal", "Strong signal (-40 to -60 dBm) with low variance", SuspicionLevel.CRITICAL, "Tracker ON YOUR PERSON.", "Check pockets, bags, shoes immediately."),
+        StalkingHeuristic("Home Departure", "Tracker appears when leaving home", SuspicionLevel.CRITICAL, "Planted at home or on vehicle.", "Check vehicle. Consider home security."),
+        StalkingHeuristic("Person Correlation", "Disappears with specific person", SuspicionLevel.CRITICAL, "That person owns/planted it.", "Document pattern. May be domestic."),
+        StalkingHeuristic("Work Hours Only", "Only appears during work hours", SuspicionLevel.HIGH, "Planted at workplace.", "Search work bag, laptop case, jacket."),
+        StalkingHeuristic("Location-Triggered", "Appears after visiting a location", SuspicionLevel.HIGH, "Planted at that location.", "Think about when it first appeared."),
+        StalkingHeuristic("Weak Fluctuating", "Weak signal with high variance", SuspicionLevel.MINIMAL, "Passing tracker, not targeting you.", "Monitor but likely safe.")
+    )
+
+    // ==================== STALKING RESPONSE GUIDANCE ====================
+
+    object StalkingResponseGuidance {
+        val immediateActions = listOf(
+            "1. DOCUMENT - Screenshots with timestamps/locations",
+            "2. DO NOT DESTROY - It's evidence. Removing battery is OK.",
+            "3. If in danger, call 911",
+            "4. Faraday bag/metal container stops transmission",
+            "5. Note who had access to your belongings/vehicle/home"
+        )
+
+        val supportResources = mapOf(
+            "National Domestic Violence Hotline" to "1-800-799-7233 (24/7)",
+            "SPARC (Stalking Prevention)" to "stalkingawareness.org",
+            "Cyber Civil Rights Initiative" to "cybercivilrights.org",
+            "Tech Safety (NNEDV)" to "techsafety.org"
+        )
+
+        val whatNotToDo = listOf(
+            "DO NOT confront stalker directly - can escalate",
+            "DO NOT destroy tracker before documenting",
+            "DO NOT ignore repeated detections",
+            "DO NOT post on social media (alerts stalker)"
+        )
+
+        fun getGuidanceForSuspicionLevel(score: Int): String = when {
+            score >= 80 -> "CRITICAL: Call 911 if danger. Document now. Hotline: 1-800-799-7233. DO NOT destroy tracker."
+            score >= 60 -> "HIGH: Search belongings/vehicle/clothes. Document all. Consider police non-emergency line."
+            score >= 40 -> "MODERATE: Monitor across locations. Casual search of items. Continue documenting."
+            else -> "LOW: Likely passing tracker. Keep scanning to see if it reappears."
+        }
+    }
+
+    // ==================== SURVEILLANCE EQUIPMENT CONTEXT ====================
+
+    object SurveillanceEquipmentContext {
+        val axonSignalInfo = mapOf(
+            "description" to "Axon Signal Sidearm triggers body cameras when weapon drawn. ~1 pps normal, 20-50 pps activated.",
+            "triggers" to listOf("Weapon unholstered", "TASER armed", "Siren activated", "Vehicle crash", "Manual button"),
+            "what_it_means" to "Police engagement in progress. Multiple body cameras recording. You may be on video."
+        )
+
+        val ravenInfo = mapOf(
+            "description" to "Flock Safety acoustic surveillance. Listens for gunfire AND 'human distress' (screaming). Solar, 24/7.",
+            "vulnerability" to "GainSec research: leaks GPS, battery, network info, detection counts via BLE.",
+            "concerns" to listOf("Continuous audio surveillance", "Vague 'distress' definition", "No warrant needed", "False positives trigger police")
+        )
+    }
+
+    // ==================== SMART HOME PRIVACY CONTEXT ====================
+
+    data class SmartHomeProfile(val manufacturer: String, val lawEnforcementSharing: Boolean, val details: String, val retention: String, val recommendations: List<String>)
+
+    val smartHomeProfiles = mapOf(
+        DeviceType.RING_DOORBELL to SmartHomeProfile("Ring (Amazon)", true, "2,500+ police partnerships. Can request footage without user consent.", "60 days", listOf("Disable Neighbors app", "Minimize cloud storage")),
+        DeviceType.NEST_CAMERA to SmartHomeProfile("Google/Nest", true, "Can share via legal process. Always-on microphones.", "30 days (paid)", listOf("Review Google Activity", "Disable Familiar face")),
+        DeviceType.EUFY_CAMERA to SmartHomeProfile("Eufy/Anker", false, "Claims 'local only' but caught sending thumbnails to cloud (2022).", "Local", listOf("Be skeptical of claims", "Monitor network traffic")),
+        DeviceType.BLINK_CAMERA to SmartHomeProfile("Blink (Amazon)", true, "Same as Ring - Amazon ownership.", "60 days", listOf("Use local Sync Module", "Same Ring concerns"))
+    )
+
+    // ==================== MAC RANDOMIZATION CONTEXT ====================
+
+    object MacRandomizationContext {
+        val explanation = "Modern trackers rotate MACs (~15 min) but are identified by payload, manufacturer data, service UUIDs, and timing."
+        val intervals = mapOf("AirTag" to "~15 min", "Tile" to "~10-15 min", "SmartTag" to "~15 min", "Generic" to "Varies")
+    }
+
     // ==================== SSID Patterns ====================
     // Primary detection method - Flock cameras advertise specific SSIDs
     val ssidPatterns = listOf(
@@ -245,43 +437,96 @@ object DetectionPatterns {
             description = "Digital Ally FirstVU Body Camera"
         ),
         
-        // Cellebrite
+        // ==================== Mobile Forensics / Phone Extraction Devices ====================
+        // CRITICAL: Detection of these devices near you may indicate device seizure risk
+
+        // Cellebrite UFED (Universal Forensic Extraction Device)
+        // $15,000-$30,000+ per unit, used by police, border agents, military
         DetectionPattern(
             type = PatternType.SSID_REGEX,
             pattern = "(?i)^cellebrite[_-]?.*",
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Cellebrite",
-            threatScore = 90,
-            description = "Cellebrite mobile forensics device",
+            threatScore = 95,
+            description = "Cellebrite mobile forensics - can extract ALL data from phones including deleted content",
             sourceUrl = "https://www.eff.org/pages/cellebrite"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
-            pattern = "(?i)^ufed[_-]?.*",
+            pattern = "(?i)^ufed[_-]?(touch|4pc|ultimate|premium)?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Cellebrite",
+            threatScore = 95,
+            description = "Cellebrite UFED - extracts messages, photos, app data, passwords from locked phones",
+            sourceUrl = "https://cellebrite.com/en/ufed/"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(physical|logical)[_-]?analyzer.*",
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Cellebrite",
             threatScore = 90,
-            description = "Cellebrite UFED (Universal Forensic Extraction Device)",
-            sourceUrl = "https://cellebrite.com/en/ufed/"
+            description = "Cellebrite Physical/Logical Analyzer - forensic data analysis tool"
         ),
 
-        // Graykey/Magnet
+        // GrayKey (Grayshift) - specifically designed to crack iPhones
+        // $15,000-$30,000 per unit, law enforcement only
         DetectionPattern(
             type = PatternType.SSID_REGEX,
             pattern = "(?i)^graykey[_-]?.*",
-            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            deviceType = DeviceType.GRAYKEY_DEVICE,
             manufacturer = "Grayshift",
-            threatScore = 90,
-            description = "GrayKey iPhone forensics device",
+            threatScore = 95,
+            description = "GrayKey iPhone forensics - can bypass iPhone passcodes and extract data",
             sourceUrl = "https://www.vice.com/en/article/graykey-iphone-unlocker-goes-on-sale-to-cops/"
         ),
         DetectionPattern(
             type = PatternType.SSID_REGEX,
-            pattern = "(?i)^magnet[_-]?forensic.*",
+            pattern = "(?i)^grayshift[_-]?.*",
+            deviceType = DeviceType.GRAYKEY_DEVICE,
+            manufacturer = "Grayshift",
+            threatScore = 95,
+            description = "Grayshift forensics device"
+        ),
+
+        // Magnet Forensics (cloud and device forensics)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^magnet[_-]?(forensic|axiom|acquire).*",
             deviceType = DeviceType.CELLEBRITE_FORENSICS,
             manufacturer = "Magnet Forensics",
+            threatScore = 90,
+            description = "Magnet Forensics - cloud and device data extraction"
+        ),
+
+        // MSAB XRY (Swedish mobile forensics)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(msab|xry)[_-]?.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "MSAB",
+            threatScore = 90,
+            description = "MSAB XRY mobile forensics system"
+        ),
+
+        // Oxygen Forensics
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^oxygen[_-]?forensic.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = "Oxygen Forensics",
             threatScore = 85,
-            description = "Magnet Forensics device"
+            description = "Oxygen Forensic Detective - mobile data extraction"
+        ),
+
+        // Generic forensics patterns
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(mobile|phone|device)[_-]?forensic.*",
+            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            manufacturer = null,
+            threatScore = 85,
+            description = "Mobile forensics device - may extract data from phones"
         ),
         
         // Genetec
@@ -468,15 +713,109 @@ object DetectionPatterns {
             description = "WiFi Pineapple - network auditing/attack tool"
         ),
 
-        // ==================== Retail/Commercial Tracking Patterns ====================
+        // ==================== Retail/Commercial WiFi Tracking Patterns ====================
+        // These systems track customers via WiFi probe requests and MAC addresses
 
+        // Major retail analytics providers
         DetectionPattern(
             type = PatternType.SSID_REGEX,
             pattern = "(?i)^(retailnext|shoppertrak|footfall).*",
             deviceType = DeviceType.CROWD_ANALYTICS,
             manufacturer = null,
             threatScore = 50,
-            description = "Retail foot traffic analytics system"
+            description = "Retail foot traffic analytics - tracks customer movement via WiFi"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^euclid[_-]?(analytics|element).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = "Euclid Analytics",
+            threatScore = 55,
+            description = "Euclid Analytics - retail WiFi tracking and analytics"
+        ),
+
+        // Cisco Meraki WiFi analytics (very common in retail/enterprise)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^meraki[_-]?(analytics|presence|scanning).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = "Cisco Meraki",
+            threatScore = 45,
+            description = "Cisco Meraki WiFi analytics - location and presence tracking"
+        ),
+
+        // Aruba/HPE (common in enterprise, can track devices)
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^aruba[_-]?(analytics|meridian|location).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = "Aruba (HPE)",
+            threatScore = 45,
+            description = "Aruba WiFi analytics - enterprise location tracking"
+        ),
+
+        // Mist Systems (Juniper) - AI-driven analytics
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^mist[_-]?(ai|analytics).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = "Mist (Juniper)",
+            threatScore = 45,
+            description = "Mist AI analytics - machine learning WiFi tracking"
+        ),
+
+        // Generic WiFi analytics patterns
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(wifi|wlan)[_-]?(analytics|tracking|presence).*",
+            deviceType = DeviceType.CROWD_ANALYTICS,
+            manufacturer = null,
+            threatScore = 50,
+            description = "WiFi analytics system - may track device presence and movement"
+        ),
+
+        // ==================== Hidden Camera WiFi Patterns ====================
+        // Common SSIDs from cheap IP cameras often used for covert surveillance
+
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(ipc|ipcam|ip[_-]?cam(era)?)[_-]?[0-9a-f]*$",
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            manufacturer = null,
+            threatScore = 70,
+            description = "IP Camera default SSID - common in hidden cameras"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(wifi[_-]?cam|wificam)[_-]?[0-9a-f]*$",
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            manufacturer = null,
+            threatScore = 70,
+            description = "WiFi Camera default SSID"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^p2p[_-]?[0-9a-f]+$",
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            manufacturer = null,
+            threatScore = 65,
+            description = "P2P Camera protocol SSID"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(spy|nanny|hidden|covert|pinhole)[_-]?cam.*",
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            manufacturer = null,
+            threatScore = 85,
+            description = "Explicitly named hidden/spy camera"
+        ),
+        DetectionPattern(
+            type = PatternType.SSID_REGEX,
+            pattern = "(?i)^(clock|smoke|outlet|charger|usb)[_-]?cam.*",
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            manufacturer = null,
+            threatScore = 80,
+            description = "Disguised camera (clock, smoke detector, USB charger, etc.)"
         )
     )
     
@@ -885,6 +1224,164 @@ object DetectionPatterns {
             manufacturer = "Grayshift",
             threatScore = 95,
             description = "GrayKey mobile forensics device"
+        ),
+
+        // ==================== Flipper Zero and Hacking Tool Patterns ====================
+
+        // Flipper Zero - Default and common device names
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^flipper[_\\- ]?(zero)?[_\\- ]?.*",
+            deviceType = DeviceType.FLIPPER_ZERO,
+            manufacturer = "Flipper Devices",
+            threatScore = 65,
+            description = "Flipper Zero multi-tool hacking device - Sub-GHz, RFID, NFC, IR, BLE capable"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^flip[_\\- ]?[0-9a-f]+.*",
+            deviceType = DeviceType.FLIPPER_ZERO,
+            manufacturer = "Flipper Devices",
+            threatScore = 60,
+            description = "Flipper Zero (serial number format)"
+        ),
+        // Flipper custom firmware naming patterns
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(unleashed|roguemaster|xtreme|momentum)[_\\- ]?.*",
+            deviceType = DeviceType.FLIPPER_ZERO,
+            manufacturer = "Flipper Devices (Custom FW)",
+            threatScore = 75,
+            description = "Flipper Zero with custom firmware (Unleashed/RogueMaster/Xtreme) - enhanced capabilities"
+        ),
+        // Flipper BadUSB/BLE mode patterns
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^badusb[_\\- ]?.*",
+            deviceType = DeviceType.FLIPPER_ZERO,
+            manufacturer = "Flipper Devices",
+            threatScore = 85,
+            description = "Flipper Zero in BadUSB mode - keystroke injection capable"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^badbt[_\\- ]?.*",
+            deviceType = DeviceType.FLIPPER_ZERO,
+            manufacturer = "Flipper Devices",
+            threatScore = 85,
+            description = "Flipper Zero in BadBT mode - Bluetooth keystroke injection"
+        ),
+
+        // Hak5 Devices
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(bash[_\\- ]?bunny|bashbunny).*",
+            deviceType = DeviceType.BASH_BUNNY,
+            manufacturer = "Hak5",
+            threatScore = 80,
+            description = "Hak5 Bash Bunny - USB attack platform"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(lan[_\\- ]?turtle|lanturtle).*",
+            deviceType = DeviceType.LAN_TURTLE,
+            manufacturer = "Hak5",
+            threatScore = 80,
+            description = "Hak5 LAN Turtle - covert network access device"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(rubber[_\\- ]?ducky|rubberducky).*",
+            deviceType = DeviceType.USB_RUBBER_DUCKY,
+            manufacturer = "Hak5",
+            threatScore = 75,
+            description = "Hak5 USB Rubber Ducky - keystroke injection device"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(key[_\\- ]?croc|keycroc).*",
+            deviceType = DeviceType.KEYCROC,
+            manufacturer = "Hak5",
+            threatScore = 85,
+            description = "Hak5 Key Croc - keylogger with WiFi exfiltration"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(shark[_\\- ]?jack|sharkjack).*",
+            deviceType = DeviceType.SHARK_JACK,
+            manufacturer = "Hak5",
+            threatScore = 80,
+            description = "Hak5 Shark Jack - portable network attack tool"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(screen[_\\- ]?crab|screencrab).*",
+            deviceType = DeviceType.SCREEN_CRAB,
+            manufacturer = "Hak5",
+            threatScore = 85,
+            description = "Hak5 Screen Crab - HDMI man-in-the-middle"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^hak5[_\\- ]?.*",
+            deviceType = DeviceType.GENERIC_HACKING_TOOL,
+            manufacturer = "Hak5",
+            threatScore = 75,
+            description = "Hak5 security testing device"
+        ),
+
+        // SDR/RF Tools
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(hackrf|portapack).*",
+            deviceType = DeviceType.HACKRF_SDR,
+            manufacturer = "Great Scott Gadgets",
+            threatScore = 70,
+            description = "HackRF/PortaPack SDR - RF analysis and transmission capable"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(sdr|rtl[_\\- ]?sdr).*",
+            deviceType = DeviceType.HACKRF_SDR,
+            manufacturer = null,
+            threatScore = 50,
+            description = "Software Defined Radio device - RF monitoring capable"
+        ),
+
+        // RFID/NFC Tools
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^proxmark.*",
+            deviceType = DeviceType.PROXMARK,
+            manufacturer = "Proxmark",
+            threatScore = 80,
+            description = "Proxmark RFID/NFC tool - can clone access cards"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(chameleon|chameleomini).*",
+            deviceType = DeviceType.PROXMARK,
+            manufacturer = null,
+            threatScore = 75,
+            description = "ChameleonMini RFID emulator - card cloning device"
+        ),
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(icopy|icopy[_\\- ]?x).*",
+            deviceType = DeviceType.PROXMARK,
+            manufacturer = null,
+            threatScore = 70,
+            description = "iCopy-X RFID cloner"
+        ),
+
+        // Generic hacking/pentest patterns
+        DetectionPattern(
+            type = PatternType.BLE_NAME_REGEX,
+            pattern = "(?i)^(pentest|hackbox|pwn|0wn|hack[_\\- ]?tool).*",
+            deviceType = DeviceType.GENERIC_HACKING_TOOL,
+            manufacturer = null,
+            threatScore = 65,
+            description = "Potential security testing/hacking device"
         )
     )
     
@@ -1243,25 +1740,45 @@ object DetectionPatterns {
                 )
             )
             DeviceType.CELLEBRITE_FORENSICS -> DeviceTypeInfo(
-                name = "Mobile Forensics Device",
-                shortDescription = "Phone Data Extraction",
-                fullDescription = "Cellebrite UFED and similar devices can extract data from locked " +
-                    "mobile phones, including deleted messages, call logs, photos, and app data. " +
-                    "Used by law enforcement to access suspects' phones, often without warrants.",
+                name = "Cellebrite Mobile Forensics",
+                shortDescription = "Phone Data Extraction Device",
+                fullDescription = "Cellebrite UFED (Universal Forensic Extraction Device) is the most widely " +
+                    "used mobile forensics tool by law enforcement worldwide. It can extract data from " +
+                    "locked phones, including deleted content, app data, passwords, and encrypted messages.\n\n" +
+                    "COST: $15,000-$30,000+ per unit (law enforcement, border agents, corporate security)\n\n" +
+                    "IF DETECTED NEARBY: This may indicate an active forensic examination. Could be at a " +
+                    "police station, border crossing, or mobile forensics unit. Proximity to you suggests " +
+                    "potential device seizure risk.",
                 capabilities = listOf(
-                    "Bypass phone lock screens",
-                    "Extract deleted data",
-                    "Access encrypted apps",
-                    "Clone entire phone contents",
-                    "Crack passwords/PINs",
-                    "Extract cloud account data"
+                    "Bypass screen locks on most phones (even newer iPhones with some models)",
+                    "Extract ALL data: messages, photos, videos, documents",
+                    "Recover DELETED content (messages, photos, call logs)",
+                    "Extract app data from: Signal, WhatsApp, Telegram, Instagram, etc.",
+                    "Capture passwords, authentication tokens, browser history",
+                    "Access encrypted app databases",
+                    "Extract cloud account credentials for remote extraction",
+                    "Full physical image of device storage",
+                    "Geolocation history reconstruction"
                 ),
                 privacyConcerns = listOf(
-                    "Complete phone data extraction",
-                    "Often used without warrants",
-                    "Can access encrypted messaging apps",
-                    "Recovers deleted content",
-                    "Used at traffic stops in some jurisdictions"
+                    "Complete phone data extraction - nothing is private",
+                    "Recovers content you thought was deleted",
+                    "Can access encrypted messaging apps via device extraction",
+                    "Border agents can use WITHOUT a warrant",
+                    "Some jurisdictions allow at traffic stops",
+                    "Data may be retained indefinitely",
+                    "Can extract cloud passwords to access online accounts",
+                    "Creates complete forensic image for later analysis"
+                ),
+                recommendations = listOf(
+                    "Know your rights: You can refuse consent (5th Amendment) but device may be seized",
+                    "At borders: Different rules apply, consent may be compelled",
+                    "Strong alphanumeric passwords are harder to crack than PINs",
+                    "Enable full-disk encryption",
+                    "Consider 'travel mode' devices for sensitive border crossings",
+                    "Signal's disappearing messages are harder to recover",
+                    "iPhone's USB Restricted Mode helps prevent extraction",
+                    "Regular phone reboots help (data protection is stronger after reboot)"
                 )
             )
             DeviceType.BODY_CAMERA -> DeviceTypeInfo(
@@ -1372,76 +1889,144 @@ object DetectionPatterns {
                 )
             )
             DeviceType.HIDDEN_CAMERA -> DeviceTypeInfo(
-                name = "Hidden Camera",
-                shortDescription = "Covert Video Surveillance",
-                fullDescription = "A WiFi-enabled hidden camera detected through network patterns. " +
-                    "These devices may be disguised as everyday objects and stream video over WiFi.",
+                name = "Hidden Camera / Spy Camera",
+                shortDescription = "Covert Video Surveillance Device",
+                fullDescription = "A WiFi-enabled hidden camera has been detected through its network " +
+                    "signature. These devices are often disguised as everyday objects and can stream " +
+                    "video to remote viewers or cloud storage.\n\n" +
+                    "COMMON DISGUISES:\n" +
+                    "- Smoke detectors, carbon monoxide detectors\n" +
+                    "- Clocks (alarm clocks, wall clocks)\n" +
+                    "- USB chargers and power adapters\n" +
+                    "- Electrical outlets and light switches\n" +
+                    "- Picture frames and mirrors\n" +
+                    "- Tissue boxes, plants, stuffed animals\n" +
+                    "- Air purifiers, speakers, routers\n\n" +
+                    "WHERE TO CHECK:\n" +
+                    "- Airbnbs, hotels, vacation rentals\n" +
+                    "- Changing rooms, bathrooms\n" +
+                    "- Areas facing beds, showers, toilets\n" +
+                    "- Any object with direct line of sight to private areas",
                 capabilities = listOf(
-                    "Video recording",
-                    "Live streaming",
-                    "Motion detection",
-                    "Night vision recording",
-                    "Cloud storage upload"
+                    "HD video recording (720p to 4K)",
+                    "Live streaming over WiFi/4G",
+                    "Night vision / IR recording",
+                    "Motion-activated recording",
+                    "Cloud storage upload",
+                    "Remote viewing via app",
+                    "Audio recording (some models)",
+                    "Long battery life or wall-powered"
                 ),
                 privacyConcerns = listOf(
-                    "Invasion of privacy in private spaces",
-                    "Recording without consent",
-                    "Footage may be stored indefinitely",
-                    "May be accessed remotely"
+                    "Illegal in private spaces without consent",
+                    "May be recording intimate moments",
+                    "Footage can be sold, shared, or used for blackmail",
+                    "Common in Airbnb/rental horror stories",
+                    "Remote viewer may be watching in real-time",
+                    "Cloud storage means footage persists even if camera removed"
                 ),
                 recommendations = listOf(
-                    "🔍 Search for the physical device",
-                    "📍 Note the signal strength to locate it",
-                    "🚨 Report to authorities if in rental/hotel",
-                    "📸 Document evidence before removal"
+                    "IR DETECTION: Use your phone camera (front camera works better) to scan for IR LEDs - they appear as purple/white glow in dark",
+                    "PHYSICAL INSPECTION: Check smoke detectors, clocks, outlets, and objects facing bed/bathroom",
+                    "LENS REFLECTION: Use flashlight - camera lenses reflect light distinctively",
+                    "RF DETECTOR: Dedicated RF detectors can find wireless cameras",
+                    "SIGNAL STRENGTH: Move around room - strongest signal indicates camera location",
+                    "NETWORK SCAN: Note MAC address to identify manufacturer",
+                    "IF FOUND: Document with photos, DO NOT touch, contact police",
+                    "LEGAL: Recording in private spaces without consent is illegal - report to authorities"
                 )
             )
             DeviceType.SURVEILLANCE_VAN -> DeviceTypeInfo(
-                name = "Surveillance Van",
+                name = "Surveillance Van / Mobile Surveillance",
                 shortDescription = "Mobile Surveillance Platform",
-                fullDescription = "A mobile hotspot matching patterns associated with surveillance vehicles. " +
-                    "These may be law enforcement, private investigators, or other monitoring operations.",
+                fullDescription = "A mobile hotspot has been detected matching patterns associated with " +
+                    "surveillance vehicles. This could be law enforcement, federal agencies, private " +
+                    "investigators, or corporate security.\n\n" +
+                    "IMPORTANT: Real surveillance operations use BLAND, generic SSIDs - not 'FBI_Van' " +
+                    "(that's a joke). Look for: generic fleet names, manufacturer defaults (Sierra Wireless, " +
+                    "Cradlepoint), or suspiciously plain hotspot names.\n\n" +
+                    "KEY INDICATOR: Same SSID appearing at multiple of YOUR locations (home, work, gym) " +
+                    "is a strong signal of targeted surveillance.\n\n" +
+                    "WHO MIGHT OPERATE:\n" +
+                    "- FBI, DEA, ATF, ICE, USMS\n" +
+                    "- State and local police\n" +
+                    "- Private investigators\n" +
+                    "- Corporate security/counterintelligence",
                 capabilities = listOf(
-                    "Mobile surveillance platform",
-                    "Multiple monitoring systems",
-                    "Extended area coverage",
-                    "Cellular interception capability"
+                    "Video/photo surveillance (telephoto, night vision)",
+                    "Audio surveillance (parabolic mics, laser mics)",
+                    "Cell site simulator (StingRay) operation",
+                    "WiFi/Bluetooth interception",
+                    "License plate readers (mobile ALPR)",
+                    "GPS tracking coordination",
+                    "Mobile command and control",
+                    "Extended duration stakeout capability"
                 ),
                 privacyConcerns = listOf(
-                    "Targeted surveillance operations",
-                    "May include multiple monitoring technologies",
-                    "Can follow subjects over distance",
-                    "Often unmarked and inconspicuous"
+                    "Targeted surveillance of specific person/location",
+                    "May deploy multiple surveillance technologies",
+                    "Can follow subjects across jurisdictions",
+                    "Often operate in unmarked vehicles (vans, SUVs, work trucks)",
+                    "May include covert entry teams",
+                    "Video/audio recording of activities",
+                    "Cell phone interception capability"
                 ),
                 recommendations = listOf(
-                    "🚶 Leave the area if possible",
-                    "📍 Note vehicle descriptions",
-                    "📱 Use encrypted communications",
-                    "🔒 Enable airplane mode if concerned"
+                    "CONFIRM: Does this SSID appear at multiple of YOUR locations?",
+                    "LOCATE: Walk around - signal strength helps identify source vehicle",
+                    "DOCUMENT: Note vehicle description (make, model, plate, location, time)",
+                    "LOOK FOR: Vans/SUVs with running engines, unusual antennas, tinted windows",
+                    "PATTERN: Track appearances over multiple days",
+                    "COMMUNICATIONS: Use encrypted messaging (Signal) if concerned",
+                    "LEGAL: Consult attorney if you believe you're under surveillance",
+                    "DO NOT: Approach or confront suspected surveillance vehicle"
                 )
             )
             DeviceType.TRACKING_DEVICE -> DeviceTypeInfo(
-                name = "Tracking Device",
-                shortDescription = "Location Tracking Device",
-                fullDescription = "A device designed to track location, which may be placed on vehicles " +
-                    "or personal belongings. Can transmit location data via WiFi or cellular.",
+                name = "Tracking Device / Following Network",
+                shortDescription = "Location Tracking via WiFi",
+                fullDescription = "A WiFi network has been detected that appears to be following your location. " +
+                    "This is determined by the same network appearing at multiple distinct locations you visit.\n\n" +
+                    "THIS IS A STRONG INDICATOR OF SURVEILLANCE if:\n" +
+                    "- Same BSSID (MAC address) seen at 3+ of your locations\n" +
+                    "- Network appears at both home AND work\n" +
+                    "- Signal strength varies but network persists\n" +
+                    "- Pattern correlates with your movement\n\n" +
+                    "POSSIBLE EXPLANATIONS:\n" +
+                    "1. Surveillance team using mobile hotspot\n" +
+                    "2. GPS/WiFi tracker planted on your vehicle\n" +
+                    "3. Tracking device in belongings\n" +
+                    "4. Coincidental: neighbor/coworker with same commute (check timing patterns)\n" +
+                    "5. Public transit WiFi (bus, train - if pattern matches routes)",
                 capabilities = listOf(
-                    "GPS location tracking",
-                    "Movement history logging",
-                    "Real-time location updates",
-                    "Geofence alerts"
+                    "Continuous GPS/cellular location tracking",
+                    "Movement pattern analysis",
+                    "Real-time location updates to monitor",
+                    "Geofence alerts (notify when entering/leaving areas)",
+                    "Historical location logging",
+                    "Long battery life (weeks to months)",
+                    "Magnetic mounting for vehicles"
                 ),
                 privacyConcerns = listOf(
-                    "Continuous location monitoring",
-                    "Movement pattern analysis",
-                    "May be placed without consent",
-                    "Data shared with third parties"
+                    "Complete location history being logged",
+                    "Daily routine and patterns exposed",
+                    "Home, work, and frequent locations known",
+                    "Relationships inferred from location data",
+                    "May be part of larger surveillance operation",
+                    "Could indicate stalking or harassment",
+                    "Data may be shared with multiple parties"
                 ),
                 recommendations = listOf(
-                    "🔍 Search vehicle and belongings",
-                    "📍 Locate using signal strength",
-                    "🚨 Report unauthorized tracking to police",
-                    "📸 Document before removal"
+                    "VERIFY: Check if network appears at 3+ distinct locations you visit",
+                    "FALSE POSITIVE CHECK: Is this a neighbor/coworker with same commute?",
+                    "VEHICLE CHECK: Inspect wheel wells, undercarriage, bumpers, trunk",
+                    "BELONGINGS: Check bags, briefcase, gifts you received",
+                    "OBD PORT: Check for device plugged into car's OBD-II port",
+                    "VARY ROUTINE: Take different route - does network still follow?",
+                    "DOCUMENT: Log all sighting locations, times, and signal strengths",
+                    "LEGAL: Police generally need warrant for GPS tracking (US v. Jones)",
+                    "STALKING: If unauthorized, this is criminal in all states",
+                    "DO NOT REMOVE: If found, document first - may be evidence"
                 )
             )
             DeviceType.RF_JAMMER -> DeviceTypeInfo(
@@ -1887,11 +2472,39 @@ object DetectionPatterns {
                 privacyConcerns = listOf("Aggregates multiple data sources", "Predictive policing")
             )
             DeviceType.GRAYKEY_DEVICE -> DeviceTypeInfo(
-                name = "GrayKey Forensics",
-                shortDescription = "Phone Cracking Device",
-                fullDescription = "GrayKey devices can unlock iPhones and Android phones for data extraction.",
-                capabilities = listOf("iPhone unlocking", "Full data extraction"),
-                privacyConcerns = listOf("Breaks phone security", "Full data access")
+                name = "GrayKey iPhone Forensics",
+                shortDescription = "iPhone Passcode Cracking Device",
+                fullDescription = "GrayKey (by Grayshift, founded by ex-Apple engineers) is specifically designed " +
+                    "to bypass iPhone passcodes and extract data. It's one of the most powerful iPhone " +
+                    "forensics tools available, capable of cracking even recent iOS versions.\n\n" +
+                    "COST: $15,000-$30,000 per unit (exclusively sold to law enforcement)\n\n" +
+                    "IF DETECTED NEARBY: This is HIGHLY UNUSUAL. GrayKey devices are expensive, rare, and " +
+                    "typically only used in police forensics labs. Detection suggests active iPhone examination.",
+                capabilities = listOf(
+                    "Crack iPhone passcodes (4-digit to complex alphanumeric)",
+                    "Works on recent iOS versions (with some delays)",
+                    "BFU (Before First Unlock) extraction on some models",
+                    "AFU (After First Unlock) full extraction",
+                    "Extract: Messages, photos, call logs, app data",
+                    "Access encrypted keychain data",
+                    "Recover some deleted content",
+                    "Faster than Cellebrite for iPhones in many cases"
+                ),
+                privacyConcerns = listOf(
+                    "Can crack most iPhone passcodes given enough time",
+                    "Law enforcement exclusive - indicates serious investigation",
+                    "Newer iPhones with USB Restricted Mode are more resistant",
+                    "Alphanumeric passwords take much longer to crack",
+                    "Data extraction is comprehensive once unlocked"
+                ),
+                recommendations = listOf(
+                    "Use long alphanumeric passcode (not 4/6 digit PIN)",
+                    "Enable USB Restricted Mode (Settings > Face/Touch ID > Accessories)",
+                    "Reboot phone before any law enforcement encounter",
+                    "iPhone locked + BFU state is most secure",
+                    "Consider device legal protections (5th Amendment)",
+                    "Know that refusing to unlock may result in device seizure"
+                )
             )
             // Network Surveillance
             DeviceType.WIFI_PINEAPPLE -> DeviceTypeInfo(
@@ -1915,6 +2528,287 @@ object DetectionPatterns {
                 fullDescription = "Device positioned between user and network to intercept communications.",
                 capabilities = listOf("Traffic interception", "SSL stripping"),
                 privacyConcerns = listOf("All traffic exposed", "Identity theft risk")
+            )
+            // ==================== Flipper Zero and Hacking Tools ====================
+            DeviceType.FLIPPER_ZERO -> DeviceTypeInfo(
+                name = "Flipper Zero",
+                shortDescription = "Multi-Tool Hacking Device",
+                fullDescription = "Flipper Zero is a portable multi-tool device designed for hardware hacking, " +
+                    "pentesting, and interacting with access control systems. It combines multiple radio protocols " +
+                    "and can read, clone, and emulate various types of wireless signals. While it has many legitimate " +
+                    "uses for security research and education, it can also be misused for malicious purposes.\n\n" +
+                    "FIRMWARE VARIANTS:\n" +
+                    "- Official: Standard features with regional restrictions\n" +
+                    "- Unleashed: Removes region locks on Sub-GHz\n" +
+                    "- RogueMaster: More aggressive features\n" +
+                    "- Xtreme/Momentum: Feature-packed custom firmware",
+                capabilities = listOf(
+                    "Sub-GHz (300-928 MHz): Garage doors, car key fobs, wireless sensors",
+                    "RFID (125 kHz): EM4100, HID Prox access cards",
+                    "NFC (13.56 MHz): Mifare, NTAG, EMV payment cards (read-only)",
+                    "Infrared: TV remotes, AC units, appliances",
+                    "iButton: 1-Wire devices, building access",
+                    "GPIO: Hardware debugging and hacking",
+                    "BadUSB: Keystroke injection via USB",
+                    "BadBT: Bluetooth keystroke injection",
+                    "BLE: Device impersonation, spam attacks"
+                ),
+                privacyConcerns = listOf(
+                    "Can clone access cards (RFID/NFC)",
+                    "Can capture and replay garage door signals",
+                    "BadUSB can execute malicious scripts on unlocked computers",
+                    "BLE spam can disrupt iOS/Android devices",
+                    "Can be used for stalking via car key relay attacks",
+                    "Presence may indicate targeted hacking attempt"
+                ),
+                recommendations = listOf(
+                    "Context matters: Security conferences = expected, random public place = concerning",
+                    "If experiencing device popups/crashes, check if a Flipper is nearby",
+                    "Look for small orange/black device with LCD screen and D-pad",
+                    "If your garage/car is affected, consider rolling code upgrades",
+                    "Document detection time/location for pattern analysis",
+                    "Flipper has limited range (~10-50m depending on attack)"
+                )
+            )
+            DeviceType.FLIPPER_ZERO_SPAM -> DeviceTypeInfo(
+                name = "Flipper Zero BLE Spam Attack",
+                shortDescription = "Active BLE Spam Detected",
+                fullDescription = "An active Bluetooth Low Energy spam attack has been detected, likely from a " +
+                    "Flipper Zero device. This attack floods the BLE spectrum with fake device advertisements, " +
+                    "causing popup floods on iPhones (Apple device pairing requests) or notification spam on " +
+                    "Android (Fast Pair requests).\n\n" +
+                    "This is MALICIOUS use of a Flipper Zero - there is no legitimate reason to spam BLE.",
+                capabilities = listOf(
+                    "iOS Popup Attack: Floods with fake AirPods/Apple device broadcasts",
+                    "Android Fast Pair Spam: Floods with fake Google Fast Pair advertisements",
+                    "Can crash older iOS versions",
+                    "Can make devices unusable due to constant popups",
+                    "Used for harassment or as distraction for other attacks"
+                ),
+                privacyConcerns = listOf(
+                    "Active attack in progress",
+                    "May be cover for other malicious activity",
+                    "Indicates hostile intent",
+                    "Person may be targeting you specifically"
+                ),
+                recommendations = listOf(
+                    "IMMEDIATE: Turn off Bluetooth to stop popups",
+                    "Look for person with small device (orange/black, LCD screen)",
+                    "Move away from the area",
+                    "If attack follows you, document and report to authorities",
+                    "Note time/location for pattern analysis",
+                    "Check if attacks stop when specific person leaves"
+                )
+            )
+            DeviceType.HACKRF_SDR -> DeviceTypeInfo(
+                name = "Software Defined Radio (HackRF/SDR)",
+                shortDescription = "RF Analysis Device",
+                fullDescription = "A Software Defined Radio (SDR) device capable of receiving and transmitting " +
+                    "across a wide range of radio frequencies. HackRF One can cover 1 MHz to 6 GHz. " +
+                    "Used for RF research, amateur radio, and security testing.",
+                capabilities = listOf(
+                    "Wide frequency range reception (1 MHz - 6 GHz)",
+                    "Transmit capability on HackRF",
+                    "Spectrum analysis",
+                    "Protocol decoding",
+                    "GPS spoofing (illegal)",
+                    "Cellular signal analysis"
+                ),
+                privacyConcerns = listOf(
+                    "Can intercept unencrypted RF signals",
+                    "Can analyze your wireless transmissions",
+                    "Transmit mode can jam/spoof signals",
+                    "May be recording RF environment"
+                ),
+                recommendations = listOf(
+                    "SDRs are common among radio hobbyists",
+                    "Presence alone is not concerning",
+                    "Be cautious if combined with other suspicious behavior",
+                    "If experiencing GPS issues, SDR spoofing is possible"
+                )
+            )
+            DeviceType.PROXMARK -> DeviceTypeInfo(
+                name = "Proxmark RFID/NFC Tool",
+                shortDescription = "RFID/NFC Cloning Device",
+                fullDescription = "Proxmark is a powerful RFID/NFC research tool that can read, write, " +
+                    "and emulate various card types. It's the gold standard for RFID security research " +
+                    "but can be misused to clone access cards.",
+                capabilities = listOf(
+                    "Read/write 125 kHz RFID cards (EM4100, HID Prox)",
+                    "Read/write 13.56 MHz NFC cards (Mifare, iClass)",
+                    "Emulate cards in real-time",
+                    "Sniff card-reader communications",
+                    "Brute force weak card encryption"
+                ),
+                privacyConcerns = listOf(
+                    "Can clone building access cards",
+                    "Can read cards in your wallet/pocket",
+                    "May be attempting unauthorized access",
+                    "Often used by physical pentesters"
+                ),
+                recommendations = listOf(
+                    "Common at security conferences",
+                    "Unusual in random public places",
+                    "Use RFID-blocking wallet if concerned",
+                    "Report if seen near secure facilities"
+                )
+            )
+            DeviceType.USB_RUBBER_DUCKY -> DeviceTypeInfo(
+                name = "USB Rubber Ducky",
+                shortDescription = "Keystroke Injection Device",
+                fullDescription = "The USB Rubber Ducky looks like a USB flash drive but acts as a keyboard, " +
+                    "typing pre-programmed keystrokes at superhuman speed. It can execute complex attacks " +
+                    "in seconds on an unlocked computer.",
+                capabilities = listOf(
+                    "Keystroke injection at 1000+ characters/second",
+                    "Can open shells, download malware, exfiltrate data",
+                    "Works on any OS that accepts USB keyboards",
+                    "New versions have WiFi and storage"
+                ),
+                privacyConcerns = listOf(
+                    "Requires physical access to computer",
+                    "Attack happens in seconds",
+                    "Difficult to detect during execution"
+                ),
+                recommendations = listOf(
+                    "Never leave computer unlocked",
+                    "Be suspicious of 'found' USB drives",
+                    "USB port locks can prevent attacks",
+                    "Group Policy can restrict USB devices"
+                )
+            )
+            DeviceType.BASH_BUNNY -> DeviceTypeInfo(
+                name = "Bash Bunny",
+                shortDescription = "USB Attack Platform",
+                fullDescription = "Hak5 Bash Bunny is an advanced USB attack platform that can emulate " +
+                    "multiple device types (keyboard, storage, ethernet) and run complex payloads.",
+                capabilities = listOf(
+                    "Multi-device emulation (keyboard, storage, ethernet)",
+                    "Runs Debian Linux internally",
+                    "Can exfiltrate files to internal storage",
+                    "Network attacks via ethernet emulation",
+                    "Credential harvesting"
+                ),
+                privacyConcerns = listOf(
+                    "More powerful than Rubber Ducky",
+                    "Can steal files and credentials",
+                    "Network man-in-the-middle capability"
+                ),
+                recommendations = listOf(
+                    "Same protections as USB Rubber Ducky",
+                    "Monitor for new network adapters",
+                    "Physical security is key"
+                )
+            )
+            DeviceType.LAN_TURTLE -> DeviceTypeInfo(
+                name = "LAN Turtle",
+                shortDescription = "Covert Network Access Device",
+                fullDescription = "Hak5 LAN Turtle is a covert network access device disguised as a USB ethernet adapter. " +
+                    "It provides persistent remote access to networks.",
+                capabilities = listOf(
+                    "Appears as normal USB ethernet adapter",
+                    "Provides remote shell access",
+                    "Man-in-the-middle network position",
+                    "DNS spoofing and credential capture",
+                    "VPN tunneling out of network"
+                ),
+                privacyConcerns = listOf(
+                    "Hard to detect (looks like normal adapter)",
+                    "Provides persistent access",
+                    "All your network traffic may be monitored"
+                ),
+                recommendations = listOf(
+                    "Check for unknown USB devices on computers",
+                    "Monitor network for unauthorized devices",
+                    "Use encrypted connections (HTTPS, VPN)"
+                )
+            )
+            DeviceType.KEYCROC -> DeviceTypeInfo(
+                name = "Key Croc",
+                shortDescription = "Keylogger with Exfiltration",
+                fullDescription = "Hak5 Key Croc is an inline keylogger that sits between keyboard and computer, " +
+                    "capturing all keystrokes and exfiltrating them over WiFi.",
+                capabilities = listOf(
+                    "Captures all keystrokes",
+                    "WiFi exfiltration of captured data",
+                    "Trigger-based payload execution",
+                    "Pattern matching for credentials"
+                ),
+                privacyConcerns = listOf(
+                    "Captures all passwords typed",
+                    "Hard to detect (inline device)",
+                    "Real-time exfiltration capability"
+                ),
+                recommendations = listOf(
+                    "Visually inspect keyboard connection",
+                    "Use password managers (paste instead of type)",
+                    "Check for inline devices regularly"
+                )
+            )
+            DeviceType.SHARK_JACK -> DeviceTypeInfo(
+                name = "Shark Jack",
+                shortDescription = "Portable Network Attack Tool",
+                fullDescription = "Hak5 Shark Jack is a portable network attack and reconnaissance tool " +
+                    "that fits in your pocket.",
+                capabilities = listOf(
+                    "Network reconnaissance",
+                    "Automated attack payloads",
+                    "Nmap scanning",
+                    "Data exfiltration"
+                ),
+                privacyConcerns = listOf(
+                    "Can scan and attack networks quickly",
+                    "Automated reconnaissance",
+                    "Portable and concealable"
+                ),
+                recommendations = listOf(
+                    "Monitor for port scanning",
+                    "Network access control",
+                    "802.1X authentication"
+                )
+            )
+            DeviceType.SCREEN_CRAB -> DeviceTypeInfo(
+                name = "Screen Crab",
+                shortDescription = "HDMI Man-in-the-Middle",
+                fullDescription = "Hak5 Screen Crab intercepts HDMI video streams, capturing screenshots " +
+                    "and exfiltrating them over WiFi.",
+                capabilities = listOf(
+                    "HDMI video interception",
+                    "Screenshot capture",
+                    "WiFi exfiltration",
+                    "Remote viewing capability"
+                ),
+                privacyConcerns = listOf(
+                    "Captures everything on screen",
+                    "Passwords visible when typed",
+                    "Sensitive documents exposed"
+                ),
+                recommendations = listOf(
+                    "Check HDMI connections",
+                    "Look for inline devices",
+                    "Use encrypted screen content where possible"
+                )
+            )
+            DeviceType.GENERIC_HACKING_TOOL -> DeviceTypeInfo(
+                name = "Security Testing Tool",
+                shortDescription = "Potential Hacking Device",
+                fullDescription = "A device matching patterns associated with security testing and hacking tools " +
+                    "has been detected. This could be legitimate security research or potentially malicious activity.",
+                capabilities = listOf(
+                    "Varies by specific device",
+                    "May include wireless attacks",
+                    "May include physical access attacks"
+                ),
+                privacyConcerns = listOf(
+                    "Purpose unknown without context",
+                    "Could be legitimate or malicious",
+                    "Monitor for suspicious behavior"
+                ),
+                recommendations = listOf(
+                    "Consider the context (security conference vs random location)",
+                    "Watch for correlated suspicious activity",
+                    "Document if concerned"
+                )
             )
             // Misc Surveillance
             DeviceType.LICENSE_PLATE_READER -> DeviceTypeInfo(
@@ -2037,6 +2931,456 @@ object DetectionPatterns {
         }?.manufacturer
     }
 
+    // ==================== UNKNOWN DEVICE ANALYSIS ====================
+
+    /**
+     * Comprehensive analysis result for an unknown BLE device.
+     */
+    data class UnknownDeviceAnalysis(
+        val macAddress: String,
+        val manufacturerFromOui: String?,
+        val manufacturerCategory: ManufacturerCategory,
+        val serviceUuidAnalysis: ServiceUuidAnalysis,
+        val advertisingBehavior: AdvertisingBehavior,
+        val signalCharacteristics: SignalCharacteristics,
+        val classificationConfidence: Float,
+        val suggestedDeviceType: DeviceType?,
+        val threatAssessment: String,
+        val investigationPriority: InvestigationPriority
+    )
+
+    /**
+     * Categories of manufacturers for quick risk assessment.
+     */
+    enum class ManufacturerCategory(val riskLevel: Int, val description: String) {
+        CONSUMER_ELECTRONICS(1, "Major consumer electronics (Apple, Samsung, Google)"),
+        IOT_CHIPMAKER(2, "IoT chip manufacturers (Espressif, Nordic, TI)"),
+        TELECOM_MODEM(3, "Cellular/LTE modem makers (Quectel, Telit, Sierra)"),
+        NETWORKING(2, "Networking equipment (Cisco, Ubiquiti, TP-Link)"),
+        LAW_ENFORCEMENT(5, "Known law enforcement suppliers"),
+        SURVEILLANCE(5, "Surveillance equipment manufacturers"),
+        UNKNOWN(3, "Unknown manufacturer - requires investigation")
+    }
+
+    /**
+     * Service UUID analysis for unknown devices.
+     */
+    data class ServiceUuidAnalysis(
+        val totalUuids: Int,
+        val standardUuids: List<StandardUuidInfo>,
+        val customUuids: List<String>,
+        val suspiciousPatterns: List<String>
+    )
+
+    /**
+     * Information about a standard BLE service UUID.
+     */
+    data class StandardUuidInfo(
+        val uuid: String,
+        val name: String,
+        val description: String,
+        val commonUsage: String
+    )
+
+    /**
+     * Advertising behavior analysis.
+     */
+    data class AdvertisingBehavior(
+        val advertisingRate: Float,
+        val rateCategory: RateCategory,
+        val isConsistent: Boolean,
+        val behavioralNotes: List<String>
+    )
+
+    /**
+     * Advertising rate categories.
+     */
+    enum class RateCategory(val description: String) {
+        VERY_LOW("< 0.5 pps - power saving mode or beacon"),
+        NORMAL("0.5-2 pps - typical BLE device"),
+        ELEVATED("2-10 pps - active device or tracking"),
+        HIGH("10-20 pps - aggressive advertising"),
+        SPIKE("> 20 pps - activation event or attack")
+    }
+
+    /**
+     * Signal characteristics analysis.
+     */
+    data class SignalCharacteristics(
+        val rssi: Int,
+        val estimatedDistance: String,
+        val proximityCategory: ProximityCategory
+    )
+
+    /**
+     * Proximity categories based on RSSI.
+     */
+    enum class ProximityCategory(val description: String) {
+        IMMEDIATE("On your person or in direct contact"),
+        NEAR("Within a few meters - same room"),
+        MEDIUM("Within 10-20 meters - nearby"),
+        FAR("Beyond 20 meters - could be incidental"),
+        EDGE("At detection limit - may be unreliable")
+    }
+
+    /**
+     * Investigation priority for unknown devices.
+     */
+    enum class InvestigationPriority(val urgency: Int, val action: String) {
+        CRITICAL(4, "Investigate immediately - potential active surveillance"),
+        HIGH(3, "Investigate soon - suspicious characteristics"),
+        MEDIUM(2, "Monitor over time - gather more data"),
+        LOW(1, "Note and continue - likely benign"),
+        IGNORE(0, "No action needed - clearly benign")
+    }
+
+    // Standard BLE service UUIDs for identification
+    private val standardServiceUuids = mapOf(
+        "1800" to StandardUuidInfo("1800", "Generic Access", "Basic device info", "All BLE devices"),
+        "1801" to StandardUuidInfo("1801", "Generic Attribute", "GATT service discovery", "All BLE devices"),
+        "180A" to StandardUuidInfo("180A", "Device Information", "Manufacturer, model, serial", "All BLE devices"),
+        "180F" to StandardUuidInfo("180F", "Battery Service", "Battery level", "Consumer devices"),
+        "1809" to StandardUuidInfo("1809", "Health Thermometer", "Temperature readings", "Medical/health devices"),
+        "1819" to StandardUuidInfo("1819", "Location and Navigation", "GPS/location data", "Fitness/tracking"),
+        "FD5A" to StandardUuidInfo("FD5A", "Samsung SmartTag", "Samsung tracker", "Samsung trackers"),
+        "FEED" to StandardUuidInfo("FEED", "Tile Tracker", "Tile service", "Tile trackers"),
+        "7DFC9000" to StandardUuidInfo("7DFC9000", "Apple Find My", "Find My network", "AirTags, Find My devices"),
+        "FE9F" to StandardUuidInfo("FE9F", "Google Fast Pair", "Quick pairing", "Android devices"),
+        "FEAA" to StandardUuidInfo("FEAA", "Eddystone", "Google beacon", "Retail/location beacons"),
+        "0000" to StandardUuidInfo("0000", "Generic Service", "Custom implementation", "Various")
+    )
+
+    /**
+     * Analyze an unknown BLE device comprehensively.
+     */
+    fun analyzeUnknownDevice(
+        macAddress: String,
+        deviceName: String?,
+        serviceUuids: List<java.util.UUID>,
+        manufacturerData: Map<Int, String>,
+        rssi: Int,
+        advertisingRate: Float
+    ): UnknownDeviceAnalysis {
+        // Get manufacturer from OUI
+        val normalizedMac = macAddress.uppercase().replace("-", ":")
+        val oui = normalizedMac.take(8)
+        val manufacturer = getManufacturerFromOui(oui)
+
+        // Categorize manufacturer
+        val manufacturerCategory = categorizeManufacturer(manufacturer, manufacturerData)
+
+        // Analyze service UUIDs
+        val serviceUuidAnalysis = analyzeServiceUuids(serviceUuids)
+
+        // Analyze advertising behavior
+        val advertisingBehavior = analyzeAdvertisingBehavior(advertisingRate)
+
+        // Analyze signal characteristics
+        val signalCharacteristics = analyzeSignalCharacteristics(rssi)
+
+        // Calculate classification confidence
+        val classificationConfidence = calculateClassificationConfidence(
+            manufacturer, deviceName, serviceUuids, manufacturerData
+        )
+
+        // Suggest device type
+        val suggestedDeviceType = suggestDeviceType(
+            manufacturer, deviceName, serviceUuids, manufacturerData, advertisingRate
+        )
+
+        // Build threat assessment
+        val threatAssessment = buildThreatAssessment(
+            manufacturerCategory, serviceUuidAnalysis, advertisingBehavior,
+            signalCharacteristics, suggestedDeviceType
+        )
+
+        // Determine investigation priority
+        val investigationPriority = determineInvestigationPriority(
+            manufacturerCategory, serviceUuidAnalysis, advertisingBehavior,
+            signalCharacteristics, classificationConfidence
+        )
+
+        return UnknownDeviceAnalysis(
+            macAddress = macAddress,
+            manufacturerFromOui = manufacturer,
+            manufacturerCategory = manufacturerCategory,
+            serviceUuidAnalysis = serviceUuidAnalysis,
+            advertisingBehavior = advertisingBehavior,
+            signalCharacteristics = signalCharacteristics,
+            classificationConfidence = classificationConfidence,
+            suggestedDeviceType = suggestedDeviceType,
+            threatAssessment = threatAssessment,
+            investigationPriority = investigationPriority
+        )
+    }
+
+    private fun categorizeManufacturer(manufacturer: String?, manufacturerData: Map<Int, String>): ManufacturerCategory {
+        // Check manufacturer data IDs first
+        if (manufacturerData.containsKey(0x004C)) return ManufacturerCategory.CONSUMER_ELECTRONICS // Apple
+        if (manufacturerData.containsKey(0x0075)) return ManufacturerCategory.CONSUMER_ELECTRONICS // Samsung
+        if (manufacturerData.containsKey(0x00E0)) return ManufacturerCategory.CONSUMER_ELECTRONICS // Google
+        if (manufacturerData.containsKey(0x0059)) return ManufacturerCategory.IOT_CHIPMAKER // Nordic
+
+        return when (manufacturer?.lowercase()) {
+            "apple", "samsung", "google", "lg", "oneplus", "htc", "xiaomi" ->
+                ManufacturerCategory.CONSUMER_ELECTRONICS
+            "espressif", "nordic semiconductor", "texas instruments", "dialog semiconductor" ->
+                ManufacturerCategory.IOT_CHIPMAKER
+            "quectel", "telit", "sierra wireless", "u-blox" ->
+                ManufacturerCategory.TELECOM_MODEM
+            "cisco", "ubiquiti", "tp-link", "cradlepoint", "digi international" ->
+                ManufacturerCategory.NETWORKING
+            "axon", "motorola solutions", "l3harris", "digital ally" ->
+                ManufacturerCategory.LAW_ENFORCEMENT
+            "flock safety", "soundthinking", "shotspotter" ->
+                ManufacturerCategory.SURVEILLANCE
+            null -> ManufacturerCategory.UNKNOWN
+            else -> ManufacturerCategory.UNKNOWN
+        }
+    }
+
+    private fun analyzeServiceUuids(serviceUuids: List<java.util.UUID>): ServiceUuidAnalysis {
+        val standardUuidInfos = mutableListOf<StandardUuidInfo>()
+        val customUuidStrings = mutableListOf<String>()
+        val suspiciousPatterns = mutableListOf<String>()
+
+        for (uuid in serviceUuids) {
+            val uuidStr = uuid.toString().uppercase()
+            val shortForm = uuidStr.substring(4, 8)
+
+            // Check for standard UUID
+            val standardInfo = standardServiceUuids[shortForm]
+            if (standardInfo != null) {
+                standardUuidInfos.add(standardInfo)
+
+                // Check for suspicious standard services
+                when (shortForm) {
+                    "1819" -> suspiciousPatterns.add("Location/Navigation service - device may track position")
+                    "1809" -> suspiciousPatterns.add("Health Thermometer - may be repurposed for data exfiltration")
+                }
+            } else {
+                customUuidStrings.add(uuidStr)
+
+                // Check for known suspicious patterns
+                if (uuidStr.startsWith("00003")) {
+                    suspiciousPatterns.add("Raven-like custom service UUID detected: $shortForm")
+                }
+                if (uuidStr.contains("7DFC9000", ignoreCase = true)) {
+                    suspiciousPatterns.add("Apple Find My network service detected")
+                }
+            }
+        }
+
+        // Check for suspicious combinations
+        if (serviceUuids.size > 5) {
+            suspiciousPatterns.add("Unusually high number of services (${serviceUuids.size}) - may indicate complex device")
+        }
+
+        return ServiceUuidAnalysis(
+            totalUuids = serviceUuids.size,
+            standardUuids = standardUuidInfos,
+            customUuids = customUuidStrings,
+            suspiciousPatterns = suspiciousPatterns
+        )
+    }
+
+    private fun analyzeAdvertisingBehavior(advertisingRate: Float): AdvertisingBehavior {
+        val rateCategory = when {
+            advertisingRate < 0.5f -> RateCategory.VERY_LOW
+            advertisingRate < 2f -> RateCategory.NORMAL
+            advertisingRate < 10f -> RateCategory.ELEVATED
+            advertisingRate < 20f -> RateCategory.HIGH
+            else -> RateCategory.SPIKE
+        }
+
+        val behavioralNotes = mutableListOf<String>()
+        when (rateCategory) {
+            RateCategory.VERY_LOW -> behavioralNotes.add("Low power mode - beacon or sleeping device")
+            RateCategory.NORMAL -> behavioralNotes.add("Standard BLE advertising - typical consumer device")
+            RateCategory.ELEVATED -> behavioralNotes.add("Elevated rate - active communication or tracking")
+            RateCategory.HIGH -> behavioralNotes.add("High rate - aggressive advertising, potential tracker")
+            RateCategory.SPIKE -> behavioralNotes.add("SPIKE DETECTED - possible activation event or attack")
+        }
+
+        return AdvertisingBehavior(
+            advertisingRate = advertisingRate,
+            rateCategory = rateCategory,
+            isConsistent = true, // Would need historical data to determine
+            behavioralNotes = behavioralNotes
+        )
+    }
+
+    private fun analyzeSignalCharacteristics(rssi: Int): SignalCharacteristics {
+        val estimatedDistance = when {
+            rssi > -40 -> "< 1m (direct contact)"
+            rssi > -50 -> "1-3m (very close)"
+            rssi > -60 -> "3-10m (same room)"
+            rssi > -70 -> "10-20m (nearby)"
+            rssi > -80 -> "20-50m (medium distance)"
+            else -> "> 50m (far/unreliable)"
+        }
+
+        val proximityCategory = when {
+            rssi > -45 -> ProximityCategory.IMMEDIATE
+            rssi > -55 -> ProximityCategory.NEAR
+            rssi > -70 -> ProximityCategory.MEDIUM
+            rssi > -85 -> ProximityCategory.FAR
+            else -> ProximityCategory.EDGE
+        }
+
+        return SignalCharacteristics(
+            rssi = rssi,
+            estimatedDistance = estimatedDistance,
+            proximityCategory = proximityCategory
+        )
+    }
+
+    private fun calculateClassificationConfidence(
+        manufacturer: String?,
+        deviceName: String?,
+        serviceUuids: List<java.util.UUID>,
+        manufacturerData: Map<Int, String>
+    ): Float {
+        var confidence = 0.2f // Base confidence for unknown
+
+        if (manufacturer != null) confidence += 0.2f
+        if (deviceName != null && deviceName.isNotBlank()) confidence += 0.25f
+        if (serviceUuids.isNotEmpty()) confidence += 0.15f
+        if (manufacturerData.isNotEmpty()) confidence += 0.2f
+
+        return confidence.coerceIn(0f, 1f)
+    }
+
+    private fun suggestDeviceType(
+        manufacturer: String?,
+        deviceName: String?,
+        serviceUuids: List<java.util.UUID>,
+        manufacturerData: Map<Int, String>,
+        advertisingRate: Float
+    ): DeviceType? {
+        // Check manufacturer data for known trackers
+        if (manufacturerData.containsKey(0x004C)) {
+            // Apple - check for AirTag patterns
+            val data = manufacturerData[0x004C] ?: ""
+            if (data.startsWith("12") || data.startsWith("07")) {
+                return DeviceType.AIRTAG
+            }
+        }
+        if (manufacturerData.containsKey(0x00C7)) return DeviceType.TILE_TRACKER
+        if (manufacturerData.containsKey(0x0075)) return DeviceType.SAMSUNG_SMARTTAG
+
+        // Check service UUIDs
+        for (uuid in serviceUuids) {
+            val shortForm = uuid.toString().uppercase().substring(4, 8)
+            when {
+                shortForm == "FD5A" -> return DeviceType.SAMSUNG_SMARTTAG
+                shortForm.startsWith("FEED") -> return DeviceType.TILE_TRACKER
+            }
+        }
+
+        // Check device name patterns
+        deviceName?.let { name ->
+            matchBleNamePattern(name)?.let { return it.deviceType }
+        }
+
+        // High advertising rate suggests activation
+        if (advertisingRate > 20f) {
+            if (manufacturerData.containsKey(0x0059)) { // Nordic
+                return DeviceType.AXON_POLICE_TECH
+            }
+        }
+
+        return null
+    }
+
+    private fun buildThreatAssessment(
+        manufacturerCategory: ManufacturerCategory,
+        serviceUuidAnalysis: ServiceUuidAnalysis,
+        advertisingBehavior: AdvertisingBehavior,
+        signalCharacteristics: SignalCharacteristics,
+        suggestedDeviceType: DeviceType?
+    ): String {
+        val assessmentParts = mutableListOf<String>()
+
+        // Manufacturer assessment
+        when (manufacturerCategory) {
+            ManufacturerCategory.LAW_ENFORCEMENT,
+            ManufacturerCategory.SURVEILLANCE -> {
+                assessmentParts.add("HIGH RISK: Manufacturer associated with surveillance equipment")
+            }
+            ManufacturerCategory.TELECOM_MODEM -> {
+                assessmentParts.add("MODERATE RISK: LTE modem chip - used in IoT surveillance devices")
+            }
+            ManufacturerCategory.IOT_CHIPMAKER -> {
+                assessmentParts.add("MODERATE RISK: IoT chipmaker - used in various devices including trackers")
+            }
+            ManufacturerCategory.UNKNOWN -> {
+                assessmentParts.add("UNKNOWN RISK: Cannot identify manufacturer")
+            }
+            else -> {
+                assessmentParts.add("LOW RISK: Common consumer electronics manufacturer")
+            }
+        }
+
+        // Service UUID assessment
+        if (serviceUuidAnalysis.suspiciousPatterns.isNotEmpty()) {
+            assessmentParts.add("SUSPICIOUS: ${serviceUuidAnalysis.suspiciousPatterns.joinToString("; ")}")
+        }
+
+        // Advertising behavior assessment
+        if (advertisingBehavior.rateCategory in listOf(RateCategory.HIGH, RateCategory.SPIKE)) {
+            assessmentParts.add("WARNING: Abnormal advertising rate detected")
+        }
+
+        // Proximity assessment
+        if (signalCharacteristics.proximityCategory == ProximityCategory.IMMEDIATE) {
+            assessmentParts.add("PROXIMITY: Device is very close - check your belongings")
+        }
+
+        return assessmentParts.joinToString("\n")
+    }
+
+    private fun determineInvestigationPriority(
+        manufacturerCategory: ManufacturerCategory,
+        serviceUuidAnalysis: ServiceUuidAnalysis,
+        advertisingBehavior: AdvertisingBehavior,
+        signalCharacteristics: SignalCharacteristics,
+        classificationConfidence: Float
+    ): InvestigationPriority {
+        var score = 0
+
+        // Manufacturer risk
+        score += manufacturerCategory.riskLevel
+
+        // Suspicious patterns
+        score += serviceUuidAnalysis.suspiciousPatterns.size
+
+        // Advertising behavior
+        when (advertisingBehavior.rateCategory) {
+            RateCategory.HIGH -> score += 2
+            RateCategory.SPIKE -> score += 4
+            else -> {}
+        }
+
+        // Proximity
+        when (signalCharacteristics.proximityCategory) {
+            ProximityCategory.IMMEDIATE -> score += 3
+            ProximityCategory.NEAR -> score += 2
+            else -> {}
+        }
+
+        // Low confidence = more investigation needed
+        if (classificationConfidence < 0.5f) score += 1
+
+        return when {
+            score >= 10 -> InvestigationPriority.CRITICAL
+            score >= 7 -> InvestigationPriority.HIGH
+            score >= 4 -> InvestigationPriority.MEDIUM
+            score >= 2 -> InvestigationPriority.LOW
+            else -> InvestigationPriority.IGNORE
+        }
+    }
+
     /**
      * Get all built-in patterns as SurveillancePattern objects.
      * Used for merging with custom/downloaded patterns.
@@ -2115,4 +3459,1719 @@ object DetectionPatterns {
 
         patterns.toList()
     }
+
+    // ==================== REAL-WORLD RF SURVEILLANCE KNOWLEDGE ====================
+    // Comprehensive reference data for RF-based surveillance detection
+
+    /**
+     * Common surveillance RF frequencies and their typical uses.
+     * Essential for understanding what devices operate on which bands.
+     */
+    object RfFrequencyReference {
+        // ==================== Hidden Camera / Bug Detection ====================
+
+        /** Older analog video transmitters - lower quality, easier to detect */
+        const val FREQ_900_MHZ = 900_000_000L      // Analog video, old devices
+        const val FREQ_1200_MHZ = 1_200_000_000L   // Video transmitters (1.2 GHz)
+        const val FREQ_2400_MHZ = 2_400_000_000L   // WiFi cameras, cheap bugs, most IoT
+        const val FREQ_5800_MHZ = 5_800_000_000L   // Higher quality video, FPV drones
+
+        /** Remote controls and triggers */
+        const val FREQ_315_MHZ = 315_000_000L      // US garage doors, remotes
+        const val FREQ_433_MHZ = 433_920_000L      // EU remotes, cheap IoT, key fobs
+        const val FREQ_868_MHZ = 868_000_000L      // EU ISM band, LoRa
+        const val FREQ_915_MHZ = 915_000_000L      // US ISM band, Amazon Sidewalk
+
+        /** GPS frequencies (for detecting jammers/spoofers) */
+        const val GPS_L1_FREQ = 1_575_420_000L     // GPS L1 (primary civilian)
+        const val GPS_L2_FREQ = 1_227_600_000L     // GPS L2
+        const val GPS_L5_FREQ = 1_176_450_000L     // GPS L5 (newer)
+        const val GLONASS_L1_FREQ = 1_602_000_000L // GLONASS
+        const val GALILEO_E1_FREQ = 1_575_420_000L // Galileo E1
+
+        /** Cellular bands (for IMSI catcher detection) */
+        const val CELL_850_MHZ = 850_000_000L      // 2G/3G
+        const val CELL_900_MHZ = 900_000_000L      // 2G/3G GSM
+        const val CELL_1800_MHZ = 1_800_000_000L   // 2G DCS
+        const val CELL_1900_MHZ = 1_900_000_000L   // 2G/3G PCS
+        const val CELL_700_MHZ = 700_000_000L      // LTE Band 12/13/17
+        const val CELL_2100_MHZ = 2_100_000_000L   // 3G UMTS
+        const val CELL_2600_MHZ = 2_600_000_000L   // LTE Band 7
+
+        val hiddenCameraBugFrequencies = listOf(
+            FrequencyBand(900_000_000L, 50_000_000L, "900 MHz Analog Video",
+                "Older analog devices - lower quality, easier to detect"),
+            FrequencyBand(1_200_000_000L, 100_000_000L, "1.2 GHz Video Transmitters",
+                "Higher quality analog video, moderate detection difficulty"),
+            FrequencyBand(2_400_000_000L, 100_000_000L, "2.4 GHz WiFi/IoT",
+                "Most cheap bugs, WiFi cameras, IoT devices - very common"),
+            FrequencyBand(5_800_000_000L, 150_000_000L, "5.8 GHz High Quality",
+                "Higher quality video, FPV systems, harder to detect")
+        )
+
+        val remoteControlFrequencies = listOf(
+            FrequencyBand(315_000_000L, 5_000_000L, "315 MHz (US)",
+                "US garage doors, car remotes, some trackers"),
+            FrequencyBand(433_920_000L, 5_000_000L, "433 MHz (EU/US)",
+                "EU remotes, cheap IoT, key fobs, many trackers")
+        )
+
+        data class FrequencyBand(
+            val centerHz: Long,
+            val bandwidthHz: Long,
+            val name: String,
+            val description: String
+        ) {
+            fun contains(frequency: Long): Boolean {
+                val halfBandwidth = bandwidthHz / 2
+                return frequency in (centerHz - halfBandwidth)..(centerHz + halfBandwidth)
+            }
+
+            val startHz: Long get() = centerHz - bandwidthHz / 2
+            val endHz: Long get() = centerHz + bandwidthHz / 2
+
+            fun formatRange(): String {
+                val startMhz = startHz / 1_000_000.0
+                val endMhz = endHz / 1_000_000.0
+                return String.format("%.1f - %.1f MHz", startMhz, endMhz)
+            }
+        }
+    }
+
+    // ==================== GPS TRACKER PROFILES ====================
+
+    /**
+     * Comprehensive GPS tracker profiles based on real-world deployment patterns.
+     * Includes OBD-II, magnetic, and hardwired trackers.
+     */
+    data class GpsTrackerProfile(
+        val id: String,
+        val name: String,
+        val category: GpsTrackerCategory,
+        val manufacturer: String?,
+        val powerSource: PowerSource,
+        val backhaul: BackhaulType,
+        val typicalDeployment: List<String>,
+        val physicalDescription: String,
+        val detectionMethods: List<String>,
+        val dataCollected: List<String>,
+        val batteryLife: String?, // null for powered devices
+        val commonLocations: List<String>,
+        val legalStatus: String,
+        val threatScore: Int
+    )
+
+    enum class GpsTrackerCategory(val displayName: String) {
+        OBD_II_PORT("OBD-II Port Tracker"),
+        MAGNETIC("Magnetic/Battery Tracker"),
+        HARDWIRED("Hardwired Tracker"),
+        PERSONAL("Personal/Asset Tracker"),
+        FLEET("Fleet Management")
+    }
+
+    enum class PowerSource(val displayName: String) {
+        OBD_VEHICLE_POWER("OBD-II Vehicle Power (always on)"),
+        VEHICLE_HARDWIRE("Hardwired to Vehicle (always on)"),
+        INTERNAL_BATTERY("Internal Battery"),
+        BATTERY_WITH_SOLAR("Battery + Solar"),
+        EXTERNAL_BATTERY_PACK("External Battery Pack")
+    }
+
+    enum class BackhaulType(val displayName: String) {
+        CELLULAR_4G("4G LTE Cellular"),
+        CELLULAR_3G("3G Cellular"),
+        CELLULAR_2G("2G GSM (older)"),
+        WIFI("WiFi (config only)"),
+        BLUETOOTH("Bluetooth (proximity only)"),
+        LORA("LoRa (long range, low power)"),
+        SATELLITE("Satellite (Iridium/Globalstar)")
+    }
+
+    val gpsTrackerProfiles = listOf(
+        // OBD-II Port Trackers
+        GpsTrackerProfile(
+            id = "bouncie",
+            name = "Bouncie GPS Tracker",
+            category = GpsTrackerCategory.OBD_II_PORT,
+            manufacturer = "Bouncie",
+            powerSource = PowerSource.OBD_VEHICLE_POWER,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Consumer vehicle tracking",
+                "Teen driver monitoring",
+                "Fleet management"
+            ),
+            physicalDescription = "Small OBD-II plug-in device, usually blue or black, ~2x3 inches",
+            detectionMethods = listOf(
+                "Check OBD-II port under dashboard (driver's side)",
+                "Look for small device plugged into diagnostic port",
+                "Use OBD-II scanner to detect unknown device",
+                "Check for cellular signal near OBD port area"
+            ),
+            dataCollected = listOf(
+                "GPS location (real-time)",
+                "Vehicle speed",
+                "Trip history",
+                "Rapid acceleration/braking events",
+                "Vehicle diagnostics (DTCs)",
+                "Geofence alerts"
+            ),
+            batteryLife = null, // Vehicle powered
+            commonLocations = listOf("OBD-II port under driver's side dashboard"),
+            legalStatus = "Legal for vehicle owners; requires consent for others",
+            threatScore = 75
+        ),
+
+        GpsTrackerProfile(
+            id = "vyncs",
+            name = "Vyncs GPS Tracker",
+            category = GpsTrackerCategory.OBD_II_PORT,
+            manufacturer = "Vyncs (Agnik)",
+            powerSource = PowerSource.OBD_VEHICLE_POWER,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Consumer vehicle tracking",
+                "Insurance telematics",
+                "Parental monitoring"
+            ),
+            physicalDescription = "OBD-II dongle, black plastic, ~2x2 inches",
+            detectionMethods = listOf(
+                "Visual inspection of OBD-II port",
+                "Device has LED indicators when active",
+                "Check for unfamiliar device in vehicle"
+            ),
+            dataCollected = listOf(
+                "GPS location",
+                "Driving behavior analytics",
+                "Vehicle health data",
+                "Fuel economy",
+                "Trip summaries"
+            ),
+            batteryLife = null,
+            commonLocations = listOf("OBD-II port"),
+            legalStatus = "Legal for vehicle owners",
+            threatScore = 70
+        ),
+
+        GpsTrackerProfile(
+            id = "motosafety",
+            name = "MOTOsafety GPS Tracker",
+            category = GpsTrackerCategory.OBD_II_PORT,
+            manufacturer = "MOTOsafety",
+            powerSource = PowerSource.OBD_VEHICLE_POWER,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Teen driver monitoring",
+                "Business fleet tracking",
+                "Family vehicle monitoring"
+            ),
+            physicalDescription = "OBD-II plug device, branded logo visible",
+            detectionMethods = listOf(
+                "Inspect OBD-II port",
+                "Look for 'MOTOsafety' branding",
+                "Check mobile app stores for active subscriptions"
+            ),
+            dataCollected = listOf(
+                "Real-time GPS tracking",
+                "Speed alerts",
+                "Curfew violations",
+                "Rapid acceleration/braking",
+                "Idle time"
+            ),
+            batteryLife = null,
+            commonLocations = listOf("OBD-II port"),
+            legalStatus = "Legal for vehicle owners; consent required for non-owners",
+            threatScore = 70
+        ),
+
+        // Magnetic GPS Trackers
+        GpsTrackerProfile(
+            id = "landairsea_overdrive",
+            name = "LandAirSea Overdrive",
+            category = GpsTrackerCategory.MAGNETIC,
+            manufacturer = "LandAirSea",
+            powerSource = PowerSource.INTERNAL_BATTERY,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Private investigation",
+                "Law enforcement (with warrant)",
+                "Asset tracking",
+                "Stalking (illegal use)"
+            ),
+            physicalDescription = "Small black box, ~3x2x1 inches, strong magnet on bottom, waterproof",
+            detectionMethods = listOf(
+                "Physical search of vehicle undercarriage",
+                "Check wheel wells (all four)",
+                "Inspect behind bumpers",
+                "Look in trunk spare tire area",
+                "Use flashlight to check frame rails",
+                "Feel for magnetic attachment points"
+            ),
+            dataCollected = listOf(
+                "GPS location (configurable intervals)",
+                "Movement history",
+                "Geofence alerts",
+                "Speed tracking",
+                "Battery level"
+            ),
+            batteryLife = "Up to 2 weeks active / 6 months standby",
+            commonLocations = listOf(
+                "Under vehicle frame",
+                "Inside wheel wells",
+                "Behind bumpers (front/rear)",
+                "Under trunk/cargo area",
+                "Attached to metal frame components"
+            ),
+            legalStatus = "Requires warrant for law enforcement; illegal for unauthorized tracking",
+            threatScore = 85
+        ),
+
+        GpsTrackerProfile(
+            id = "spytec_gl300",
+            name = "SpyTec GL300",
+            category = GpsTrackerCategory.MAGNETIC,
+            manufacturer = "SpyTec",
+            powerSource = PowerSource.INTERNAL_BATTERY,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Personal asset tracking",
+                "Vehicle tracking",
+                "Private investigation",
+                "Rental car monitoring"
+            ),
+            physicalDescription = "Small rectangular device, ~3x1.5x1 inches, waterproof case available",
+            detectionMethods = listOf(
+                "Thorough vehicle search",
+                "Magnetic sweep of undercarriage",
+                "Check all hidden compartments",
+                "Inspect wheel wells"
+            ),
+            dataCollected = listOf(
+                "Real-time GPS location",
+                "Historical tracking data",
+                "Geofence alerts",
+                "Speed monitoring"
+            ),
+            batteryLife = "Up to 2.5 weeks",
+            commonLocations = listOf(
+                "Vehicle undercarriage",
+                "Wheel wells",
+                "Inside personal bags/belongings"
+            ),
+            legalStatus = "Legal for own property; illegal for tracking others without consent",
+            threatScore = 80
+        ),
+
+        GpsTrackerProfile(
+            id = "optimus_2",
+            name = "Optimus 2.0 GPS Tracker",
+            category = GpsTrackerCategory.MAGNETIC,
+            manufacturer = "Optimus",
+            powerSource = PowerSource.INTERNAL_BATTERY,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Vehicle tracking",
+                "Teen monitoring",
+                "Asset protection"
+            ),
+            physicalDescription = "Compact black device with magnetic case option",
+            detectionMethods = listOf(
+                "Physical vehicle inspection",
+                "Magnetic wand sweep",
+                "Check common hiding spots"
+            ),
+            dataCollected = listOf(
+                "GPS coordinates",
+                "Speed",
+                "Trip history",
+                "SOS alerts"
+            ),
+            batteryLife = "Up to 2 weeks",
+            commonLocations = listOf(
+                "Under vehicle",
+                "In wheel wells",
+                "Attached to frame"
+            ),
+            legalStatus = "Requires consent for tracking individuals",
+            threatScore = 80
+        ),
+
+        // Hardwired Trackers
+        GpsTrackerProfile(
+            id = "fleet_hardwired",
+            name = "Hardwired Fleet Tracker",
+            category = GpsTrackerCategory.HARDWIRED,
+            manufacturer = null,
+            powerSource = PowerSource.VEHICLE_HARDWIRE,
+            backhaul = BackhaulType.CELLULAR_4G,
+            typicalDeployment = listOf(
+                "Commercial fleet management",
+                "Professional installation",
+                "Long-term vehicle tracking",
+                "Law enforcement (with warrant)"
+            ),
+            physicalDescription = "Small black box connected to vehicle wiring, often hidden in dashboard or under seats",
+            detectionMethods = listOf(
+                "Professional TSCM sweep",
+                "Check for non-factory wiring",
+                "Inspect under dashboard",
+                "Look behind panels",
+                "Trace unusual wires to hidden devices",
+                "Use RF detector near wiring harness"
+            ),
+            dataCollected = listOf(
+                "Continuous GPS tracking",
+                "Vehicle ignition status",
+                "Mileage",
+                "Driver behavior",
+                "Engine diagnostics"
+            ),
+            batteryLife = null, // Hardwired
+            commonLocations = listOf(
+                "Behind dashboard panels",
+                "Under driver/passenger seats",
+                "In center console",
+                "Near OBD-II port (tapped into)",
+                "Inside door panels"
+            ),
+            legalStatus = "Professional installation; requires consent or warrant",
+            threatScore = 90
+        )
+    )
+
+    // ==================== DRONE DETECTION PROFILES ====================
+
+    /**
+     * Comprehensive drone profiles with Remote ID information.
+     * Remote ID became mandatory in the US starting September 2023.
+     */
+    data class DroneProfile(
+        val id: String,
+        val name: String,
+        val manufacturer: String,
+        val category: DroneCategory,
+        val controlFrequencies: List<Long>,
+        val controlProtocol: String,
+        val hasRemoteId: Boolean, // Required since Sept 2023 in US
+        val remoteIdBroadcast: RemoteIdBroadcastType?,
+        val wifiPatterns: List<String>,
+        val blePatterns: List<String>,
+        val ouiPrefixes: List<String>,
+        val typicalRange: String,
+        val suspiciousIndicators: List<String>,
+        val legalRequirements: List<String>
+    )
+
+    enum class DroneCategory(val displayName: String) {
+        CONSUMER("Consumer/Prosumer"),
+        COMMERCIAL("Commercial"),
+        RACING_FPV("Racing/FPV"),
+        ENTERPRISE("Enterprise"),
+        GOVERNMENT("Government/Law Enforcement"),
+        DIY("DIY/Custom Built")
+    }
+
+    enum class RemoteIdBroadcastType(val displayName: String) {
+        WIFI_BEACON("WiFi Beacon Advertisement"),
+        BLUETOOTH_5("Bluetooth 5 Long Range"),
+        BOTH("WiFi + Bluetooth"),
+        NONE("No Remote ID (illegal in US since 9/2023)")
+    }
+
+    val droneProfiles = listOf(
+        DroneProfile(
+            id = "dji_mavic",
+            name = "DJI Mavic Series",
+            manufacturer = "DJI",
+            category = DroneCategory.CONSUMER,
+            controlFrequencies = listOf(2_400_000_000L, 5_800_000_000L),
+            controlProtocol = "OcuSync 2.0/3.0 (proprietary)",
+            hasRemoteId = true,
+            remoteIdBroadcast = RemoteIdBroadcastType.WIFI_BEACON,
+            wifiPatterns = listOf("(?i)^mavic[-_]?(pro|air|mini|[0-9]).*"),
+            blePatterns = listOf("(?i)^(mavic|dji)[-_]?.*"),
+            ouiPrefixes = listOf("60:60:1F", "34:D2:62", "48:1C:B9", "60:C7:98"),
+            typicalRange = "Up to 10km (OcuSync 3.0)",
+            suspiciousIndicators = listOf(
+                "Hovering over private property",
+                "Following specific person/vehicle",
+                "Operating at night without lights",
+                "No Remote ID broadcast (illegal)",
+                "Operating near airports/restricted areas"
+            ),
+            legalRequirements = listOf(
+                "Remote ID broadcast required (US since 9/2023)",
+                "FAA registration required for >250g",
+                "Visual line of sight required (unless waiver)",
+                "Cannot fly over people without certification"
+            )
+        ),
+
+        DroneProfile(
+            id = "dji_phantom",
+            name = "DJI Phantom Series",
+            manufacturer = "DJI",
+            category = DroneCategory.CONSUMER,
+            controlFrequencies = listOf(2_400_000_000L, 5_800_000_000L),
+            controlProtocol = "Lightbridge/OcuSync",
+            hasRemoteId = true,
+            remoteIdBroadcast = RemoteIdBroadcastType.WIFI_BEACON,
+            wifiPatterns = listOf("(?i)^phantom[-_]?[0-9].*"),
+            blePatterns = listOf("(?i)^phantom.*"),
+            ouiPrefixes = listOf("60:60:1F", "60:C7:98"),
+            typicalRange = "Up to 7km",
+            suspiciousIndicators = listOf(
+                "Large drone near residence",
+                "Extended hovering",
+                "Camera pointed at windows"
+            ),
+            legalRequirements = listOf(
+                "Remote ID required",
+                "FAA registration required"
+            )
+        ),
+
+        DroneProfile(
+            id = "autel_evo",
+            name = "Autel EVO Series",
+            manufacturer = "Autel Robotics",
+            category = DroneCategory.CONSUMER,
+            controlFrequencies = listOf(2_400_000_000L, 5_800_000_000L),
+            controlProtocol = "Autel SkyLink",
+            hasRemoteId = true,
+            remoteIdBroadcast = RemoteIdBroadcastType.WIFI_BEACON,
+            wifiPatterns = listOf("(?i)^(autel|evo)[-_]?(ii|2|lite).*"),
+            blePatterns = listOf("(?i)^autel.*"),
+            ouiPrefixes = listOf(), // Add when known
+            typicalRange = "Up to 9km",
+            suspiciousIndicators = listOf(
+                "US-made drone alternative to DJI",
+                "May be used by government/enterprises"
+            ),
+            legalRequirements = listOf(
+                "Remote ID required",
+                "FAA registration required"
+            )
+        ),
+
+        DroneProfile(
+            id = "skydio",
+            name = "Skydio Drones",
+            manufacturer = "Skydio (USA)",
+            category = DroneCategory.ENTERPRISE,
+            controlFrequencies = listOf(2_400_000_000L, 5_800_000_000L),
+            controlProtocol = "Skydio Autonomy",
+            hasRemoteId = true,
+            remoteIdBroadcast = RemoteIdBroadcastType.BOTH,
+            wifiPatterns = listOf("(?i)^skydio[-_]?[0-9x].*"),
+            blePatterns = listOf("(?i)^skydio.*"),
+            ouiPrefixes = listOf(),
+            typicalRange = "Up to 6km",
+            suspiciousIndicators = listOf(
+                "US-made autonomous drone",
+                "Used by law enforcement/military",
+                "Autonomous following capability"
+            ),
+            legalRequirements = listOf(
+                "Remote ID required",
+                "Often used by government agencies"
+            )
+        ),
+
+        DroneProfile(
+            id = "parrot_anafi",
+            name = "Parrot Anafi",
+            manufacturer = "Parrot (France)",
+            category = DroneCategory.CONSUMER,
+            controlFrequencies = listOf(2_400_000_000L, 5_800_000_000L),
+            controlProtocol = "WiFi Direct",
+            hasRemoteId = true,
+            remoteIdBroadcast = RemoteIdBroadcastType.WIFI_BEACON,
+            wifiPatterns = listOf("(?i)^(parrot|anafi|bebop)[-_]?.*"),
+            blePatterns = listOf("(?i)^parrot.*"),
+            ouiPrefixes = listOf("A0:14:3D", "90:03:B7", "00:12:1C", "00:26:7E"),
+            typicalRange = "Up to 4km",
+            suspiciousIndicators = listOf(
+                "French-made drone",
+                "Thermal imaging variants exist"
+            ),
+            legalRequirements = listOf(
+                "Remote ID required in US",
+                "CE marking for EU operation"
+            )
+        )
+    )
+
+    /**
+     * Remote ID information - broadcasts from drones since Sept 2023.
+     * Per FAA regulations, drones must broadcast this information.
+     */
+    data class RemoteIdInfo(
+        val serialNumber: String?,      // Drone serial number
+        val latitude: Double?,          // Drone current location
+        val longitude: Double?,
+        val altitude: Double?,          // Altitude in meters
+        val speed: Double?,             // Ground speed
+        val heading: Double?,           // Direction of travel
+        val operatorLatitude: Double?,  // Operator/controller location
+        val operatorLongitude: Double?,
+        val timestamp: Long,
+        val emergencyStatus: Boolean
+    )
+
+    /**
+     * Check Remote ID apps for drone detection:
+     * - DroneScout (available on iOS/Android)
+     * - OpenDroneID (open source reference)
+     * - AirMap
+     */
+    val remoteIdDetectionApps = listOf(
+        "DroneScout" to "Official FAA-recommended app",
+        "OpenDroneID" to "Open source reference implementation",
+        "AirMap" to "Commercial drone airspace management"
+    )
+
+    // ==================== JAMMING DEVICE SIGNATURES ====================
+
+    /**
+     * RF jamming device signatures and detection patterns.
+     * NOTE: Jamming devices are ILLEGAL to operate in the US (FCC violation).
+     */
+    data class JammerProfile(
+        val id: String,
+        val name: String,
+        val targetedBands: List<JammedBand>,
+        val detectionSigns: List<String>,
+        val typicalUsers: List<String>,
+        val legalStatus: String,
+        val countermeasures: List<String>
+    )
+
+    data class JammedBand(
+        val name: String,
+        val frequencyRange: String,
+        val affectedServices: List<String>
+    )
+
+    val jammerProfiles = listOf(
+        JammerProfile(
+            id = "gps_jammer",
+            name = "GPS/GNSS Jammer",
+            targetedBands = listOf(
+                JammedBand("GPS L1", "1575.42 MHz", listOf("GPS navigation", "Fleet tracking", "Timing systems")),
+                JammedBand("GPS L2", "1227.60 MHz", listOf("Precision GPS", "Survey equipment")),
+                JammedBand("GLONASS L1", "1602 MHz", listOf("Russian navigation"))
+            ),
+            detectionSigns = listOf(
+                "Sudden GPS signal loss while stationary",
+                "GPS 'jumps' or erratic position",
+                "GNSS receiver reports no satellites",
+                "Multiple devices lose GPS simultaneously",
+                "GPS accuracy degrades dramatically"
+            ),
+            typicalUsers = listOf(
+                "Truckers avoiding fleet tracking (illegal)",
+                "Criminals avoiding location tracking",
+                "Car thieves defeating GPS trackers"
+            ),
+            legalStatus = "ILLEGAL in US (FCC violation) - up to \$100K fine + criminal charges",
+            countermeasures = listOf(
+                "Note time and location of jamming",
+                "Report to FCC if persistent",
+                "Use cellular-based tracking as backup",
+                "Professional TSCM equipment can locate jammer"
+            )
+        ),
+
+        JammerProfile(
+            id = "cell_jammer",
+            name = "Cellular Phone Jammer",
+            targetedBands = listOf(
+                JammedBand("2G/GSM", "850/900/1800/1900 MHz", listOf("2G voice calls", "SMS")),
+                JammedBand("3G/UMTS", "850/1900/2100 MHz", listOf("3G calls/data")),
+                JammedBand("4G/LTE", "700-2600 MHz", listOf("LTE data/calls", "Most smartphones"))
+            ),
+            detectionSigns = listOf(
+                "All phones lose signal simultaneously",
+                "Phones show 'No Service' or 'Emergency Only'",
+                "Calls drop immediately when entering area",
+                "Data connections fail completely",
+                "Multiple carriers affected simultaneously"
+            ),
+            typicalUsers = listOf(
+                "Prisons (with legal waiver)",
+                "Theaters (ILLEGALLY)",
+                "Criminals during robberies",
+                "Exam cheating prevention (illegal)"
+            ),
+            legalStatus = "ILLEGAL in US except for federal government with waiver",
+            countermeasures = listOf(
+                "Leave the area if possible",
+                "Use WiFi calling if WiFi is available",
+                "Note location for reporting to FCC",
+                "Cannot make 911 calls in jammed area - DANGER"
+            )
+        ),
+
+        JammerProfile(
+            id = "wifi_jammer",
+            name = "WiFi Jammer",
+            targetedBands = listOf(
+                JammedBand("2.4 GHz", "2400-2483 MHz", listOf("WiFi", "Bluetooth", "IoT devices")),
+                JammedBand("5 GHz", "5150-5850 MHz", listOf("WiFi 5/6", "FPV drones"))
+            ),
+            detectionSigns = listOf(
+                "Massive deauth packets on all channels",
+                "All WiFi networks become unreachable",
+                "Bluetooth devices disconnect",
+                "Smart home devices go offline",
+                "Persistent interference across all channels"
+            ),
+            typicalUsers = listOf(
+                "Criminals defeating security cameras",
+                "Burglars disabling WiFi alarms",
+                "Corporate espionage"
+            ),
+            legalStatus = "ILLEGAL - FCC violation",
+            countermeasures = listOf(
+                "Use wired security cameras as backup",
+                "Local recording (SD card) for cameras",
+                "Cellular backup for alarm systems",
+                "Report persistent jamming to FCC"
+            )
+        )
+    )
+
+    // ==================== PROFESSIONAL SURVEILLANCE EQUIPMENT ====================
+
+    /**
+     * Professional-grade surveillance equipment profiles.
+     * Used by law enforcement, private investigators, and TSCM professionals.
+     */
+    data class ProfessionalSurveillanceProfile(
+        val id: String,
+        val name: String,
+        val category: ProfessionalCategory,
+        val manufacturer: String?,
+        val typicalUsers: List<String>,
+        val detectionMethods: List<String>,
+        val dataCollected: List<String>,
+        val legalFramework: String,
+        val rfCharacteristics: RfCharacteristics?
+    )
+
+    enum class ProfessionalCategory(val displayName: String) {
+        LAW_ENFORCEMENT_TRACKER("Law Enforcement GPS Tracker"),
+        AUDIO_BUG("Audio Transmitter/Bug"),
+        GSM_BUG("GSM/Cellular Bug"),
+        TSCM_EQUIPMENT("TSCM Sweep Equipment"),
+        FORENSIC_TOOL("Digital Forensics Tool")
+    }
+
+    data class RfCharacteristics(
+        val frequencyBands: List<String>,
+        val modulationType: String?,
+        val transmitPower: String?,
+        val detectionDifficulty: String
+    )
+
+    val professionalSurveillanceProfiles = listOf(
+        ProfessionalSurveillanceProfile(
+            id = "le_vehicle_tracker",
+            name = "Law Enforcement Vehicle Tracker",
+            category = ProfessionalCategory.LAW_ENFORCEMENT_TRACKER,
+            manufacturer = null, // Various
+            typicalUsers = listOf(
+                "FBI",
+                "DEA",
+                "State/Local Law Enforcement",
+                "Federal agencies"
+            ),
+            detectionMethods = listOf(
+                "Professional TSCM vehicle sweep",
+                "RF detector sweep of vehicle",
+                "Physical inspection by trained professional",
+                "Check for unusual cellular activity from vehicle",
+                "Look for magnetic devices under vehicle"
+            ),
+            dataCollected = listOf(
+                "Real-time GPS location",
+                "Historical movement patterns",
+                "Speed and direction",
+                "Stop locations and duration",
+                "Pattern of life analysis"
+            ),
+            legalFramework = "Requires court-approved warrant (US v. Jones 2012)",
+            rfCharacteristics = RfCharacteristics(
+                frequencyBands = listOf("4G LTE cellular bands"),
+                modulationType = "Cellular protocol",
+                transmitPower = "Low (battery conservation)",
+                detectionDifficulty = "High - professional sweep required"
+            )
+        ),
+
+        ProfessionalSurveillanceProfile(
+            id = "uhf_audio_bug",
+            name = "UHF Audio Transmitter (Bug)",
+            category = ProfessionalCategory.AUDIO_BUG,
+            manufacturer = null,
+            typicalUsers = listOf(
+                "Law enforcement (with warrant)",
+                "Corporate espionage (illegal)",
+                "Private investigators",
+                "Stalkers (illegal)"
+            ),
+            detectionMethods = listOf(
+                "Sweep with RF detector in 300-500 MHz range",
+                "Non-linear junction detector (NLJD)",
+                "Physical search for hidden devices",
+                "Check power outlets, lamps, smoke detectors",
+                "Thermal imaging for active electronics"
+            ),
+            dataCollected = listOf(
+                "Audio conversations",
+                "Ambient sounds",
+                "Voice recordings"
+            ),
+            legalFramework = "Wiretapping laws vary by state; generally requires warrant or consent",
+            rfCharacteristics = RfCharacteristics(
+                frequencyBands = listOf("300-500 MHz (UHF)"),
+                modulationType = "FM/AM narrowband",
+                transmitPower = "10-100 mW typically",
+                detectionDifficulty = "Medium - RF sweep can detect active transmission"
+            )
+        ),
+
+        ProfessionalSurveillanceProfile(
+            id = "vhf_audio_bug",
+            name = "VHF Audio Transmitter",
+            category = ProfessionalCategory.AUDIO_BUG,
+            manufacturer = null,
+            typicalUsers = listOf(
+                "Older surveillance equipment",
+                "Budget devices"
+            ),
+            detectionMethods = listOf(
+                "RF detector sweep in 100-300 MHz range",
+                "Broadband receiver scan",
+                "Physical inspection"
+            ),
+            dataCollected = listOf(
+                "Audio conversations"
+            ),
+            legalFramework = "Wiretapping laws apply",
+            rfCharacteristics = RfCharacteristics(
+                frequencyBands = listOf("100-300 MHz (VHF)"),
+                modulationType = "FM typically",
+                transmitPower = "Variable",
+                detectionDifficulty = "Medium-Low - older technology, easier to detect"
+            )
+        ),
+
+        ProfessionalSurveillanceProfile(
+            id = "gsm_bug",
+            name = "GSM/Cellular Audio Bug",
+            category = ProfessionalCategory.GSM_BUG,
+            manufacturer = null,
+            typicalUsers = listOf(
+                "Surveillance professionals",
+                "Corporate espionage",
+                "Private investigators"
+            ),
+            detectionMethods = listOf(
+                "Call the room and listen for ringtone",
+                "RF detector checking for cellular activity",
+                "Cell network analyzer looking for unknown devices",
+                "Physical search of room",
+                "Check for SIM cards in unusual objects"
+            ),
+            dataCollected = listOf(
+                "Audio - caller can listen remotely",
+                "Some models have GPS",
+                "Can be activated remotely via phone call"
+            ),
+            legalFramework = "Wiretapping laws apply; illegal without consent/warrant",
+            rfCharacteristics = RfCharacteristics(
+                frequencyBands = listOf("Cellular bands (850/900/1800/1900 MHz)"),
+                modulationType = "GSM/LTE cellular",
+                transmitPower = "Standard cellular",
+                detectionDifficulty = "High - only transmits when activated"
+            )
+        ),
+
+        ProfessionalSurveillanceProfile(
+            id = "tscm_equipment",
+            name = "TSCM Sweep Equipment",
+            category = ProfessionalCategory.TSCM_EQUIPMENT,
+            manufacturer = "REI, JJN Digital, Others",
+            typicalUsers = listOf(
+                "TSCM professionals",
+                "Corporate security",
+                "Government counter-intelligence"
+            ),
+            detectionMethods = listOf(
+                "If detected, may indicate sweep in progress",
+                "Look for professional vehicles/personnel",
+                "High-end RF detection equipment signatures"
+            ),
+            dataCollected = listOf(
+                "Detects bugs, not collects data",
+                "Spectrum analysis",
+                "NLJD signatures"
+            ),
+            legalFramework = "Legal for authorized security sweeps",
+            rfCharacteristics = RfCharacteristics(
+                frequencyBands = listOf("Wideband receivers", "0-6 GHz coverage typically"),
+                modulationType = "Receiver only",
+                transmitPower = "N/A - detection equipment",
+                detectionDifficulty = "N/A"
+            )
+        )
+    )
+
+    // ==================== SMART HOME / IoT SECURITY PATTERNS ====================
+
+    /**
+     * Extended smart home and IoT security profiles with privacy context.
+     */
+    data class SmartHomeSecurityProfile(
+        val id: String,
+        val name: String,
+        val manufacturer: String,
+        val deviceType: SmartHomeDeviceType,
+        val wifiCharacteristics: WifiCharacteristics,
+        val bleCharacteristics: BleCharacteristics?,
+        val cloudDependency: CloudDependency,
+        val lawEnforcementAccess: LawEnforcementAccessProfile,
+        val privacyConcerns: List<String>,
+        val networkPatterns: List<String>
+    )
+
+    enum class SmartHomeDeviceType(val displayName: String) {
+        VIDEO_DOORBELL("Video Doorbell"),
+        SECURITY_CAMERA("Security Camera"),
+        MESH_NETWORK("Mesh Network/Sidewalk"),
+        SMART_SPEAKER("Smart Speaker"),
+        SMART_LOCK("Smart Lock"),
+        BABY_MONITOR("Baby Monitor"),
+        MATTER_THREAD("Matter/Thread Device")
+    }
+
+    data class WifiCharacteristics(
+        val ssidPatterns: List<String>,
+        val macPrefixes: List<String>,
+        val defaultPorts: List<Int>
+    )
+
+    data class BleCharacteristics(
+        val namePatterns: List<String>,
+        val serviceUuids: List<String>
+    )
+
+    enum class CloudDependency(val displayName: String, val description: String) {
+        MANDATORY("Cloud Required", "Device requires cloud connection to function"),
+        OPTIONAL("Cloud Optional", "Local control possible but cloud available"),
+        LOCAL_ONLY("Local Only", "No cloud connectivity - fully local"),
+        HYBRID("Hybrid", "Some features require cloud, basic function local")
+    }
+
+    data class LawEnforcementAccessProfile(
+        val hasPartnership: Boolean,
+        val partnershipDetails: String?,
+        val canRequestWithoutWarrant: Boolean,
+        val ownerNotified: Boolean
+    )
+
+    val smartHomeSecurityProfiles = listOf(
+        SmartHomeSecurityProfile(
+            id = "ring_doorbell",
+            name = "Ring Video Doorbell",
+            manufacturer = "Ring (Amazon)",
+            deviceType = SmartHomeDeviceType.VIDEO_DOORBELL,
+            wifiCharacteristics = WifiCharacteristics(
+                ssidPatterns = listOf("(?i)^ring[_-]?(doorbell|cam|setup|stick).*"),
+                macPrefixes = listOf("44:73:D6", "18:B4:30", "0C:47:C9"),
+                defaultPorts = listOf(443, 9999)
+            ),
+            bleCharacteristics = BleCharacteristics(
+                namePatterns = listOf("(?i)^ring[_-]?.*"),
+                serviceUuids = listOf()
+            ),
+            cloudDependency = CloudDependency.MANDATORY,
+            lawEnforcementAccess = LawEnforcementAccessProfile(
+                hasPartnership = true,
+                partnershipDetails = "Partners with 2,500+ police departments via Neighbors app. " +
+                    "Police can request footage through Neighbors Public Safety Service.",
+                canRequestWithoutWarrant = true,
+                ownerNotified = false // Under new policy (2022), Ring requires warrant unless emergency
+            ),
+            privacyConcerns = listOf(
+                "Footage shared with 2,500+ law enforcement agencies",
+                "Neighbors app creates surveillance network",
+                "Audio recording range: 15-25 feet",
+                "Video recording: 180 degree view",
+                "Cloud storage on Amazon servers",
+                "Facial recognition capability (Neighbors app)",
+                "Always-on microphone"
+            ),
+            networkPatterns = listOf(
+                "Constant outbound connection to Ring servers",
+                "Video upload on motion detection",
+                "Periodic health check packets"
+            )
+        ),
+
+        SmartHomeSecurityProfile(
+            id = "amazon_sidewalk",
+            name = "Amazon Sidewalk Network",
+            manufacturer = "Amazon",
+            deviceType = SmartHomeDeviceType.MESH_NETWORK,
+            wifiCharacteristics = WifiCharacteristics(
+                ssidPatterns = listOf("(?i)^(amazon[_-]?sidewalk|sidewalk[_-]?bridge).*"),
+                macPrefixes = listOf("44:73:D6", "18:B4:30"),
+                defaultPorts = listOf()
+            ),
+            bleCharacteristics = BleCharacteristics(
+                namePatterns = listOf("(?i)^sidewalk.*"),
+                serviceUuids = listOf()
+            ),
+            cloudDependency = CloudDependency.MANDATORY,
+            lawEnforcementAccess = LawEnforcementAccessProfile(
+                hasPartnership = true,
+                partnershipDetails = "Part of Amazon ecosystem with Ring partnerships",
+                canRequestWithoutWarrant = false,
+                ownerNotified = true
+            ),
+            privacyConcerns = listOf(
+                "Uses 900 MHz (LoRa) and Bluetooth for mesh network",
+                "Borrows bandwidth from Ring/Echo devices",
+                "Can track Tile trackers via network",
+                "Privacy: Shared with neighbors' devices",
+                "Creates neighborhood-wide tracking network",
+                "Low-bandwidth but persistent connectivity"
+            ),
+            networkPatterns = listOf(
+                "900 MHz LoRa transmissions",
+                "BLE advertisements",
+                "Mesh routing between Amazon devices"
+            )
+        ),
+
+        SmartHomeSecurityProfile(
+            id = "matter_thread",
+            name = "Matter/Thread Device",
+            manufacturer = "Various (Standard)",
+            deviceType = SmartHomeDeviceType.MATTER_THREAD,
+            wifiCharacteristics = WifiCharacteristics(
+                ssidPatterns = listOf(),
+                macPrefixes = listOf(),
+                defaultPorts = listOf(5540) // Matter port
+            ),
+            bleCharacteristics = BleCharacteristics(
+                namePatterns = listOf(),
+                serviceUuids = listOf("FFF6") // Matter commissioning
+            ),
+            cloudDependency = CloudDependency.OPTIONAL,
+            lawEnforcementAccess = LawEnforcementAccessProfile(
+                hasPartnership = false,
+                partnershipDetails = "Local control standard - varies by manufacturer",
+                canRequestWithoutWarrant = false,
+                ownerNotified = true
+            ),
+            privacyConcerns = listOf(
+                "New smart home standard (2022+)",
+                "Uses 2.4 GHz (Thread) or WiFi",
+                "Local control possible - more private than cloud-dependent",
+                "Interoperability across ecosystems",
+                "Privacy depends on manufacturer implementation"
+            ),
+            networkPatterns = listOf(
+                "Thread mesh on 2.4 GHz (IEEE 802.15.4)",
+                "Matter over WiFi",
+                "Local mDNS/DNS-SD discovery"
+            )
+        )
+    )
+
+    // ==================== LAW ENFORCEMENT EQUIPMENT PROFILES ====================
+
+    /**
+     * Detailed law enforcement equipment profiles for detection.
+     */
+    data class LawEnforcementEquipmentProfile(
+        val id: String,
+        val name: String,
+        val category: LEEquipmentCategory,
+        val manufacturer: String,
+        val wifiPatterns: List<String>,
+        val blePatterns: List<String>,
+        val macPrefixes: List<String>,
+        val capabilities: List<String>,
+        val dataUploaded: String,
+        val detectionIndicators: List<String>
+    )
+
+    enum class LEEquipmentCategory(val displayName: String) {
+        BODY_CAMERA("Body Worn Camera"),
+        IN_CAR_VIDEO("In-Car Video System"),
+        LPR_ALPR("License Plate Reader"),
+        RADIO_SYSTEM("Radio Communication"),
+        FORENSIC_TOOL("Forensic Tool")
+    }
+
+    val lawEnforcementEquipmentProfiles = listOf(
+        // Body Worn Cameras
+        LawEnforcementEquipmentProfile(
+            id = "axon_body_3",
+            name = "Axon Body 3/4",
+            category = LEEquipmentCategory.BODY_CAMERA,
+            manufacturer = "Axon Enterprise",
+            wifiPatterns = listOf("(?i)^axon[_-]?(body|signal).*", "(?i)^ab[234].*"),
+            blePatterns = listOf("(?i)^axon.*", "(?i)^(body|flex)[_-]?[234].*"),
+            macPrefixes = listOf(), // Nordic Semiconductor typically
+            capabilities = listOf(
+                "HD video recording",
+                "GPS location logging",
+                "Automatic activation via Axon Signal",
+                "Real-time streaming (Axon Respond)",
+                "WiFi and LTE upload",
+                "10+ hour battery life"
+            ),
+            dataUploaded = "Evidence.com cloud storage",
+            detectionIndicators = listOf(
+                "BLE beacon for Axon Signal triggers",
+                "WiFi connection for docking/upload",
+                "Axon-specific BLE service UUIDs"
+            )
+        ),
+
+        LawEnforcementEquipmentProfile(
+            id = "motorola_si500",
+            name = "Motorola Si500",
+            category = LEEquipmentCategory.BODY_CAMERA,
+            manufacturer = "Motorola Solutions",
+            wifiPatterns = listOf("(?i)^(moto|si)[_-]?500.*", "(?i)^v[35]00.*"),
+            blePatterns = listOf("(?i)^(si|v)[0-9]+.*"),
+            macPrefixes = listOf(),
+            capabilities = listOf(
+                "Video recording",
+                "WiFi upload",
+                "BLE connectivity",
+                "Integration with Motorola radios"
+            ),
+            dataUploaded = "CommandCentral Vault",
+            detectionIndicators = listOf(
+                "Motorola BLE advertising",
+                "WiFi upload patterns"
+            )
+        ),
+
+        LawEnforcementEquipmentProfile(
+            id = "digital_ally_firstvu",
+            name = "Digital Ally FirstVU",
+            category = LEEquipmentCategory.BODY_CAMERA,
+            manufacturer = "Digital Ally",
+            wifiPatterns = listOf("(?i)^(digital[_-]?ally|firstvu).*"),
+            blePatterns = listOf("(?i)^(da|firstvu).*"),
+            macPrefixes = listOf(),
+            capabilities = listOf(
+                "HD video",
+                "WiFi upload",
+                "Cloud storage"
+            ),
+            dataUploaded = "Digital Ally cloud",
+            detectionIndicators = listOf(
+                "WiFi direct for upload",
+                "Digital Ally branding in SSID"
+            )
+        ),
+
+        LawEnforcementEquipmentProfile(
+            id = "watchguard_4re",
+            name = "WatchGuard 4RE",
+            category = LEEquipmentCategory.IN_CAR_VIDEO,
+            manufacturer = "Motorola Solutions (WatchGuard)",
+            wifiPatterns = listOf("(?i)^watchguard.*", "(?i)^4re.*"),
+            blePatterns = listOf("(?i)^watchguard.*"),
+            macPrefixes = listOf(),
+            capabilities = listOf(
+                "Multiple camera angles",
+                "In-car video recording",
+                "Body camera integration",
+                "WiFi/cellular upload",
+                "Automatic trigger on lights/siren"
+            ),
+            dataUploaded = "Evidence Library cloud",
+            detectionIndicators = listOf(
+                "WiFi AP in patrol vehicle",
+                "Multiple camera streams",
+                "Integration with body cameras"
+            )
+        ),
+
+        // License Plate Readers
+        LawEnforcementEquipmentProfile(
+            id = "vigilant_motorola",
+            name = "Vigilant ALPR (Motorola)",
+            category = LEEquipmentCategory.LPR_ALPR,
+            manufacturer = "Motorola Solutions",
+            wifiPatterns = listOf("(?i)^vigilant.*"),
+            blePatterns = listOf(),
+            macPrefixes = listOf(),
+            capabilities = listOf(
+                "Mobile and fixed ALPR",
+                "Real-time plate lookups",
+                "Integration with LEARN database",
+                "Hot list alerts"
+            ),
+            dataUploaded = "Vigilant LEARN database",
+            detectionIndicators = listOf(
+                "WiFi upload from mobile unit",
+                "Cellular connectivity",
+                "IR illumination visible at night"
+            )
+        ),
+
+        LawEnforcementEquipmentProfile(
+            id = "flock_safety_lpr",
+            name = "Flock Safety ALPR",
+            category = LEEquipmentCategory.LPR_ALPR,
+            manufacturer = "Flock Safety",
+            wifiPatterns = listOf("(?i)^flock.*", "(?i)^falcon.*", "(?i)^sparrow.*", "(?i)^condor.*"),
+            blePatterns = listOf("(?i)^flock.*"),
+            macPrefixes = listOf("50:29:4D", "86:25:19"), // Quectel modems
+            capabilities = listOf(
+                "License plate capture",
+                "Vehicle fingerprint (make/model/color)",
+                "Direction of travel",
+                "Real-time alerts",
+                "Cross-jurisdiction sharing"
+            ),
+            dataUploaded = "Flock Safety cloud (30-day retention typically)",
+            detectionIndicators = listOf(
+                "Solar-powered pole mount",
+                "Quectel LTE modem OUI",
+                "Flock SSID patterns"
+            )
+        ),
+
+        LawEnforcementEquipmentProfile(
+            id = "elsag_alpr",
+            name = "ELSAG ALPR",
+            category = LEEquipmentCategory.LPR_ALPR,
+            manufacturer = "Leonardo DRS",
+            wifiPatterns = listOf("(?i)^elsag.*"),
+            blePatterns = listOf(),
+            macPrefixes = listOf(),
+            capabilities = listOf(
+                "Mobile ALPR on patrol vehicles",
+                "Fixed position cameras",
+                "EOC integration"
+            ),
+            dataUploaded = "ELSAG Enterprise Operations Center",
+            detectionIndicators = listOf(
+                "Mounted on patrol vehicle",
+                "Multiple cameras per vehicle",
+                "IR flash at night"
+            )
+        )
+    )
+
+    // ==================== CONFIRMATION METHODS ====================
+
+    /**
+     * Confirmation methods for suspected surveillance devices.
+     * Practical steps users can take to verify detections.
+     */
+    data class ConfirmationMethod(
+        val deviceCategory: String,
+        val steps: List<ConfirmationStep>,
+        val equipment: List<String>,
+        val warnings: List<String>
+    )
+
+    data class ConfirmationStep(
+        val order: Int,
+        val action: String,
+        val details: String,
+        val difficulty: ConfirmationDifficulty
+    )
+
+    enum class ConfirmationDifficulty(val displayName: String) {
+        EASY("Easy - No special equipment"),
+        MODERATE("Moderate - Basic tools/apps"),
+        DIFFICULT("Difficult - Special equipment"),
+        PROFESSIONAL("Professional - TSCM expertise required")
+    }
+
+    val confirmationMethods = mapOf(
+        "hidden_camera" to ConfirmationMethod(
+            deviceCategory = "Hidden Cameras",
+            steps = listOf(
+                ConfirmationStep(1, "Visual inspection with flashlight",
+                    "Shine a bright flashlight around the room looking for reflections from camera lenses. " +
+                    "Camera lenses will reflect light differently than other surfaces.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(2, "Scan with phone camera for IR LEDs",
+                    "Use your phone's front camera (less IR filtering) to look for invisible IR LEDs. " +
+                    "Night vision cameras emit IR light that phone cameras can detect as purple/white glow.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(3, "Check for small holes in objects",
+                    "Examine smoke detectors, clocks, USB chargers, air fresheners, picture frames, " +
+                    "and other common objects for tiny holes that could house a camera.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(4, "Use RF detector in sweep mode",
+                    "If the camera transmits wirelessly, an RF detector can locate it. " +
+                    "Sweep the room slowly, focusing on areas where detection app showed signals.",
+                    ConfirmationDifficulty.MODERATE),
+                ConfirmationStep(5, "Network scan for unknown devices",
+                    "Use a network scanner app to identify all devices on the WiFi network. " +
+                    "Unknown devices with video-related ports may be cameras.",
+                    ConfirmationDifficulty.MODERATE)
+            ),
+            equipment = listOf(
+                "Flashlight (bright)",
+                "Smartphone camera (front camera preferred)",
+                "RF detector (optional)",
+                "WiFi network scanner app"
+            ),
+            warnings = listOf(
+                "Do not tamper with devices in rental properties - document and report instead",
+                "Hidden cameras in private spaces are illegal in most jurisdictions",
+                "If you find a camera, take photos before touching it"
+            )
+        ),
+
+        "gps_tracker" to ConfirmationMethod(
+            deviceCategory = "GPS Trackers",
+            steps = listOf(
+                ConfirmationStep(1, "Inspect OBD-II port",
+                    "Check the OBD-II diagnostic port under the driver's side dashboard. " +
+                    "Look for any plugged-in device that isn't a standard code reader.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(2, "Check vehicle undercarriage",
+                    "Use a flashlight to inspect under the vehicle, focusing on flat metal surfaces " +
+                    "where a magnetic tracker could attach. Check frame rails and crossmembers.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(3, "Inspect wheel wells",
+                    "Feel inside all four wheel wells for magnetic devices. " +
+                    "Trackers are often placed in the plastic liner or on metal components.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(4, "Check bumpers and trunk",
+                    "Look behind front and rear bumpers (accessible from below). " +
+                    "Check spare tire compartment and trunk lining.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(5, "Professional TSCM sweep",
+                    "For hardwired trackers or persistent suspicion, hire a professional " +
+                    "TSCM (Technical Surveillance Countermeasures) expert.",
+                    ConfirmationDifficulty.PROFESSIONAL)
+            ),
+            equipment = listOf(
+                "Flashlight",
+                "Mirror on stick (for hard to see areas)",
+                "Mechanic's creeper (for under-vehicle inspection)",
+                "Magnetic wand or stud finder (helps locate magnetic devices)"
+            ),
+            warnings = listOf(
+                "If you find a tracker, DO NOT remove it immediately - it may be law enforcement",
+                "Document the device with photos before any action",
+                "Removing a tracker may be destruction of property if it belongs to someone else",
+                "Consult an attorney if you suspect illegal tracking"
+            )
+        ),
+
+        "drone" to ConfirmationMethod(
+            deviceCategory = "Drones",
+            steps = listOf(
+                ConfirmationStep(1, "Visual scan of sky",
+                    "Look up and scan the sky for the drone. Most consumer drones are visible " +
+                    "and audible within 100 meters. Look for flashing lights at night.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(2, "Listen for motor sound",
+                    "Drones make a distinctive buzzing/whirring sound from their propellers. " +
+                    "The sound is most noticeable when the drone is stationary/hovering.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(3, "Check Remote ID apps",
+                    "Use DroneScout, OpenDroneID, or AirMap apps to detect Remote ID broadcasts. " +
+                    "Since Sept 2023, most drones must broadcast their ID and location.",
+                    ConfirmationDifficulty.MODERATE),
+                ConfirmationStep(4, "WiFi scan for drone networks",
+                    "Scan for WiFi networks with drone manufacturer names (DJI, Parrot, etc.). " +
+                    "Drone control WiFi networks are usually visible when nearby.",
+                    ConfirmationDifficulty.MODERATE),
+                ConfirmationStep(5, "Track signal direction",
+                    "Use the app's signal strength indicator to determine the drone's direction. " +
+                    "Walk in the direction of stronger signal to locate.",
+                    ConfirmationDifficulty.MODERATE)
+            ),
+            equipment = listOf(
+                "Remote ID app (DroneScout, OpenDroneID)",
+                "Binoculars (for distant drones)",
+                "WiFi scanner app"
+            ),
+            warnings = listOf(
+                "Do not attempt to shoot down or interfere with drones - this is illegal",
+                "Drones without Remote ID are illegal in US since Sept 2023",
+                "If drone is over your property, document and report to local authorities",
+                "Commercial/government drones may be operating legally with permissions"
+            )
+        ),
+
+        "audio_bug" to ConfirmationMethod(
+            deviceCategory = "Audio Bugs/Transmitters",
+            steps = listOf(
+                ConfirmationStep(1, "Visual inspection of room",
+                    "Check electrical outlets, power strips, smoke detectors, lamps, and USB chargers. " +
+                    "Bugs are often hidden in or near power sources.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(2, "Listen for feedback",
+                    "Call your own phone and listen for electronic feedback or clicking. " +
+                    "Some bugs cause interference with phone signals.",
+                    ConfirmationDifficulty.EASY),
+                ConfirmationStep(3, "RF detector sweep",
+                    "Use an RF detector to sweep the room. Focus on the frequency ranges: " +
+                    "100-300 MHz (VHF) and 300-500 MHz (UHF) for traditional bugs.",
+                    ConfirmationDifficulty.MODERATE),
+                ConfirmationStep(4, "GSM bug detection",
+                    "Use a cellular activity detector or make calls to find GSM bugs. " +
+                    "These only transmit when active, making them harder to detect.",
+                    ConfirmationDifficulty.DIFFICULT),
+                ConfirmationStep(5, "Professional TSCM sweep",
+                    "For high-assurance situations, hire a TSCM professional with " +
+                    "spectrum analyzers and non-linear junction detectors.",
+                    ConfirmationDifficulty.PROFESSIONAL)
+            ),
+            equipment = listOf(
+                "Flashlight",
+                "RF detector (pocket-sized available ~\$20-100)",
+                "Cell phone for interference testing",
+                "NLJD (professional equipment)"
+            ),
+            warnings = listOf(
+                "Do not discuss sensitive topics while searching - assume you're being heard",
+                "If found, document before removal",
+                "Wiretapping is illegal - report to law enforcement if you find a bug",
+                "In some states, all-party consent is required for recording"
+            )
+        )
+    )
+
+    // ==================== DEVICE METADATA EXTENSIONS ====================
+
+    /**
+     * Extended metadata for device profiles including operational context.
+     */
+    data class DeviceOperationalMetadata(
+        val deviceType: DeviceType,
+        val estimatedRange: String,
+        val powerRequirements: String,
+        val typicalDeploymentScenarios: List<String>,
+        val legalStatus: LegalStatus,
+        val dataCollected: List<String>,
+        val dataRetention: String,
+        val typicalOperators: List<String>,
+        val counterDetectionDifficulty: String,
+        val recommendedResponse: List<String>
+    )
+
+    data class LegalStatus(
+        val generalStatus: String,
+        val variances: String?,
+        val relevantLaws: List<String>
+    )
+
+    val deviceOperationalMetadata = mapOf(
+        DeviceType.HIDDEN_CAMERA to DeviceOperationalMetadata(
+            deviceType = DeviceType.HIDDEN_CAMERA,
+            estimatedRange = "WiFi cameras: network dependent; Analog: 50-500m depending on power",
+            powerRequirements = "Battery (hours to days) or hardwired (continuous)",
+            typicalDeploymentScenarios = listOf(
+                "Airbnb/hotel room surveillance (illegal)",
+                "Workplace monitoring (varies by jurisdiction)",
+                "Nanny cams (legal with notice in most states)",
+                "Voyeurism (illegal everywhere)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Illegal in private spaces without consent",
+                variances = "Workplace rules vary; bathrooms/changing rooms always illegal",
+                relevantLaws = listOf(
+                    "Video Voyeurism Prevention Act (federal)",
+                    "State wiretapping/eavesdropping laws",
+                    "Invasion of privacy torts"
+                )
+            ),
+            dataCollected = listOf(
+                "Video footage (continuous or motion-triggered)",
+                "Audio (if microphone equipped)",
+                "Timestamps",
+                "Motion events"
+            ),
+            dataRetention = "Varies - SD card storage or cloud (days to indefinite)",
+            typicalOperators = listOf(
+                "Airbnb/hotel guests checking for cameras",
+                "Property owners (legal on own property)",
+                "Stalkers/voyeurs (illegal)",
+                "Private investigators"
+            ),
+            counterDetectionDifficulty = "Easy-Moderate: RF detection, lens reflection, IR detection",
+            recommendedResponse = listOf(
+                "Document the device with photos",
+                "Do not touch or tamper with the device",
+                "Report to property management/police",
+                "Leave the area if in rental property"
+            )
+        ),
+
+        DeviceType.DRONE to DeviceOperationalMetadata(
+            deviceType = DeviceType.DRONE,
+            estimatedRange = "Control: 1-10km depending on model; Visual: typically <500m",
+            powerRequirements = "Battery - 15-45 minutes typical flight time",
+            typicalDeploymentScenarios = listOf(
+                "Recreational flying (legal with FAA rules)",
+                "Photography/videography",
+                "Real estate photography",
+                "Law enforcement surveillance",
+                "Stalking/harassment (illegal)",
+                "Package delivery (Amazon, etc.)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Legal with FAA registration and Remote ID (since 9/2023)",
+                variances = "Restricted near airports, over crowds, at night without waiver",
+                relevantLaws = listOf(
+                    "FAA Part 107 (commercial)",
+                    "FAA recreational rules",
+                    "State/local drone laws",
+                    "Remote ID rule (effective 9/16/2023)"
+                )
+            ),
+            dataCollected = listOf(
+                "Video/photos",
+                "GPS coordinates of footage",
+                "Flight path/telemetry",
+                "Potentially facial recognition"
+            ),
+            dataRetention = "Varies by operator",
+            typicalOperators = listOf(
+                "Recreational hobbyists",
+                "Commercial photographers",
+                "Law enforcement",
+                "Real estate agents",
+                "Infrastructure inspectors"
+            ),
+            counterDetectionDifficulty = "Easy: Visual, audible, Remote ID detection",
+            recommendedResponse = listOf(
+                "Check Remote ID apps for registration info",
+                "Document time, location, behavior",
+                "If persistent/suspicious, report to local police",
+                "Do NOT attempt to shoot down or interfere"
+            )
+        ),
+
+        DeviceType.RF_JAMMER to DeviceOperationalMetadata(
+            deviceType = DeviceType.RF_JAMMER,
+            estimatedRange = "GPS jammers: 5-50m typical; Cell jammers: 10-100m; WiFi: 10-50m",
+            powerRequirements = "Battery (cigarette lighter adapter) or wall power",
+            typicalDeploymentScenarios = listOf(
+                "Criminals avoiding GPS tracking",
+                "Car thieves defeating trackers",
+                "Burglars disabling WiFi security",
+                "Exam cheaters (illegal)",
+                "Prisons (legal with federal waiver)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "ILLEGAL to operate, sell, or market in the US",
+                variances = "Only federal government can authorize use",
+                relevantLaws = listOf(
+                    "Communications Act of 1934",
+                    "47 U.S.C. Section 333",
+                    "FCC enforcement actions - up to \$100K+ fines",
+                    "Criminal penalties possible"
+                )
+            ),
+            dataCollected = listOf("N/A - jamming devices collect no data"),
+            dataRetention = "N/A",
+            typicalOperators = listOf(
+                "Criminals",
+                "Fleet drivers avoiding tracking (illegal)",
+                "Prisons (federally authorized)"
+            ),
+            counterDetectionDifficulty = "Moderate: Detection by signal loss pattern analysis",
+            recommendedResponse = listOf(
+                "DANGER: Cannot make emergency calls in jammed area",
+                "Leave the area immediately if possible",
+                "Note time, location, duration for FCC report",
+                "Report persistent jamming to FCC Enforcement Bureau",
+                "Consider using wired alternatives"
+            )
+        ),
+
+        DeviceType.STINGRAY_IMSI to DeviceOperationalMetadata(
+            deviceType = DeviceType.STINGRAY_IMSI,
+            estimatedRange = "Effective range: 1-2 km radius",
+            powerRequirements = "High power - typically vehicle-mounted with generator",
+            typicalDeploymentScenarios = listOf(
+                "Law enforcement surveillance (warrant varies by jurisdiction)",
+                "Mass event monitoring (protests, gatherings)",
+                "Locating specific phones/individuals",
+                "Foreign intelligence (illegal domestic use)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Legal for law enforcement with appropriate legal process",
+                variances = "DOJ requires warrant except for exigent circumstances",
+                relevantLaws = listOf(
+                    "Fourth Amendment (search/seizure)",
+                    "Carpenter v. United States (2018)",
+                    "State cell-site simulator laws",
+                    "DOJ policy requires warrant"
+                )
+            ),
+            dataCollected = listOf(
+                "IMSI (SIM identifier) of all nearby phones",
+                "IMEI (device identifier)",
+                "Phone calls (with active interception)",
+                "SMS messages",
+                "Precise location",
+                "Device model information"
+            ),
+            dataRetention = "Varies - often destroyed after investigation",
+            typicalOperators = listOf(
+                "FBI",
+                "DEA",
+                "US Marshals",
+                "State/local law enforcement",
+                "Foreign intelligence (illegal in US)"
+            ),
+            counterDetectionDifficulty = "Difficult: Requires cellular protocol analysis",
+            recommendedResponse = listOf(
+                "Enable airplane mode for complete privacy",
+                "Use encrypted messaging (Signal) if phone must stay on",
+                "Disable 2G if phone supports it",
+                "Note location/time for potential legal challenges",
+                "Use WiFi calling on trusted network"
+            )
+        ),
+
+        DeviceType.AIRTAG to DeviceOperationalMetadata(
+            deviceType = DeviceType.AIRTAG,
+            estimatedRange = "BLE: ~10-30m direct; Find My network: global",
+            powerRequirements = "CR2032 battery - ~1 year lifespan",
+            typicalDeploymentScenarios = listOf(
+                "Personal item tracking (keys, bags)",
+                "Pet tracking",
+                "Vehicle tracking",
+                "Stalking (illegal use)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Legal for personal property; illegal to track others without consent",
+                variances = "Anti-stalking laws apply in all states",
+                relevantLaws = listOf(
+                    "State stalking/cyberstalking laws",
+                    "Federal stalking statutes (18 U.S.C. 2261A)",
+                    "Apple's anti-stalking measures"
+                )
+            ),
+            dataCollected = listOf(
+                "Real-time location via Find My network",
+                "Location history (on owner's device)",
+                "Timestamps of location updates"
+            ),
+            dataRetention = "Apple: 24 hours; Owner device: varies",
+            typicalOperators = listOf(
+                "Consumers tracking belongings",
+                "Parents tracking children's items",
+                "Stalkers/abusers (illegal)"
+            ),
+            counterDetectionDifficulty = "Easy: iOS alerts, Android AirGuard app, audio chirp",
+            recommendedResponse = listOf(
+                "If unknown AirTag found, disable it (remove battery)",
+                "Use AirGuard app on Android for detection",
+                "iOS will alert you to unknown AirTags traveling with you",
+                "Report to police if you believe you're being stalked"
+            )
+        ),
+
+        DeviceType.RING_DOORBELL to DeviceOperationalMetadata(
+            deviceType = DeviceType.RING_DOORBELL,
+            estimatedRange = "WiFi dependent; Audio: 15-25 feet; Video: 180 degrees",
+            powerRequirements = "Battery (rechargeable) or hardwired",
+            typicalDeploymentScenarios = listOf(
+                "Home security",
+                "Package theft prevention",
+                "Visitor monitoring",
+                "Neighborhood surveillance (Neighbors app)"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Legal on own property; recordings of public areas generally legal",
+                variances = "Audio recording laws vary by state (one-party vs all-party consent)",
+                relevantLaws = listOf(
+                    "State wiretapping laws (audio)",
+                    "Privacy laws for public areas",
+                    "Amazon/Ring law enforcement partnerships"
+                )
+            ),
+            dataCollected = listOf(
+                "Video footage (motion-triggered or continuous)",
+                "Audio recordings",
+                "Motion detection events",
+                "Facial recognition (via Neighbors app)",
+                "Visitor patterns"
+            ),
+            dataRetention = "Cloud: 60 days (Ring Protect); Can be shared with police",
+            typicalOperators = listOf(
+                "Homeowners",
+                "Landlords",
+                "Business owners",
+                "Law enforcement (via requests)"
+            ),
+            counterDetectionDifficulty = "Easy: Visible device, WiFi scan",
+            recommendedResponse = listOf(
+                "Be aware you may be recorded approaching property",
+                "Ring footage may be shared with 2,500+ police departments",
+                "Audio is captured - be mindful of conversations",
+                "Check if property has Ring via visible device or Neighbors app"
+            )
+        ),
+
+        DeviceType.FLOCK_SAFETY_CAMERA to DeviceOperationalMetadata(
+            deviceType = DeviceType.FLOCK_SAFETY_CAMERA,
+            estimatedRange = "ALPR capture: effective on passing vehicles at normal speeds",
+            powerRequirements = "Solar powered with cellular backhaul",
+            typicalDeploymentScenarios = listOf(
+                "Neighborhood entrance monitoring",
+                "HOA/private community surveillance",
+                "Law enforcement vehicle tracking",
+                "Business parking lot monitoring"
+            ),
+            legalStatus = LegalStatus(
+                generalStatus = "Legal - no expectation of privacy for license plates in public",
+                variances = "Some states have ALPR data retention limits",
+                relevantLaws = listOf(
+                    "State ALPR laws (CA, ME, NH have restrictions)",
+                    "Fourth Amendment considerations",
+                    "Data retention policies vary"
+                )
+            ),
+            dataCollected = listOf(
+                "License plate numbers and images",
+                "Vehicle make, model, color",
+                "Direction of travel",
+                "Timestamps and GPS coordinates",
+                "Vehicle 'fingerprint' for re-identification"
+            ),
+            dataRetention = "Flock: 30 days standard; Law enforcement may retain longer",
+            typicalOperators = listOf(
+                "HOAs and private communities",
+                "Law enforcement agencies",
+                "Business parks",
+                "Schools"
+            ),
+            counterDetectionDifficulty = "Easy: Visible pole-mounted cameras, WiFi/BLE detection",
+            recommendedResponse = listOf(
+                "Your vehicle movements are being tracked in this area",
+                "Data may be shared across 1,500+ law enforcement agencies",
+                "Consider varying routes if concerned about pattern analysis",
+                "Check flockos.com or local government for camera locations"
+            )
+        )
+    )
 }

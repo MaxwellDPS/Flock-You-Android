@@ -31,6 +31,11 @@ static void cdc_rx_callback(void* context) {
 
     // Signal RX thread that data is available
     FURI_LOG_D(TAG, "RX callback triggered");
+
+    // Release the semaphore to wake up the RX thread
+    if (usb->rx_semaphore) {
+        furi_semaphore_release(usb->rx_semaphore);
+    }
 }
 
 static void cdc_state_callback(void* context, CdcState state) {
@@ -64,16 +69,23 @@ static int32_t usb_cdc_rx_thread(void* context) {
     uint8_t buffer[64];
     uint32_t poll_count = 0;
 
-    FURI_LOG_I(TAG, "USB CDC RX thread started (polling channel %d)", FLOCK_CDC_CHANNEL);
+    FURI_LOG_I(TAG, "USB CDC RX thread started (channel %d)", FLOCK_CDC_CHANNEL);
 
     while (usb->running) {
-        // Log periodically
-        if (poll_count % 500 == 0) {
+        // Wait for the semaphore signal from the RX callback, with a timeout
+        // to allow periodic polling as a fallback and to check if we should stop
+        FuriStatus status = furi_semaphore_acquire(usb->rx_semaphore, 100);
+
+        if (!usb->running) break;
+
+        // Log periodically (every ~5 seconds)
+        if (poll_count % 50 == 0) {
             FURI_LOG_D(TAG, "RX poll #%lu, connected=%d", poll_count, usb->connected);
         }
         poll_count++;
 
-        // Poll for data on channel 1
+        // Poll for data on channel 1 (do this whether signaled or timed out)
+        // This ensures we don't miss data even if the callback is not working perfectly
         int32_t received = furi_hal_cdc_receive(FLOCK_CDC_CHANNEL, buffer, sizeof(buffer));
         if (received > 0) {
             FURI_LOG_I(TAG, "RX: %ld bytes: %02X %02X %02X %02X",
@@ -98,9 +110,9 @@ static int32_t usb_cdc_rx_thread(void* context) {
             if (callback) {
                 callback(ctx, buffer, received);
             }
-        } else {
-            // Small delay to prevent busy-waiting
-            furi_delay_ms(10);
+        } else if (status == FuriStatusErrorTimeout) {
+            // No data and timeout - just continue waiting
+            // This is normal when no data is being received
         }
     }
 
@@ -121,11 +133,14 @@ FlockUsbCdc* flock_usb_cdc_alloc(void) {
     // Allocate mutex
     usb->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
+    // Allocate semaphore for RX signaling (binary semaphore: max 1, initial 0)
+    usb->rx_semaphore = furi_semaphore_alloc(1, 0);
+
     // Allocate stream buffers
     usb->rx_stream = furi_stream_buffer_alloc(USB_CDC_RX_BUFFER_SIZE, 1);
     usb->tx_stream = furi_stream_buffer_alloc(USB_CDC_TX_BUFFER_SIZE, 1);
 
-    if (!usb->mutex || !usb->rx_stream || !usb->tx_stream) {
+    if (!usb->mutex || !usb->rx_semaphore || !usb->rx_stream || !usb->tx_stream) {
         FURI_LOG_E(TAG, "Failed to allocate resources");
         flock_usb_cdc_free(usb);
         return NULL;
@@ -150,6 +165,11 @@ void flock_usb_cdc_free(FlockUsbCdc* usb) {
     }
     if (usb->tx_stream) {
         furi_stream_buffer_free(usb->tx_stream);
+    }
+
+    // Free semaphore
+    if (usb->rx_semaphore) {
+        furi_semaphore_free(usb->rx_semaphore);
     }
 
     // Free mutex
@@ -225,6 +245,12 @@ void flock_usb_cdc_stop(FlockUsbCdc* usb) {
 
     // Stop RX thread
     usb->running = false;
+
+    // Release semaphore to wake up the RX thread so it can exit
+    if (usb->rx_semaphore) {
+        furi_semaphore_release(usb->rx_semaphore);
+    }
+
     if (usb->rx_thread) {
         furi_thread_join(usb->rx_thread);
         furi_thread_free(usb->rx_thread);
@@ -370,4 +396,127 @@ void flock_bridge_set_connection_mode(FlockBridgeApp* app, FlockConnectionMode m
     furi_mutex_release(app->mutex);
 
     FURI_LOG_I(TAG, "Connection mode set to: %d (active: %d)", mode, app->connection_mode);
+}
+
+// ============================================================================
+// USB CDC Pause/Resume for IR Scanning
+// ============================================================================
+// On Flipper Zero, dual USB CDC mode uses DMA/timer resources that can
+// conflict with the IR receiver. When IR scanning is needed, we temporarily
+// pause USB CDC by switching to single CDC mode (which uses fewer resources).
+
+bool flock_usb_cdc_pause(FlockUsbCdc* usb) {
+    if (!usb) return false;
+
+    furi_mutex_acquire(usb->mutex, FuriWaitForever);
+
+    // Already paused or not running
+    if (usb->paused || !usb->running) {
+        furi_mutex_release(usb->mutex);
+        return true;
+    }
+
+    FURI_LOG_I(TAG, "Pausing USB CDC for IR scanning");
+
+    // Stop the RX thread
+    usb->running = false;
+
+    // Release semaphore to wake up the RX thread so it can exit
+    if (usb->rx_semaphore) {
+        furi_semaphore_release(usb->rx_semaphore);
+    }
+
+    furi_mutex_release(usb->mutex);
+
+    // Wait for RX thread to stop (must be done outside mutex)
+    if (usb->rx_thread) {
+        furi_thread_join(usb->rx_thread);
+        furi_thread_free(usb->rx_thread);
+        usb->rx_thread = NULL;
+    }
+
+    furi_mutex_acquire(usb->mutex, FuriWaitForever);
+
+    // Clear callbacks on channel 1
+    furi_hal_cdc_set_callbacks(FLOCK_CDC_CHANNEL, NULL, NULL);
+
+    // Switch back to single CDC mode to free up DMA/timer resources
+    // This releases the resources that conflict with IR
+    if (usb->usb_if_prev) {
+        // We already have the previous config saved
+        FURI_LOG_I(TAG, "Switching to single CDC mode (freeing resources)");
+        furi_hal_usb_set_config(&usb_cdc_single, NULL);
+        furi_delay_ms(50);
+    }
+
+    usb->paused = true;
+    usb->connected = false;
+
+    furi_mutex_release(usb->mutex);
+
+    FURI_LOG_I(TAG, "USB CDC paused - IR scanner can now run");
+    return true;
+}
+
+bool flock_usb_cdc_resume(FlockUsbCdc* usb) {
+    if (!usb) return false;
+
+    furi_mutex_acquire(usb->mutex, FuriWaitForever);
+
+    // Not paused
+    if (!usb->paused) {
+        furi_mutex_release(usb->mutex);
+        return true;  // Already resumed
+    }
+
+    FURI_LOG_I(TAG, "Resuming USB CDC after IR scanning");
+
+    // Switch back to dual CDC mode
+    if (!furi_hal_usb_set_config(&usb_cdc_dual, NULL)) {
+        FURI_LOG_E(TAG, "Failed to restore dual CDC mode");
+        usb->paused = false;  // Mark as not paused to avoid stuck state
+        furi_mutex_release(usb->mutex);
+        return false;
+    }
+
+    // Wait for USB re-enumeration
+    furi_delay_ms(100);
+    FURI_LOG_I(TAG, "Restored dual CDC mode");
+
+    // Re-register callbacks on channel 1
+    furi_hal_cdc_set_callbacks(FLOCK_CDC_CHANNEL, &cdc_callbacks, usb);
+
+    // Restart RX thread
+    usb->running = true;
+    usb->paused = false;
+    usb->rx_thread = furi_thread_alloc_ex("FlockUsbCdcRx", 1024, usb_cdc_rx_thread, usb);
+    furi_thread_start(usb->rx_thread);
+
+    // Assume connected
+    usb->connected = true;
+
+    furi_mutex_release(usb->mutex);
+
+    FURI_LOG_I(TAG, "USB CDC resumed - IR scanner should stop");
+    return true;
+}
+
+bool flock_usb_cdc_is_paused(FlockUsbCdc* usb) {
+    if (!usb) return false;
+
+    furi_mutex_acquire(usb->mutex, FuriWaitForever);
+    bool paused = usb->paused;
+    furi_mutex_release(usb->mutex);
+
+    return paused;
+}
+
+bool flock_usb_cdc_is_running(FlockUsbCdc* usb) {
+    if (!usb) return false;
+
+    furi_mutex_acquire(usb->mutex, FuriWaitForever);
+    bool running = usb->running && !usb->paused;
+    furi_mutex_release(usb->mutex);
+
+    return running;
 }

@@ -136,6 +136,15 @@ enum class BeaconProtocolType(val displayName: String) {
 
 /**
  * Ultrasonic beacon signature for audio-based tracking
+ *
+ * Enhanced with real-world tracking knowledge including:
+ * - Known tracking systems (SilverPush, Alphonso, LISNR, Shopkick, Samba TV, etc.)
+ * - Modulation types for fingerprinting (FSK, PSK, CHIRP)
+ * - Beacon timing patterns
+ * - Privacy impact classification
+ * - Legal status and regulatory context
+ * - Real-world confirmation methods
+ * - Mitigation advice
  */
 data class UltrasonicTrackerSignature(
     override val id: String,
@@ -158,32 +167,217 @@ data class UltrasonicTrackerSignature(
     // Purpose classification
     val trackingPurpose: UltrasonicTrackingPurpose,
 
+    // === Enhanced Real-World Context Fields ===
+
+    // Beacon timing characteristics (for fingerprinting)
+    // SilverPush beacons typically last 2-5 seconds
+    val beaconDurationMs: Pair<Long, Long>? = null,
+
+    // Privacy impact classification
+    val privacyImpact: PrivacyImpact = PrivacyImpact.UNKNOWN,
+
+    // Legal/regulatory status
+    val legalStatus: LegalStatus = LegalStatus.UNKNOWN,
+
+    // Whether this system has legitimate uses (e.g., LISNR for payments)
+    val hasLegitimateUses: Boolean = false,
+
+    // Known deployment locations (for context-aware threat scoring)
+    // e.g., Shopkick deployed in Target, Macy's, Best Buy
+    val deploymentLocations: List<String> = emptyList(),
+
+    // Real-world confirmation method for users
+    // e.g., "Check if detection correlates with TV commercials"
+    val confirmationMethod: String? = null,
+
+    // Mitigation advice for users
+    // e.g., "Revoke mic permission from apps that don't need it"
+    val mitigationAdvice: String? = null,
+
     override val protocols: Set<DetectionProtocolType> = setOf(DetectionProtocolType.ULTRASONIC)
 ) : TrackerSignature
 
 /**
  * Ultrasonic modulation types
+ *
+ * Different tracking systems use different modulation:
+ * - FSK (SilverPush): Frequency Shift Keying - shows as pulsing pattern
+ * - PSK (Alphonso): Phase Shift Keying - phase-shifted patterns
+ * - CHIRP (LISNR): Frequency sweep - higher bandwidth
+ * - OOK: On-Off Keying - simple presence beacons
  */
-enum class UltrasonicModulation {
-    CONTINUOUS,
-    PULSED,
-    FSK,
-    PSK,
-    CHIRP,
-    UNKNOWN
+enum class UltrasonicModulation(val displayName: String) {
+    CONTINUOUS("Continuous Tone"),
+    PULSED("Pulsed Signal"),
+    FSK("Frequency Shift Keying (FSK)"),
+    PSK("Phase Shift Keying (PSK)"),
+    OOK("On-Off Keying (OOK)"),
+    CHIRP("CHIRP (Frequency Sweep)"),
+    UNKNOWN("Unknown Modulation")
 }
 
 /**
  * Purpose classification for ultrasonic beacons
  */
-enum class UltrasonicTrackingPurpose(val displayName: String) {
-    AD_TRACKING("Advertising Attribution"),
-    TV_ATTRIBUTION("TV/Video Attribution"),
-    RETAIL_ANALYTICS("Retail Analytics"),
-    CROSS_DEVICE_LINKING("Cross-Device Linking"),
-    LOCATION_VERIFICATION("Location Verification"),
-    PRESENCE_DETECTION("Presence Detection"),
-    UNKNOWN("Unknown Purpose")
+enum class UltrasonicTrackingPurpose(val displayName: String, val privacyConcern: String) {
+    AD_TRACKING(
+        "Advertising Attribution",
+        "Links your devices to ads you've seen, enabling targeted advertising across all your screens"
+    ),
+    TV_ATTRIBUTION(
+        "TV/Video Attribution",
+        "Tracks what TV shows and ads you watch, even when your phone is in your pocket"
+    ),
+    RETAIL_ANALYTICS(
+        "Retail Analytics",
+        "Tracks your movement within stores, time spent in aisles, and store visit frequency"
+    ),
+    CROSS_DEVICE_LINKING(
+        "Cross-Device Linking",
+        "Creates hidden links between your phone, tablet, laptop, and smart TV for unified tracking"
+    ),
+    LOCATION_VERIFICATION(
+        "Location Verification",
+        "Verifies your physical presence at specific locations for advertising or analytics"
+    ),
+    PRESENCE_DETECTION(
+        "Presence Detection",
+        "Detects when you are nearby for triggering location-based actions"
+    ),
+    UNKNOWN(
+        "Unknown Purpose",
+        "Purpose unknown - may be tracking your device"
+    )
+}
+
+/**
+ * Privacy impact classification for ultrasonic tracking
+ *
+ * Understanding the real privacy implications:
+ * - Cross-device tracking: Links phone, tablet, laptop, smart TV
+ * - De-anonymization: Can link anonymous browsing to real identity
+ * - Location history: Tracks store visits, time spent
+ * - Ad attribution: Knows which TV ad made you buy
+ * - Household mapping: Identifies all devices in home
+ */
+enum class PrivacyImpact(val displayName: String, val description: String) {
+    CROSS_DEVICE_LINKING(
+        "Cross-Device Linking",
+        "Links all your devices together. Can de-anonymize anonymous browsing " +
+            "by connecting your laptop browsing to your phone's real identity."
+    ),
+    VIEWING_HABITS(
+        "Viewing Habits",
+        "Tracks what you watch on TV. Companies know your show preferences, " +
+            "ad exposure, and can sell this data to advertisers."
+    ),
+    LOCATION_TRACKING(
+        "Location Tracking",
+        "Tracks your physical location history. Knows which stores you visit, " +
+            "how long you spend there, and your shopping patterns."
+    ),
+    HOUSEHOLD_MAPPING(
+        "Household Mapping",
+        "Maps all devices in your home. Can identify household members, " +
+            "shared devices, and build detailed household profiles."
+    ),
+    AD_ATTRIBUTION(
+        "Ad Attribution",
+        "Links TV ads to your purchases. Advertisers know which ad made you " +
+            "visit a website or buy a product."
+    ),
+    UNKNOWN(
+        "Unknown",
+        "Privacy impact is not fully understood."
+    )
+}
+
+/**
+ * Legal/regulatory status of ultrasonic tracking systems
+ */
+enum class LegalStatus(val displayName: String, val description: String) {
+    FTC_INVESTIGATED(
+        "FTC Investigated",
+        "FTC has investigated this tracking technology. Ruled that SilverPush-style " +
+            "tracking can be deceptive if users aren't properly informed."
+    ),
+    FTC_SETTLED(
+        "FTC Settlement",
+        "Company paid FTC settlement for privacy violations related to this tracking."
+    ),
+    GDPR_CONSENT_REQUIRED(
+        "GDPR Consent Required",
+        "Under GDPR, explicit consent is required for this type of tracking in the EU."
+    ),
+    CCPA_OPT_OUT_REQUIRED(
+        "CCPA Opt-Out Required",
+        "Under CCPA, companies must disclose this tracking and allow California residents to opt out."
+    ),
+    BANNED_SOME_COUNTRIES(
+        "Banned in Some Countries",
+        "This tracking method is banned without explicit consent in certain jurisdictions."
+    ),
+    LEGITIMATE(
+        "Legitimate",
+        "Generally considered legitimate with proper user consent."
+    ),
+    UNKNOWN(
+        "Unknown",
+        "Legal status is not well established."
+    )
+}
+
+/**
+ * Known false positive sources for ultrasonic frequencies
+ *
+ * These are common sources of ultrasonic frequencies that are NOT tracking beacons.
+ * Use these to reduce false positive alerts.
+ */
+enum class FalsePositiveUltrasonicSource(
+    val displayName: String,
+    val frequencyRanges: List<IntRange>,
+    val description: String
+) {
+    CRT_MONITOR(
+        "CRT Monitor/TV",
+        listOf(15700..15800),
+        "CRT horizontal scan at 15.75 kHz. Fading out as CRTs become rare."
+    ),
+    LCD_BACKLIGHT_PWM(
+        "LCD Backlight PWM",
+        listOf(20000..25000),
+        "LCD backlight pulse-width modulation can generate ultrasonic frequencies."
+    ),
+    SWITCHING_POWER_SUPPLY(
+        "Switching Power Supply",
+        listOf(20000..100000),
+        "Switching power supplies (laptop chargers, USB adapters) emit ultrasonic noise."
+    ),
+    HVAC_HUMIDIFIER(
+        "HVAC Ultrasonic Humidifier",
+        listOf(20000..25000),
+        "Ultrasonic humidifiers in HVAC systems generate constant ultrasonic frequencies."
+    ),
+    DOG_PEST_DETERRENT(
+        "Dog/Pest Deterrent",
+        listOf(18000..25000),
+        "Ultrasonic pest/dog deterrent devices emit continuous or pulsed tones."
+    ),
+    HARD_DRIVE_WHINE(
+        "Hard Drive (older)",
+        listOf(17000..20000),
+        "Older mechanical hard drives can produce high-frequency whine."
+    ),
+    ELECTRONIC_INTERFERENCE(
+        "Electronic Interference",
+        listOf(17500..22000),
+        "General electronic interference from various devices."
+    ),
+    FLUORESCENT_LIGHTS(
+        "Fluorescent Lights",
+        listOf(20000..40000),
+        "Fluorescent light ballasts can generate ultrasonic frequencies."
+    )
 }
 
 // ============================================================================

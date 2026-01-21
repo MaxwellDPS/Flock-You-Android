@@ -538,6 +538,14 @@ bool flock_protocol_parse_gpio_pulse(
     FlockGpioPulsePayload* payload);
 
 /**
+ * Parse Zigbee beacon (Zigbee Knocker) request.
+ */
+bool flock_protocol_parse_zigbee_beacon(
+    const uint8_t* buffer,
+    size_t length,
+    FlockZigbeeBeaconPayload* payload);
+
+/**
  * Parse Sub-GHz replay (Sleep Denial) request.
  */
 bool flock_protocol_parse_subghz_replay(

@@ -74,7 +74,11 @@ typedef enum {
 // Configuration
 // ============================================================================
 
-#define SUBGHZ_HOP_INTERVAL_MS      500   // Time per frequency
+// Sub-GHz hop interval - increased from 500ms to 2500ms to allow complete signal decoding
+// Most RF protocols transmit in bursts of 100-500ms, with retransmissions taking longer
+// 2500ms gives enough time to decode a signal including retransmissions
+#define SUBGHZ_HOP_INTERVAL_MS      2500  // Time per frequency (was 500ms - too fast!)
+
 #define BLE_SCAN_DURATION_MS        2000  // BLE burst scan duration
 #define BLE_SCAN_INTERVAL_MS        5000  // Time between BLE scans
 #define SCHEDULER_TICK_MS           100   // Main loop tick rate
@@ -307,3 +311,23 @@ void detection_scheduler_set_bt_serial(
  * Returns true if BT serial is set and can be paused for scanning.
  */
 bool detection_scheduler_can_ble_scan(DetectionScheduler* scheduler);
+
+/**
+ * Set USB CDC for time-multiplexed IR scanning.
+ * When set, IR scanning will pause USB CDC, scan, then resume.
+ * This allows IR scanning even when connected via USB.
+ *
+ * On Flipper Zero, the IR receiver uses DMA/timer resources that can
+ * conflict with USB CDC dual mode. By pausing USB CDC temporarily,
+ * we can run IR scanning in burst mode.
+ */
+void detection_scheduler_set_usb_cdc(
+    DetectionScheduler* scheduler,
+    struct FlockUsbCdc* usb_cdc);
+
+/**
+ * Check if time-multiplexed IR scanning is available.
+ * Returns true if USB CDC is set (IR will use burst mode) or
+ * if no USB CDC is active (IR can run continuously).
+ */
+bool detection_scheduler_can_ir_scan(DetectionScheduler* scheduler);

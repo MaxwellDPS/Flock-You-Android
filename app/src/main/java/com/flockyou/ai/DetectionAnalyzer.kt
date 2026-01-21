@@ -1431,67 +1431,45 @@ Provide your analysis with specific recommendations for this detection.
 
     /**
      * Comprehensive rule-based analysis covering all 50+ device types.
+     * Uses the new enterprise description system for actionable, context-aware descriptions.
      */
     private fun generateRuleBasedAnalysis(
         detection: Detection,
         contextualInsights: ContextualInsights?
     ): AiAnalysisResult {
-        val deviceInfo = getComprehensiveDeviceInfo(detection.deviceType)
-        val dataCollection = getDataCollectionCapabilities(detection.deviceType)
-        val riskAssessment = getRiskAssessment(detection)
-        val recommendations = getSmartRecommendations(detection, contextualInsights)
-
-        val analysis = buildString {
-            appendLine("## ${detection.deviceType.displayName} Analysis")
-            appendLine()
-
-            // Device description
-            appendLine("### Device Overview")
-            appendLine(deviceInfo.description)
-            appendLine()
-
-            // Operator/owner info
-            if (deviceInfo.typicalOperator != null) {
-                appendLine("**Typical Operator:** ${deviceInfo.typicalOperator}")
-            }
-            if (deviceInfo.legalFramework != null) {
-                appendLine("**Legal Framework:** ${deviceInfo.legalFramework}")
-            }
-            appendLine()
-
-            // Data collection
-            appendLine("### Data Collection Capabilities")
-            dataCollection.forEach { appendLine("- $it") }
-            appendLine()
-
-            // Privacy impact
-            appendLine("### Privacy Impact: ${detection.threatLevel.displayName}")
-            appendLine(riskAssessment)
-            appendLine()
-
-            // Signal info
-            appendLine("### Signal Analysis")
-            appendLine("- Protocol: ${detection.protocol.displayName}")
-            appendLine("- Signal Strength: ${detection.signalStrength.displayName}")
-            appendLine("- Estimated Distance: ${detection.signalStrength.description}")
-            detection.manufacturer?.let { appendLine("- Manufacturer: $it") }
-            if (detection.seenCount > 1) {
-                appendLine("- Times Detected: ${detection.seenCount}")
-            }
-            appendLine()
-
-            // Contextual insights
-            if (contextualInsights != null) {
-                appendLine("### Contextual Analysis")
-                contextualInsights.locationPattern?.let { appendLine("- Location: $it") }
-                contextualInsights.timePattern?.let { appendLine("- Time Pattern: $it") }
-                contextualInsights.clusterInfo?.let { appendLine("- Cluster: $it") }
-                contextualInsights.historicalContext?.let { appendLine("- History: $it") }
-                appendLine()
-            }
+        // Convert local ContextualInsights to PromptTemplates version
+        val templateInsights = contextualInsights?.let {
+            PromptTemplates.ContextualInsights(
+                isKnownLocation = it.isKnownLocation,
+                locationPattern = it.locationPattern,
+                timePattern = it.timePattern,
+                clusterInfo = it.clusterInfo,
+                historicalContext = it.historicalContext
+            )
         }
 
-        // Build structured data
+        // Generate enterprise-grade description
+        val enterpriseDesc = PromptTemplates.generateEnterpriseDescription(
+            detection = detection,
+            enrichedData = null, // Enriched data handled separately via LLM path
+            contextualInsights = templateInsights,
+            falsePositiveResult = null // Will be populated by FP analyzer
+        )
+
+        // Format the enterprise description as user-facing analysis
+        val analysis = PromptTemplates.formatEnterpriseDescriptionForUser(enterpriseDesc)
+
+        // Generate recommendations from enterprise description
+        val recommendations = mutableListOf<String>()
+        enterpriseDesc.immediateAction?.let { recommendations.add(it.action) }
+        recommendations.add(enterpriseDesc.monitoringRecommendation)
+        enterpriseDesc.documentationSuggestion?.let { recommendations.add(it) }
+
+        // Get legacy device info for structured data compatibility
+        val deviceInfo = getComprehensiveDeviceInfo(detection.deviceType)
+        val dataCollection = getDataCollectionCapabilities(detection.deviceType)
+
+        // Build structured data with enterprise insights
         val structuredData = StructuredAnalysis(
             deviceCategory = deviceInfo.category,
             surveillanceType = deviceInfo.surveillanceType,
@@ -1502,24 +1480,39 @@ Provide your analysis with specific recommendations for this detection.
                 MitigationAction(
                     action = rec,
                     priority = when (index) {
-                        0 -> ActionPriority.IMMEDIATE
+                        0 -> if (enterpriseDesc.immediateAction != null) ActionPriority.IMMEDIATE else ActionPriority.MEDIUM
                         1 -> ActionPriority.HIGH
                         else -> ActionPriority.MEDIUM
                     },
                     description = rec
                 )
             },
-            contextualInsights = contextualInsights
+            contextualInsights = contextualInsights,
+            // Add enterprise description metadata
+            enterpriseDescription = enterpriseDesc
         )
+
+        // Adjust confidence based on false positive likelihood
+        val adjustedConfidence = if (enterpriseDesc.isMostLikelyBenign) {
+            // Lower confidence when likely false positive
+            (0.95f * (1f - enterpriseDesc.falsePositiveLikelihood / 100f)).coerceIn(0.3f, 0.95f)
+        } else {
+            0.95f
+        }
 
         return AiAnalysisResult(
             success = true,
             analysis = analysis,
-            recommendations = recommendations,
-            confidence = 0.95f,
-            modelUsed = "rule-based", // Always rule-based for this function, regardless of currentModel
+            recommendations = recommendations.distinct().take(6),
+            confidence = adjustedConfidence,
+            modelUsed = "rule-based-enterprise", // Indicates enhanced rule-based with enterprise templates
             wasOnDevice = true,
-            structuredData = structuredData
+            structuredData = structuredData,
+            // Add enterprise-specific fields
+            isFalsePositiveLikely = enterpriseDesc.isMostLikelyBenign,
+            falsePositiveLikelihoodPercent = enterpriseDesc.falsePositiveLikelihood,
+            simpleExplanation = enterpriseDesc.simpleExplanation,
+            technicalDetails = enterpriseDesc.technicalDetails
         )
     }
 
@@ -2015,6 +2008,71 @@ Provide your analysis with specific recommendations for this detection.
                 description = "Pigvision surveillance system detected. Agricultural/industrial monitoring system.",
                 category = "Commercial Surveillance",
                 surveillanceType = "Industrial Monitoring"
+            )
+
+            // Flipper Zero and Hacking Tools
+            DeviceType.FLIPPER_ZERO -> DeviceInfo(
+                description = "Flipper Zero multi-tool hacking device detected. Capable of interacting with Sub-GHz, RFID, NFC, IR, and BLE protocols. Can clone access cards, capture garage door signals, and perform BLE attacks. May be used for legitimate security research or malicious purposes.",
+                category = "Hacking Tool",
+                surveillanceType = "Multi-Protocol Attack Tool",
+                typicalOperator = "Security researchers, pentesters, hobbyists, or malicious actors",
+                legalFramework = "Device itself is legal; usage for unauthorized access is illegal"
+            )
+            DeviceType.FLIPPER_ZERO_SPAM -> DeviceInfo(
+                description = "Active Flipper Zero BLE spam attack detected. Device is flooding Bluetooth with fake device advertisements causing popup floods on iPhones or notification spam on Android. This is malicious use with no legitimate purpose.",
+                category = "Active Attack",
+                surveillanceType = "BLE Spam Attack",
+                typicalOperator = "Malicious actor",
+                legalFramework = "May violate computer fraud laws, harassment statutes, or FCC regulations"
+            )
+            DeviceType.HACKRF_SDR -> DeviceInfo(
+                description = "Software Defined Radio (HackRF or similar) detected. Capable of wide-spectrum RF reception and transmission. Used for RF research, amateur radio, and security testing.",
+                category = "RF Analysis Tool",
+                surveillanceType = "RF Monitoring",
+                typicalOperator = "Radio hobbyists, security researchers"
+            )
+            DeviceType.PROXMARK -> DeviceInfo(
+                description = "Proxmark RFID/NFC research tool detected. Powerful device for reading, writing, and emulating RFID/NFC cards. Can clone access cards and building badges.",
+                category = "RFID/NFC Tool",
+                surveillanceType = "Card Cloning",
+                typicalOperator = "Security researchers, physical pentesters",
+                legalFramework = "Cloning cards without authorization is illegal"
+            )
+            DeviceType.USB_RUBBER_DUCKY -> DeviceInfo(
+                description = "USB Rubber Ducky keystroke injection device detected. Looks like USB drive but acts as keyboard, injecting pre-programmed keystrokes at high speed.",
+                category = "USB Attack Tool",
+                surveillanceType = "Keystroke Injection",
+                legalFramework = "Unauthorized use is computer fraud"
+            )
+            DeviceType.BASH_BUNNY -> DeviceInfo(
+                description = "Hak5 Bash Bunny USB attack platform detected. Advanced multi-function USB attack tool capable of keystroke injection, network attacks, and data exfiltration.",
+                category = "USB Attack Tool",
+                surveillanceType = "Multi-Function USB Attack"
+            )
+            DeviceType.LAN_TURTLE -> DeviceInfo(
+                description = "Hak5 LAN Turtle covert network access device detected. Appears as USB ethernet adapter but provides persistent remote access to networks.",
+                category = "Network Attack Tool",
+                surveillanceType = "Covert Network Access"
+            )
+            DeviceType.KEYCROC -> DeviceInfo(
+                description = "Hak5 Key Croc inline keylogger detected. Captures all keystrokes and exfiltrates them over WiFi. Sits between keyboard and computer.",
+                category = "Keylogger",
+                surveillanceType = "Keystroke Capture"
+            )
+            DeviceType.SHARK_JACK -> DeviceInfo(
+                description = "Hak5 Shark Jack portable network attack tool detected. Pocket-sized device for network reconnaissance and attacks.",
+                category = "Network Attack Tool",
+                surveillanceType = "Network Reconnaissance"
+            )
+            DeviceType.SCREEN_CRAB -> DeviceInfo(
+                description = "Hak5 Screen Crab HDMI interception device detected. Captures screenshots from HDMI video stream and exfiltrates over WiFi.",
+                category = "Video Interception",
+                surveillanceType = "Screen Capture"
+            )
+            DeviceType.GENERIC_HACKING_TOOL -> DeviceInfo(
+                description = "Security testing or hacking tool detected. Device matches patterns associated with penetration testing equipment.",
+                category = "Hacking Tool",
+                surveillanceType = "Security Testing"
             )
 
             // Catch-all

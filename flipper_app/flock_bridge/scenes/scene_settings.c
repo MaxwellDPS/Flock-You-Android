@@ -110,9 +110,28 @@ void flock_bridge_scene_settings_on_enter(void* context) {
 }
 
 bool flock_bridge_scene_settings_on_event(void* context, SceneManagerEvent event) {
-    UNUSED(context);
-    UNUSED(event);
-    return false;
+    FlockBridgeApp* app = context;
+    bool consumed = false;
+
+    if (event.type == SceneManagerEventTypeCustom) {
+        // Handle custom events (e.g., external radio connection changes)
+        switch (event.event) {
+        case FlockBridgeEventBtConnected:
+        case FlockBridgeEventBtDisconnected:
+            // Refresh menu to update any BLE-related status
+            flock_bridge_scene_settings_on_enter(app);
+            consumed = true;
+            break;
+        default:
+            break;
+        }
+    } else if (event.type == SceneManagerEventTypeBack) {
+        // Apply settings to the detection scheduler when leaving settings
+        flock_bridge_apply_radio_settings(app);
+        // Don't consume - let scene manager handle back navigation
+    }
+
+    return consumed;
 }
 
 void flock_bridge_scene_settings_on_exit(void* context) {

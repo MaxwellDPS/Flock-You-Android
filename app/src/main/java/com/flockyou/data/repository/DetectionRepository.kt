@@ -220,4 +220,31 @@ class DetectionRepository @Inject constructor(
     suspend fun getDetectionsPendingFpAnalysis(limit: Int): List<Detection> {
         return detectionDao.getDetectionsPendingFpAnalysis(limit)
     }
+
+    /**
+     * Mark a detection as reviewed (dismissed).
+     * Sets isActive to false to indicate the user has acknowledged it.
+     */
+    suspend fun markAsReviewed(detectionId: String) {
+        val detection = getDetectionById(detectionId) ?: return
+        detectionDao.updateDetection(detection.copy(isActive = false))
+        Log.d(TAG, "Detection marked as reviewed: $detectionId")
+    }
+
+    /**
+     * Mark a detection as a false positive.
+     * Sets fpScore to 1.0 (definitely false positive) and updates FP metadata.
+     */
+    suspend fun markAsFalsePositive(detectionId: String) {
+        updateFpAnalysis(
+            detectionId = detectionId,
+            fpScore = 1.0f,
+            fpReason = "User marked as false positive",
+            fpCategory = "USER_REPORTED",
+            llmAnalyzed = false
+        )
+        // Also mark as inactive since it's been reviewed
+        markAsReviewed(detectionId)
+        Log.d(TAG, "Detection marked as false positive: $detectionId")
+    }
 }

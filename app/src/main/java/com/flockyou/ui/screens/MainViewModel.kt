@@ -9,6 +9,9 @@ import androidx.work.WorkManager
 import com.flockyou.data.BroadcastSettings
 import com.flockyou.data.BroadcastSettingsRepository
 import com.flockyou.data.DetectionSettingsRepository
+import com.flockyou.data.FlipperUiSettings
+import com.flockyou.data.FlipperUiSettingsRepository
+import com.flockyou.data.FlipperViewMode
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.NetworkSettingsRepository
 import com.flockyou.data.OuiSettings
@@ -25,6 +28,8 @@ import com.flockyou.network.TorAwareHttpClient
 import com.flockyou.network.TorConnectionStatus
 import com.flockyou.scanner.flipper.FlipperClient
 import com.flockyou.scanner.flipper.FlipperConnectionState
+import com.flockyou.scanner.flipper.FlipperOnboardingRepository
+import com.flockyou.scanner.flipper.FlipperOnboardingSettings
 import com.flockyou.scanner.flipper.FlipperScannerManager
 import com.flockyou.scanner.flipper.FlipperStatusResponse
 import com.flockyou.service.CellularMonitor
@@ -114,7 +119,15 @@ data class MainUiState(
     val flipperIsScanning: Boolean = false,
     val flipperDetectionCount: Int = 0,
     val flipperWipsAlertCount: Int = 0,
-    val flipperLastError: String? = null
+    val flipperLastError: String? = null,
+    val flipperScanSchedulerStatus: com.flockyou.scanner.flipper.ScanSchedulerStatus = com.flockyou.scanner.flipper.ScanSchedulerStatus(),
+    // Flipper UX improvements
+    val flipperAutoReconnectState: com.flockyou.scanner.flipper.AutoReconnectState = com.flockyou.scanner.flipper.AutoReconnectState(),
+    val flipperDiscoveredDevices: List<com.flockyou.scanner.flipper.DiscoveredFlipperDevice> = emptyList(),
+    val flipperRecentDevices: List<com.flockyou.scanner.flipper.RecentFlipperDevice> = emptyList(),
+    val flipperIsScanningForDevices: Boolean = false,
+    val flipperConnectionRssi: Int? = null,
+    val flipperShowDevicePicker: Boolean = false
 )
 
 @HiltViewModel
@@ -132,7 +145,9 @@ class MainViewModel @Inject constructor(
     private val workManager: WorkManager,
     private val detectionAnalyzer: com.flockyou.ai.DetectionAnalyzer,
     private val serviceConnection: ScanningServiceConnection,  // Injected singleton
-    private val flipperScannerManager: FlipperScannerManager  // Flipper Zero integration
+    private val flipperScannerManager: FlipperScannerManager,  // Flipper Zero integration
+    private val flipperUiSettingsRepository: FlipperUiSettingsRepository,  // Flipper UI settings
+    private val flipperOnboardingRepository: FlipperOnboardingRepository  // Flipper onboarding
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -175,6 +190,26 @@ class MainViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = PrivacySettings()
         )
+
+    // Flipper UI Settings
+    val flipperUiSettings: StateFlow<FlipperUiSettings> = flipperUiSettingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = FlipperUiSettings()
+        )
+
+    // Flipper Onboarding Settings
+    val flipperOnboardingSettings: StateFlow<FlipperOnboardingSettings> = flipperOnboardingRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = FlipperOnboardingSettings()
+        )
+
+    // Flipper Setup Wizard state
+    private val _showFlipperSetupWizard = MutableStateFlow(false)
+    val showFlipperSetupWizard: StateFlow<Boolean> = _showFlipperSetupWizard.asStateFlow()
 
     private val _isOrbotInstalled = MutableStateFlow(false)
     val isOrbotInstalled: StateFlow<Boolean> = _isOrbotInstalled.asStateFlow()
@@ -501,6 +536,48 @@ class MainViewModel @Inject constructor(
             }
         }
 
+        // Observe Flipper scan scheduler status
+        viewModelScope.launch {
+            flipperScannerManager.scanSchedulerStatus.collect { status ->
+                _uiState.update { it.copy(flipperScanSchedulerStatus = status) }
+            }
+        }
+
+        // Observe Flipper auto-reconnect state
+        viewModelScope.launch {
+            flipperScannerManager.autoReconnectState.collect { state ->
+                _uiState.update { it.copy(flipperAutoReconnectState = state) }
+            }
+        }
+
+        // Observe Flipper discovered devices (Bluetooth scanning)
+        viewModelScope.launch {
+            flipperScannerManager.discoveredDevices.collect { devices ->
+                _uiState.update { it.copy(flipperDiscoveredDevices = devices) }
+            }
+        }
+
+        // Observe Flipper device scanning state
+        viewModelScope.launch {
+            flipperScannerManager.isScanningForDevices.collect { isScanning ->
+                _uiState.update { it.copy(flipperIsScanningForDevices = isScanning) }
+            }
+        }
+
+        // Observe Flipper recent devices from history
+        viewModelScope.launch {
+            flipperScannerManager.recentDevices.collect { devices ->
+                _uiState.update { it.copy(flipperRecentDevices = devices) }
+            }
+        }
+
+        // Observe Flipper connection RSSI
+        viewModelScope.launch {
+            flipperScannerManager.connectionRssi.collect { rssi ->
+                _uiState.update { it.copy(flipperConnectionRssi = rssi) }
+            }
+        }
+
         // Request the current state after all collectors are set up
         // This ensures state updates will be properly received
         serviceConnection.requestState()
@@ -654,6 +731,58 @@ class MainViewModel @Inject constructor(
     fun deleteDetection(detection: Detection) {
         viewModelScope.launch {
             repository.deleteDetection(detection)
+        }
+    }
+
+    /**
+     * Mark a detection as reviewed/dismissed.
+     * This updates the detection to have a lower threat score indicating it was manually reviewed.
+     */
+    fun markAsReviewed(detection: Detection) {
+        viewModelScope.launch {
+            // Mark as reviewed by setting fpScore to indicate manual review
+            // and adding a category to track that it was user-reviewed
+            val updatedDetection = detection.copy(
+                fpScore = 0.5f, // Moderate FP score - reviewed but not necessarily false positive
+                fpCategory = "USER_REVIEWED",
+                fpReason = "Manually reviewed and dismissed by user",
+                analyzedAt = System.currentTimeMillis()
+            )
+            repository.updateDetection(updatedDetection)
+        }
+    }
+
+    /**
+     * Mark a detection as a false positive.
+     * This sets a high FP score so it will be filtered out by default.
+     */
+    fun markAsFalsePositive(detection: Detection) {
+        viewModelScope.launch {
+            val updatedDetection = detection.copy(
+                fpScore = 0.9f, // High FP score - user confirmed false positive
+                fpCategory = "USER_MARKED_FP",
+                fpReason = "Manually marked as false positive by user",
+                analyzedAt = System.currentTimeMillis()
+            )
+            repository.updateDetection(updatedDetection)
+        }
+    }
+
+    /**
+     * Undo marking a detection (reset FP fields if user-marked).
+     */
+    fun undoMarkDetection(detection: Detection) {
+        viewModelScope.launch {
+            // Only reset if it was user-marked
+            if (detection.fpCategory == "USER_REVIEWED" || detection.fpCategory == "USER_MARKED_FP") {
+                val updatedDetection = detection.copy(
+                    fpScore = null,
+                    fpCategory = null,
+                    fpReason = null,
+                    analyzedAt = null
+                )
+                repository.updateDetection(updatedDetection)
+            }
         }
     }
     
@@ -1152,6 +1281,250 @@ class MainViewModel @Inject constructor(
      */
     fun clearSatelliteHistory() {
         serviceConnection.clearSatelliteHistory()
+    }
+
+    // ========== Flipper Zero Connection ==========
+
+    /**
+     * Connect to Flipper Zero using preferred method from settings.
+     */
+    fun connectFlipper() {
+        flipperScannerManager.connect()
+    }
+
+    /**
+     * Disconnect from Flipper Zero.
+     */
+    fun disconnectFlipper() {
+        flipperScannerManager.disconnect()
+    }
+
+    // ========== Flipper Device Picker ==========
+
+    /**
+     * Show the device picker dialog/bottom sheet.
+     */
+    fun showFlipperDevicePicker() {
+        _uiState.update { it.copy(flipperShowDevicePicker = true) }
+        // Start scanning for devices automatically
+        flipperScannerManager.startDeviceScan()
+    }
+
+    /**
+     * Hide the device picker dialog/bottom sheet.
+     */
+    fun hideFlipperDevicePicker() {
+        _uiState.update { it.copy(flipperShowDevicePicker = false) }
+        // Stop scanning when picker is dismissed
+        flipperScannerManager.stopDeviceScan()
+    }
+
+    /**
+     * Start scanning for Flipper devices via Bluetooth.
+     */
+    fun startFlipperDeviceScan() {
+        flipperScannerManager.startDeviceScan()
+    }
+
+    /**
+     * Stop scanning for Flipper devices.
+     */
+    fun stopFlipperDeviceScan() {
+        flipperScannerManager.stopDeviceScan()
+    }
+
+    /**
+     * Connect to a discovered Flipper device from the picker.
+     */
+    fun connectToDiscoveredFlipper(device: com.flockyou.scanner.flipper.DiscoveredFlipperDevice) {
+        flipperScannerManager.connectBluetooth(device.address, device.name)
+        hideFlipperDevicePicker()
+    }
+
+    /**
+     * Connect to a recent Flipper device from history.
+     */
+    fun connectToRecentFlipper(device: com.flockyou.scanner.flipper.RecentFlipperDevice) {
+        flipperScannerManager.connectToRecentDevice(device)
+        hideFlipperDevicePicker()
+    }
+
+    /**
+     * Remove a device from connection history.
+     */
+    fun removeFlipperFromHistory(address: String) {
+        flipperScannerManager.removeFromHistory(address)
+    }
+
+    /**
+     * Cancel auto-reconnect attempts.
+     */
+    fun cancelFlipperAutoReconnect() {
+        flipperScannerManager.cancelAutoReconnect()
+    }
+
+    /**
+     * Get signal strength level (0-4) for current connection.
+     */
+    fun getFlipperSignalLevel(): Int {
+        return flipperScannerManager.getSignalLevel()
+    }
+
+    /**
+     * Pause Flipper scanning (keeps connection alive).
+     */
+    fun pauseFlipperScanning() {
+        flipperScannerManager.pauseScanning()
+    }
+
+    /**
+     * Resume Flipper scanning.
+     */
+    fun resumeFlipperScanning() {
+        flipperScannerManager.resumeScanning()
+    }
+
+    /**
+     * Toggle Flipper pause/resume state.
+     */
+    fun toggleFlipperPause() {
+        flipperScannerManager.togglePauseScanning()
+    }
+
+    /**
+     * Trigger a manual Flipper scan for a specific scan type.
+     * Returns true if scan was triggered, false if on cooldown or not connected.
+     */
+    fun triggerFlipperManualScan(scanType: com.flockyou.scanner.flipper.FlipperScanType): Boolean {
+        return flipperScannerManager.triggerManualScan(scanType)
+    }
+
+    // ========== Flipper UI Settings ==========
+
+    /**
+     * Set Flipper tab view mode (Detailed or Summary).
+     */
+    fun setFlipperViewMode(mode: FlipperViewMode) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setViewMode(mode)
+        }
+    }
+
+    /**
+     * Toggle Flipper status card expanded state.
+     */
+    fun setFlipperStatusCardExpanded(expanded: Boolean) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setStatusCardExpanded(expanded)
+        }
+    }
+
+    /**
+     * Toggle Flipper scheduler card expanded state.
+     */
+    fun setFlipperSchedulerCardExpanded(expanded: Boolean) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setSchedulerCardExpanded(expanded)
+        }
+    }
+
+    /**
+     * Toggle Flipper stats card expanded state.
+     */
+    fun setFlipperStatsCardExpanded(expanded: Boolean) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setStatsCardExpanded(expanded)
+        }
+    }
+
+    /**
+     * Toggle Flipper capabilities card expanded state.
+     */
+    fun setFlipperCapabilitiesCardExpanded(expanded: Boolean) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setCapabilitiesCardExpanded(expanded)
+        }
+    }
+
+    /**
+     * Toggle Flipper advanced card expanded state.
+     */
+    fun setFlipperAdvancedCardExpanded(expanded: Boolean) {
+        viewModelScope.launch {
+            flipperUiSettingsRepository.setAdvancedCardExpanded(expanded)
+        }
+    }
+
+    // ========== Flipper Onboarding ==========
+
+    /**
+     * Show the Flipper setup wizard.
+     */
+    fun showFlipperSetupWizard() {
+        _showFlipperSetupWizard.value = true
+    }
+
+    /**
+     * Dismiss the Flipper setup wizard without completing.
+     */
+    fun dismissFlipperSetupWizard() {
+        _showFlipperSetupWizard.value = false
+    }
+
+    /**
+     * Complete the Flipper setup wizard (with "Don't show again" selected).
+     */
+    fun completeFlipperSetupWizard() {
+        viewModelScope.launch {
+            flipperOnboardingRepository.setSetupWizardCompleted(true)
+            _showFlipperSetupWizard.value = false
+        }
+    }
+
+    /**
+     * Record that the user has successfully connected a Flipper.
+     * Called when connection state becomes READY.
+     */
+    fun recordFlipperConnected() {
+        viewModelScope.launch {
+            flipperOnboardingRepository.setHasEverConnected(true)
+        }
+    }
+
+    /**
+     * Toggle visibility of scan type tips in the scheduler card.
+     */
+    fun setShowScanTypeTips(show: Boolean) {
+        viewModelScope.launch {
+            flipperOnboardingRepository.setShowScanTypeTips(show)
+        }
+    }
+
+    /**
+     * Toggle visibility of detection explanations section.
+     */
+    fun setShowDetectionExplanations(show: Boolean) {
+        viewModelScope.launch {
+            flipperOnboardingRepository.setShowDetectionExplanations(show)
+        }
+    }
+
+    /**
+     * Increment Flipper tab visit count for progressive disclosure.
+     */
+    fun incrementFlipperTabVisitCount() {
+        viewModelScope.launch {
+            flipperOnboardingRepository.incrementFlipperTabVisitCount()
+        }
+    }
+
+    /**
+     * Reset Flipper onboarding state (for testing).
+     */
+    fun resetFlipperOnboarding() {
+        viewModelScope.launch {
+            flipperOnboardingRepository.resetOnboarding()
+        }
     }
 
     // ========== AI Analysis ==========

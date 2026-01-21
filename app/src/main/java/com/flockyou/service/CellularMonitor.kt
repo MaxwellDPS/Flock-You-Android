@@ -57,12 +57,133 @@ class CellularMonitor(
         // How stale location data can be before we consider movement unknown
         private const val LOCATION_STALENESS_THRESHOLD_MS = 30_000L // 30 seconds
 
-        // Known suspicious patterns
+        // ==================== KNOWN IMSI CATCHER SIGNATURES ====================
+        // Real-world IMSI catcher device characteristics based on documented deployments
+
+        /**
+         * Known IMSI Catcher Device Types:
+         *
+         * 1. Harris StingRay/StingRay II:
+         *    - Most common law enforcement IMSI catcher in the US
+         *    - Often uses LAC 1 or very low LAC values (1-10)
+         *    - Forces 2G downgrade for interception
+         *    - Typical cell IDs: sequential or round numbers
+         *
+         * 2. Harris Hailstorm:
+         *    - Upgraded StingRay with 4G/LTE capability
+         *    - Can intercept LTE but still often forces 2G for content
+         *    - Similar LAC patterns to StingRay
+         *
+         * 3. DRT (DRTbox/Dirtbox):
+         *    - Airplane-mounted IMSI catcher (used by US Marshals, FBI)
+         *    - Characterized by VERY strong signals from above
+         *    - Larger coverage area, signals from unusual elevation
+         *    - Often -50 dBm or stronger signal
+         *
+         * 4. Septier IMSI Catcher:
+         *    - Israeli-made, common in Middle East and Europe
+         *    - Similar characteristics to StingRay
+         *
+         * 5. Ability Unlimited ULIN:
+         *    - Passive collection variant (harder to detect)
+         *    - May not force downgrades
+         */
+
+        // Suspicious LAC values commonly associated with IMSI catchers
+        // StingRay devices often use LAC 1 or very low LAC values
+        private val SUSPICIOUS_LAC_VALUES = setOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+
+        // Very low TAC values are also suspicious for LTE
+        private val SUSPICIOUS_TAC_VALUES = setOf(0, 1, 2, 3, 4, 5)
+
+        // Known suspicious/test MCC-MNC codes that should NEVER appear on real networks
         private val SUSPICIOUS_MCC_MNC = setOf(
-            "001-01", "001-00", "001-02", // ITU test networks
-            "999-99", "999-01",           // Reserved test networks
-            "000-00"                       // Invalid
+            // ITU Test Networks (used by IMSI catchers)
+            "001-01", "001-00", "001-02", "001-001",
+            // Reserved test networks
+            "999-99", "999-01", "999-00",
+            // Invalid codes
+            "000-00", "000-01",
+            // Additional test codes sometimes seen
+            "002-01", "002-02",
+            // Codes that should never be broadcast
+            "901-01", "901-18"  // International networks - shouldn't appear as primary
         )
+
+        // ==================== US CARRIER MCC-MNC CODES ====================
+        // Legitimate US carrier codes - if connected to US but NOT one of these, suspicious
+
+        // T-Mobile USA and subsidiaries
+        private val TMOBILE_MNC_CODES = setOf(
+            "260", "200", "210", "220", "230", "240", "250", "260", "270",
+            "310", "490", "660", "800", "160", "026"
+        )
+
+        // AT&T USA
+        private val ATT_MNC_CODES = setOf(
+            "410", "150", "170", "380", "560", "680", "980", "070"
+        )
+
+        // Verizon Wireless
+        private val VERIZON_MNC_CODES = setOf(
+            "480", "481", "482", "483", "484", "485", "486", "487", "488", "489",
+            "012", "110"
+        )
+
+        // US Cellular
+        private val US_CELLULAR_MNC_CODES = setOf(
+            "580", "581", "582", "583", "584", "585", "586", "587", "588"
+        )
+
+        // All known legitimate US MNCs (MCC 310 and 311)
+        private val KNOWN_US_MNC_CODES_310 = TMOBILE_MNC_CODES + ATT_MNC_CODES + setOf(
+            // Sprint (now T-Mobile)
+            "120", "130", "140", "150", "160", "170", "180", "190",
+            // Other legitimate carriers
+            "030", "032", "033", "034", "040", "050", "060", "070", "080", "090"
+        )
+
+        private val KNOWN_US_MNC_CODES_311 = VERIZON_MNC_CODES + US_CELLULAR_MNC_CODES + setOf(
+            // Other legitimate carriers
+            "040", "050", "060", "070", "080", "090", "100", "110", "120", "220"
+        )
+
+        // ==================== IMSI CATCHER CELL ID PATTERNS ====================
+
+        /**
+         * Check if a cell ID has suspicious patterns:
+         * - Sequential numbers (12345, 11111)
+         * - Round numbers (10000, 50000, 100000)
+         * - Very low values (1-100) - often test values
+         */
+        private fun isSuspiciousCellIdPattern(cellId: Long?): Boolean {
+            if (cellId == null) return false
+
+            // Very low cell IDs are suspicious
+            if (cellId in 1..100) return true
+
+            // Round numbers (divisible by 1000 or 10000)
+            if (cellId % 10000L == 0L && cellId > 0) return true
+            if (cellId % 1000L == 0L && cellId < 100000L && cellId > 0) return true
+
+            // Check for repeated digits (11111, 22222, etc.)
+            val str = cellId.toString()
+            if (str.length >= 4 && str.all { it == str[0] }) return true
+
+            // Check for sequential (12345, 54321)
+            if (str.length >= 5) {
+                val ascending = str.zipWithNext().all { (a, b) -> b.code == a.code + 1 }
+                val descending = str.zipWithNext().all { (a, b) -> b.code == a.code - 1 }
+                if (ascending || descending) return true
+            }
+
+            return false
+        }
+
+        // Very strong signal threshold - signals stronger than this are suspicious
+        // especially if they appear suddenly or are from an unknown cell
+        // DRTbox (airplane-mounted) often produces -50 dBm or stronger
+        private const val SUSPICIOUSLY_STRONG_SIGNAL_DBM = -55
 
         // Carriers known to have aggressive handoffs (reduce FPs)
         private val AGGRESSIVE_HANDOFF_CARRIERS = setOf(
@@ -118,6 +239,18 @@ class CellularMonitor(
     private val downgradeHistory = mutableListOf<Pair<Long, String>>() // timestamp to network generation
     private val maxDowngradeHistorySize = 20
     private var lastOperator: String? = null
+
+    // Stationary cell change pattern tracking for improved heuristics
+    private data class StationaryCellChangeEvent(
+        val timestamp: Long,
+        val fromCellId: Long?,
+        val toCellId: Long?,
+        val returnedToOriginal: Boolean = false
+    )
+    private val stationaryCellChanges = mutableListOf<StationaryCellChangeEvent>()
+    private val maxStationaryCellChangeHistory = 20
+    private val stationaryChangeWindowMs = 300_000L // 5 minute window for pattern analysis
+    private val quickReturnThresholdMs = 60_000L // If we return to original cell within 1 minute, likely network optimization
 
     // Callback for cell info changes
     @Suppress("DEPRECATION")
@@ -290,20 +423,41 @@ class CellularMonitor(
         CRITICAL("Critical - Strong Indicators", 4)
     }
     
+    /**
+     * Anomaly types with calibrated base scores.
+     *
+     * SCORING PHILOSOPHY:
+     * - Base scores represent the MINIMUM suspicion level for the anomaly type
+     * - Additional factors ADD to the score (never exceed 100)
+     * - Score determines severity: 90-100=CRITICAL, 70-89=HIGH, 50-69=MEDIUM, 30-49=LOW, 0-29=INFO
+     *
+     * IMPORTANT: Base scores are intentionally LOW for common events that need context.
+     * A single cell change while stationary is common (network optimization).
+     * Multiple cell changes, or changes combined with other factors, are suspicious.
+     */
     enum class AnomalyType(
-        val displayName: String, 
-        val baseScore: Int, 
+        val displayName: String,
+        val baseScore: Int,
         val emoji: String,
-        val requiresMultipleFactors: Boolean
+        val requiresMultipleFactors: Boolean,
+        val userFriendlyExplanation: String
     ) {
-        SIGNAL_SPIKE("Sudden Signal Spike", 30, "📶", true),
-        CELL_TOWER_CHANGE("Cell Tower Change", 20, "🗼", true), // Low base - needs context
-        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 80, "🔓", false), // High base - always suspicious
-        SUSPICIOUS_NETWORK("Suspicious Network ID", 95, "⚠️", false), // Very high - test networks
-        UNKNOWN_CELL_FAMILIAR_AREA("Unknown Cell in Familiar Area", 60, "❓", true),
-        RAPID_CELL_SWITCHING("Rapid Cell Switching", 40, "🔄", true),
-        LAC_TAC_ANOMALY("Location Area Anomaly", 35, "📍", true),
-        STATIONARY_CELL_CHANGE("Cell Changed While Stationary", 50, "🚫", true)
+        SIGNAL_SPIKE("Sudden Signal Spike", 15, "📶", true,
+            "Your phone's signal strength jumped unusually high, which can indicate a nearby fake cell tower broadcasting a strong signal to attract your phone."),
+        CELL_TOWER_CHANGE("Cell Tower Change", 10, "🗼", true,
+            "Your phone switched to a different cell tower. This is usually normal, but can be suspicious if combined with other indicators."),
+        ENCRYPTION_DOWNGRADE("Encryption Downgrade", 60, "🔓", false,
+            "Your phone was forced to use an older, weaker network (like 2G) that has known encryption vulnerabilities. IMSI catchers often force this downgrade to intercept communications."),
+        SUSPICIOUS_NETWORK("Suspicious Network ID", 90, "⚠️", false,
+            "Your phone connected to a network using test/invalid identifiers. Legitimate networks never use these codes. This is a strong indicator of surveillance equipment."),
+        UNKNOWN_CELL_FAMILIAR_AREA("Unknown Cell in Familiar Area", 25, "❓", true,
+            "A cell tower appeared in an area where you've been before, but this specific tower has never been seen. Could indicate a new legitimate tower or a temporary fake one."),
+        RAPID_CELL_SWITCHING("Rapid Cell Switching", 20, "🔄", true,
+            "Your phone is switching between cell towers more frequently than normal, which can indicate competing signals from surveillance equipment."),
+        LAC_TAC_ANOMALY("Location Area Anomaly", 20, "📍", true,
+            "The cell tower's location area code changed without actually changing towers. This is technically unusual and can indicate network manipulation."),
+        STATIONARY_CELL_CHANGE("Cell Changed While Stationary", 15, "🚫", true,
+            "Your phone switched towers even though you weren't moving. Single occurrences are often normal (network load balancing), but repeated changes are suspicious.")
     }
     
     /**
@@ -539,6 +693,9 @@ class CellularMonitor(
         downgradeHistory.clear()
         lastOperator = null
 
+        // Clear stationary cell change tracking
+        stationaryCellChanges.clear()
+
         // Clear status
         _cellStatus.value = null
 
@@ -739,7 +896,7 @@ class CellularMonitor(
             return
         }
 
-        // 3. Cell tower changed - check context with enriched analysis
+        // 3. Cell tower changed - check context with enriched analysis and pattern heuristics
         if (current.cellId != previous.cellId && current.cellId != null) {
             // Check if this is a 5G handoff - these are MUCH more frequent and normal
             val is5GHandoff = current.networkType == TelephonyManager.NETWORK_TYPE_NR &&
@@ -751,11 +908,20 @@ class CellularMonitor(
             addTimelineEvent(
                 type = if (currentCellTrusted) CellularEventType.RETURNED_TO_TRUSTED else CellularEventType.CELL_HANDOFF,
                 title = if (currentCellTrusted) "Returned to Known Cell" else if (is5GHandoff) "5G Cell Handoff" else "Cell Handoff",
-                description = "Cell changed: ${previous.cellId ?: "?"} → ${current.cellId} (${analysis.movementType.displayName}, ${String.format("%.0f", analysis.distanceMeters)}m)",
+                description = "Cell changed: ${previous.cellId ?: "?"} -> ${current.cellId} (${analysis.movementType.displayName}, ${String.format("%.0f", analysis.distanceMeters)}m)",
                 cellId = current.cellId.toString(),
                 networkType = getNetworkTypeName(current.networkType),
                 signalStrength = current.signalStrength
             )
+
+            // ===== STATIONARY CELL CHANGE PATTERN ANALYSIS =====
+            // Track cell changes while stationary for pattern detection
+            if (isStationary) {
+                trackStationaryCellChange(previous.cellId, current.cellId)
+            }
+
+            // Analyze stationary cell change patterns
+            val stationaryPattern = analyzeStationaryCellPattern(previous.cellId, current.cellId)
 
             // Use enriched movement analysis for better detection
             if (isStationary && !currentCellTrusted) {
@@ -767,21 +933,52 @@ class CellularMonitor(
                 val shouldSuppress5GHandoff = is5GHandoff && isSameCarrier &&
                     (isAggressiveHandoffCarrier || analysis.imsiCatcherScore < NR_5G_MINIMUM_IMSI_SCORE_TO_REPORT)
 
-                if (shouldSuppress5GHandoff) {
+                // NEW: Check for quick return pattern (network optimization, not threat)
+                if (stationaryPattern.isQuickReturn) {
+                    Log.d(TAG, "Quick return pattern detected - likely network optimization, suppressing")
+                    contributingFactors.add("Note: Quick return to original cell detected (likely network optimization)")
+                    // Don't add score - this is likely benign
+                } else if (shouldSuppress5GHandoff) {
                     // Normal 5G handoff - don't report but log for debug
                     Log.d(TAG, "Suppressing 5G handoff alert: same carrier, IMSI=${analysis.imsiCatcherScore}%")
                 } else {
-                    // Stationary + new cell = suspicious (but less so for 5G)
+                    // Stationary + new cell = potentially suspicious, but calibrate score based on patterns
                     contributingFactors.add("Cell changed while ${analysis.movementType.displayName.lowercase()}")
                     contributingFactors.add("New cell tower (trust: ${analysis.cellTrustScore}%)")
 
-                    // Reduce score penalty for 5G same-carrier handoffs
-                    val baseHandoffScore = if (is5GHandoff && isSameCarrier) {
-                        AnomalyType.STATIONARY_CELL_CHANGE.baseScore // 50 points, no bonus
-                    } else {
-                        AnomalyType.STATIONARY_CELL_CHANGE.baseScore + 20 // 70 points for non-5G
+                    // NEW: Score based on pattern, not just single event
+                    val baseHandoffScore = AnomalyType.STATIONARY_CELL_CHANGE.baseScore // Now 15 (was 50)
+
+                    // Add context-based scoring
+                    var patternScore = baseHandoffScore
+
+                    // Multiple changes in short window = more suspicious
+                    if (stationaryPattern.recentChangesCount >= 3) {
+                        patternScore += 25
+                        contributingFactors.add("${stationaryPattern.recentChangesCount} cell changes in ${stationaryChangeWindowMs / 60000} minutes while stationary")
+                    } else if (stationaryPattern.recentChangesCount >= 2) {
+                        patternScore += 10
+                        contributingFactors.add("${stationaryPattern.recentChangesCount} cell changes recently while stationary")
                     }
-                    totalScore += baseHandoffScore
+
+                    // Oscillating between same cells = network issue, not threat
+                    if (stationaryPattern.isOscillating) {
+                        patternScore -= 10 // Reduce suspicion
+                        contributingFactors.add("Note: Oscillating between same cells (likely edge-of-coverage)")
+                    }
+
+                    // Unknown cell that's never been seen anywhere = more suspicious
+                    if (analysis.cellTrustScore == 0 && !analysis.isInFamiliarArea) {
+                        patternScore += 15
+                        contributingFactors.add("Completely unknown cell in unfamiliar area")
+                    }
+
+                    // 5G same-carrier handoffs are less suspicious
+                    if (is5GHandoff && isSameCarrier) {
+                        patternScore -= 5
+                    }
+
+                    totalScore += patternScore.coerceAtLeast(0)
 
                     // Check for impossible movement (potential IMSI catcher mobility)
                     if (analysis.impossibleSpeed) {
@@ -800,7 +997,7 @@ class CellularMonitor(
                     signalStrength = current.signalStrength,
                     threatLevel = ThreatLevel.INFO
                 )
-                // Don't report as anomaly
+                // Don't report as anomaly - this is normal behavior
             } else if (!isStationary) {
                 // Moving - cell changes are expected, but check for impossible speed
                 if (analysis.impossibleSpeed) {
@@ -855,55 +1052,107 @@ class CellularMonitor(
         }
 
         // Determine if we should report based on total score and factors
-        if (contributingFactors.isNotEmpty() && totalScore >= 50) {
-            // Use both factor count and IMSI score for confidence
+        // FIXED: Use IMSI score for reporting threshold, not arbitrary confidence levels
+        // Only report if IMSI score reaches at least LOW concern level (30+)
+        if (contributingFactors.isNotEmpty() && analysis.imsiCatcherScore >= 30) {
+            // Determine confidence based on factor quality and count
             val confidence = when {
-                analysis.imsiCatcherScore >= 70 -> AnomalyConfidence.CRITICAL
-                contributingFactors.size >= 4 || analysis.imsiCatcherScore >= 50 -> AnomalyConfidence.HIGH
-                contributingFactors.size >= 3 -> AnomalyConfidence.HIGH
-                contributingFactors.size >= 2 -> AnomalyConfidence.MEDIUM
+                analysis.imsiCatcherScore >= 90 -> AnomalyConfidence.CRITICAL
+                analysis.imsiCatcherScore >= 70 -> AnomalyConfidence.HIGH
+                analysis.imsiCatcherScore >= 50 -> AnomalyConfidence.MEDIUM
                 else -> AnomalyConfidence.LOW
             }
 
-            // Only report if confidence is at least MEDIUM, unless score is very high
-            if (confidence.ordinal >= AnomalyConfidence.MEDIUM.ordinal || totalScore >= 70) {
-                val primaryType = when {
-                    analysis.impossibleSpeed -> AnomalyType.CELL_TOWER_CHANGE // Likely spoofing/IMSI catcher
-                    contributingFactors.any { it.contains("stationary", ignoreCase = true) || it.contains("walking", ignoreCase = true) } &&
-                    contributingFactors.any { it.contains("cell", ignoreCase = true) } ->
-                        AnomalyType.STATIONARY_CELL_CHANGE
-                    contributingFactors.any { it.contains("rapid", ignoreCase = true) || it.contains("changes in last", ignoreCase = true) } ->
-                        AnomalyType.RAPID_CELL_SWITCHING
-                    contributingFactors.any { it.contains("signal", ignoreCase = true) } ->
-                        AnomalyType.SIGNAL_SPIKE
-                    contributingFactors.any { it.contains("unknown", ignoreCase = true) } ->
-                        AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA
-                    else -> AnomalyType.CELL_TOWER_CHANGE
-                }
+            val primaryType = when {
+                analysis.impossibleSpeed -> AnomalyType.CELL_TOWER_CHANGE // Likely spoofing/IMSI catcher
+                contributingFactors.any { it.contains("stationary", ignoreCase = true) || it.contains("walking", ignoreCase = true) } &&
+                contributingFactors.any { it.contains("cell", ignoreCase = true) } ->
+                    AnomalyType.STATIONARY_CELL_CHANGE
+                contributingFactors.any { it.contains("rapid", ignoreCase = true) || it.contains("changes in last", ignoreCase = true) } ->
+                    AnomalyType.RAPID_CELL_SWITCHING
+                contributingFactors.any { it.contains("signal", ignoreCase = true) } ->
+                    AnomalyType.SIGNAL_SPIKE
+                contributingFactors.any { it.contains("unknown", ignoreCase = true) } ->
+                    AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA
+                else -> AnomalyType.CELL_TOWER_CHANGE
+            }
 
-                reportAnomalyImproved(
-                    type = primaryType,
-                    description = "Multiple suspicious indicators detected - IMSI likelihood: ${analysis.imsiCatcherScore}%",
-                    technicalDetails = buildCellularTechnicalDetails(analysis, current, previous),
-                    contributingFactors = contributingFactors,
-                    confidence = confidence,
-                    current = current,
-                    previous = previous,
-                    analysis = analysis
-                )
-            } else {
-                // Low confidence - just log to timeline
-                addTimelineEvent(
-                    type = CellularEventType.CELL_HANDOFF,
-                    title = "Cell Activity",
-                    description = "${contributingFactors.firstOrNull() ?: "Cell network change"} (IMSI: ${analysis.imsiCatcherScore}%)",
-                    cellId = current.cellId?.toString(),
-                    networkType = getNetworkTypeName(current.networkType),
-                    signalStrength = current.signalStrength,
-                    threatLevel = ThreatLevel.INFO
-                )
+            // Build a specific description based on the primary anomaly type and factors
+            val specificDescription = buildSpecificAnomalyDescription(primaryType, analysis, contributingFactors)
+
+            reportAnomalyImproved(
+                type = primaryType,
+                description = specificDescription,
+                technicalDetails = buildCellularTechnicalDetails(analysis, current, previous),
+                contributingFactors = contributingFactors,
+                confidence = confidence,
+                current = current,
+                previous = previous,
+                analysis = analysis
+            )
+        } else if (contributingFactors.isNotEmpty() && analysis.imsiCatcherScore >= 15) {
+            // Low score (15-29) - log to timeline as informational, don't alert
+            addTimelineEvent(
+                type = CellularEventType.CELL_HANDOFF,
+                title = "Cell Activity (Normal)",
+                description = "${contributingFactors.firstOrNull() ?: "Cell network change"} - IMSI score: ${analysis.imsiCatcherScore}% (below alert threshold)",
+                cellId = current.cellId?.toString(),
+                networkType = getNetworkTypeName(current.networkType),
+                signalStrength = current.signalStrength,
+                threatLevel = ThreatLevel.INFO
+            )
+        }
+        // Below 15% IMSI score - don't report at all, this is normal network behavior
+    }
+
+    /**
+     * Build a specific, contextual description for the anomaly instead of generic text.
+     */
+    private fun buildSpecificAnomalyDescription(
+        type: AnomalyType,
+        analysis: CellularAnomalyAnalysis,
+        factors: List<String>
+    ): String {
+        val sb = StringBuilder()
+
+        when (type) {
+            AnomalyType.STATIONARY_CELL_CHANGE -> {
+                sb.append("Cell tower changed while you were stationary")
+                if (analysis.cellTrustScore < 30) {
+                    sb.append(" to an unfamiliar tower")
+                }
+                if (factors.any { it.contains("changes in") }) {
+                    val countMatch = factors.find { it.contains("changes in") }
+                    sb.append(". $countMatch")
+                }
+            }
+            AnomalyType.RAPID_CELL_SWITCHING -> {
+                sb.append("Rapid cell tower switching detected")
+                val countMatch = factors.find { it.contains("cell changes") }
+                countMatch?.let { sb.append(": $it") }
+            }
+            AnomalyType.SIGNAL_SPIKE -> {
+                sb.append("Unusual signal spike detected")
+                if (analysis.signalDeltaDbm > 0) {
+                    sb.append(" (+${analysis.signalDeltaDbm} dBm)")
+                }
+            }
+            AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA -> {
+                sb.append("Unknown cell tower appeared in an area where you've been before")
+            }
+            AnomalyType.CELL_TOWER_CHANGE -> {
+                if (analysis.impossibleSpeed) {
+                    sb.append("Cell tower change with impossible movement speed (${String.format("%.0f", analysis.speedKmh)} km/h) - possible IMSI catcher")
+                } else {
+                    sb.append("Suspicious cell tower change detected")
+                }
+            }
+            else -> {
+                sb.append(type.displayName)
             }
         }
+
+        return sb.toString()
     }
     
     private fun reportAnomalyImproved(
@@ -926,30 +1175,24 @@ class CellularMonitor(
         lastAnomalyTimes[type] = now
         lastAnyAnomalyTime = now // Update global cooldown
 
-        // Calculate severity based on confidence, base score, and IMSI catcher score
+        val imsiScore = analysis?.imsiCatcherScore ?: 0
+
+        // FIXED: Severity MUST match the IMSI likelihood score
+        // Score 90-100 = CRITICAL (immediate threat)
+        // Score 70-89 = HIGH (confirmed surveillance indicators)
+        // Score 50-69 = MEDIUM (likely surveillance equipment)
+        // Score 30-49 = LOW (possible, continue monitoring)
+        // Score 0-29 = INFO (notable but not threatening)
         val severity = when {
-            analysis?.imsiCatcherScore ?: 0 >= 70 -> ThreatLevel.CRITICAL
-            confidence == AnomalyConfidence.CRITICAL -> ThreatLevel.CRITICAL
-            analysis?.imsiCatcherScore ?: 0 >= 50 -> ThreatLevel.HIGH
-            confidence == AnomalyConfidence.HIGH -> ThreatLevel.HIGH
-            confidence == AnomalyConfidence.MEDIUM -> ThreatLevel.MEDIUM
-            else -> ThreatLevel.LOW
+            imsiScore >= 90 -> ThreatLevel.CRITICAL
+            imsiScore >= 70 -> ThreatLevel.HIGH
+            imsiScore >= 50 -> ThreatLevel.MEDIUM
+            imsiScore >= 30 -> ThreatLevel.LOW
+            else -> ThreatLevel.INFO
         }
 
-        // Build enriched description if analysis is available
-        val enrichedDescription = if (analysis != null) {
-            buildString {
-                append(description)
-                if (analysis.impossibleSpeed) {
-                    append(" | IMPOSSIBLE MOVEMENT: ${String.format("%.0f", analysis.speedKmh)} km/h")
-                }
-                if (analysis.downgradeWithSignalSpike) {
-                    append(" | Downgrade + Signal Spike")
-                }
-            }
-        } else {
-            description
-        }
+        // Build rich, actionable description
+        val enrichedDescription = buildRichDescription(type, analysis, contributingFactors, imsiScore)
 
         val anomaly = CellularAnomaly(
             type = type,
@@ -1342,6 +1585,213 @@ class CellularMonitor(
             .toList()
     }
     
+    // ==================== STATIONARY CELL CHANGE PATTERN ANALYSIS ====================
+
+    /**
+     * Result of analyzing stationary cell change patterns.
+     */
+    private data class StationaryCellPatternResult(
+        val recentChangesCount: Int,           // Number of changes in tracking window
+        val isQuickReturn: Boolean,            // Changed and quickly returned to original
+        val isOscillating: Boolean,            // Bouncing between same 2-3 cells
+        val uniqueCellsCount: Int,             // Number of unique cells seen recently
+        val timeSinceFirstChange: Long         // Time since first change in window
+    )
+
+    /**
+     * Track a stationary cell change event for pattern analysis.
+     */
+    private fun trackStationaryCellChange(fromCellId: Long?, toCellId: Long?) {
+        val now = System.currentTimeMillis()
+
+        // Check if this is a return to a previous cell
+        val isReturn = stationaryCellChanges.isNotEmpty() &&
+            stationaryCellChanges.any { it.toCellId == fromCellId || it.fromCellId == toCellId }
+
+        stationaryCellChanges.add(StationaryCellChangeEvent(
+            timestamp = now,
+            fromCellId = fromCellId,
+            toCellId = toCellId,
+            returnedToOriginal = isReturn
+        ))
+
+        // Clean up old entries
+        val cutoff = now - stationaryChangeWindowMs
+        stationaryCellChanges.removeAll { it.timestamp < cutoff }
+
+        // Limit history size
+        while (stationaryCellChanges.size > maxStationaryCellChangeHistory) {
+            stationaryCellChanges.removeAt(0)
+        }
+    }
+
+    /**
+     * Analyze recent stationary cell changes to detect patterns.
+     *
+     * Heuristics:
+     * - Quick return to original cell = likely network optimization (NOT suspicious)
+     * - Oscillating between 2-3 cells = likely edge-of-coverage (less suspicious)
+     * - Multiple unique cells = more suspicious
+     * - Sustained change to unknown cell = most suspicious
+     */
+    private fun analyzeStationaryCellPattern(fromCellId: Long?, toCellId: Long?): StationaryCellPatternResult {
+        val now = System.currentTimeMillis()
+        val cutoff = now - stationaryChangeWindowMs
+        val recentChanges = stationaryCellChanges.filter { it.timestamp > cutoff }
+
+        if (recentChanges.isEmpty()) {
+            return StationaryCellPatternResult(
+                recentChangesCount = 0,
+                isQuickReturn = false,
+                isOscillating = false,
+                uniqueCellsCount = 0,
+                timeSinceFirstChange = 0
+            )
+        }
+
+        // Count unique cells involved in recent changes
+        val uniqueCells = mutableSetOf<Long>()
+        recentChanges.forEach { change ->
+            change.fromCellId?.let { uniqueCells.add(it) }
+            change.toCellId?.let { uniqueCells.add(it) }
+        }
+
+        // Check for quick return pattern:
+        // If we changed FROM cell A TO cell B, and now we're changing back TO cell A
+        // within the quick return threshold, this is likely network optimization
+        val isQuickReturn = recentChanges.any { change ->
+            change.toCellId == fromCellId &&
+            (now - change.timestamp) < quickReturnThresholdMs
+        }
+
+        // Check for oscillation pattern:
+        // If we're bouncing between the same 2-3 cells, this is usually edge-of-coverage
+        val isOscillating = uniqueCells.size <= 3 && recentChanges.size >= 3 &&
+            recentChanges.count { it.returnedToOriginal } >= recentChanges.size / 2
+
+        val timeSinceFirst = if (recentChanges.isNotEmpty()) {
+            now - recentChanges.first().timestamp
+        } else 0L
+
+        return StationaryCellPatternResult(
+            recentChangesCount = recentChanges.size,
+            isQuickReturn = isQuickReturn,
+            isOscillating = isOscillating,
+            uniqueCellsCount = uniqueCells.size,
+            timeSinceFirstChange = timeSinceFirst
+        )
+    }
+
+    // ==================== RICH DESCRIPTION GENERATION ====================
+
+    /**
+     * Build a rich, actionable description for the user.
+     * This replaces generic messages like "Multiple suspicious indicators detected"
+     * with specific, contextual information about what was detected and why it matters.
+     */
+    private fun buildRichDescription(
+        type: AnomalyType,
+        analysis: CellularAnomalyAnalysis?,
+        contributingFactors: List<String>,
+        imsiScore: Int
+    ): String {
+        val sb = StringBuilder()
+
+        // Start with the user-friendly explanation of this anomaly type
+        sb.append(type.userFriendlyExplanation)
+        sb.append("\n\n")
+
+        // Add assessment based on IMSI score
+        val assessmentLabel = when {
+            imsiScore >= 90 -> "CRITICAL THREAT"
+            imsiScore >= 70 -> "HIGH THREAT"
+            imsiScore >= 50 -> "MODERATE CONCERN"
+            imsiScore >= 30 -> "LOW CONCERN"
+            else -> "INFORMATIONAL"
+        }
+        sb.append("Assessment: $assessmentLabel (${imsiScore}% IMSI catcher likelihood)\n\n")
+
+        // List specific contributing factors
+        if (contributingFactors.isNotEmpty()) {
+            sb.append("Why this was flagged:\n")
+            contributingFactors.take(5).forEach { factor ->
+                sb.append("  - $factor\n")
+            }
+            sb.append("\n")
+        }
+
+        // Add movement context if available
+        analysis?.let { a ->
+            if (a.movementType == MovementType.STATIONARY) {
+                sb.append("Context: You appear to be stationary. ")
+                if (a.cellTrustScore >= 60) {
+                    sb.append("The cell you switched to is one you've seen before, which reduces suspicion.\n")
+                } else {
+                    sb.append("Switching to an unfamiliar cell while not moving is more suspicious than while traveling.\n")
+                }
+            } else if (a.movementType == MovementType.VEHICLE || a.movementType == MovementType.HIGH_SPEED_VEHICLE) {
+                sb.append("Context: You appear to be traveling (${String.format("%.0f", a.speedKmh)} km/h). Cell changes while moving are normal.\n")
+            }
+
+            if (a.impossibleSpeed) {
+                sb.append("\nWARNING: The calculated movement speed (${String.format("%.0f", a.speedKmh)} km/h) is physically impossible. This could indicate location spoofing or a mobile IMSI catcher.\n")
+            }
+        }
+
+        // Add recommendations based on threat level
+        sb.append("\n")
+        sb.append(getRecommendationsForScore(imsiScore))
+
+        return sb.toString()
+    }
+
+    /**
+     * Get specific recommendations based on the IMSI score.
+     */
+    private fun getRecommendationsForScore(imsiScore: Int): String {
+        return when {
+            imsiScore >= 90 -> """
+                |IMMEDIATE ACTIONS RECOMMENDED:
+                |  1. Enable airplane mode to disconnect from cellular network
+                |  2. Use only WiFi with a VPN for communications
+                |  3. Leave the area if possible
+                |  4. Do NOT make phone calls or send SMS - use encrypted apps only
+                |  5. Report this detection to local authorities if you believe you're being targeted
+            """.trimMargin()
+
+            imsiScore >= 70 -> """
+                |HIGH THREAT - TAKE PRECAUTIONS:
+                |  1. Avoid making sensitive phone calls or sending SMS
+                |  2. Use end-to-end encrypted messaging apps (Signal, WhatsApp)
+                |  3. Consider enabling airplane mode if you need to discuss sensitive topics
+                |  4. Note your location for future reference
+                |  5. Monitor for additional anomalies in this area
+            """.trimMargin()
+
+            imsiScore >= 50 -> """
+                |MODERATE CONCERN - MONITOR SITUATION:
+                |  1. Be cautious with sensitive communications
+                |  2. Prefer encrypted messaging apps over SMS
+                |  3. The detection could be a false positive, but stay alert
+                |  4. If you see more anomalies, the threat level increases
+            """.trimMargin()
+
+            imsiScore >= 30 -> """
+                |LOW CONCERN - STAY AWARE:
+                |  1. This is likely normal network behavior
+                |  2. Continue monitoring - patterns matter more than single events
+                |  3. No immediate action required
+            """.trimMargin()
+
+            else -> """
+                |INFORMATIONAL - NO ACTION NEEDED:
+                |  1. This event was logged for pattern analysis
+                |  2. By itself, this is not concerning
+                |  3. Multiple similar events would warrant investigation
+            """.trimMargin()
+        }
+    }
+
     // ==================== ENRICHMENT ANALYSIS FUNCTIONS ====================
 
     /**
@@ -1432,15 +1882,38 @@ class CellularMonitor(
     }
 
     /**
-     * Check if there's an IMSI catcher signature in the downgrade pattern
-     * Returns score 0-100
+     * Check if there's an IMSI catcher signature in the downgrade pattern.
+     * Returns score 0-100 based on real-world IMSI catcher characteristics.
+     *
+     * SCORING METHODOLOGY (based on documented IMSI catcher behavior):
+     *
+     * HIGH VALUE INDICATORS (20-30 points each):
+     * - Progressive downgrade to 2G (classic StingRay behavior)
+     * - Suspicious LAC/TAC values (LAC 1-10 is StingRay signature)
+     * - Test network MCC-MNC codes
+     * - Suspiciously strong signal (DRTbox characteristic)
+     *
+     * MEDIUM VALUE INDICATORS (10-20 points each):
+     * - Encryption downgrade with signal spike
+     * - Unknown tower while stationary
+     * - Suspicious cell ID patterns
+     * - Unknown carrier MNC for the region
+     *
+     * LOW VALUE INDICATORS (5-10 points each):
+     * - Single stationary cell change
+     * - Low cell trust score
+     * - Recent network generation change
      */
     private fun calculateImsiCatcherScore(
         analysis: CellularAnomalyAnalysis
     ): Int {
         var score = 0
+        val reasons = mutableListOf<String>()
+
+        // ==================== HIGH VALUE INDICATORS ====================
 
         // Downgrade chain analysis - progressive downgrade is highly suspicious
+        // This is the PRIMARY method used by StingRay to enable interception
         val chain = analysis.encryptionDowngradeChain
         if (chain.size >= 2) {
             val hasProgressiveDowngrade = chain.zipWithNext().all { (prev, curr) ->
@@ -1449,42 +1922,133 @@ class CellularMonitor(
                 currGen < prevGen || currGen == prevGen
             }
             if (hasProgressiveDowngrade && chain.last() == "2G") {
-                score += 30 // Clear downgrade pattern ending in 2G
+                score += 30 // Clear downgrade pattern ending in 2G - CLASSIC STINGRAY
+                reasons.add("Progressive downgrade to 2G (StingRay signature)")
             }
         }
 
-        // Ended on 2G specifically
+        // Ended on 2G - this is where interception happens
+        // 2G has no mutual authentication, allowing MITM attacks
         if (analysis.currentEncryption == EncryptionStrength.WEAK ||
             analysis.currentEncryption == EncryptionStrength.NONE) {
             score += 25
+            reasons.add("Currently on 2G with weak/no encryption")
         }
 
+        // Suspiciously strong signal - characteristic of DRTbox (airplane-mounted)
+        // and close-proximity ground-based IMSI catchers
+        if (analysis.currentSignalDbm >= SUSPICIOUSLY_STRONG_SIGNAL_DBM) {
+            score += 20
+            reasons.add("Suspiciously strong signal (${analysis.currentSignalDbm} dBm) - possible close IMSI catcher")
+        }
+
+        // ==================== MEDIUM VALUE INDICATORS ====================
+
         // Downgrade with signal spike - classic IMSI catcher behavior
+        // The fake tower broadcasts stronger to attract phones
         if (analysis.downgradeWithSignalSpike) {
             score += 20
+            reasons.add("Encryption downgrade coincided with signal spike")
         }
 
         // Downgrade with new/unknown tower
         if (analysis.downgradeWithNewTower) {
             score += 15
+            reasons.add("Downgrade to unknown cell tower")
         }
 
-        // User was stationary
-        if (analysis.movementType == MovementType.STATIONARY) {
-            score += 10
-        }
-
-        // Low cell trust
-        if (analysis.cellTrustScore < 30) {
-            score += 10
-        }
-
-        // Impossible movement (potential spoofing)
+        // Impossible movement (potential spoofing or mobile IMSI catcher)
         if (analysis.impossibleSpeed) {
             score += 15
+            reasons.add("Impossible movement speed detected")
+        }
+
+        // User was stationary - cell changes are more suspicious when not moving
+        if (analysis.movementType == MovementType.STATIONARY) {
+            score += 10
+            reasons.add("Cell changed while stationary")
+        }
+
+        // Low cell trust - unknown towers are more suspicious
+        if (analysis.cellTrustScore < 30) {
+            score += 10
+            reasons.add("Unknown/untrusted cell tower")
+        }
+
+        // ==================== LOW VALUE INDICATORS ====================
+
+        // Rapid network generation changes
+        if (analysis.networkGenerationChange != null) {
+            score += 5
+        }
+
+        // LAC/TAC changed without cell change (unusual network behavior)
+        if (analysis.lacTacChanged) {
+            score += 10
+            reasons.add("LAC/TAC changed without cell change")
+        }
+
+        // Operator changed (could indicate spoofing)
+        if (analysis.operatorChanged) {
+            score += 10
+            reasons.add("Carrier identifier changed")
         }
 
         return score.coerceIn(0, 100)
+    }
+
+    /**
+     * Enhanced IMSI catcher score calculation that includes cell snapshot data.
+     * This version can check LAC values, cell ID patterns, and MCC-MNC validity.
+     */
+    private fun calculateEnhancedImsiScore(
+        analysis: CellularAnomalyAnalysis,
+        current: CellSnapshot,
+        previous: CellSnapshot?
+    ): Pair<Int, List<String>> {
+        var score = calculateImsiCatcherScore(analysis)
+        val reasons = mutableListOf<String>()
+
+        // Check for suspicious LAC values (StingRay often uses LAC 1-10)
+        current.lac?.let { lac ->
+            if (lac in SUSPICIOUS_LAC_VALUES) {
+                score += 25
+                reasons.add("Suspicious LAC value ($lac) - common in StingRay devices")
+            }
+        }
+
+        // Check for suspicious TAC values (LTE equivalent)
+        current.tac?.let { tac ->
+            if (tac in SUSPICIOUS_TAC_VALUES) {
+                score += 20
+                reasons.add("Suspicious TAC value ($tac) - common in IMSI catchers")
+            }
+        }
+
+        // Check for suspicious cell ID patterns
+        if (isSuspiciousCellIdPattern(current.cellId)) {
+            score += 15
+            reasons.add("Suspicious cell ID pattern (${current.cellId}) - test/sequential number")
+        }
+
+        // Check for unknown MNC in known MCC region (potential fake network)
+        val mcc = current.mcc
+        val mnc = current.mnc
+        if (mcc == "310" && mnc != null && mnc !in KNOWN_US_MNC_CODES_310) {
+            score += 20
+            reasons.add("Unknown carrier code MCC-MNC: 310-$mnc (not a recognized US carrier)")
+        } else if (mcc == "311" && mnc != null && mnc !in KNOWN_US_MNC_CODES_311) {
+            score += 20
+            reasons.add("Unknown carrier code MCC-MNC: 311-$mnc (not a recognized US carrier)")
+        }
+
+        // Check for suspiciously strong signal with unknown tower
+        if (current.signalStrength >= SUSPICIOUSLY_STRONG_SIGNAL_DBM && analysis.cellTrustScore < 30) {
+            score += 15
+            reasons.add("Very strong signal (${current.signalStrength} dBm) from unknown tower")
+        }
+
+        return Pair(score.coerceIn(0, 100), reasons)
     }
 
     /**

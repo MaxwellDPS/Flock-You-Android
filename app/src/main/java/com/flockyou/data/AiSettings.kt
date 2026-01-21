@@ -232,6 +232,12 @@ enum class AiModel(
 /**
  * Result of an AI analysis operation.
  * All analysis is performed locally on the device.
+ *
+ * Enhanced with enterprise-grade fields for comprehensive, actionable intelligence:
+ * - Severity-aligned messaging (LOW severity = reassuring, HIGH = urgent)
+ * - False positive assessment and acknowledgment
+ * - Simple and technical explanations for different user types
+ * - Actionable recommendations with urgency levels
  */
 data class AiAnalysisResult(
     val success: Boolean,
@@ -250,12 +256,30 @@ data class AiAnalysisResult(
     val isFalsePositive: Boolean = false,
     val falsePositiveConfidence: Float = 0f,
     val falsePositiveBanner: String? = null, // User-friendly explanation if FP
-    val falsePositiveReasons: List<String> = emptyList()
+    val falsePositiveReasons: List<String> = emptyList(),
+
+    // === ENTERPRISE-GRADE FIELDS ===
+    // These provide comprehensive, actionable intelligence beyond basic analysis
+
+    // False positive likelihood as percentage (0-100)
+    // If > 50%, the detection is likely benign
+    val isFalsePositiveLikely: Boolean = false,
+    val falsePositiveLikelihoodPercent: Int = 0,
+
+    // User-friendly explanation (non-technical) for general users
+    // Example: "Your phone's connection changed, but this is probably just normal cell tower behavior."
+    val simpleExplanation: String? = null,
+
+    // Technical details for advanced users
+    // Example: "IMSI Catcher Score: 20%, Encryption Chain: 5G -> 4G, Cell Trust: 85%"
+    val technicalDetails: String? = null
 )
 
 /**
  * Structured analysis data for programmatic consumption.
  * Allows other parts of the app to use analysis results directly.
+ *
+ * Enhanced with enterprise description for comprehensive metadata access.
  */
 data class StructuredAnalysis(
     val deviceCategory: String,
@@ -264,7 +288,13 @@ data class StructuredAnalysis(
     val riskScore: Int, // 0-100
     val riskFactors: List<String>,
     val mitigationActions: List<MitigationAction>,
-    val contextualInsights: ContextualInsights? = null
+    val contextualInsights: ContextualInsights? = null,
+
+    // === ENTERPRISE DESCRIPTION ===
+    // Full enterprise-grade description with all metadata
+    // This is typed as Any? to avoid circular dependency with PromptTemplates
+    // Cast to PromptTemplates.EnterpriseDetectionDescription when needed
+    val enterpriseDescription: Any? = null
 )
 
 data class MitigationAction(

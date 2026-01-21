@@ -348,6 +348,64 @@ data class PatternMatch(
 }
 
 /**
+ * Result of a proper threat calculation using the enterprise-grade formula.
+ *
+ * Contains the full breakdown of how the threat score was calculated:
+ * - Raw score from the formula: likelihood * impact * confidence
+ * - The severity level derived from the score
+ * - All the factors that contributed to the confidence adjustment
+ * - Human-readable reasoning for debug/audit purposes
+ *
+ * @property rawScore Calculated threat score (0-100)
+ * @property severity Derived threat level
+ * @property likelihood Base likelihood percentage used (0-100)
+ * @property impactFactor Impact factor for the device type (0.5-2.0)
+ * @property confidence Final confidence after adjustments (0.0-1.0)
+ * @property confidenceFactors List of factors that affected confidence
+ * @property reasoning Human-readable explanation of the calculation
+ */
+data class ThreatCalculationResult(
+    val rawScore: Int,
+    val severity: ThreatLevel,
+    val likelihood: Int,
+    val impactFactor: Double,
+    val confidence: Double,
+    val confidenceFactors: List<String>,
+    val reasoning: String
+) {
+    /**
+     * Whether this represents a significant threat (MEDIUM or higher).
+     */
+    val isSignificantThreat: Boolean
+        get() = severity == ThreatLevel.MEDIUM ||
+                severity == ThreatLevel.HIGH ||
+                severity == ThreatLevel.CRITICAL
+
+    /**
+     * Whether this is likely a false positive (low score with low confidence).
+     */
+    val isLikelyFalsePositive: Boolean
+        get() = rawScore < 30 && confidence < 0.4
+
+    /**
+     * Generate a debug export map for this result.
+     */
+    fun toDebugMap(): Map<String, Any> = mapOf(
+        "raw_score" to rawScore,
+        "severity" to severity.name,
+        "severity_display" to severity.displayName,
+        "likelihood_percent" to likelihood,
+        "impact_factor" to impactFactor,
+        "confidence_percent" to (confidence * 100).toInt(),
+        "confidence_factors" to confidenceFactors,
+        "reasoning" to reasoning,
+        "is_significant_threat" to isSignificantThreat,
+        "is_likely_false_positive" to isLikelyFalsePositive,
+        "formula" to "score = $likelihood * ${"%.2f".format(impactFactor)} * ${"%.2f".format(confidence)} = $rawScore"
+    )
+}
+
+/**
  * Types of patterns that can be matched during detection.
  */
 enum class PatternMatchType(val displayName: String) {
@@ -772,35 +830,300 @@ abstract class BaseDetectionHandler<T : DetectionContext> : DetectionHandler<T> 
     /**
      * Calculates aggregate confidence from multiple pattern matches.
      *
+     * This improved method applies proper confidence adjustments:
+     * - Multiple confirming indicators: +0.2
+     * - Cross-protocol correlation: +0.3
+     * - High match quality: +0.1 to +0.15
+     * - Single weak indicator: -0.3
+     *
      * @param matches List of pattern matches
+     * @param hasMultipleProtocols Whether detections came from multiple protocols
      * @return Aggregate confidence score (0.0-1.0)
      */
-    protected fun calculateAggregateConfidence(matches: List<PatternMatch>): Float {
+    protected fun calculateAggregateConfidence(
+        matches: List<PatternMatch>,
+        hasMultipleProtocols: Boolean = false
+    ): Float {
         if (matches.isEmpty()) return 0f
 
-        // Use a weighted average where higher threat scores contribute more
+        // Start with base confidence from weighted average
         val totalWeight = matches.sumOf { it.threatScore.toDouble() }
-        if (totalWeight == 0.0) return matches.map { it.confidence }.average().toFloat()
+        var baseConfidence = if (totalWeight == 0.0) {
+            matches.map { it.confidence }.average().toFloat()
+        } else {
+            val weightedSum = matches.sumOf { it.confidence * it.threatScore.toDouble() }
+            (weightedSum / totalWeight).toFloat()
+        }
 
-        val weightedSum = matches.sumOf { it.confidence * it.threatScore.toDouble() }
-        return (weightedSum / totalWeight).toFloat().coerceIn(0f, 1f)
+        // Apply confidence adjustments based on ThreatScoring system
+
+        // Multiple confirming indicators boost
+        if (matches.size > 1) {
+            baseConfidence += 0.2f
+        } else {
+            // Single indicator penalty
+            baseConfidence -= 0.3f
+        }
+
+        // Cross-protocol correlation boost (strong indicator)
+        if (hasMultipleProtocols) {
+            baseConfidence += 0.3f
+        }
+
+        // Bonus for definitive matches
+        val definitiveCount = matches.count { it.isDefinitive }
+        if (definitiveCount > 0) {
+            baseConfidence += 0.1f * definitiveCount.coerceAtMost(2)
+        }
+
+        return baseConfidence.coerceIn(0f, 1f)
     }
 
     /**
      * Calculates aggregate threat score from multiple pattern matches.
      *
+     * This improved method uses the proper formula:
+     *   threat_score = likelihood * impact_factor * confidence
+     *
+     * It ensures:
+     * - 20% IMSI likelihood with low confidence -> LOW severity, not HIGH
+     * - High scores only for confirmed, high-confidence threats
+     *
      * @param matches List of pattern matches
+     * @param baseLikelihood Base likelihood percentage (0-100) that these patterns indicate a real threat
+     * @param impactFactor Impact factor based on device type (0.5-2.0)
+     * @param confidence Calculated confidence (0.0-1.0)
      * @return Aggregate threat score (0-100)
      */
-    protected fun calculateAggregateThreatScore(matches: List<PatternMatch>): Int {
+    protected fun calculateAggregateThreatScore(
+        matches: List<PatternMatch>,
+        baseLikelihood: Int = 50,
+        impactFactor: Double = 1.0,
+        confidence: Float = 0.5f
+    ): Int {
         if (matches.isEmpty()) return 0
 
-        // Take the maximum score, with a bonus for multiple matches
+        // DEPRECATED BEHAVIOR (kept for backward compatibility when using old signature):
+        // If using default parameters, fall back to legacy calculation
+        // This will be removed once all callers are updated
+        if (baseLikelihood == 50 && impactFactor == 1.0 && confidence == 0.5f) {
+            return calculateLegacyAggregateThreatScore(matches)
+        }
+
+        // NEW BEHAVIOR: Use proper formula
+        // threat_score = likelihood * impact_factor * confidence
+        val rawScore = (baseLikelihood * impactFactor * confidence).toInt()
+
+        // Apply minor bonus for multiple confirming matches (capped)
+        val matchBonus = ((matches.size - 1) * 3).coerceAtMost(10)
+
+        return (rawScore + matchBonus).coerceIn(0, 100)
+    }
+
+    /**
+     * Legacy threat score calculation for backward compatibility.
+     * DO NOT USE for new code - use calculateAggregateThreatScore with proper parameters.
+     */
+    @Deprecated("Use calculateAggregateThreatScore with proper likelihood, impact, and confidence parameters")
+    private fun calculateLegacyAggregateThreatScore(matches: List<PatternMatch>): Int {
+        if (matches.isEmpty()) return 0
+
+        // Take the maximum score, with a small bonus for multiple matches
         val maxScore = matches.maxOf { it.threatScore }
-        val bonusPerMatch = 5
-        val bonus = (matches.size - 1) * bonusPerMatch
+        val bonusPerMatch = 3  // Reduced from 5 to prevent score inflation
+        val bonus = ((matches.size - 1) * bonusPerMatch).coerceAtMost(10)
 
         return (maxScore + bonus).coerceIn(0, 100)
+    }
+
+    /**
+     * Calculate threat score using the proper enterprise-grade formula.
+     *
+     * This method implements:
+     *   threat_score = likelihood * impact_factor * confidence
+     *
+     * @param baseLikelihood Base probability (0-100) this is a real threat
+     * @param deviceType The device type for impact factor lookup
+     * @param rssi Signal strength in dBm
+     * @param seenCount Number of times detected
+     * @param hasMultipleIndicators Whether multiple confirming indicators exist
+     * @param hasCrossProtocolCorrelation Whether seen on multiple protocols
+     * @param isKnownFalsePositivePattern Whether this matches a known FP pattern
+     * @param isConsumerDevice Whether this is a known consumer IoT device
+     * @return ThreatCalculationResult with score, severity, and reasoning
+     */
+    protected fun calculateProperThreatScore(
+        baseLikelihood: Int,
+        deviceType: com.flockyou.data.model.DeviceType,
+        rssi: Int,
+        seenCount: Int = 1,
+        hasMultipleIndicators: Boolean = false,
+        hasCrossProtocolCorrelation: Boolean = false,
+        isKnownFalsePositivePattern: Boolean = false,
+        isConsumerDevice: Boolean = false
+    ): ThreatCalculationResult {
+        // Get impact factor based on device type
+        val impactFactor = getImpactFactor(deviceType)
+
+        // Calculate confidence with adjustments
+        var confidence = 0.5
+
+        // Signal strength adjustments
+        when {
+            rssi > -50 -> confidence += 0.1
+            rssi > -60 -> confidence += 0.05
+            rssi < -90 -> confidence -= 0.2
+            rssi < -80 -> confidence -= 0.1
+        }
+
+        // Multiple indicators
+        if (hasMultipleIndicators) {
+            confidence += 0.2
+        } else {
+            confidence -= 0.3  // Single indicator penalty
+        }
+
+        // Cross-protocol correlation (strong indicator)
+        if (hasCrossProtocolCorrelation) {
+            confidence += 0.3
+        }
+
+        // Known false positive penalty
+        if (isKnownFalsePositivePattern) {
+            confidence -= 0.5
+        }
+
+        // Consumer device penalty
+        if (isConsumerDevice) {
+            confidence -= 0.2
+        }
+
+        // Persistence bonus
+        if (seenCount > 3) {
+            confidence += 0.2
+        } else if (seenCount == 1) {
+            confidence -= 0.2  // Brief detection penalty
+        }
+
+        // Clamp confidence
+        confidence = confidence.coerceIn(0.1, 1.0)
+
+        // Calculate final score
+        val rawScore = (baseLikelihood * impactFactor * confidence).toInt().coerceIn(0, 100)
+
+        // Determine severity
+        val severity = com.flockyou.data.model.scoreToThreatLevel(rawScore)
+
+        // Build confidence factors list
+        val factors = mutableListOf<String>()
+        if (hasMultipleIndicators) factors.add("+multiple_indicators")
+        else factors.add("-single_indicator")
+        if (hasCrossProtocolCorrelation) factors.add("+cross_protocol")
+        if (isKnownFalsePositivePattern) factors.add("-known_fp_pattern")
+        if (isConsumerDevice) factors.add("-consumer_device")
+        when {
+            rssi > -50 -> factors.add("+signal_excellent")
+            rssi > -60 -> factors.add("+signal_good")
+            rssi < -90 -> factors.add("-signal_very_weak")
+            rssi < -80 -> factors.add("-signal_weak")
+        }
+        if (seenCount > 3) factors.add("+persistent")
+        else if (seenCount == 1) factors.add("-brief")
+
+        return ThreatCalculationResult(
+            rawScore = rawScore,
+            severity = severity,
+            likelihood = baseLikelihood,
+            impactFactor = impactFactor,
+            confidence = confidence,
+            confidenceFactors = factors,
+            reasoning = buildThreatReasoning(
+                baseLikelihood, impactFactor, confidence, rawScore, severity, deviceType
+            )
+        )
+    }
+
+    /**
+     * Get impact factor for a device type.
+     */
+    private fun getImpactFactor(deviceType: com.flockyou.data.model.DeviceType): Double = when (deviceType) {
+        // Maximum impact - intercepts all communications
+        com.flockyou.data.model.DeviceType.STINGRAY_IMSI -> 2.0
+        com.flockyou.data.model.DeviceType.CELLEBRITE_FORENSICS -> 2.0
+        com.flockyou.data.model.DeviceType.GRAYKEY_DEVICE -> 2.0
+        com.flockyou.data.model.DeviceType.MAN_IN_MIDDLE -> 2.0
+
+        // High impact - can cause physical harm
+        com.flockyou.data.model.DeviceType.GNSS_SPOOFER -> 1.8
+        com.flockyou.data.model.DeviceType.GNSS_JAMMER -> 1.8
+        com.flockyou.data.model.DeviceType.RF_JAMMER -> 1.8
+        com.flockyou.data.model.DeviceType.WIFI_PINEAPPLE -> 1.8
+        com.flockyou.data.model.DeviceType.ROGUE_AP -> 1.7
+
+        // Tracking/stalking concern
+        com.flockyou.data.model.DeviceType.AIRTAG -> 1.5
+        com.flockyou.data.model.DeviceType.TILE_TRACKER -> 1.5
+        com.flockyou.data.model.DeviceType.SAMSUNG_SMARTTAG -> 1.5
+        com.flockyou.data.model.DeviceType.GENERIC_BLE_TRACKER -> 1.5
+        com.flockyou.data.model.DeviceType.TRACKING_DEVICE -> 1.5
+        com.flockyou.data.model.DeviceType.SURVEILLANCE_VAN -> 1.5
+        com.flockyou.data.model.DeviceType.DRONE -> 1.4
+
+        // Privacy violations
+        com.flockyou.data.model.DeviceType.HIDDEN_CAMERA -> 1.3
+        com.flockyou.data.model.DeviceType.HIDDEN_TRANSMITTER -> 1.3
+        com.flockyou.data.model.DeviceType.PACKET_SNIFFER -> 1.3
+        com.flockyou.data.model.DeviceType.FLOCK_SAFETY_CAMERA -> 1.2
+        com.flockyou.data.model.DeviceType.LICENSE_PLATE_READER -> 1.2
+        com.flockyou.data.model.DeviceType.FACIAL_RECOGNITION -> 1.2
+
+        // Standard surveillance
+        com.flockyou.data.model.DeviceType.BODY_CAMERA -> 1.0
+        com.flockyou.data.model.DeviceType.POLICE_VEHICLE -> 1.0
+        com.flockyou.data.model.DeviceType.CCTV_CAMERA -> 1.0
+        com.flockyou.data.model.DeviceType.ULTRASONIC_BEACON -> 1.0
+
+        // Consumer IoT - lower impact
+        com.flockyou.data.model.DeviceType.RING_DOORBELL -> 0.8
+        com.flockyou.data.model.DeviceType.NEST_CAMERA -> 0.8
+        com.flockyou.data.model.DeviceType.WYZE_CAMERA -> 0.8
+        com.flockyou.data.model.DeviceType.AMAZON_SIDEWALK -> 0.7
+        com.flockyou.data.model.DeviceType.BLUETOOTH_BEACON -> 0.7
+
+        // Traffic infrastructure - minimal impact
+        com.flockyou.data.model.DeviceType.SPEED_CAMERA -> 0.6
+        com.flockyou.data.model.DeviceType.RED_LIGHT_CAMERA -> 0.6
+        com.flockyou.data.model.DeviceType.TOLL_READER -> 0.6
+        com.flockyou.data.model.DeviceType.TRAFFIC_SENSOR -> 0.5
+
+        // Environmental/signal issues
+        com.flockyou.data.model.DeviceType.RF_INTERFERENCE -> 0.5
+        com.flockyou.data.model.DeviceType.RF_ANOMALY -> 0.5
+
+        // Default
+        else -> 1.0
+    }
+
+    /**
+     * Build human-readable reasoning for the threat calculation.
+     */
+    private fun buildThreatReasoning(
+        likelihood: Int,
+        impactFactor: Double,
+        confidence: Double,
+        score: Int,
+        severity: ThreatLevel,
+        deviceType: com.flockyou.data.model.DeviceType
+    ): String {
+        return buildString {
+            appendLine("Threat Assessment: ${severity.displayName}")
+            appendLine()
+            appendLine("Formula: score = likelihood * impact * confidence")
+            appendLine("  Likelihood: $likelihood% (base probability of real threat)")
+            appendLine("  Impact: ${"%.2f".format(impactFactor)} (${deviceType.displayName})")
+            appendLine("  Confidence: ${"%.0f".format(confidence * 100)}%")
+            appendLine("  Final Score: $score")
+        }
     }
 
     /**

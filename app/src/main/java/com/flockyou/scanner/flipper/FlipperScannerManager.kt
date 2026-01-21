@@ -20,7 +20,8 @@ import javax.inject.Singleton
 class FlipperScannerManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val detectionRepository: DetectionRepository,
-    private val settingsRepository: FlipperSettingsRepository
+    private val settingsRepository: FlipperSettingsRepository,
+    private val alertManager: FlipperAlertManager
 ) {
     companion object {
         private const val TAG = "FlipperScannerManager"
@@ -52,9 +53,38 @@ class FlipperScannerManager @Inject constructor(
     private val _wipsAlertCount = MutableStateFlow(0)
     val wipsAlertCount: StateFlow<Int> = _wipsAlertCount.asStateFlow()
 
+    // Scan scheduler status
+    private val _scanSchedulerStatus = MutableStateFlow(ScanSchedulerStatus())
+    val scanSchedulerStatus: StateFlow<ScanSchedulerStatus> = _scanSchedulerStatus.asStateFlow()
+
+    // Auto-reconnect state
+    private val _autoReconnectState = MutableStateFlow(AutoReconnectState())
+    val autoReconnectState: StateFlow<AutoReconnectState> = _autoReconnectState.asStateFlow()
+
+    // Discovered Bluetooth devices (from scanning)
+    private val _discoveredDevices = MutableStateFlow<List<DiscoveredFlipperDevice>>(emptyList())
+    val discoveredDevices: StateFlow<List<DiscoveredFlipperDevice>> = _discoveredDevices.asStateFlow()
+
+    // Device scanning state
+    private val _isScanningForDevices = MutableStateFlow(false)
+    val isScanningForDevices: StateFlow<Boolean> = _isScanningForDevices.asStateFlow()
+
+    // Connection quality (RSSI)
+    private val _connectionRssi = MutableStateFlow<Int?>(null)
+    val connectionRssi: StateFlow<Int?> = _connectionRssi.asStateFlow()
+
+    // Recent devices from settings
+    val recentDevices: Flow<List<RecentFlipperDevice>> = settingsRepository.recentDevices
+
     // Current settings cache
     private var currentSettings = FlipperSettings()
     private var surveillancePatterns = emptyList<SurveillancePattern>()
+
+    // Auto-reconnect job
+    private var autoReconnectJob: Job? = null
+    private var lastConnectedAddress: String? = null
+    private var lastConnectedName: String? = null
+    private var lastConnectionType: FlipperClient.ConnectionType = FlipperClient.ConnectionType.NONE
 
     // Current location
     private var currentLatitude: Double? = null
@@ -65,6 +95,35 @@ class FlipperScannerManager @Inject constructor(
     private var subGhzScanJob: Job? = null
     private var bleScanJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var nfcScanJob: Job? = null
+    private var irScanJob: Job? = null
+
+    // Pause state
+    private val _isPaused = MutableStateFlow(false)
+
+    // Last scan times
+    private val _lastWifiScanTime = MutableStateFlow<Long?>(null)
+    private val _lastSubGhzScanTime = MutableStateFlow<Long?>(null)
+    private val _lastBleScanTime = MutableStateFlow<Long?>(null)
+    private val _lastNfcScanTime = MutableStateFlow<Long?>(null)
+    private val _lastIrScanTime = MutableStateFlow<Long?>(null)
+
+    // Currently scanning flags
+    private val _isWifiScanning = MutableStateFlow(false)
+    private val _isSubGhzScanning = MutableStateFlow(false)
+    private val _isBleScanning = MutableStateFlow(false)
+    private val _isNfcScanning = MutableStateFlow(false)
+    private val _isIrScanning = MutableStateFlow(false)
+
+    // Cooldown timestamps
+    private val _wifiScanCooldownUntil = MutableStateFlow(0L)
+    private val _subGhzScanCooldownUntil = MutableStateFlow(0L)
+    private val _bleScanCooldownUntil = MutableStateFlow(0L)
+    private val _nfcScanCooldownUntil = MutableStateFlow(0L)
+    private val _irScanCooldownUntil = MutableStateFlow(0L)
+
+    // Cooldown duration in milliseconds (3 seconds)
+    private val SCAN_COOLDOWN_MS = 3000L
 
     init {
         // Observe settings changes
@@ -78,18 +137,51 @@ class FlipperScannerManager @Inject constructor(
         }
 
         // Auto-start scanning and request status when connection becomes READY
+        // Also handle auto-reconnect on disconnection
         scope.launch {
             _connectionState.collect { state ->
-                if (state == FlipperConnectionState.READY) {
-                    // Request status to populate Flipper info (battery, uptime, etc.)
-                    Log.i(TAG, "Connection ready, requesting Flipper status")
-                    flipperClient?.requestStatus()
+                when (state) {
+                    FlipperConnectionState.READY -> {
+                        // Request status to populate Flipper info (battery, uptime, etc.)
+                        Log.i(TAG, "Connection ready, requesting Flipper status")
+                        flipperClient?.requestStatus()
 
-                    // Auto-start scanning if not already running
-                    if (!_isRunning.value) {
-                        Log.i(TAG, "Auto-starting Flipper scanning")
-                        startScanning(surveillancePatterns)
+                        // Cancel any pending auto-reconnect
+                        cancelAutoReconnect()
+
+                        // Save to recent devices if we have address info
+                        saveConnectionToHistory()
+
+                        // Auto-start scanning if not already running
+                        if (!_isRunning.value) {
+                            Log.i(TAG, "Auto-starting Flipper scanning")
+                            startScanning(surveillancePatterns)
+                        }
+
+                        // Start RSSI monitoring for Bluetooth connections
+                        if (_connectionType.value == FlipperClient.ConnectionType.BLUETOOTH) {
+                            startRssiMonitoring()
+                        }
                     }
+                    FlipperConnectionState.DISCONNECTED -> {
+                        // Stop RSSI monitoring
+                        stopRssiMonitoring()
+
+                        // Start auto-reconnect if enabled and we have a previous connection
+                        if (lastConnectedAddress != null || lastConnectionType == FlipperClient.ConnectionType.USB) {
+                            scope.launch {
+                                val autoReconnectEnabled = settingsRepository.autoReconnectEnabled.first()
+                                if (autoReconnectEnabled) {
+                                    startAutoReconnect()
+                                }
+                            }
+                        }
+                    }
+                    FlipperConnectionState.ERROR -> {
+                        // Stop RSSI monitoring
+                        stopRssiMonitoring()
+                    }
+                    else -> {}
                 }
             }
         }
@@ -167,8 +259,11 @@ class FlipperScannerManager @Inject constructor(
     /**
      * Connect to Flipper via Bluetooth
      */
-    fun connectBluetooth(deviceAddress: String) {
+    fun connectBluetooth(deviceAddress: String, deviceName: String = "Flipper") {
         initialize()
+        lastConnectedAddress = deviceAddress
+        lastConnectedName = deviceName
+        lastConnectionType = FlipperClient.ConnectionType.BLUETOOTH
         flipperClient?.connectBluetooth(deviceAddress)
     }
 
@@ -177,6 +272,9 @@ class FlipperScannerManager @Inject constructor(
      */
     fun connectUsb(device: UsbDevice) {
         initialize()
+        lastConnectedAddress = null
+        lastConnectedName = "Flipper (USB)"
+        lastConnectionType = FlipperClient.ConnectionType.USB
         flipperClient?.connectUsb(device)
     }
 
@@ -185,6 +283,9 @@ class FlipperScannerManager @Inject constructor(
      */
     fun connectUsb(): Boolean {
         initialize()
+        lastConnectedAddress = null
+        lastConnectedName = "Flipper (USB)"
+        lastConnectionType = FlipperClient.ConnectionType.USB
         return flipperClient?.connectUsb() ?: false
     }
 
@@ -200,8 +301,14 @@ class FlipperScannerManager @Inject constructor(
      * Disconnect from Flipper
      */
     fun disconnect() {
+        cancelAutoReconnect()
         stopScanning()
+        stopRssiMonitoring()
         flipperClient?.disconnect()
+        // Clear last connected info to prevent auto-reconnect
+        lastConnectedAddress = null
+        lastConnectedName = null
+        lastConnectionType = FlipperClient.ConnectionType.NONE
     }
 
     /**
@@ -409,9 +516,15 @@ class FlipperScannerManager @Inject constructor(
         // WiFi scan loop
         if (currentSettings.enableWifiScanning) {
             wifiScanJob = scope.launch {
-                while (_isRunning.value) {
+                while (_isRunning.value && !_isPaused.value) {
+                    _isWifiScanning.value = true
+                    updateScanSchedulerStatus()
                     flipperClient?.requestWifiScan()
-                    delay(currentSettings.wifiScanIntervalSeconds * 1000L)
+                    _lastWifiScanTime.value = System.currentTimeMillis()
+                    delay(500) // Brief scanning animation
+                    _isWifiScanning.value = false
+                    updateScanSchedulerStatus()
+                    delay((currentSettings.wifiScanIntervalSeconds * 1000L) - 500)
                 }
             }
         }
@@ -419,12 +532,18 @@ class FlipperScannerManager @Inject constructor(
         // Sub-GHz scan loop
         if (currentSettings.enableSubGhzScanning) {
             subGhzScanJob = scope.launch {
-                while (_isRunning.value) {
+                while (_isRunning.value && !_isPaused.value) {
+                    _isSubGhzScanning.value = true
+                    updateScanSchedulerStatus()
                     flipperClient?.requestSubGhzScan(
                         currentSettings.subGhzFrequencyStart,
                         currentSettings.subGhzFrequencyEnd
                     )
-                    delay(currentSettings.subGhzScanIntervalSeconds * 1000L)
+                    _lastSubGhzScanTime.value = System.currentTimeMillis()
+                    delay(500) // Brief scanning animation
+                    _isSubGhzScanning.value = false
+                    updateScanSchedulerStatus()
+                    delay((currentSettings.subGhzScanIntervalSeconds * 1000L) - 500)
                 }
             }
         }
@@ -432,24 +551,42 @@ class FlipperScannerManager @Inject constructor(
         // BLE scan loop
         if (currentSettings.enableBleScanning) {
             bleScanJob = scope.launch {
-                while (_isRunning.value) {
+                while (_isRunning.value && !_isPaused.value) {
+                    _isBleScanning.value = true
+                    updateScanSchedulerStatus()
                     flipperClient?.requestBleScan()
-                    delay(currentSettings.bleScanIntervalSeconds * 1000L)
+                    _lastBleScanTime.value = System.currentTimeMillis()
+                    delay(500) // Brief scanning animation
+                    _isBleScanning.value = false
+                    updateScanSchedulerStatus()
+                    delay((currentSettings.bleScanIntervalSeconds * 1000L) - 500)
                 }
             }
         }
 
-        // IR scan (one-shot if enabled)
+        // IR scan (one-shot if enabled, but can be retriggered)
         if (currentSettings.enableIrScanning) {
-            scope.launch {
+            irScanJob = scope.launch {
+                _isIrScanning.value = true
+                updateScanSchedulerStatus()
                 flipperClient?.requestIrScan()
+                _lastIrScanTime.value = System.currentTimeMillis()
+                delay(500)
+                _isIrScanning.value = false
+                updateScanSchedulerStatus()
             }
         }
 
-        // NFC scan (one-shot if enabled)
+        // NFC scan (one-shot if enabled, but can be retriggered)
         if (currentSettings.enableNfcScanning) {
-            scope.launch {
+            nfcScanJob = scope.launch {
+                _isNfcScanning.value = true
+                updateScanSchedulerStatus()
                 flipperClient?.requestNfcScan()
+                _lastNfcScanTime.value = System.currentTimeMillis()
+                delay(500)
+                _isNfcScanning.value = false
+                updateScanSchedulerStatus()
             }
         }
 
@@ -460,6 +597,9 @@ class FlipperScannerManager @Inject constructor(
                 delay(currentSettings.heartbeatIntervalSeconds * 1000L)
             }
         }
+
+        // Update scheduler status after starting loops
+        updateScanSchedulerStatus()
     }
 
     private fun cancelScanLoops() {
@@ -471,6 +611,9 @@ class FlipperScannerManager @Inject constructor(
         subGhzScanJob = null
         bleScanJob = null
         heartbeatJob = null
+
+        // Update scheduler status after canceling loops
+        updateScanSchedulerStatus()
     }
 
     private fun restartScanLoops() {
@@ -577,6 +720,8 @@ class FlipperScannerManager @Inject constructor(
             val isNew = detectionRepository.upsertDetection(detection)
             if (isNew) {
                 _detectionCount.update { it + 1 }
+                // Trigger alert for new detections (haptic, sound, notification)
+                alertManager.onDetection(detection, isNew = true)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save detection", e)
@@ -592,4 +737,458 @@ class FlipperScannerManager @Inject constructor(
         flipperClient = null
         scope.cancel()
     }
+
+    /**
+     * Update scan scheduler status based on current state
+     */
+    private fun updateScanSchedulerStatus() {
+        _scanSchedulerStatus.update {
+            ScanSchedulerStatus(
+                wifiScanActive = wifiScanJob?.isActive == true && !_isPaused.value,
+                wifiScanIntervalSeconds = currentSettings.wifiScanIntervalSeconds,
+                subGhzScanActive = subGhzScanJob?.isActive == true && !_isPaused.value,
+                subGhzScanIntervalSeconds = currentSettings.subGhzScanIntervalSeconds,
+                subGhzFrequencyStart = currentSettings.subGhzFrequencyStart,
+                subGhzFrequencyEnd = currentSettings.subGhzFrequencyEnd,
+                bleScanActive = bleScanJob?.isActive == true && !_isPaused.value,
+                bleScanIntervalSeconds = currentSettings.bleScanIntervalSeconds,
+                heartbeatActive = heartbeatJob?.isActive == true,
+                heartbeatIntervalSeconds = currentSettings.heartbeatIntervalSeconds,
+                irScanEnabled = currentSettings.enableIrScanning,
+                nfcScanEnabled = currentSettings.enableNfcScanning,
+                wipsEnabled = currentSettings.wipsEnabled,
+                isPaused = _isPaused.value,
+                lastWifiScanTime = _lastWifiScanTime.value,
+                lastSubGhzScanTime = _lastSubGhzScanTime.value,
+                lastBleScanTime = _lastBleScanTime.value,
+                lastNfcScanTime = _lastNfcScanTime.value,
+                lastIrScanTime = _lastIrScanTime.value,
+                isWifiScanning = _isWifiScanning.value,
+                isSubGhzScanning = _isSubGhzScanning.value,
+                isBleScanning = _isBleScanning.value,
+                isNfcScanning = _isNfcScanning.value,
+                isIrScanning = _isIrScanning.value,
+                wifiScanCooldownUntil = _wifiScanCooldownUntil.value,
+                subGhzScanCooldownUntil = _subGhzScanCooldownUntil.value,
+                bleScanCooldownUntil = _bleScanCooldownUntil.value,
+                nfcScanCooldownUntil = _nfcScanCooldownUntil.value,
+                irScanCooldownUntil = _irScanCooldownUntil.value
+            )
+        }
+    }
+
+    /**
+     * Pause all scanning loops (keeps connection alive)
+     */
+    fun pauseScanning() {
+        if (_isPaused.value || !_isRunning.value) return
+
+        Log.i(TAG, "Pausing Flipper scanning")
+        _isPaused.value = true
+
+        // Cancel scan loops but keep heartbeat running
+        wifiScanJob?.cancel()
+        subGhzScanJob?.cancel()
+        bleScanJob?.cancel()
+        nfcScanJob?.cancel()
+        irScanJob?.cancel()
+        wifiScanJob = null
+        subGhzScanJob = null
+        bleScanJob = null
+        nfcScanJob = null
+        irScanJob = null
+
+        updateScanSchedulerStatus()
+    }
+
+    /**
+     * Resume scanning after pause
+     */
+    fun resumeScanning() {
+        if (!_isPaused.value || !_isRunning.value) return
+
+        Log.i(TAG, "Resuming Flipper scanning")
+        _isPaused.value = false
+
+        startScanLoops()
+    }
+
+    /**
+     * Toggle pause/resume state
+     */
+    fun togglePauseScanning() {
+        if (_isPaused.value) {
+            resumeScanning()
+        } else {
+            pauseScanning()
+        }
+    }
+
+    /**
+     * Trigger a manual scan for a specific scan type.
+     * Returns true if scan was triggered, false if on cooldown or not connected.
+     */
+    fun triggerManualScan(scanType: FlipperScanType): Boolean {
+        if (!isConnected()) {
+            Log.w(TAG, "Cannot trigger manual scan: not connected")
+            return false
+        }
+
+        val now = System.currentTimeMillis()
+
+        // Check cooldown
+        val cooldownUntil = when (scanType) {
+            FlipperScanType.WIFI -> _wifiScanCooldownUntil.value
+            FlipperScanType.SUB_GHZ -> _subGhzScanCooldownUntil.value
+            FlipperScanType.BLE -> _bleScanCooldownUntil.value
+            FlipperScanType.NFC -> _nfcScanCooldownUntil.value
+            FlipperScanType.IR -> _irScanCooldownUntil.value
+        }
+
+        if (now < cooldownUntil) {
+            Log.d(TAG, "Manual scan on cooldown for $scanType")
+            return false
+        }
+
+        // Set scanning flag and cooldown
+        when (scanType) {
+            FlipperScanType.WIFI -> {
+                _isWifiScanning.value = true
+                _wifiScanCooldownUntil.value = now + SCAN_COOLDOWN_MS
+            }
+            FlipperScanType.SUB_GHZ -> {
+                _isSubGhzScanning.value = true
+                _subGhzScanCooldownUntil.value = now + SCAN_COOLDOWN_MS
+            }
+            FlipperScanType.BLE -> {
+                _isBleScanning.value = true
+                _bleScanCooldownUntil.value = now + SCAN_COOLDOWN_MS
+            }
+            FlipperScanType.NFC -> {
+                _isNfcScanning.value = true
+                _nfcScanCooldownUntil.value = now + SCAN_COOLDOWN_MS
+            }
+            FlipperScanType.IR -> {
+                _isIrScanning.value = true
+                _irScanCooldownUntil.value = now + SCAN_COOLDOWN_MS
+            }
+        }
+
+        updateScanSchedulerStatus()
+
+        scope.launch {
+            try {
+                when (scanType) {
+                    FlipperScanType.WIFI -> {
+                        flipperClient?.requestWifiScan()
+                        _lastWifiScanTime.value = System.currentTimeMillis()
+                    }
+                    FlipperScanType.SUB_GHZ -> {
+                        flipperClient?.requestSubGhzScan(
+                            currentSettings.subGhzFrequencyStart,
+                            currentSettings.subGhzFrequencyEnd
+                        )
+                        _lastSubGhzScanTime.value = System.currentTimeMillis()
+                    }
+                    FlipperScanType.BLE -> {
+                        flipperClient?.requestBleScan()
+                        _lastBleScanTime.value = System.currentTimeMillis()
+                    }
+                    FlipperScanType.NFC -> {
+                        flipperClient?.requestNfcScan()
+                        _lastNfcScanTime.value = System.currentTimeMillis()
+                    }
+                    FlipperScanType.IR -> {
+                        flipperClient?.requestIrScan()
+                        _lastIrScanTime.value = System.currentTimeMillis()
+                    }
+                }
+
+                // Reset scanning flag after a brief delay to allow animation
+                delay(1500)
+
+                when (scanType) {
+                    FlipperScanType.WIFI -> _isWifiScanning.value = false
+                    FlipperScanType.SUB_GHZ -> _isSubGhzScanning.value = false
+                    FlipperScanType.BLE -> _isBleScanning.value = false
+                    FlipperScanType.NFC -> _isNfcScanning.value = false
+                    FlipperScanType.IR -> _isIrScanning.value = false
+                }
+
+                updateScanSchedulerStatus()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during manual scan", e)
+                // Reset scanning flag on error
+                when (scanType) {
+                    FlipperScanType.WIFI -> _isWifiScanning.value = false
+                    FlipperScanType.SUB_GHZ -> _isSubGhzScanning.value = false
+                    FlipperScanType.BLE -> _isBleScanning.value = false
+                    FlipperScanType.NFC -> _isNfcScanning.value = false
+                    FlipperScanType.IR -> _isIrScanning.value = false
+                }
+                updateScanSchedulerStatus()
+            }
+        }
+
+        Log.i(TAG, "Triggered manual scan: $scanType")
+        return true
+    }
+
+    /**
+     * Check if a scan type is currently on cooldown
+     */
+    fun isScanOnCooldown(scanType: FlipperScanType): Boolean {
+        val now = System.currentTimeMillis()
+        return when (scanType) {
+            FlipperScanType.WIFI -> now < _wifiScanCooldownUntil.value
+            FlipperScanType.SUB_GHZ -> now < _subGhzScanCooldownUntil.value
+            FlipperScanType.BLE -> now < _bleScanCooldownUntil.value
+            FlipperScanType.NFC -> now < _nfcScanCooldownUntil.value
+            FlipperScanType.IR -> now < _irScanCooldownUntil.value
+        }
+    }
+
+    // ========== Auto-Reconnect ==========
+
+    private fun startAutoReconnect() {
+        if (autoReconnectJob?.isActive == true) return
+
+        autoReconnectJob = scope.launch {
+            val maxAttempts = settingsRepository.autoReconnectMaxAttempts.first()
+            var attemptNumber = 0
+            val baseDelayMs = 2000L
+            val maxDelayMs = 30000L
+
+            while (attemptNumber < maxAttempts && _connectionState.value != FlipperConnectionState.READY) {
+                attemptNumber++
+                val delayMs = minOf(baseDelayMs * attemptNumber, maxDelayMs)
+
+                _autoReconnectState.value = AutoReconnectState(
+                    isReconnecting = true,
+                    attemptNumber = attemptNumber,
+                    maxAttempts = maxAttempts,
+                    lastAttemptTimestamp = System.currentTimeMillis(),
+                    nextAttemptDelayMs = delayMs
+                )
+
+                Log.i(TAG, "Auto-reconnect attempt $attemptNumber/$maxAttempts")
+
+                // Attempt reconnection based on last connection type
+                when (lastConnectionType) {
+                    FlipperClient.ConnectionType.BLUETOOTH -> {
+                        lastConnectedAddress?.let { address ->
+                            flipperClient?.connectBluetooth(address)
+                        }
+                    }
+                    FlipperClient.ConnectionType.USB -> {
+                        flipperClient?.connectUsb()
+                    }
+                    FlipperClient.ConnectionType.NONE -> {
+                        // Try USB first, then Bluetooth
+                        if (flipperClient?.connectUsb() != true) {
+                            lastConnectedAddress?.let { address ->
+                                flipperClient?.connectBluetooth(address)
+                            }
+                        }
+                    }
+                }
+
+                // Wait and check if connected
+                delay(delayMs)
+
+                if (_connectionState.value == FlipperConnectionState.READY) {
+                    Log.i(TAG, "Auto-reconnect successful on attempt $attemptNumber")
+                    break
+                }
+            }
+
+            if (_connectionState.value != FlipperConnectionState.READY) {
+                Log.w(TAG, "Auto-reconnect failed after $maxAttempts attempts")
+                _lastError.value = "Reconnection failed after $maxAttempts attempts"
+            }
+
+            _autoReconnectState.value = AutoReconnectState(isReconnecting = false)
+        }
+    }
+
+    /**
+     * Cancel auto-reconnect attempts.
+     */
+    fun cancelAutoReconnect() {
+        autoReconnectJob?.cancel()
+        autoReconnectJob = null
+        _autoReconnectState.value = AutoReconnectState(isReconnecting = false)
+    }
+
+    private fun saveConnectionToHistory() {
+        scope.launch {
+            val address = lastConnectedAddress
+            val name = lastConnectedName ?: "Flipper"
+            val type = lastConnectionType.name
+
+            if (address != null) {
+                settingsRepository.addRecentDevice(address, name, type)
+                Log.d(TAG, "Saved connection to history: $name ($address)")
+            }
+        }
+    }
+
+    // ========== Bluetooth Device Scanning ==========
+
+    private var bleClient: FlipperBluetoothClient? = null
+
+    /**
+     * Start scanning for Flipper devices via Bluetooth.
+     */
+    fun startDeviceScan() {
+        if (bleClient == null) {
+            bleClient = FlipperBluetoothClient(context)
+        }
+
+        // Observe discovered devices
+        scope.launch {
+            bleClient?.discoveredDevices?.collect { devices ->
+                _discoveredDevices.value = devices
+            }
+        }
+
+        // Observe scanning state
+        scope.launch {
+            bleClient?.isScanning?.collect { scanning ->
+                _isScanningForDevices.value = scanning
+            }
+        }
+
+        bleClient?.startDeviceScan()
+        Log.i(TAG, "Started Bluetooth device scan")
+    }
+
+    /**
+     * Stop scanning for Bluetooth devices.
+     */
+    fun stopDeviceScan() {
+        bleClient?.stopDeviceScan()
+        Log.i(TAG, "Stopped Bluetooth device scan")
+    }
+
+    /**
+     * Clear discovered devices list.
+     */
+    fun clearDiscoveredDevices() {
+        _discoveredDevices.value = emptyList()
+        bleClient?.clearDiscoveredDevices()
+    }
+
+    /**
+     * Connect to a recently used device from history.
+     */
+    fun connectToRecentDevice(device: RecentFlipperDevice) {
+        when (device.connectionType) {
+            "BLUETOOTH" -> connectBluetooth(device.address, device.name)
+            "USB" -> connectUsb()
+            else -> Log.w(TAG, "Unknown connection type: ${device.connectionType}")
+        }
+    }
+
+    /**
+     * Remove a device from connection history.
+     */
+    fun removeFromHistory(address: String) {
+        scope.launch {
+            settingsRepository.removeRecentDevice(address)
+        }
+    }
+
+    // ========== Connection Quality (RSSI) ==========
+
+    private var rssiMonitorJob: Job? = null
+
+    private fun startRssiMonitoring() {
+        rssiMonitorJob?.cancel()
+        rssiMonitorJob = scope.launch {
+            // Get the BLE client from the FlipperClient if using Bluetooth
+            // For now, we'll monitor via the bleClient we use for scanning
+            if (bleClient == null) {
+                bleClient = FlipperBluetoothClient(context)
+            }
+
+            bleClient?.currentRssi?.collect { rssi ->
+                _connectionRssi.value = rssi
+            }
+        }
+
+        // Start monitoring on the underlying BLE client
+        bleClient?.startRssiMonitoring()
+    }
+
+    private fun stopRssiMonitoring() {
+        rssiMonitorJob?.cancel()
+        rssiMonitorJob = null
+        _connectionRssi.value = null
+        bleClient?.stopRssiMonitoring()
+    }
+
+    /**
+     * Get signal level (0-4) based on current RSSI.
+     */
+    fun getSignalLevel(): Int {
+        val rssi = _connectionRssi.value ?: return 0
+        return when {
+            rssi >= -50 -> 4  // Excellent
+            rssi >= -60 -> 3  // Good
+            rssi >= -70 -> 2  // Fair
+            rssi >= -80 -> 1  // Weak
+            else -> 0         // Very weak
+        }
+    }
 }
+
+/**
+ * Scan type enum for triggering manual scans and tracking last scan times
+ */
+enum class FlipperScanType {
+    WIFI,
+    SUB_GHZ,
+    BLE,
+    NFC,
+    IR
+}
+
+/**
+ * Status of the Flipper scan scheduler showing which scan loops are active
+ */
+data class ScanSchedulerStatus(
+    val wifiScanActive: Boolean = false,
+    val wifiScanIntervalSeconds: Int = 30,
+    val subGhzScanActive: Boolean = false,
+    val subGhzScanIntervalSeconds: Int = 15,
+    val subGhzFrequencyStart: Long = 300_000_000L,
+    val subGhzFrequencyEnd: Long = 928_000_000L,
+    val bleScanActive: Boolean = false,
+    val bleScanIntervalSeconds: Int = 20,
+    val heartbeatActive: Boolean = false,
+    val heartbeatIntervalSeconds: Int = 5,
+    val irScanEnabled: Boolean = false,
+    val nfcScanEnabled: Boolean = false,
+    val wipsEnabled: Boolean = true,
+    // Pause/Resume state
+    val isPaused: Boolean = false,
+    // Last scan timestamps (null if never scanned)
+    val lastWifiScanTime: Long? = null,
+    val lastSubGhzScanTime: Long? = null,
+    val lastBleScanTime: Long? = null,
+    val lastNfcScanTime: Long? = null,
+    val lastIrScanTime: Long? = null,
+    // Currently scanning flags for animation
+    val isWifiScanning: Boolean = false,
+    val isSubGhzScanning: Boolean = false,
+    val isBleScanning: Boolean = false,
+    val isNfcScanning: Boolean = false,
+    val isIrScanning: Boolean = false,
+    // Manual scan cooldown tracking
+    val wifiScanCooldownUntil: Long = 0L,
+    val subGhzScanCooldownUntil: Long = 0L,
+    val bleScanCooldownUntil: Long = 0L,
+    val nfcScanCooldownUntil: Long = 0L,
+    val irScanCooldownUntil: Long = 0L
+)

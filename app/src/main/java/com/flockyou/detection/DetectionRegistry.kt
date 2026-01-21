@@ -1,10 +1,13 @@
 package com.flockyou.detection
 
 import android.util.Log
+import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DetectionProtocol
 import com.flockyou.data.model.DeviceType
+import com.flockyou.data.model.ThreatLevel
 import com.flockyou.detection.handler.DetectionHandler
 import com.flockyou.detection.handler.DeviceTypeProfile
+import com.flockyou.detection.handler.ThreatCalculationResult
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -300,4 +303,305 @@ class DetectionRegistry @Inject constructor(
         Log.d(TAG, "Registered handler: ${handler.displayName} " +
                 "(protocol=${handler.protocol}, deviceTypes=${handler.supportedDeviceTypes.size}, custom=$isCustom)")
     }
+
+    // ============================================================================
+    // Aggregate Threat Calculation
+    // ============================================================================
+
+    /**
+     * Calculate aggregate threat level from multiple detections.
+     *
+     * This is smarter than just counting HIGH threats:
+     * - Considers correlation (same time/place = one incident)
+     * - Considers pattern (same type recurring = more concerning)
+     * - Weights recent detections higher than old ones
+     * - Applies cross-protocol correlation boost when threats seen on multiple protocols
+     *
+     * @param detections List of recent detections to analyze
+     * @param timeWindowMs Time window for "recent" detections (default 30 minutes)
+     * @return AggregateThreatResult with overall severity and breakdown
+     */
+    fun calculateAggregateThreat(
+        detections: List<Detection>,
+        timeWindowMs: Long = 30 * 60 * 1000L
+    ): AggregateThreatResult {
+        if (detections.isEmpty()) {
+            return AggregateThreatResult(
+                overallSeverity = ThreatLevel.INFO,
+                overallScore = 0,
+                incidentCount = 0,
+                detectionCount = 0,
+                highestThreatDetection = null,
+                correlatedProtocols = emptySet(),
+                hasCorrelation = false,
+                hasRecurringPattern = false,
+                reasoning = "No detections to analyze"
+            )
+        }
+
+        val now = System.currentTimeMillis()
+        val recentDetections = detections.filter {
+            now - it.timestamp < timeWindowMs
+        }
+
+        if (recentDetections.isEmpty()) {
+            return AggregateThreatResult(
+                overallSeverity = ThreatLevel.INFO,
+                overallScore = 0,
+                incidentCount = 0,
+                detectionCount = 0,
+                highestThreatDetection = null,
+                correlatedProtocols = emptySet(),
+                hasCorrelation = false,
+                hasRecurringPattern = false,
+                reasoning = "No recent detections within ${timeWindowMs / 60000} minute window"
+            )
+        }
+
+        // Group by incident (same location + time = one incident)
+        val incidents = groupIntoIncidents(recentDetections)
+
+        // Find the highest individual threat
+        val highestThreat = recentDetections.maxByOrNull { it.threatScore }
+
+        // Check for cross-protocol correlation
+        val protocols = recentDetections.map { it.protocol }.toSet()
+        val hasCorrelation = protocols.size > 1
+
+        // Check for recurring patterns
+        val deviceTypeCounts = recentDetections.groupBy { it.deviceType }
+            .mapValues { it.value.size }
+        val hasRecurringPattern = deviceTypeCounts.any { it.value >= 3 }
+
+        // Calculate aggregate score starting from highest individual
+        var aggregateScore = highestThreat?.threatScore ?: 0
+
+        // Boost for cross-protocol correlation (+20%)
+        if (hasCorrelation) {
+            aggregateScore = (aggregateScore * 1.2).toInt().coerceIn(0, 100)
+        }
+
+        // Boost for recurring pattern (+15%)
+        if (hasRecurringPattern) {
+            aggregateScore = (aggregateScore * 1.15).toInt().coerceIn(0, 100)
+        }
+
+        // Weight very recent detections (last 5 minutes) higher (+10%)
+        val veryRecentDetections = recentDetections.filter {
+            now - it.timestamp < 5 * 60 * 1000
+        }
+        if (veryRecentDetections.any {
+                it.threatLevel == ThreatLevel.HIGH || it.threatLevel == ThreatLevel.CRITICAL
+            }) {
+            aggregateScore = (aggregateScore * 1.1).toInt().coerceIn(0, 100)
+        }
+
+        val overallSeverity = when {
+            aggregateScore >= 90 -> ThreatLevel.CRITICAL
+            aggregateScore >= 70 -> ThreatLevel.HIGH
+            aggregateScore >= 50 -> ThreatLevel.MEDIUM
+            aggregateScore >= 30 -> ThreatLevel.LOW
+            else -> ThreatLevel.INFO
+        }
+
+        val reasoning = buildString {
+            appendLine("Aggregate Threat Assessment: ${overallSeverity.displayName}")
+            appendLine()
+            appendLine("Summary:")
+            appendLine("  Total detections: ${recentDetections.size}")
+            appendLine("  Unique incidents: ${incidents.size}")
+            appendLine("  Protocols involved: ${protocols.joinToString { it.displayName }}")
+            if (hasCorrelation) {
+                appendLine("  Cross-protocol correlation: YES (+20% score)")
+            }
+            if (hasRecurringPattern) {
+                appendLine("  Recurring pattern detected: YES (+15% score)")
+            }
+            appendLine()
+            if (highestThreat != null) {
+                appendLine("Highest individual threat:")
+                appendLine("  Device: ${highestThreat.deviceType.displayName}")
+                appendLine("  Score: ${highestThreat.threatScore}")
+                appendLine("  Severity: ${highestThreat.threatLevel.displayName}")
+            }
+            appendLine()
+            appendLine("Detection breakdown by type:")
+            deviceTypeCounts.entries.sortedByDescending { it.value }.forEach { (type, count) ->
+                appendLine("  ${type.displayName}: $count")
+            }
+        }
+
+        return AggregateThreatResult(
+            overallSeverity = overallSeverity,
+            overallScore = aggregateScore,
+            incidentCount = incidents.size,
+            detectionCount = recentDetections.size,
+            highestThreatDetection = highestThreat,
+            correlatedProtocols = protocols,
+            hasCorrelation = hasCorrelation,
+            hasRecurringPattern = hasRecurringPattern,
+            reasoning = reasoning
+        )
+    }
+
+    /**
+     * Group detections into incidents based on spatial and temporal proximity.
+     * Detections within 5 minutes and ~50 meters are considered the same incident.
+     */
+    private fun groupIntoIncidents(detections: List<Detection>): List<List<Detection>> {
+        if (detections.isEmpty()) return emptyList()
+
+        val sorted = detections.sortedBy { it.timestamp }
+        val incidents = mutableListOf<MutableList<Detection>>()
+        var currentIncident = mutableListOf(sorted.first())
+
+        for (i in 1 until sorted.size) {
+            val detection = sorted[i]
+            val lastInIncident = currentIncident.last()
+
+            val timeDiff = detection.timestamp - lastInIncident.timestamp
+            val sameLocation = isSameLocation(detection, lastInIncident)
+
+            // Same incident if within 5 minutes and same location (or location unknown)
+            if (timeDiff < 5 * 60 * 1000 && sameLocation) {
+                currentIncident.add(detection)
+            } else {
+                incidents.add(currentIncident)
+                currentIncident = mutableListOf(detection)
+            }
+        }
+        incidents.add(currentIncident)
+
+        return incidents
+    }
+
+    /**
+     * Check if two detections are at the same location (within ~50m).
+     */
+    private fun isSameLocation(a: Detection, b: Detection): Boolean {
+        if (a.latitude == null || a.longitude == null ||
+            b.latitude == null || b.longitude == null) {
+            return true  // Assume same location if unknown
+        }
+
+        val latDiff = kotlin.math.abs(a.latitude - b.latitude)
+        val lonDiff = kotlin.math.abs(a.longitude - b.longitude)
+
+        // Roughly 50 meters at mid-latitudes
+        return latDiff < 0.0005 && lonDiff < 0.0005
+    }
+
+    /**
+     * Get threat statistics for a collection of detections.
+     * Useful for dashboard displays and summary views.
+     */
+    fun getThreatStatistics(detections: List<Detection>): ThreatStatistics {
+        val criticalCount = detections.count { it.threatLevel == ThreatLevel.CRITICAL }
+        val highCount = detections.count { it.threatLevel == ThreatLevel.HIGH }
+        val mediumCount = detections.count { it.threatLevel == ThreatLevel.MEDIUM }
+        val lowCount = detections.count { it.threatLevel == ThreatLevel.LOW }
+        val infoCount = detections.count { it.threatLevel == ThreatLevel.INFO }
+
+        val averageScore = if (detections.isEmpty()) 0.0 else {
+            detections.map { it.threatScore }.average()
+        }
+
+        val maxScore = detections.maxOfOrNull { it.threatScore } ?: 0
+
+        // Count unique device types
+        val uniqueDeviceTypes = detections.map { it.deviceType }.toSet().size
+
+        // Count unique protocols
+        val uniqueProtocols = detections.map { it.protocol }.toSet().size
+
+        return ThreatStatistics(
+            totalCount = detections.size,
+            criticalCount = criticalCount,
+            highCount = highCount,
+            mediumCount = mediumCount,
+            lowCount = lowCount,
+            infoCount = infoCount,
+            averageScore = averageScore,
+            maxScore = maxScore,
+            uniqueDeviceTypes = uniqueDeviceTypes,
+            uniqueProtocols = uniqueProtocols
+        )
+    }
+}
+
+/**
+ * Result of aggregate threat calculation across multiple detections.
+ */
+data class AggregateThreatResult(
+    val overallSeverity: ThreatLevel,
+    val overallScore: Int,
+    val incidentCount: Int,
+    val detectionCount: Int,
+    val highestThreatDetection: Detection?,
+    val correlatedProtocols: Set<DetectionProtocol>,
+    val hasCorrelation: Boolean,
+    val hasRecurringPattern: Boolean,
+    val reasoning: String
+) {
+    /**
+     * Whether immediate action is recommended.
+     */
+    val requiresImmediateAction: Boolean
+        get() = overallSeverity == ThreatLevel.CRITICAL ||
+                overallSeverity == ThreatLevel.HIGH
+
+    /**
+     * Whether monitoring is recommended.
+     */
+    val requiresMonitoring: Boolean
+        get() = overallSeverity == ThreatLevel.MEDIUM
+
+    /**
+     * Generate debug export map.
+     */
+    fun toDebugMap(): Map<String, Any> = mapOf(
+        "overall_severity" to overallSeverity.name,
+        "overall_severity_display" to overallSeverity.displayName,
+        "overall_score" to overallScore,
+        "incident_count" to incidentCount,
+        "detection_count" to detectionCount,
+        "correlated_protocols" to correlatedProtocols.map { it.name },
+        "has_cross_protocol_correlation" to hasCorrelation,
+        "has_recurring_pattern" to hasRecurringPattern,
+        "requires_immediate_action" to requiresImmediateAction,
+        "requires_monitoring" to requiresMonitoring,
+        "highest_threat_device" to (highestThreatDetection?.deviceType?.displayName ?: "none"),
+        "highest_threat_score" to (highestThreatDetection?.threatScore ?: 0),
+        "reasoning" to reasoning
+    )
+}
+
+/**
+ * Statistics about a collection of detections.
+ */
+data class ThreatStatistics(
+    val totalCount: Int,
+    val criticalCount: Int,
+    val highCount: Int,
+    val mediumCount: Int,
+    val lowCount: Int,
+    val infoCount: Int,
+    val averageScore: Double,
+    val maxScore: Int,
+    val uniqueDeviceTypes: Int,
+    val uniqueProtocols: Int
+) {
+    /**
+     * Count of significant threats (MEDIUM or higher).
+     */
+    val significantThreatCount: Int
+        get() = criticalCount + highCount + mediumCount
+
+    /**
+     * Percentage of significant threats.
+     */
+    val significantThreatPercentage: Double
+        get() = if (totalCount == 0) 0.0 else {
+            (significantThreatCount.toDouble() / totalCount) * 100
+        }
 }

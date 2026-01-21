@@ -13,6 +13,37 @@ import javax.inject.Singleton
 private val Context.flipperDataStore: DataStore<Preferences> by preferencesDataStore(name = "flipper_settings")
 
 /**
+ * Haptic feedback pattern for Flipper detections.
+ * Different patterns for different severity levels.
+ */
+enum class FlipperHapticPattern(val displayName: String, val pattern: LongArray) {
+    /** Single short buzz for low-severity detections */
+    LOW_SINGLE_BUZZ("Single Buzz", longArrayOf(0, 100)),
+    /** Double buzz for medium-severity detections */
+    MEDIUM_DOUBLE_BUZZ("Double Buzz", longArrayOf(0, 100, 100, 100)),
+    /** Triple buzz for high-severity detections */
+    HIGH_TRIPLE_BUZZ("Triple Buzz", longArrayOf(0, 150, 100, 150, 100, 150)),
+    /** Long vibration pattern for critical detections */
+    CRITICAL_LONG("Long Pattern", longArrayOf(0, 300, 100, 300, 100, 500)),
+    /** SOS pattern for emergency alerts */
+    EMERGENCY_SOS("SOS Pattern", longArrayOf(0, 100, 100, 100, 100, 100, 300, 100, 300, 100, 300, 100, 100, 100, 100, 100, 100))
+}
+
+/**
+ * Alert sound type for Flipper detections.
+ */
+enum class FlipperAlertSound(val displayName: String) {
+    /** Use system default notification sound */
+    SYSTEM_DEFAULT("System Default"),
+    /** Use system alarm sound for urgent alerts */
+    SYSTEM_ALARM("System Alarm"),
+    /** Use system notification sound */
+    SYSTEM_NOTIFICATION("System Notification"),
+    /** Silent - no sound */
+    SILENT("Silent")
+}
+
+/**
  * Settings for Flipper Zero integration.
  */
 data class FlipperSettings(
@@ -49,7 +80,29 @@ data class FlipperSettings(
 
     // Threat assessment thresholds
     val strongSignalThresholdDbm: Int = -50,
-    val trackerFrequencyToleranceHz: Long = 1_000_000L
+    val trackerFrequencyToleranceHz: Long = 1_000_000L,
+
+    // ==================== Alert & Notification Settings ====================
+
+    // Haptic feedback settings
+    val hapticFeedbackEnabled: Boolean = true,
+    val hapticForLowSeverity: Boolean = false,
+    val hapticForMediumSeverity: Boolean = true,
+    val hapticForHighSeverity: Boolean = true,
+    val hapticForCriticalSeverity: Boolean = true,
+
+    // Sound settings
+    val alertSoundsEnabled: Boolean = true,
+    val soundForLowSeverity: FlipperAlertSound = FlipperAlertSound.SILENT,
+    val soundForMediumSeverity: FlipperAlertSound = FlipperAlertSound.SYSTEM_NOTIFICATION,
+    val soundForHighSeverity: FlipperAlertSound = FlipperAlertSound.SYSTEM_DEFAULT,
+    val soundForCriticalSeverity: FlipperAlertSound = FlipperAlertSound.SYSTEM_ALARM,
+    val respectSilentMode: Boolean = true,
+
+    // Notification settings
+    val notificationsEnabled: Boolean = true,
+    val showQuickActions: Boolean = true,
+    val groupNotifications: Boolean = true
 )
 
 enum class FlipperConnectionPreference {
@@ -59,10 +112,35 @@ enum class FlipperConnectionPreference {
     BLUETOOTH_ONLY
 }
 
+/**
+ * Represents a recently connected Flipper device for connection history.
+ */
+data class RecentFlipperDevice(
+    val address: String,
+    val name: String,
+    val lastConnectedTimestamp: Long,
+    val connectionType: String // "BLUETOOTH" or "USB"
+)
+
+/**
+ * Auto-reconnect state information.
+ */
+data class AutoReconnectState(
+    val isReconnecting: Boolean = false,
+    val attemptNumber: Int = 0,
+    val maxAttempts: Int = 5,
+    val lastAttemptTimestamp: Long = 0,
+    val nextAttemptDelayMs: Long = 0
+)
+
 @Singleton
 class FlipperSettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    companion object {
+        const val MAX_RECENT_DEVICES = 5
+    }
+
     private object PreferencesKeys {
         // Connection
         val FLIPPER_ENABLED = booleanPreferencesKey("flipper_enabled")
@@ -70,6 +148,13 @@ class FlipperSettingsRepository @Inject constructor(
         val AUTO_CONNECT_BLUETOOTH = booleanPreferencesKey("auto_connect_bluetooth")
         val SAVED_BLUETOOTH_ADDRESS = stringPreferencesKey("saved_bluetooth_address")
         val PREFERRED_CONNECTION = stringPreferencesKey("preferred_connection")
+
+        // Connection history - stored as JSON-like string set
+        val RECENT_DEVICES = stringSetPreferencesKey("recent_flipper_devices")
+
+        // Auto-reconnect settings
+        val AUTO_RECONNECT_ENABLED = booleanPreferencesKey("auto_reconnect_enabled")
+        val AUTO_RECONNECT_MAX_ATTEMPTS = intPreferencesKey("auto_reconnect_max_attempts")
 
         // Scan toggles
         val ENABLE_WIFI_SCANNING = booleanPreferencesKey("flipper_enable_wifi")
@@ -98,6 +183,24 @@ class FlipperSettingsRepository @Inject constructor(
         // Thresholds
         val STRONG_SIGNAL_THRESHOLD = intPreferencesKey("strong_signal_threshold")
         val TRACKER_FREQ_TOLERANCE = longPreferencesKey("tracker_freq_tolerance")
+
+        // Alert & Notification settings
+        val HAPTIC_FEEDBACK_ENABLED = booleanPreferencesKey("flipper_haptic_enabled")
+        val HAPTIC_FOR_LOW = booleanPreferencesKey("flipper_haptic_low")
+        val HAPTIC_FOR_MEDIUM = booleanPreferencesKey("flipper_haptic_medium")
+        val HAPTIC_FOR_HIGH = booleanPreferencesKey("flipper_haptic_high")
+        val HAPTIC_FOR_CRITICAL = booleanPreferencesKey("flipper_haptic_critical")
+
+        val ALERT_SOUNDS_ENABLED = booleanPreferencesKey("flipper_sounds_enabled")
+        val SOUND_FOR_LOW = stringPreferencesKey("flipper_sound_low")
+        val SOUND_FOR_MEDIUM = stringPreferencesKey("flipper_sound_medium")
+        val SOUND_FOR_HIGH = stringPreferencesKey("flipper_sound_high")
+        val SOUND_FOR_CRITICAL = stringPreferencesKey("flipper_sound_critical")
+        val RESPECT_SILENT_MODE = booleanPreferencesKey("flipper_respect_silent_mode")
+
+        val NOTIFICATIONS_ENABLED = booleanPreferencesKey("flipper_notifications_enabled")
+        val SHOW_QUICK_ACTIONS = booleanPreferencesKey("flipper_show_quick_actions")
+        val GROUP_NOTIFICATIONS = booleanPreferencesKey("flipper_group_notifications")
     }
 
     val settings: Flow<FlipperSettings> = context.flipperDataStore.data.map { preferences ->
@@ -131,7 +234,33 @@ class FlipperSettingsRepository @Inject constructor(
             heartbeatIntervalSeconds = preferences[PreferencesKeys.HEARTBEAT_INTERVAL] ?: 5,
 
             strongSignalThresholdDbm = preferences[PreferencesKeys.STRONG_SIGNAL_THRESHOLD] ?: -50,
-            trackerFrequencyToleranceHz = preferences[PreferencesKeys.TRACKER_FREQ_TOLERANCE] ?: 1_000_000L
+            trackerFrequencyToleranceHz = preferences[PreferencesKeys.TRACKER_FREQ_TOLERANCE] ?: 1_000_000L,
+
+            // Alert & notification settings
+            hapticFeedbackEnabled = preferences[PreferencesKeys.HAPTIC_FEEDBACK_ENABLED] ?: true,
+            hapticForLowSeverity = preferences[PreferencesKeys.HAPTIC_FOR_LOW] ?: false,
+            hapticForMediumSeverity = preferences[PreferencesKeys.HAPTIC_FOR_MEDIUM] ?: true,
+            hapticForHighSeverity = preferences[PreferencesKeys.HAPTIC_FOR_HIGH] ?: true,
+            hapticForCriticalSeverity = preferences[PreferencesKeys.HAPTIC_FOR_CRITICAL] ?: true,
+
+            alertSoundsEnabled = preferences[PreferencesKeys.ALERT_SOUNDS_ENABLED] ?: true,
+            soundForLowSeverity = preferences[PreferencesKeys.SOUND_FOR_LOW]?.let {
+                try { FlipperAlertSound.valueOf(it) } catch (_: Exception) { null }
+            } ?: FlipperAlertSound.SILENT,
+            soundForMediumSeverity = preferences[PreferencesKeys.SOUND_FOR_MEDIUM]?.let {
+                try { FlipperAlertSound.valueOf(it) } catch (_: Exception) { null }
+            } ?: FlipperAlertSound.SYSTEM_NOTIFICATION,
+            soundForHighSeverity = preferences[PreferencesKeys.SOUND_FOR_HIGH]?.let {
+                try { FlipperAlertSound.valueOf(it) } catch (_: Exception) { null }
+            } ?: FlipperAlertSound.SYSTEM_DEFAULT,
+            soundForCriticalSeverity = preferences[PreferencesKeys.SOUND_FOR_CRITICAL]?.let {
+                try { FlipperAlertSound.valueOf(it) } catch (_: Exception) { null }
+            } ?: FlipperAlertSound.SYSTEM_ALARM,
+            respectSilentMode = preferences[PreferencesKeys.RESPECT_SILENT_MODE] ?: true,
+
+            notificationsEnabled = preferences[PreferencesKeys.NOTIFICATIONS_ENABLED] ?: true,
+            showQuickActions = preferences[PreferencesKeys.SHOW_QUICK_ACTIONS] ?: true,
+            groupNotifications = preferences[PreferencesKeys.GROUP_NOTIFICATIONS] ?: true
         )
     }
 
@@ -248,5 +377,193 @@ class FlipperSettingsRepository @Inject constructor(
         context.flipperDataStore.edit {
             it[PreferencesKeys.TRACKER_FREQ_TOLERANCE] = hz.coerceIn(100_000L, 10_000_000L)
         }
+    }
+
+    // ========== Connection History ==========
+
+    /**
+     * Get list of recently connected Flipper devices.
+     */
+    val recentDevices: Flow<List<RecentFlipperDevice>> = context.flipperDataStore.data.map { preferences ->
+        val deviceStrings = preferences[PreferencesKeys.RECENT_DEVICES] ?: emptySet()
+        deviceStrings.mapNotNull { parseRecentDevice(it) }
+            .sortedByDescending { it.lastConnectedTimestamp }
+            .take(MAX_RECENT_DEVICES)
+    }
+
+    /**
+     * Add or update a device in connection history.
+     */
+    suspend fun addRecentDevice(address: String, name: String, connectionType: String) {
+        context.flipperDataStore.edit { preferences ->
+            val existing = preferences[PreferencesKeys.RECENT_DEVICES]?.toMutableSet() ?: mutableSetOf()
+
+            // Remove existing entry for this address (if any)
+            existing.removeAll { it.startsWith("$address|") }
+
+            // Add new entry
+            val entry = "$address|$name|${System.currentTimeMillis()}|$connectionType"
+            existing.add(entry)
+
+            // Keep only the most recent MAX_RECENT_DEVICES
+            val sorted = existing.mapNotNull { parseRecentDevice(it) }
+                .sortedByDescending { it.lastConnectedTimestamp }
+                .take(MAX_RECENT_DEVICES)
+                .map { "${it.address}|${it.name}|${it.lastConnectedTimestamp}|${it.connectionType}" }
+                .toSet()
+
+            preferences[PreferencesKeys.RECENT_DEVICES] = sorted
+        }
+    }
+
+    /**
+     * Remove a device from connection history.
+     */
+    suspend fun removeRecentDevice(address: String) {
+        context.flipperDataStore.edit { preferences ->
+            val existing = preferences[PreferencesKeys.RECENT_DEVICES]?.toMutableSet() ?: return@edit
+            existing.removeAll { it.startsWith("$address|") }
+            preferences[PreferencesKeys.RECENT_DEVICES] = existing
+        }
+    }
+
+    /**
+     * Clear all connection history.
+     */
+    suspend fun clearRecentDevices() {
+        context.flipperDataStore.edit { preferences ->
+            preferences.remove(PreferencesKeys.RECENT_DEVICES)
+        }
+    }
+
+    private fun parseRecentDevice(entry: String): RecentFlipperDevice? {
+        val parts = entry.split("|")
+        if (parts.size < 4) return null
+        return try {
+            RecentFlipperDevice(
+                address = parts[0],
+                name = parts[1],
+                lastConnectedTimestamp = parts[2].toLong(),
+                connectionType = parts[3]
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ========== Auto-Reconnect Settings ==========
+
+    /**
+     * Check if auto-reconnect is enabled.
+     */
+    val autoReconnectEnabled: Flow<Boolean> = context.flipperDataStore.data.map { preferences ->
+        preferences[PreferencesKeys.AUTO_RECONNECT_ENABLED] ?: true
+    }
+
+    /**
+     * Get max auto-reconnect attempts.
+     */
+    val autoReconnectMaxAttempts: Flow<Int> = context.flipperDataStore.data.map { preferences ->
+        preferences[PreferencesKeys.AUTO_RECONNECT_MAX_ATTEMPTS] ?: 5
+    }
+
+    /**
+     * Set auto-reconnect enabled state.
+     */
+    suspend fun setAutoReconnectEnabled(enabled: Boolean) {
+        context.flipperDataStore.edit {
+            it[PreferencesKeys.AUTO_RECONNECT_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * Set max auto-reconnect attempts.
+     */
+    suspend fun setAutoReconnectMaxAttempts(maxAttempts: Int) {
+        context.flipperDataStore.edit {
+            it[PreferencesKeys.AUTO_RECONNECT_MAX_ATTEMPTS] = maxAttempts.coerceIn(1, 10)
+        }
+    }
+
+    // ========== Alert & Notification Settings ==========
+
+    /**
+     * Enable/disable haptic feedback for Flipper detections.
+     */
+    suspend fun setHapticFeedbackEnabled(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.HAPTIC_FEEDBACK_ENABLED] = enabled }
+    }
+
+    /**
+     * Enable/disable haptic feedback for specific severity levels.
+     */
+    suspend fun setHapticForLowSeverity(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.HAPTIC_FOR_LOW] = enabled }
+    }
+
+    suspend fun setHapticForMediumSeverity(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.HAPTIC_FOR_MEDIUM] = enabled }
+    }
+
+    suspend fun setHapticForHighSeverity(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.HAPTIC_FOR_HIGH] = enabled }
+    }
+
+    suspend fun setHapticForCriticalSeverity(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.HAPTIC_FOR_CRITICAL] = enabled }
+    }
+
+    /**
+     * Enable/disable alert sounds for Flipper detections.
+     */
+    suspend fun setAlertSoundsEnabled(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.ALERT_SOUNDS_ENABLED] = enabled }
+    }
+
+    /**
+     * Set alert sound type for specific severity levels.
+     */
+    suspend fun setSoundForLowSeverity(sound: FlipperAlertSound) {
+        context.flipperDataStore.edit { it[PreferencesKeys.SOUND_FOR_LOW] = sound.name }
+    }
+
+    suspend fun setSoundForMediumSeverity(sound: FlipperAlertSound) {
+        context.flipperDataStore.edit { it[PreferencesKeys.SOUND_FOR_MEDIUM] = sound.name }
+    }
+
+    suspend fun setSoundForHighSeverity(sound: FlipperAlertSound) {
+        context.flipperDataStore.edit { it[PreferencesKeys.SOUND_FOR_HIGH] = sound.name }
+    }
+
+    suspend fun setSoundForCriticalSeverity(sound: FlipperAlertSound) {
+        context.flipperDataStore.edit { it[PreferencesKeys.SOUND_FOR_CRITICAL] = sound.name }
+    }
+
+    /**
+     * Set whether to respect system silent mode.
+     */
+    suspend fun setRespectSilentMode(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.RESPECT_SILENT_MODE] = enabled }
+    }
+
+    /**
+     * Enable/disable notifications for Flipper detections.
+     */
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.NOTIFICATIONS_ENABLED] = enabled }
+    }
+
+    /**
+     * Enable/disable quick action buttons in notifications.
+     */
+    suspend fun setShowQuickActions(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.SHOW_QUICK_ACTIONS] = enabled }
+    }
+
+    /**
+     * Enable/disable notification grouping.
+     */
+    suspend fun setGroupNotifications(enabled: Boolean) {
+        context.flipperDataStore.edit { it[PreferencesKeys.GROUP_NOTIFICATIONS] = enabled }
     }
 }

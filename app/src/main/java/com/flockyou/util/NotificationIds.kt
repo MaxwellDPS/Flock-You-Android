@@ -29,6 +29,12 @@ object NotificationIds {
 
     // Permission reminder notification
     const val PERMISSION_REMINDER = 5001
+
+    // Flipper detection notifications (base ID, actual ID = base + detection hash)
+    const val FLIPPER_DETECTION_BASE = 6000
+
+    // Flipper detection notification group summary
+    const val FLIPPER_DETECTION_SUMMARY = 6999
 }
 
 /**
@@ -49,4 +55,18 @@ object NotificationChannelIds {
 
     // Update notifications channel
     const val UPDATES = "flockyou_updates"
+
+    // Flipper detection alerts channel (medium-high priority)
+    const val FLIPPER_DETECTION = "flockyou_flipper_detection"
+
+    // Flipper critical alerts channel (high priority, can bypass DND)
+    const val FLIPPER_CRITICAL = "flockyou_flipper_critical"
+}
+
+/**
+ * Notification group keys for grouped notifications.
+ */
+object NotificationGroupKeys {
+    // Group key for Flipper detection notifications
+    const val FLIPPER_DETECTIONS = "flockyou_flipper_detections_group"
 }

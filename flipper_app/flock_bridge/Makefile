@@ -11,17 +11,31 @@ FAP_OUTPUT_DIR = dist
 # Source files
 SOURCES = \
 	flock_bridge.c \
+	handlers/active_probes.c \
+	handlers/detection_callbacks.c \
+	handlers/msg_handler.c \
+	handlers/settings.c \
 	helpers/usb_cdc.c \
 	helpers/bt_serial.c \
 	helpers/wips_engine.c \
-	protocol/flock_protocol.c
+	helpers/external_radio.c \
+	protocol/flock_protocol.c \
+	scanners/detection_scheduler.c \
+	scanners/ble_scanner.c \
+	scanners/subghz_scanner.c \
+	scanners/wifi_scanner.c \
+	scanners/ir_scanner.c \
+	scanners/nfc_scanner.c
 
 HEADERS = \
 	flock_bridge_app.h \
+	handlers/handlers.h \
 	helpers/usb_cdc.h \
 	helpers/bt_serial.h \
 	helpers/wips_engine.h \
-	protocol/flock_protocol.h
+	helpers/external_radio.h \
+	protocol/flock_protocol.h \
+	scanners/detection_scheduler.h
 
 # Default target
 .PHONY: all

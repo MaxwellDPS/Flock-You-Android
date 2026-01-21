@@ -56,6 +56,18 @@ typedef enum {
 } SubGhzProtocolId;
 
 // ============================================================================
+// Modulation Presets
+// ============================================================================
+
+typedef enum {
+    SubGhzPresetOok650 = 0,   // OOK, 650kHz bandwidth - most common
+    SubGhzPresetOok270,       // OOK, 270kHz bandwidth - narrowband
+    SubGhzPreset2FSKDev238,   // 2-FSK, 2.38kHz deviation - sensors
+    SubGhzPreset2FSKDev476,   // 2-FSK, 4.76kHz deviation - keyfobs
+    SubGhzPresetCount
+} SubGhzPresetType;
+
+// ============================================================================
 // Callback
 // ============================================================================
 
@@ -150,3 +162,35 @@ void subghz_scanner_reset_decoder(SubGhzScanner* scanner);
  * Use for periodic memory cleanup during long-running sessions.
  */
 void subghz_scanner_recreate_receiver(SubGhzScanner* scanner);
+
+// ============================================================================
+// Preset Management
+// ============================================================================
+
+/**
+ * Set the modulation preset.
+ * Different presets detect different signal types (OOK vs FSK).
+ * Returns false if decode is in progress and preset change was deferred.
+ */
+bool subghz_scanner_set_preset(SubGhzScanner* scanner, SubGhzPresetType preset);
+
+/**
+ * Get current preset.
+ */
+SubGhzPresetType subghz_scanner_get_preset(SubGhzScanner* scanner);
+
+/**
+ * Cycle to the next preset (for automatic modulation coverage).
+ */
+void subghz_scanner_cycle_preset(SubGhzScanner* scanner);
+
+// ============================================================================
+// Decode State
+// ============================================================================
+
+/**
+ * Check if decoder is actively processing a signal.
+ * Returns true if decode is in progress or within cooldown period.
+ * Use this to defer frequency hopping during active reception.
+ */
+bool subghz_decoder_is_active(SubGhzScanner* scanner);

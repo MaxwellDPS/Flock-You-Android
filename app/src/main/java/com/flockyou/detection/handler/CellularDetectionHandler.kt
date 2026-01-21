@@ -42,14 +42,203 @@ class CellularDetectionHandler @Inject constructor(
 
         // Known suspicious test/invalid MCC-MNC codes
         private val SUSPICIOUS_MCC_MNC = setOf(
-            "001-01", "001-00", "001-02", // ITU test networks
-            "999-99", "999-01",           // Reserved test networks
-            "000-00"                       // Invalid
+            "001-01", "001-00", "001-02", "001-001", // ITU test networks
+            "999-99", "999-01", "999-00",            // Reserved test networks
+            "000-00", "000-01",                       // Invalid
+            "002-01", "002-02",                       // Additional test codes
+            "901-01", "901-18"                        // International - shouldn't appear as primary
         )
 
-        // IMSI catcher score thresholds
-        private const val IMSI_CRITICAL_THRESHOLD = 70
-        private const val IMSI_HIGH_THRESHOLD = 50
+        // ==================== KNOWN IMSI CATCHER DEVICE SIGNATURES ====================
+
+        /**
+         * Real-world IMSI catcher device characteristics for AI analysis context.
+         * This information helps the LLM provide expert-level analysis.
+         */
+        private val IMSI_CATCHER_DEVICE_INFO = """
+            |KNOWN IMSI CATCHER DEVICES AND SIGNATURES:
+            |
+            |1. HARRIS STINGRAY / STINGRAY II
+            |   - Most common law enforcement IMSI catcher in US (FBI, local police)
+            |   - Manufacturer: Harris Corporation (now L3Harris)
+            |   - Characteristics:
+            |     * Often uses LAC values 1-10 (LAC 1 is very common)
+            |     * Forces 2G (GSM) downgrade for interception
+            |     * May use sequential or round Cell IDs
+            |     * Ground-based, vehicle-mounted, or portable
+            |   - Capabilities: IMSI collection, location tracking, call/SMS interception
+            |
+            |2. HARRIS HAILSTORM
+            |   - Upgraded StingRay with 4G/LTE capability
+            |   - Can identify devices on LTE but often still forces 2G for content interception
+            |   - Similar LAC patterns to StingRay
+            |   - Higher cost, used by federal agencies
+            |
+            |3. DRT/DRTBOX (DIGITAL RECEIVER TECHNOLOGY "DIRTBOX")
+            |   - AIRPLANE-MOUNTED IMSI catcher
+            |   - Used by: US Marshals Service, FBI, DEA
+            |   - Characteristics:
+            |     * VERY strong signal from above (-50 dBm or stronger)
+            |     * Covers large geographic area
+            |     * Unusual signal patterns (strength from "above")
+            |   - Can collect from thousands of phones simultaneously
+            |
+            |4. SEPTIER IMSI CATCHER
+            |   - Israeli-manufactured
+            |   - Common in Middle East, Europe, and exported globally
+            |   - Similar characteristics to StingRay
+            |
+            |5. ABILITY UNLIMITED ULIN
+            |   - Passive collection variant
+            |   - May not force downgrades (harder to detect)
+            |   - Collects IMSI/IMEI through passive monitoring
+            |
+            |6. GAMMA GROUP FINFISHER
+            |   - Commercial spyware suite including IMSI catcher components
+            |   - Sold to governments worldwide
+            |   - May include malware injection capabilities
+        """.trimMargin()
+
+        /**
+         * US carrier MCC-MNC codes for validation
+         */
+        private val US_CARRIER_INFO = """
+            |LEGITIMATE US CARRIER CODES (MCC 310/311):
+            |
+            |T-MOBILE USA (MCC 310):
+            |  MNC: 260, 200, 210, 220, 230, 240, 250, 270, 310, 490, 660, 800, 160
+            |
+            |AT&T USA (MCC 310):
+            |  MNC: 410, 150, 170, 380, 560, 680, 980, 070
+            |
+            |VERIZON WIRELESS (MCC 311):
+            |  MNC: 480, 481, 482, 483, 484, 485, 486, 487, 488, 489, 012, 110
+            |
+            |US CELLULAR (MCC 311):
+            |  MNC: 580, 581, 582, 583, 584, 585, 586, 587, 588
+            |
+            |If you see a US MCC (310/311) with an MNC NOT in these lists,
+            |it could be a test network or IMSI catcher.
+        """.trimMargin()
+
+        /**
+         * Technical background on GSM/LTE vulnerabilities for AI context
+         */
+        private val CELLULAR_VULNERABILITY_INFO = """
+            |CELLULAR NETWORK SECURITY VULNERABILITIES:
+            |
+            |== WHY 2G IS DANGEROUS ==
+            |GSM (2G) has a fundamental vulnerability: ONE-WAY AUTHENTICATION.
+            |
+            |How legitimate authentication works:
+            |1. Phone connects to tower
+            |2. Tower challenges phone to prove identity (IMSI/TMSI)
+            |3. Phone responds with authentication
+            |4. PROBLEM: Phone NEVER verifies the tower's identity
+            |
+            |This means ANY device broadcasting as a cell tower will be trusted.
+            |
+            |== ENCRYPTION VULNERABILITIES ==
+            |
+            |2G (GSM):
+            |  - A5/0: NO encryption (plaintext)
+            |  - A5/1: Weak encryption, crackable in REAL-TIME with commodity hardware
+            |  - A5/2: Export cipher, even weaker (deprecated)
+            |  - A5/3 (KASUMI): Stronger but rarely deployed on 2G
+            |
+            |3G (UMTS):
+            |  - KASUMI cipher - has known weaknesses but requires significant resources
+            |  - Adds mutual authentication (tower must prove identity)
+            |
+            |4G (LTE):
+            |  - AES-256 encryption - considered secure
+            |  - Mutual authentication
+            |  - BUT: Can be forced to fall back to 2G
+            |
+            |5G (NR):
+            |  - SUPI encryption (subscriber identity protected)
+            |  - Stronger mutual authentication
+            |  - BEST protection, but still has some vulnerabilities
+            |
+            |== IMSI CATCHER ATTACK FLOW ==
+            |
+            |1. IMSI catcher broadcasts as legitimate tower with STRONG signal
+            |2. Nearby phones connect (choose strongest signal)
+            |3. IMSI catcher forces 2G downgrade (disables 4G/5G)
+            |4. Captures IMSI (permanent identity)
+            |5. Can now:
+            |   - Track location
+            |   - Intercept calls/SMS (A5/1 cracked in real-time)
+            |   - Inject content (fake emergency alerts)
+            |   - Denial of service
+            |
+            |== PASSIVE VS ACTIVE IMSI CATCHERS ==
+            |
+            |PASSIVE:
+            |  - Just listens to existing traffic
+            |  - Can collect IMSI from unencrypted channels
+            |  - Harder to detect
+            |
+            |ACTIVE:
+            |  - Actively impersonates cell tower
+            |  - Forces connections
+            |  - Can intercept content
+            |  - Detectable through the anomalies we monitor
+        """.trimMargin()
+
+        /**
+         * Legal context for IMSI catcher use by region
+         */
+        private val LEGAL_CONTEXT_INFO = """
+            |LEGAL CONTEXT FOR IMSI CATCHER USE:
+            |
+            |== UNITED STATES ==
+            |Federal:
+            |  - Law enforcement generally needs a warrant (since 2015 DOJ policy)
+            |  - FBI, DEA, US Marshals, Secret Service all use them
+            |  - Often use "pen register" orders (lower standard than warrant)
+            |
+            |State laws vary significantly:
+            |  - CALIFORNIA: Requires warrant, public reporting
+            |  - WASHINGTON: Requires warrant
+            |  - MARYLAND: Generally requires warrant
+            |  - ILLINOIS: Electronic surveillance requires two-party consent
+            |  - Many states have NO specific regulations
+            |
+            |CBP/ICE:
+            |  - Border Patrol uses them at borders/airports
+            |  - Lower warrant requirements at "border zones" (100 miles)
+            |
+            |Local police:
+            |  - Many departments have StingRays
+            |  - Often acquired with federal grants
+            |  - Usage often kept secret (NDA with Harris Corp)
+            |
+            |== EUROPEAN UNION ==
+            |Generally more restricted:
+            |  - GDPR implications for mass surveillance
+            |  - Most countries require judicial authorization
+            |  - UK: Regulated under Investigatory Powers Act
+            |  - Germany: BKA uses them with judicial oversight
+            |
+            |== IF YOU BELIEVE YOU'RE BEING SURVEILLED ==
+            |1. Document time, location, and detection details
+            |2. Note any pattern (same location, following you)
+            |3. Consider filing FOIA requests with local police/FBI
+            |4. Contact digital rights organizations (EFF, ACLU)
+            |5. If immediate threat: enable airplane mode, use encrypted apps only
+        """.trimMargin()
+
+        // IMSI catcher score thresholds - aligned with severity levels
+        // Score 90-100 = CRITICAL (immediate threat)
+        // Score 70-89 = HIGH (confirmed surveillance indicators)
+        // Score 50-69 = MEDIUM (likely surveillance equipment)
+        // Score 30-49 = LOW (possible, continue monitoring)
+        // Score 0-29 = INFO (notable but not threatening)
+        private const val IMSI_CRITICAL_THRESHOLD = 90
+        private const val IMSI_HIGH_THRESHOLD = 70
+        private const val IMSI_MEDIUM_THRESHOLD = 50
+        private const val IMSI_LOW_THRESHOLD = 30
     }
 
     private var lastDetectionTime = mutableMapOf<DetectionMethod, Long>()
@@ -125,91 +314,369 @@ class CellularDetectionHandler @Inject constructor(
 
     /**
      * Generate an enriched AI prompt for cellular anomaly analysis.
+     *
+     * This provides COMPREHENSIVE context for LLM analysis including:
+     * - Real-world IMSI catcher device signatures and characteristics
+     * - Technical background on GSM/LTE vulnerabilities
+     * - Specific indicators detected and their significance
+     * - Environmental context (movement, location, network history)
+     * - User verification methods
+     * - Legal context by region
+     * - Actionable recommendations based on threat level
+     *
+     * The goal is to enable the AI to provide EXPERT-LEVEL analysis
+     * comparable to a cellular security specialist.
      */
     override fun generateAiPrompt(context: CellularDetectionContext, detection: Detection): String {
         return buildString {
-            appendLine("=== CELLULAR ANOMALY ANALYSIS ===")
+            appendLine("=" .repeat(70))
+            appendLine("CELLULAR ANOMALY ANALYSIS - EXPERT AI CONTEXT")
+            appendLine("=" .repeat(70))
             appendLine()
 
-            // Header info
-            appendLine("IMSI Catcher Likelihood: ${context.imsiCatcherScore}%")
-            appendLine("Detection Method: ${mapAnomalyTypeToMethod(context.anomalyType).displayName}")
-            appendLine("Confidence: ${context.confidence?.displayName ?: "Unknown"}")
-            appendLine("Severity: ${context.severity?.displayName ?: "Unknown"}")
+            // ==================== SECTION 1: EXECUTIVE SUMMARY ====================
+            appendLine("== EXECUTIVE SUMMARY ==")
             appendLine()
-
-            // Encryption analysis
-            appendLine("== ENCRYPTION STATUS ==")
-            appendLine("Current Encryption: ${context.encryptionType.displayName}")
-            context.previousNetworkType?.let {
-                appendLine("Previous Network: $it")
-                if (context.encryptionType == EncryptionType.WEAK_2G ||
-                    context.encryptionType == EncryptionType.NONE) {
-                    appendLine("WARNING: Encryption downgrade detected!")
-                    appendLine("Vulnerability: ${getEncryptionVulnerability(context.encryptionType)}")
-                }
-            }
-            appendLine()
-
-            // Network context
-            appendLine("== NETWORK CONTEXT ==")
-            appendLine("Network Type: ${context.networkType}")
-            appendLine("MCC-MNC: ${context.mcc}-${context.mnc}")
-            appendLine("Cell ID: ${context.cellId}")
-            context.previousCellId?.let { appendLine("Previous Cell: $it") }
-            context.lac?.let { appendLine("LAC: $it") }
-            context.tac?.let { appendLine("TAC: $it") }
-            appendLine("Roaming: ${if (context.isRoaming) "Yes" else "No"}")
-            appendLine()
-
-            // Signal analysis
-            appendLine("== SIGNAL ANALYSIS ==")
-            appendLine("Signal Strength: ${context.signalStrength} dBm (${getSignalQuality(context.signalStrength)})")
-            context.previousSignalStrength?.let { prev ->
-                val delta = context.signalStrength - prev
-                appendLine("Signal Delta: ${if (delta >= 0) "+" else ""}$delta dBm")
-            }
-            appendLine()
-
-            // Movement analysis
-            context.movementType?.let { movement ->
-                appendLine("== MOVEMENT ANALYSIS ==")
-                appendLine("Movement Type: ${movement.displayName}")
-                context.speedKmh?.let { appendLine("Speed: ${String.format("%.1f", it)} km/h") }
-                context.distanceMeters?.let { appendLine("Distance: ${String.format("%.1f", it)} m") }
-                if (movement == MovementType.IMPOSSIBLE) {
-                    appendLine("CRITICAL: Impossible movement detected - potential spoofing!")
-                }
-                appendLine()
-            }
-
-            // Cell trust analysis
-            context.cellTrustScore?.let { trust ->
-                appendLine("== CELL TRUST ANALYSIS ==")
-                appendLine("Trust Score: $trust%")
-                appendLine("Status: ${getTrustStatus(trust)}")
-                context.cellSeenCount?.let { appendLine("Times Seen: $it") }
-                appendLine()
-            }
-
-            // Contributing factors
-            if (context.contributingFactors.isNotEmpty()) {
-                appendLine("== CONTRIBUTING FACTORS ==")
-                context.contributingFactors.forEach { factor ->
-                    appendLine("- $factor")
-                }
-                appendLine()
-            }
-
-            // IMSI catcher signature analysis
-            appendLine("== IMSI CATCHER SIGNATURE ==")
-            appendLine("Score: ${context.imsiCatcherScore}%")
+            appendLine("IMSI Catcher Likelihood Score: ${context.imsiCatcherScore}%")
+            appendLine("Threat Level: ${detection.threatLevel.displayName}")
+            appendLine("Detection Type: ${mapAnomalyTypeToMethod(context.anomalyType).displayName}")
             appendLine("Assessment: ${getImsiAssessment(context.imsiCatcherScore)}")
             appendLine()
 
-            // Recommendations
-            appendLine("== RECOMMENDATIONS ==")
+            // ==================== SECTION 2: WHAT WAS DETECTED ====================
+            appendLine("== WHAT WAS DETECTED ==")
+            appendLine()
+            appendLine("Primary Anomaly: ${context.anomalyType.name}")
+            appendLine("Confidence: ${context.confidence?.displayName ?: "Unknown"}")
+            appendLine()
+            appendLine(getAnomalyExplanation(context.anomalyType))
+            appendLine()
+
+            // Contributing factors
+            if (context.contributingFactors.isNotEmpty()) {
+                appendLine("Contributing Factors:")
+                context.contributingFactors.forEachIndexed { index, factor ->
+                    appendLine("  ${index + 1}. $factor")
+                }
+                appendLine()
+            }
+
+            // ==================== SECTION 3: NETWORK TECHNICAL DETAILS ====================
+            appendLine("== NETWORK TECHNICAL DETAILS ==")
+            appendLine()
+            appendLine("Current Network Type: ${context.networkType}")
+            appendLine("MCC-MNC: ${context.mcc}-${context.mnc}")
+            appendLine("Cell ID: ${context.cellId ?: "Unknown"}")
+            context.previousCellId?.let { appendLine("Previous Cell ID: $it") }
+            context.lac?.let { lac ->
+                appendLine("Location Area Code (LAC): $lac")
+                if (lac in 0..10) {
+                    appendLine("  WARNING: LAC $lac is in suspicious range (1-10)")
+                    appendLine("  StingRay devices often use LAC 1 or very low LAC values")
+                }
+            }
+            context.tac?.let { tac ->
+                appendLine("Tracking Area Code (TAC): $tac")
+                if (tac in 0..5) {
+                    appendLine("  WARNING: TAC $tac is in suspicious range")
+                }
+            }
+            appendLine("Roaming: ${if (context.isRoaming) "Yes" else "No"}")
+            appendLine()
+
+            // MCC-MNC Analysis
+            val mccMnc = "${context.mcc}-${context.mnc}"
+            if (mccMnc in SUSPICIOUS_MCC_MNC) {
+                appendLine("CRITICAL: MCC-MNC $mccMnc is a KNOWN TEST/INVALID CODE")
+                appendLine("This should NEVER appear on legitimate networks!")
+                appendLine()
+            }
+
+            // ==================== SECTION 4: SIGNAL ANALYSIS ====================
+            appendLine("== SIGNAL ANALYSIS ==")
+            appendLine()
+            appendLine("Current Signal: ${context.signalStrength} dBm (${getSignalQuality(context.signalStrength)})")
+
+            // Check for suspiciously strong signal (DRTbox characteristic)
+            if (context.signalStrength >= -55) {
+                appendLine("  ALERT: Unusually strong signal!")
+                appendLine("  Signals this strong may indicate:")
+                appendLine("    - Very close proximity to tower (unusual)")
+                appendLine("    - DRTbox/airplane-mounted IMSI catcher")
+                appendLine("    - Close-proximity ground-based IMSI catcher")
+            }
+
+            context.previousSignalStrength?.let { prev ->
+                val delta = context.signalStrength - prev
+                appendLine("Signal Change: ${if (delta >= 0) "+" else ""}$delta dBm")
+                if (delta > 20) {
+                    appendLine("  WARNING: Large signal spike detected (+$delta dBm)")
+                    appendLine("  IMSI catchers broadcast strong signals to attract phones")
+                }
+            }
+            appendLine()
+
+            // ==================== SECTION 5: ENCRYPTION ANALYSIS ====================
+            appendLine("== ENCRYPTION STATUS ==")
+            appendLine()
+            appendLine("Current: ${context.encryptionType.displayName}")
+            appendLine("Security: ${context.encryptionType.description}")
+
+            context.previousNetworkType?.let { prevNet ->
+                appendLine("Previous Network: $prevNet")
+            }
+
+            if (context.encryptionType == EncryptionType.WEAK_2G ||
+                context.encryptionType == EncryptionType.NONE) {
+                appendLine()
+                appendLine("*** ENCRYPTION VULNERABILITY DETECTED ***")
+                appendLine()
+                appendLine("Current encryption: ${context.encryptionType.displayName}")
+                appendLine("Vulnerability: ${getEncryptionVulnerability(context.encryptionType)}")
+                appendLine()
+                appendLine("WHY THIS MATTERS:")
+                appendLine("- 2G uses one-way authentication (phone cannot verify tower)")
+                appendLine("- A5/1 cipher can be cracked in REAL-TIME with $1000 hardware")
+                appendLine("- Voice calls and SMS can be intercepted")
+                appendLine("- This is the PRIMARY method IMSI catchers use for interception")
+            }
+            appendLine()
+
+            // Downgrade chain
+            context.encryptionDowngradeChain?.let { chain ->
+                if (chain.size > 1) {
+                    appendLine("Network Generation History: ${chain.joinToString(" -> ")}")
+                    if (chain.last() == "2G") {
+                        appendLine("  WARNING: Progressive downgrade to 2G")
+                        appendLine("  This pattern is CLASSIC StingRay behavior")
+                    }
+                    appendLine()
+                }
+            }
+
+            // ==================== SECTION 6: MOVEMENT CONTEXT ====================
+            context.movementType?.let { movement ->
+                appendLine("== MOVEMENT CONTEXT ==")
+                appendLine()
+                appendLine("Classification: ${movement.displayName}")
+                context.speedKmh?.let { appendLine("Speed: ${String.format("%.1f", it)} km/h") }
+                context.distanceMeters?.let { appendLine("Distance: ${String.format("%.1f", it)} meters") }
+                appendLine()
+
+                when (movement) {
+                    MovementType.STATIONARY -> {
+                        appendLine("Analysis: You appear stationary.")
+                        appendLine("- Cell changes while stationary CAN be normal (load balancing)")
+                        appendLine("- BUT: Multiple changes or changes to unknown towers are suspicious")
+                        appendLine("- AND: Changes combined with encryption downgrade are very suspicious")
+                    }
+                    MovementType.IMPOSSIBLE -> {
+                        appendLine("*** CRITICAL: IMPOSSIBLE MOVEMENT DETECTED ***")
+                        appendLine("Calculated speed: ${String.format("%.0f", context.speedKmh)} km/h")
+                        appendLine()
+                        appendLine("This could indicate:")
+                        appendLine("  1. Mobile IMSI catcher (vehicle/aircraft-mounted)")
+                        appendLine("  2. Location data spoofing/GPS interference")
+                        appendLine("  3. Time synchronization issue (less likely)")
+                    }
+                    MovementType.VEHICLE, MovementType.HIGH_SPEED_VEHICLE -> {
+                        appendLine("Analysis: You appear to be traveling.")
+                        appendLine("- Cell tower changes are EXPECTED when moving")
+                        appendLine("- This reduces suspicion for simple handoffs")
+                        appendLine("- BUT: Encryption downgrade while moving is still suspicious")
+                    }
+                    else -> {
+                        appendLine("Movement appears normal for the detected speed.")
+                    }
+                }
+                appendLine()
+            }
+
+            // ==================== SECTION 7: CELL TRUST ANALYSIS ====================
+            context.cellTrustScore?.let { trust ->
+                appendLine("== CELL TOWER FAMILIARITY ==")
+                appendLine()
+                appendLine("Trust Score: $trust%")
+                appendLine("Status: ${getTrustStatus(trust)}")
+                context.cellSeenCount?.let { appendLine("Times Seen: $it") }
+                context.isInFamiliarArea?.let {
+                    appendLine("In Familiar Area: ${if (it) "Yes" else "No"}")
+                }
+
+                if (trust < 30) {
+                    appendLine()
+                    appendLine("NOTE: This cell tower is UNFAMILIAR")
+                    appendLine("- Never seen before or rarely seen")
+                    appendLine("- New towers in familiar areas warrant attention")
+                    appendLine("- Could be: new legitimate tower, or temporary surveillance")
+                }
+                appendLine()
+            }
+
+            // ==================== SECTION 8: REAL-WORLD CONTEXT ====================
+            appendLine("== REAL-WORLD IMSI CATCHER KNOWLEDGE ==")
+            appendLine()
+            appendLine(IMSI_CATCHER_DEVICE_INFO)
+            appendLine()
+
+            // ==================== SECTION 9: TECHNICAL BACKGROUND ====================
+            appendLine("== TECHNICAL BACKGROUND ==")
+            appendLine()
+            appendLine(CELLULAR_VULNERABILITY_INFO)
+            appendLine()
+
+            // ==================== SECTION 10: CARRIER VALIDATION ====================
+            appendLine("== CARRIER INFORMATION ==")
+            appendLine()
+            appendLine(US_CARRIER_INFO)
+            appendLine()
+
+            // ==================== SECTION 11: USER VERIFICATION METHODS ====================
+            appendLine("== HOW TO VERIFY THIS DETECTION ==")
+            appendLine()
+            appendLine("The user can perform these checks to validate the detection:")
+            appendLine()
+            appendLine("1. CHECK SERVING CELL INFO:")
+            appendLine("   - Samsung: Dial *#0011# for ServiceMode")
+            appendLine("   - Other Android: Use apps like 'Network Cell Info Lite'")
+            appendLine("   - Look for: Cell ID, LAC/TAC, MCC-MNC, network type")
+            appendLine()
+            appendLine("2. VERIFY CELL EXISTS IN PUBLIC DATABASES:")
+            appendLine("   - cellmapper.net - Community-mapped cell towers")
+            appendLine("   - opencellid.org - Open database of cell locations")
+            appendLine("   - If the Cell ID doesn't appear, it may be fake")
+            appendLine()
+            appendLine("3. CHECK IF CELL APPEARS IN MULTIPLE LOCATIONS:")
+            appendLine("   - Real towers are FIXED - they don't move")
+            appendLine("   - If same Cell ID appears in different locations = FAKE")
+            appendLine()
+            appendLine("4. MONITOR OVER TIME:")
+            appendLine("   - Does this cell appear consistently or sporadically?")
+            appendLine("   - Does it only appear during certain events?")
+            appendLine()
+            appendLine("5. CHECK TIMING ADVANCE (if available):")
+            appendLine("   - TA indicates distance to tower")
+            appendLine("   - IMSI catchers may have inconsistent TA values")
+            appendLine()
+            appendLine("6. DOCUMENT FOR RECORDS:")
+            appendLine("   - Note time, location, cell details")
+            appendLine("   - Useful for FOIA requests or legal action")
+            appendLine()
+
+            // ==================== SECTION 12: ENVIRONMENTAL CONTEXT ====================
+            appendLine("== ENVIRONMENTAL CONTEXT CONSIDERATIONS ==")
+            appendLine()
+            appendLine("IMSI catchers are more commonly deployed:")
+            appendLine()
+            appendLine("HIGH LIKELIHOOD LOCATIONS:")
+            appendLine("  - Protests, demonstrations, political gatherings")
+            appendLine("  - Near government buildings (federal, state, local)")
+            appendLine("  - Airports, border crossings (CBP deployment)")
+            appendLine("  - Prisons/jails (contraband phone detection)")
+            appendLine("  - High-profile events (conferences, summits)")
+            appendLine()
+            appendLine("MODERATE LIKELIHOOD:")
+            appendLine("  - Major public events (concerts, sports)")
+            appendLine("  - Tourist areas in major cities")
+            appendLine("  - Near foreign embassies/consulates")
+            appendLine()
+            appendLine("LOWER LIKELIHOOD:")
+            appendLine("  - Residential neighborhoods (unless targeted)")
+            appendLine("  - Rural areas")
+            appendLine("  - Late night in quiet areas (unless following someone)")
+            appendLine()
+            appendLine("Ask the user about their current location context.")
+            appendLine()
+
+            // ==================== SECTION 13: LEGAL CONTEXT ====================
+            appendLine("== LEGAL CONTEXT ==")
+            appendLine()
+            appendLine(LEGAL_CONTEXT_INFO)
+            appendLine()
+
+            // ==================== SECTION 14: RECOMMENDATIONS ====================
+            appendLine("== RECOMMENDED ACTIONS ==")
+            appendLine()
             appendLine(getRecommendations(context))
+            appendLine()
+
+            // ==================== SECTION 15: AI ANALYSIS INSTRUCTIONS ====================
+            appendLine("=" .repeat(70))
+            appendLine("INSTRUCTIONS FOR AI ANALYSIS")
+            appendLine("=" .repeat(70))
+            appendLine()
+            appendLine("Based on all the above information, provide the user with:")
+            appendLine()
+            appendLine("1. ASSESSMENT: Is this likely an IMSI catcher or normal network behavior?")
+            appendLine("   Consider all factors: score, encryption, movement, cell familiarity")
+            appendLine()
+            appendLine("2. SPECIFIC ANALYSIS: What specific indicators are most concerning?")
+            appendLine("   Reference the real-world device signatures if applicable")
+            appendLine()
+            appendLine("3. CONTEXT QUESTIONS: Ask about user's location/situation")
+            appendLine("   - Are they near any high-risk locations?")
+            appendLine("   - Is this part of a pattern they've noticed?")
+            appendLine()
+            appendLine("4. VERIFICATION STEPS: Guide them through verification")
+            appendLine("   - Recommend specific checks from the verification section")
+            appendLine()
+            appendLine("5. ACTIONABLE ADVICE: What should they do RIGHT NOW?")
+            appendLine("   - Based on threat level, give specific guidance")
+            appendLine("   - For HIGH/CRITICAL: immediate protective actions")
+            appendLine("   - For MEDIUM: monitoring and precautions")
+            appendLine("   - For LOW: awareness and documentation")
+            appendLine()
+            appendLine("6. EDUCATION: Help them understand what's happening")
+            appendLine("   - Explain the technical aspects in accessible terms")
+            appendLine("   - Help them make informed decisions")
+            appendLine()
+            appendLine("Be direct, specific, and actionable. Avoid vague warnings.")
+            appendLine("If this appears to be a false positive, explain why.")
+        }
+    }
+
+    /**
+     * Get a user-friendly explanation of the anomaly type.
+     */
+    private fun getAnomalyExplanation(type: CellularMonitor.AnomalyType): String {
+        return when (type) {
+            CellularMonitor.AnomalyType.ENCRYPTION_DOWNGRADE ->
+                "Your phone was forced to use an older, weaker network (like 2G) that has " +
+                "known encryption vulnerabilities. IMSI catchers often force this downgrade " +
+                "to intercept communications that would otherwise be encrypted."
+
+            CellularMonitor.AnomalyType.SUSPICIOUS_NETWORK ->
+                "Your phone connected to a network using test or invalid identifiers. " +
+                "Legitimate cell networks never use these codes. This is a strong indicator " +
+                "of surveillance equipment or a misconfigured test system."
+
+            CellularMonitor.AnomalyType.STATIONARY_CELL_CHANGE ->
+                "Your phone switched to a different cell tower even though you weren't moving. " +
+                "Single occurrences are often normal (network load balancing), but repeated " +
+                "changes or changes to unfamiliar towers warrant attention."
+
+            CellularMonitor.AnomalyType.RAPID_CELL_SWITCHING ->
+                "Your phone is switching between cell towers more frequently than normal. " +
+                "This can indicate competing signals from surveillance equipment trying to " +
+                "capture your connection."
+
+            CellularMonitor.AnomalyType.SIGNAL_SPIKE ->
+                "Your phone's signal strength jumped unusually high. IMSI catchers broadcast " +
+                "strong signals to attract nearby phones. However, this can also occur near " +
+                "legitimate towers or with antenna alignment."
+
+            CellularMonitor.AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA ->
+                "A cell tower appeared in an area where you've been before, but this specific " +
+                "tower has never been seen. This could indicate a new legitimate tower or " +
+                "a temporary surveillance device."
+
+            CellularMonitor.AnomalyType.LAC_TAC_ANOMALY ->
+                "The cell tower's location area code changed without actually changing towers. " +
+                "This is technically unusual and can indicate network manipulation."
+
+            CellularMonitor.AnomalyType.CELL_TOWER_CHANGE ->
+                "Your phone switched to a different cell tower. This is usually normal during " +
+                "movement, but can be suspicious when combined with other indicators."
         }
     }
 
@@ -295,8 +762,9 @@ class CellularDetectionHandler @Inject constructor(
     // ==================== Private Helper Methods ====================
 
     private fun meetsThresholds(context: CellularDetectionContext, thresholds: CellularThresholds): Boolean {
-        // For MEDIUM severity, check if IMSI score is high enough
-        return context.imsiCatcherScore >= IMSI_HIGH_THRESHOLD
+        // Only report if IMSI score reaches at least LOW concern level (30+)
+        // This prevents noise from being reported as detections
+        return context.imsiCatcherScore >= IMSI_LOW_THRESHOLD
     }
 
     private fun buildDetection(context: CellularDetectionContext, method: DetectionMethod): Detection {
@@ -352,14 +820,14 @@ class CellularDetectionHandler @Inject constructor(
         // Use provided severity if available
         context.severity?.let { return it }
 
-        // Calculate based on IMSI score and confidence
+        // FIXED: Severity MUST match the IMSI likelihood score
+        // This ensures consistency between what we report and the actual threat level
         return when {
-            context.imsiCatcherScore >= IMSI_CRITICAL_THRESHOLD -> ThreatLevel.CRITICAL
-            context.imsiCatcherScore >= IMSI_HIGH_THRESHOLD -> ThreatLevel.HIGH
-            context.confidence == CellularMonitor.AnomalyConfidence.CRITICAL -> ThreatLevel.CRITICAL
-            context.confidence == CellularMonitor.AnomalyConfidence.HIGH -> ThreatLevel.HIGH
-            context.confidence == CellularMonitor.AnomalyConfidence.MEDIUM -> ThreatLevel.MEDIUM
-            else -> ThreatLevel.LOW
+            context.imsiCatcherScore >= IMSI_CRITICAL_THRESHOLD -> ThreatLevel.CRITICAL  // 90-100%
+            context.imsiCatcherScore >= IMSI_HIGH_THRESHOLD -> ThreatLevel.HIGH          // 70-89%
+            context.imsiCatcherScore >= IMSI_MEDIUM_THRESHOLD -> ThreatLevel.MEDIUM      // 50-69%
+            context.imsiCatcherScore >= IMSI_LOW_THRESHOLD -> ThreatLevel.LOW            // 30-49%
+            else -> ThreatLevel.INFO                                                      // 0-29%
         }
     }
 
@@ -388,16 +856,24 @@ class CellularDetectionHandler @Inject constructor(
         }
     }
 
+    /**
+     * Get base IMSI score for anomaly type.
+     *
+     * CALIBRATED BASE SCORES (aligned with CellularMonitor):
+     * - Base scores are intentionally LOW for common events that need context
+     * - A single cell change while stationary is common (network optimization)
+     * - Multiple factors combined increase the total score appropriately
+     */
     private fun getAnomalyBaseScore(type: CellularMonitor.AnomalyType): Int {
         return when (type) {
-            CellularMonitor.AnomalyType.SUSPICIOUS_NETWORK -> 95
-            CellularMonitor.AnomalyType.ENCRYPTION_DOWNGRADE -> 80
-            CellularMonitor.AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA -> 60
-            CellularMonitor.AnomalyType.STATIONARY_CELL_CHANGE -> 50
-            CellularMonitor.AnomalyType.RAPID_CELL_SWITCHING -> 40
-            CellularMonitor.AnomalyType.LAC_TAC_ANOMALY -> 35
-            CellularMonitor.AnomalyType.SIGNAL_SPIKE -> 30
-            CellularMonitor.AnomalyType.CELL_TOWER_CHANGE -> 20
+            CellularMonitor.AnomalyType.SUSPICIOUS_NETWORK -> 90     // Test networks = immediate concern
+            CellularMonitor.AnomalyType.ENCRYPTION_DOWNGRADE -> 60   // 2G downgrade is concerning, but needs context
+            CellularMonitor.AnomalyType.UNKNOWN_CELL_FAMILIAR_AREA -> 25  // Needs multiple factors
+            CellularMonitor.AnomalyType.STATIONARY_CELL_CHANGE -> 15     // Very common, needs pattern analysis
+            CellularMonitor.AnomalyType.RAPID_CELL_SWITCHING -> 20       // Needs frequency context
+            CellularMonitor.AnomalyType.LAC_TAC_ANOMALY -> 20            // Technical anomaly, needs context
+            CellularMonitor.AnomalyType.SIGNAL_SPIKE -> 15               // Common near towers, needs context
+            CellularMonitor.AnomalyType.CELL_TOWER_CHANGE -> 10          // Very common, baseline event
         }
     }
 
@@ -494,28 +970,163 @@ class CellularDetectionHandler @Inject constructor(
 
     private fun getImsiAssessment(score: Int): String {
         return when {
-            score >= 80 -> "CRITICAL - Strong indicators of IMSI catcher/cell site simulator"
-            score >= 60 -> "HIGH - Multiple suspicious indicators detected"
-            score >= 40 -> "MODERATE - Some suspicious activity detected"
-            score >= 20 -> "LOW - Minor anomalies detected"
-            else -> "MINIMAL - Normal cellular behavior"
+            score >= 90 -> "CRITICAL - Strong indicators of active IMSI catcher/cell site simulator. Immediate action recommended."
+            score >= 70 -> "HIGH - Multiple confirmed surveillance indicators. Exercise caution with communications."
+            score >= 50 -> "MEDIUM - Likely surveillance equipment detected. Monitor for additional indicators."
+            score >= 30 -> "LOW - Possible surveillance activity. Continue monitoring but no immediate action needed."
+            else -> "INFO - Normal cellular behavior with minor anomalies. No action required."
         }
     }
 
     private fun getRecommendations(context: CellularDetectionContext): String {
         return buildString {
-            if (context.imsiCatcherScore >= 60) {
-                appendLine("1. Avoid making sensitive calls or sending SMS")
-                appendLine("2. Use end-to-end encrypted messaging apps")
-                appendLine("3. Consider enabling airplane mode temporarily")
-                appendLine("4. Move to a different location if possible")
-            } else if (context.imsiCatcherScore >= 40) {
-                appendLine("1. Monitor for additional anomalies")
-                appendLine("2. Prefer encrypted communications")
-                appendLine("3. Note current location for pattern analysis")
-            } else {
-                appendLine("1. Continue normal monitoring")
-                appendLine("2. No immediate action required")
+            when {
+                context.imsiCatcherScore >= 90 -> {
+                    appendLine("*** CRITICAL THREAT - IMMEDIATE ACTIONS REQUIRED ***")
+                    appendLine()
+                    appendLine("STEP 1 - DISCONNECT NOW:")
+                    appendLine("   - Enable airplane mode IMMEDIATELY")
+                    appendLine("   - This breaks connection to the suspected IMSI catcher")
+                    appendLine()
+                    appendLine("STEP 2 - PROTECT YOUR COMMUNICATIONS:")
+                    appendLine("   - DO NOT make phone calls (can be intercepted)")
+                    appendLine("   - DO NOT send SMS (can be intercepted)")
+                    appendLine("   - If you must communicate, use WiFi + VPN + Signal/WhatsApp")
+                    appendLine()
+                    appendLine("STEP 3 - MOVE TO SAFETY:")
+                    appendLine("   - Leave the immediate area if possible")
+                    appendLine("   - Move at least 500 meters away")
+                    appendLine("   - Briefly enable cellular to check if anomaly persists")
+                    appendLine()
+                    appendLine("STEP 4 - DOCUMENT EVERYTHING:")
+                    appendLine("   - Screenshot this detection")
+                    appendLine("   - Note: time, exact location, what you were doing")
+                    appendLine("   - This could be evidence for legal action or FOIA")
+                    appendLine()
+                    appendLine("STEP 5 - VERIFY THE THREAT:")
+                    appendLine("   - Check cell ID on cellmapper.net or opencellid.org")
+                    appendLine("   - Samsung users: dial *#0011# for service mode")
+                    appendLine("   - If cell doesn't exist in databases, highly likely fake")
+                    appendLine()
+                    appendLine("STEP 6 - CONSIDER REPORTING:")
+                    appendLine("   - Contact EFF (eff.org) or ACLU if you believe you're targeted")
+                    appendLine("   - File FOIA request with local police for StingRay records")
+                    appendLine("   - Document pattern if this happens repeatedly")
+                }
+                context.imsiCatcherScore >= 70 -> {
+                    appendLine("*** HIGH THREAT - TAKE PROTECTIVE ACTION ***")
+                    appendLine()
+                    appendLine("IMMEDIATE PRECAUTIONS:")
+                    appendLine("   - Avoid making sensitive phone calls")
+                    appendLine("   - Do not send SMS with sensitive content")
+                    appendLine("   - Use Signal, WhatsApp, or other E2E encrypted apps")
+                    appendLine()
+                    appendLine("VERIFICATION STEPS:")
+                    appendLine("   - Check if cell ID exists: cellmapper.net, opencellid.org")
+                    appendLine("   - Samsung: *#0011# shows network details")
+                    appendLine("   - Note LAC value - if 1-10, very suspicious")
+                    appendLine()
+                    appendLine("IF ENCRYPTION DOWNGRADE DETECTED:")
+                    appendLine("   - Your phone may have been forced to 2G")
+                    appendLine("   - Voice calls on 2G can be intercepted in real-time")
+                    appendLine("   - Consider airplane mode for any sensitive discussions")
+                    appendLine()
+                    appendLine("CONTEXT CHECK:")
+                    appendLine("   - Are you near: protest, government building, airport, prison?")
+                    appendLine("   - These locations commonly have IMSI catcher deployment")
+                    appendLine()
+                    appendLine("DOCUMENTATION:")
+                    appendLine("   - Save this detection for your records")
+                    appendLine("   - If pattern repeats, you may be specifically targeted")
+                }
+                context.imsiCatcherScore >= 50 -> {
+                    appendLine("*** MODERATE CONCERN - HEIGHTENED AWARENESS ***")
+                    appendLine()
+                    appendLine("CURRENT SITUATION:")
+                    appendLine("   - Multiple indicators suggest possible surveillance")
+                    appendLine("   - Could still be a false positive from network issues")
+                    appendLine("   - Worth monitoring but not emergency")
+                    appendLine()
+                    appendLine("RECOMMENDED ACTIONS:")
+                    appendLine("   - Prefer encrypted messaging (Signal, WhatsApp) over SMS")
+                    appendLine("   - Be mindful of sensitive phone conversations")
+                    appendLine("   - Note your location in case pattern develops")
+                    appendLine()
+                    appendLine("VERIFICATION:")
+                    appendLine("   - Check cell ID in cellmapper.net database")
+                    appendLine("   - If cell doesn't appear, suspicion increases")
+                    appendLine("   - If cell appears with correct location, likely false positive")
+                    appendLine()
+                    appendLine("WATCH FOR:")
+                    appendLine("   - Additional anomalies in same area = threat increases")
+                    appendLine("   - Same anomaly in different areas = possible targeted surveillance")
+                    appendLine("   - Anomaly only at specific times/events = pattern worth noting")
+                }
+                context.imsiCatcherScore >= 30 -> {
+                    appendLine("*** LOW CONCERN - MONITOR SITUATION ***")
+                    appendLine()
+                    appendLine("ASSESSMENT:")
+                    appendLine("   - This is likely normal network behavior")
+                    appendLine("   - Cell networks frequently optimize and hand off")
+                    appendLine("   - Single events are usually not concerning")
+                    appendLine()
+                    appendLine("WHAT TO WATCH FOR:")
+                    appendLine("   - Repeated similar events = more concerning")
+                    appendLine("   - Events combined with encryption downgrade = concerning")
+                    appendLine("   - Pattern tied to specific locations/times = investigate")
+                    appendLine()
+                    appendLine("NO IMMEDIATE ACTION REQUIRED")
+                    appendLine("   - Continue using your phone normally")
+                    appendLine("   - The app is logging this for pattern analysis")
+                    appendLine("   - You'll be alerted if threat level increases")
+                }
+                else -> {
+                    appendLine("*** INFORMATIONAL - NORMAL BEHAVIOR ***")
+                    appendLine()
+                    appendLine("This event was logged but is not concerning:")
+                    appendLine("   - Minor network event that is common")
+                    appendLine("   - By itself, this indicates nothing suspicious")
+                    appendLine("   - Recorded for pattern analysis only")
+                    appendLine()
+                    appendLine("Your phone is operating normally.")
+                    appendLine("No action needed.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Generate a brief summary for notifications (shorter than full AI prompt).
+     */
+    fun generateNotificationSummary(context: CellularDetectionContext, detection: Detection): String {
+        return buildString {
+            append("IMSI Catcher Detection: ${context.imsiCatcherScore}% likelihood. ")
+
+            when {
+                context.imsiCatcherScore >= 90 -> {
+                    append("CRITICAL - Enable airplane mode immediately. ")
+                }
+                context.imsiCatcherScore >= 70 -> {
+                    append("HIGH - Avoid sensitive calls/SMS. Use encrypted apps. ")
+                }
+                context.imsiCatcherScore >= 50 -> {
+                    append("MODERATE - Use caution with communications. ")
+                }
+                else -> {
+                    append("LOW - Monitoring for patterns. ")
+                }
+            }
+
+            // Add key indicator
+            when (context.anomalyType) {
+                CellularMonitor.AnomalyType.ENCRYPTION_DOWNGRADE ->
+                    append("Your connection was downgraded to weak encryption (2G).")
+                CellularMonitor.AnomalyType.SUSPICIOUS_NETWORK ->
+                    append("Connected to test/invalid network ID.")
+                CellularMonitor.AnomalyType.STATIONARY_CELL_CHANGE ->
+                    append("Cell tower changed while you were stationary.")
+                else ->
+                    append("Anomaly: ${context.anomalyType.name}")
             }
         }
     }

@@ -480,127 +480,230 @@ object TrackerDatabase {
 
     /**
      * Comprehensive ultrasonic beacon signature database
+     *
+     * Real-world ultrasonic tracking knowledge:
+     * - Cross-device tracking links phone, tablet, laptop, smart TV
+     * - De-anonymization can link anonymous browsing to real identity
+     * - Location history tracks store visits and time spent
+     * - Ad attribution knows which TV ad made you buy
+     * - Household mapping identifies all devices in home
+     *
+     * Even "opt-in" services often bury consent in ToS, share data
+     * with dozens of partners, and persist tracking after app uninstall.
      */
     val ULTRASONIC_SIGNATURES: List<UltrasonicTrackerSignature> = listOf(
-        // SilverPush
+        // ============================================================
+        // SilverPush (India) - Cross-device ad tracking
+        // SDK was in 200+ apps (2015-2017), supposedly discontinued
+        // Beacon duration: 2-5 seconds
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "silverpush_primary",
             name = "SilverPush Primary",
-            manufacturer = "SilverPush Technologies",
+            manufacturer = "SilverPush Technologies (India)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "SilverPush cross-device ad tracking beacon",
+            description = "SilverPush cross-device ad tracking. SDK was found in 200+ apps (2015-2017). " +
+                "Links your phone to TV ads using FSK modulation. Beacon typically lasts 2-5 seconds.",
             primaryFrequencyHz = 18000,
             trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING,
-            modulationType = UltrasonicModulation.FSK
+            modulationType = UltrasonicModulation.FSK,
+            beaconDurationMs = 2000L to 5000L,
+            privacyImpact = PrivacyImpact.CROSS_DEVICE_LINKING,
+            legalStatus = LegalStatus.FTC_INVESTIGATED,
+            confirmationMethod = "Check if detection correlates with TV commercials. " +
+                "Use another phone with ultrasonic app to cross-verify.",
+            mitigationAdvice = "Check app permissions for microphone access. " +
+                "Revoke mic permission from apps that don't need it. Mute TV during commercials."
         ),
         UltrasonicTrackerSignature(
             id = "silverpush_secondary",
             name = "SilverPush Secondary",
-            manufacturer = "SilverPush Technologies",
+            manufacturer = "SilverPush Technologies (India)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "SilverPush secondary beacon frequency",
+            description = "SilverPush secondary beacon frequency. Part of multi-frequency encoding scheme.",
             primaryFrequencyHz = 18200,
-            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING
+            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING,
+            modulationType = UltrasonicModulation.FSK,
+            beaconDurationMs = 2000L to 5000L,
+            privacyImpact = PrivacyImpact.CROSS_DEVICE_LINKING,
+            legalStatus = LegalStatus.FTC_INVESTIGATED
         ),
 
-        // Alphonso
+        // ============================================================
+        // Alphonso (US) - TV ad attribution / "Automated Content Recognition"
+        // Found in 1,000+ apps including games
+        // Always-on listening in background
+        // FTC investigated in 2018
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "alphonso_tv",
             name = "Alphonso TV Attribution",
-            manufacturer = "Alphonso Inc",
+            manufacturer = "Alphonso Inc (US)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Alphonso TV viewing attribution beacon",
+            description = "Alphonso Automated Content Recognition. Found in 1,000+ apps including games. " +
+                "Always-on background listening fingerprints TV audio to track shows and ads you watch. " +
+                "FTC investigated in 2018.",
             primaryFrequencyHz = 18500,
             trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
-            modulationType = UltrasonicModulation.PSK
+            modulationType = UltrasonicModulation.PSK,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS,
+            legalStatus = LegalStatus.FTC_INVESTIGATED,
+            confirmationMethod = "Check if detection correlates with TV being on. " +
+                "Signal should appear when specific commercials air.",
+            mitigationAdvice = "Revoke microphone permissions from game apps and apps that shouldn't need audio. " +
+                "Use F-Droid or privacy-focused app stores."
         ),
 
-        // Zapr
+        // ============================================================
+        // Zapr Media Labs - TV content recognition (India)
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "zapr_tv",
             name = "Zapr TV Attribution",
-            manufacturer = "Zapr Media Labs",
+            manufacturer = "Zapr Media Labs (India)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Zapr TV content recognition beacon",
+            description = "Zapr TV content recognition. Tracks what TV shows you watch for targeted advertising.",
             primaryFrequencyHz = 17500,
-            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION
+            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS,
+            confirmationMethod = "Check if detection happens when TV is playing content.",
+            mitigationAdvice = "Mute TV during commercials. Check installed apps for Zapr SDK."
         ),
 
-        // Signal360
+        // ============================================================
+        // Signal360 - Location-based advertising
+        // Deployed in malls, airports
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "signal360",
             name = "Signal360",
-            manufacturer = "Signal360",
+            manufacturer = "Signal360 (US)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.MEDIUM,
-            description = "Signal360 proximity marketing beacon",
+            description = "Signal360 proximity marketing. Deployed in malls and airports for location-based advertising.",
             primaryFrequencyHz = 19000,
-            trackingPurpose = UltrasonicTrackingPurpose.LOCATION_VERIFICATION
+            trackingPurpose = UltrasonicTrackingPurpose.LOCATION_VERIFICATION,
+            privacyImpact = PrivacyImpact.LOCATION_TRACKING,
+            confirmationMethod = "Detection should occur near mall entrances or airport gates. " +
+                "Move away from suspected source - signal should drop.",
+            mitigationAdvice = "Disable microphone for shopping apps when not actively using voice features."
         ),
 
-        // LISNR
+        // ============================================================
+        // LISNR (US) - Cross-device linking / proximity payments
+        // Higher bandwidth, legitimate use cases exist (check-in, payments)
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "lisnr",
             name = "LISNR",
-            manufacturer = "LISNR Inc",
+            manufacturer = "LISNR Inc (US)",
             category = TrackerCategory.CROSS_DEVICE_TRACKER,
             threatLevel = ThreatLevel.HIGH,
-            description = "LISNR ultrasonic data transmission",
+            description = "LISNR ultrasonic data transfer. Used for proximity payments, ticketing, and cross-device linking. " +
+                "Higher bandwidth than other systems. Some legitimate uses exist (check-in, payments).",
             primaryFrequencyHz = 19500,
             trackingPurpose = UltrasonicTrackingPurpose.CROSS_DEVICE_LINKING,
-            modulationType = UltrasonicModulation.CHIRP
+            modulationType = UltrasonicModulation.CHIRP,
+            privacyImpact = PrivacyImpact.CROSS_DEVICE_LINKING,
+            hasLegitimateUses = true,
+            confirmationMethod = "May be legitimate if at ticketing event or using payment app. " +
+                "Suspicious if detected in random locations without clear source.",
+            mitigationAdvice = "If not using for payments/ticketing, revoke mic access from apps. " +
+                "Consider ultrasonic blocking apps."
         ),
 
-        // Shopkick
+        // ============================================================
+        // Shopkick - Retail presence detection
+        // Deployed in Target, Macy's, Best Buy, etc.
+        // User opt-in (mostly legitimate)
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "shopkick",
             name = "Shopkick",
             manufacturer = "Shopkick/SK Telecom",
             category = TrackerCategory.RETAIL_BEACON,
             threatLevel = ThreatLevel.MEDIUM,
-            description = "Shopkick retail location verification",
+            description = "Shopkick retail presence detection and loyalty rewards. " +
+                "Deployed in Target, Macy's, Best Buy, and other major retailers. " +
+                "Usually user opt-in for rewards program.",
             primaryFrequencyHz = 20000,
-            trackingPurpose = UltrasonicTrackingPurpose.RETAIL_ANALYTICS
+            trackingPurpose = UltrasonicTrackingPurpose.RETAIL_ANALYTICS,
+            privacyImpact = PrivacyImpact.LOCATION_TRACKING,
+            hasLegitimateUses = true,
+            deploymentLocations = listOf("Target", "Macy's", "Best Buy", "Walmart", "CVS"),
+            confirmationMethod = "Note if detection happens near store entrance. " +
+                "Check if you have Shopkick app installed.",
+            mitigationAdvice = "Disable Shopkick app if you don't want retail tracking. " +
+                "The app must be installed and have mic permission for this to affect you."
         ),
 
-        // Realeyes
+        // ============================================================
+        // Realeyes - Ad attention measurement
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "realeyes",
             name = "Realeyes Attention Tracking",
             manufacturer = "Realeyes",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Realeyes ad attention measurement",
+            description = "Realeyes ad attention measurement. Measures if you're paying attention to advertisements.",
             primaryFrequencyHz = 19200,
-            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING
+            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS
         ),
 
-        // TVision
+        // ============================================================
+        // TVision - TV viewership measurement
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "tvision",
             name = "TVision Viewership",
             manufacturer = "TVision Insights",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "TVision TV viewership measurement",
+            description = "TVision TV viewership measurement. Tracks what you watch and for how long.",
             primaryFrequencyHz = 19800,
-            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION
+            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS,
+            confirmationMethod = "Detection should correlate with TV being powered on."
         ),
 
-        // Samba TV
+        // ============================================================
+        // Samba TV / Inscape - Smart TV ACR
+        // Built into Samsung, Vizio, LG smart TVs
+        // Tracks everything you watch
+        // ============================================================
         UltrasonicTrackerSignature(
             id = "samba_tv",
             name = "Samba TV ACR",
             manufacturer = "Samba TV",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Samba TV automatic content recognition",
+            description = "Samba TV Automatic Content Recognition. Built into many smart TVs. " +
+                "Tracks everything you watch including streaming, cable, gaming, and HDMI inputs.",
             primaryFrequencyHz = 20200,
-            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION
+            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS,
+            deploymentLocations = listOf("Samsung Smart TVs", "Vizio Smart TVs", "LG Smart TVs", "Sony Smart TVs"),
+            confirmationMethod = "Check smart TV settings for 'Viewing Data' or 'Samba Interactive TV' options. " +
+                "At home + smart TV on = likely Samba/Inscape (lower external threat).",
+            mitigationAdvice = "Disable ACR in smart TV settings. Look for 'Viewing Data', 'Smart Interactivity', " +
+                "or 'Samba Interactive TV' options. Consider using external streaming device instead."
+        ),
+        UltrasonicTrackerSignature(
+            id = "samba_tv_secondary",
+            name = "Samba TV ACR (High Band)",
+            manufacturer = "Samba TV",
+            category = TrackerCategory.ADVERTISING_BEACON,
+            threatLevel = ThreatLevel.HIGH,
+            description = "Samba TV ACR secondary frequency band (20-21 kHz range).",
+            primaryFrequencyHz = 20800,
+            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS
         ),
 
         // Inscape (Vizio)
@@ -610,9 +713,14 @@ object TrackerDatabase {
             manufacturer = "Inscape (Vizio)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Inscape smart TV viewing data",
+            description = "Inscape smart TV viewing data collection. Vizio paid $2.2M FTC settlement in 2017 " +
+                "for collecting viewing data without consent.",
             primaryFrequencyHz = 21500,
-            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION
+            trackingPurpose = UltrasonicTrackingPurpose.TV_ATTRIBUTION,
+            privacyImpact = PrivacyImpact.VIEWING_HABITS,
+            legalStatus = LegalStatus.FTC_SETTLED,
+            confirmationMethod = "Check if you have a Vizio TV. Look for 'Smart Interactivity' setting.",
+            mitigationAdvice = "Disable 'Smart Interactivity' in Vizio TV settings."
         ),
 
         // Data Plus Math
@@ -622,9 +730,11 @@ object TrackerDatabase {
             manufacturer = "LiveRamp (Data Plus Math)",
             category = TrackerCategory.ADVERTISING_BEACON,
             threatLevel = ThreatLevel.HIGH,
-            description = "Cross-platform ad attribution",
+            description = "Cross-platform ad attribution. Links TV ad exposure to online purchases and app installs.",
             primaryFrequencyHz = 22000,
-            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING
+            trackingPurpose = UltrasonicTrackingPurpose.AD_TRACKING,
+            privacyImpact = PrivacyImpact.CROSS_DEVICE_LINKING,
+            confirmationMethod = "Check if detection correlates with specific ad campaigns."
         ),
 
         // Generic retail beacon bands
@@ -634,9 +744,11 @@ object TrackerDatabase {
             manufacturer = "Unknown",
             category = TrackerCategory.RETAIL_BEACON,
             threatLevel = ThreatLevel.MEDIUM,
-            description = "Generic retail location beacon",
+            description = "Generic retail location beacon. Common in shopping malls and large retail stores.",
             primaryFrequencyHz = 20500,
-            trackingPurpose = UltrasonicTrackingPurpose.RETAIL_ANALYTICS
+            trackingPurpose = UltrasonicTrackingPurpose.RETAIL_ANALYTICS,
+            privacyImpact = PrivacyImpact.LOCATION_TRACKING,
+            confirmationMethod = "Note if detected in retail environment. Move away to verify signal drops."
         ),
         UltrasonicTrackerSignature(
             id = "retail_band_2",
@@ -644,9 +756,10 @@ object TrackerDatabase {
             manufacturer = "Unknown",
             category = TrackerCategory.RETAIL_BEACON,
             threatLevel = ThreatLevel.MEDIUM,
-            description = "Generic retail presence detection",
+            description = "Generic retail presence detection.",
             primaryFrequencyHz = 21000,
-            trackingPurpose = UltrasonicTrackingPurpose.PRESENCE_DETECTION
+            trackingPurpose = UltrasonicTrackingPurpose.PRESENCE_DETECTION,
+            privacyImpact = PrivacyImpact.LOCATION_TRACKING
         )
     )
 
