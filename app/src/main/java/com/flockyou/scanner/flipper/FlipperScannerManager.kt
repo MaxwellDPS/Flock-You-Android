@@ -77,12 +77,29 @@ class FlipperScannerManager @Inject constructor(
             }
         }
 
-        // Auto-start scanning when connection becomes READY
+        // Auto-start scanning and request status when connection becomes READY
         scope.launch {
             _connectionState.collect { state ->
-                if (state == FlipperConnectionState.READY && !_isRunning.value) {
-                    Log.i(TAG, "Connection ready, auto-starting Flipper scanning")
-                    startScanning(surveillancePatterns)
+                if (state == FlipperConnectionState.READY) {
+                    // Request status to populate Flipper info (battery, uptime, etc.)
+                    Log.i(TAG, "Connection ready, requesting Flipper status")
+                    flipperClient?.requestStatus()
+
+                    // Auto-start scanning if not already running
+                    if (!_isRunning.value) {
+                        Log.i(TAG, "Auto-starting Flipper scanning")
+                        startScanning(surveillancePatterns)
+                    }
+                }
+            }
+        }
+
+        // Periodic status refresh to keep Flipper info updated
+        scope.launch {
+            while (true) {
+                delay(30_000) // Every 30 seconds
+                if (_connectionState.value == FlipperConnectionState.READY) {
+                    flipperClient?.requestStatus()
                 }
             }
         }
