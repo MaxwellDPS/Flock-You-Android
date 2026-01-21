@@ -236,7 +236,15 @@ class RogueWifiMonitor(
         // Risk Score
         val followingConfidence: Float,           // 0-100%
         val followingDurationMs: Long,
-        val riskIndicators: List<String>
+        val riskIndicators: List<String>,
+
+        // False Positive Heuristics
+        val falsePositiveLikelihood: Float = 0f,  // 0-100%
+        val fpIndicators: List<String> = emptyList(),
+        val isLikelyNeighborNetwork: Boolean = false,     // Common neighbor/business WiFi
+        val isLikelyMobileHotspot: Boolean = false,       // Personal hotspot from family/coworker
+        val isLikelyCommuterDevice: Boolean = false,      // Same commute pattern
+        val isLikelyPublicTransit: Boolean = false        // Bus/train WiFi
     )
 
     data class WifiAnomaly(

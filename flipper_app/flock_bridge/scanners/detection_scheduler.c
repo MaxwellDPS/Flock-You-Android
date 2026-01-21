@@ -466,13 +466,13 @@ static int32_t scheduler_thread_func(void* context) {
         // Periodic Memory Cleanup - Prevents decoder state accumulation
         // ====================================================================
         if ((now - last_memory_cleanup) >= MEMORY_CLEANUP_INTERVAL_MS) {
-            FURI_LOG_D(TAG, "Performing periodic memory cleanup");
+            FURI_LOG_I(TAG, "Performing periodic memory cleanup");
 
-            // Reset SubGHz receiver to clear accumulated pulse data buffers
-            // This is critical for long-running sessions where RF noise can
-            // cause internal decoder state to grow unbounded
-            if (scheduler->subghz_internal && subghz_scanner_is_running(scheduler->subghz_internal)) {
-                subghz_scanner_reset_decoder(scheduler->subghz_internal);
+            // Recreate SubGHz receiver to completely free all decoder memory
+            // subghz_receiver_reset() doesn't free internal decoder allocations,
+            // only recreating the receiver guarantees memory is released
+            if (scheduler->subghz_internal) {
+                subghz_scanner_recreate_receiver(scheduler->subghz_internal);
             }
 
             // Restart NFC scanner to clear SDK internal state
@@ -481,7 +481,7 @@ static int32_t scheduler_thread_func(void* context) {
                 flock_nfc_scanner_stop(scheduler->nfc);
                 furi_delay_ms(50);  // Brief pause for cleanup
                 flock_nfc_scanner_start(scheduler->nfc);
-                FURI_LOG_D(TAG, "NFC scanner restarted for memory cleanup");
+                FURI_LOG_I(TAG, "NFC scanner restarted for memory cleanup");
             }
 
             last_memory_cleanup = now;

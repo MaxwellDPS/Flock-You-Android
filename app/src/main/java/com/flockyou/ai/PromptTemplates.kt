@@ -249,6 +249,22 @@ JSON response:"""
         detection: Detection,
         analysis: CellularAnomalyAnalysis
     ): String {
+        val fpSection = if (analysis.falsePositiveLikelihood > 30f) {
+            """
+
+=== FALSE POSITIVE ANALYSIS ===
+FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%
+Likely Normal Handoff: ${if (analysis.isLikelyNormalHandoff) "YES - Routine cell tower switch" else "No"}
+Likely Carrier Behavior: ${if (analysis.isLikelyCarrierBehavior) "YES - This carrier has aggressive handoff patterns" else "No"}
+Likely Edge Coverage: ${if (analysis.isLikelyEdgeCoverage) "YES - User at cell coverage boundary" else "No"}
+Likely 5G Beam Steering: ${if (analysis.isLikely5gBeamSteering) "YES - Normal 5G beam management" else "No"}
+FP Indicators:
+${analysis.fpIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
+
+IMPORTANT: This detection has a ${String.format("%.0f", analysis.falsePositiveLikelihood)}% chance of being a FALSE POSITIVE.
+Consider these FP indicators when analyzing. If FP likelihood > 50%, lean toward normal cellular behavior."""
+        } else ""
+
         val content = """Analyze this potential IMSI catcher/cell site simulator detection.
 
 === IMSI CATCHER ANALYSIS ===
@@ -284,24 +300,28 @@ Network Change: ${analysis.networkGenerationChange ?: "None"}
 LAC/TAC Changed: ${if (analysis.lacTacChanged) "YES - Unusual" else "No"}
 Operator Changed: ${if (analysis.operatorChanged) "YES" else "No"}
 Roaming: ${if (analysis.isRoaming) "Yes" else "No"}
+$fpSection
 
 Based on this enriched data, provide:
-1. A plain-English explanation for a non-technical user about what's happening to their phone
+1. A plain-English explanation for a non-technical user about what's happening to their phone - OR explain why this is likely a false positive
 2. Whether this indicates active IMSI catcher surveillance (yes/no with confidence percentage)
-3. The top 3 SPECIFIC actions they should take RIGHT NOW
-4. What data may have been captured
+3. The top 3 SPECIFIC actions they should take RIGHT NOW (or "No action needed" if FP)
+4. What data may have been captured (or "No data at risk" if FP)
+
+CRITICAL: If FP Likelihood > 50%, you MUST conclude this is likely NOT an IMSI catcher.
+Common false positives include: normal handoffs while driving, carrier network optimization, 5G beam steering, entering/exiting buildings, areas with poor coverage.
 
 Format as:
 ## Assessment
-[Your assessment]
+[Your assessment - OR why this is likely a false positive]
 
 ## Actions
-1. [Action 1]
+1. [Action 1 - OR "No action needed"]
 2. [Action 2]
 3. [Action 3]
 
 ## Data at Risk
-[What may have been captured]"""
+[What may have been captured - OR "No data at risk - likely normal network behavior"]"""
 
         return wrapGemmaPrompt(content)
     }
@@ -313,6 +333,21 @@ Format as:
         detection: Detection,
         analysis: GnssAnomalyAnalysis
     ): String {
+        val fpSection = if (analysis.falsePositiveLikelihood > 30f) {
+            """
+
+=== FALSE POSITIVE ANALYSIS ===
+FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%
+Likely Normal Operation: ${if (analysis.isLikelyNormalOperation) "YES" else "No"}
+Likely Urban Multipath: ${if (analysis.isLikelyUrbanMultipath) "YES - Building reflections causing signal variance" else "No"}
+Likely Indoor Signal Loss: ${if (analysis.isLikelyIndoorSignalLoss) "YES - Weak indoor reception" else "No"}
+FP Indicators:
+${analysis.fpIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
+
+IMPORTANT: This detection has a ${String.format("%.0f", analysis.falsePositiveLikelihood)}% chance of being a FALSE POSITIVE.
+Consider these FP indicators when analyzing. If FP likelihood > 50%, lean toward dismissing as normal GPS behavior."""
+        } else ""
+
         val content = """Analyze this GNSS (GPS/satellite) anomaly detection.
 
 === SPOOFING/JAMMING LIKELIHOOD ===
@@ -344,6 +379,7 @@ Cumulative Drift: ${analysis.cumulativeDriftNs / 1_000_000} ms
 Drift Trend: ${analysis.driftTrend.displayName}
 Drift Anomalous: ${if (analysis.driftAnomalous) "YES" else "No"}
 Drift Jumps: ${analysis.driftJumpCount}
+$fpSection
 
 === INDICATORS ===
 Spoofing Indicators:
@@ -353,20 +389,23 @@ Jamming Indicators:
 ${analysis.jammingIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None detected" }}
 
 Based on this enriched data, provide:
-1. A clear explanation of whether the user's GPS/location is being manipulated
-2. What this means for their safety and privacy
-3. The top 3 actions they should take
+1. A clear explanation of whether the user's GPS/location is being manipulated - OR explain why this is likely a false positive
+2. What this means for their safety and privacy (if applicable)
+3. The top 3 actions they should take (or "No action needed" if FP)
 4. Whether they should trust their current location on maps
+
+CRITICAL: If FP Likelihood > 50%, you MUST conclude this is likely NOT an attack.
+Common false positives include: urban multipath (signal reflections off buildings), indoor signal attenuation, normal GPS variation during cold start, transitioning between environments.
 
 Format as:
 ## Assessment
-[Your assessment - is GPS being spoofed or jammed?]
+[Your assessment - is GPS being spoofed or jammed? OR why this is likely a false positive]
 
 ## Impact
-[What this means for the user]
+[What this means for the user - OR "Likely no impact - normal GPS behavior"]
 
 ## Actions
-1. [Action 1]
+1. [Action 1 - OR "No action needed"]
 2. [Action 2]
 3. [Action 3]
 
@@ -383,6 +422,20 @@ Format as:
         detection: Detection,
         analysis: BeaconAnalysis
     ): String {
+        val fpSection = if (analysis.falsePositiveLikelihood > 30f) {
+            """
+=== FALSE POSITIVE ANALYSIS ===
+FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%
+Concurrent Beacons: ${analysis.concurrentBeaconCount} (detected at same time)
+Likely Ambient Noise: ${if (analysis.isLikelyAmbientNoise) "YES" else "No"}
+Likely Device Artifact: ${if (analysis.isLikelyDeviceArtifact) "YES" else "No"}
+FP Indicators:
+${analysis.fpIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
+
+IMPORTANT: This detection has a ${String.format("%.0f", analysis.falsePositiveLikelihood)}% chance of being a FALSE POSITIVE.
+Consider these FP indicators when analyzing. If FP likelihood > 50%, lean toward dismissing as noise."""
+        } else ""
+
         val content = """Analyze this ultrasonic tracking beacon detection.
 
 === BEACON FINGERPRINT ===
@@ -407,6 +460,7 @@ Persistence Score: ${String.format("%.0f", analysis.persistenceScore * 100)}%
 
 === ENVIRONMENT CONTEXT ===
 Noise Floor: ${String.format("%.1f", analysis.noiseFloorDb)} dB
+$fpSection
 
 === RISK ASSESSMENT ===
 Tracking Likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%
@@ -414,23 +468,26 @@ Risk Indicators:
 ${analysis.riskIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
 
 Based on this enriched data, explain:
-1. What this ultrasonic beacon is doing (in plain English)
+1. What this ultrasonic beacon is doing (in plain English) - OR explain why this is likely a false positive
 2. How it tracks users across devices (if applicable)
-3. What company/technology is likely behind it
-4. How to stop or avoid this tracking
+3. What company/technology is likely behind it (or "Likely not a real beacon" if FP)
+4. How to stop or avoid this tracking (or "No action needed" if FP)
+
+CRITICAL: If FP Likelihood > 50%, you MUST conclude this is likely NOT a real tracking beacon.
+Common false positives include: ambient ultrasonic noise, electronic interference, device speaker/microphone artifacts.
 
 Format as:
 ## What's Happening
-[Explanation of the beacon]
+[Explanation of the beacon OR why it's a false positive]
 
 ## How It Tracks You
-[Tracking mechanism]
+[Tracking mechanism OR "Not applicable - likely false positive"]
 
 ## Likely Source
-[Who is behind this]
+[Who is behind this OR "Environmental noise / device artifact"]
 
 ## Protection Steps
-1. [Step 1]
+1. [Step 1 OR "No action needed"]
 2. [Step 2]
 3. [Step 3]"""
 
@@ -444,6 +501,22 @@ Format as:
         detection: Detection,
         analysis: FollowingNetworkAnalysis
     ): String {
+        val fpSection = if (analysis.falsePositiveLikelihood > 30f) {
+            """
+
+=== FALSE POSITIVE ANALYSIS ===
+FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%
+Likely Neighbor Network: ${if (analysis.isLikelyNeighborNetwork) "YES - Common business/residential WiFi in your area" else "No"}
+Likely Mobile Hotspot: ${if (analysis.isLikelyMobileHotspot) "YES - Personal hotspot from family/coworker" else "No"}
+Likely Commuter Device: ${if (analysis.isLikelyCommuterDevice) "YES - Same commute pattern (not following you)" else "No"}
+Likely Public Transit: ${if (analysis.isLikelyPublicTransit) "YES - Bus/train WiFi you regularly use" else "No"}
+FP Indicators:
+${analysis.fpIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
+
+IMPORTANT: This detection has a ${String.format("%.0f", analysis.falsePositiveLikelihood)}% chance of being a FALSE POSITIVE.
+Consider these FP indicators when analyzing. If FP likelihood > 50%, lean toward coincidental overlap."""
+        } else ""
+
         val content = """Analyze this "following network" detection - a WiFi network appearing at multiple locations.
 
 === FOLLOWING PATTERN ===
@@ -477,25 +550,29 @@ Foot Surveillance: ${if (analysis.possibleFootSurveillance) "POSSIBLE - Slower, 
 
 === RISK INDICATORS ===
 ${analysis.riskIndicators.joinToString("\n") { "- $it" }.ifEmpty { "- None" }}
+$fpSection
 
 Based on this enriched data, provide:
-1. Whether this network is genuinely following the user or a coincidence
-2. The likely type of device/vehicle carrying this network
-3. Whether this indicates physical surveillance or stalking
-4. Immediate safety recommendations
+1. Whether this network is genuinely following the user or a coincidence - OR explain why this is likely a false positive
+2. The likely type of device/vehicle carrying this network (if applicable)
+3. Whether this indicates physical surveillance or stalking (if applicable)
+4. Immediate safety recommendations (or "No action needed" if FP)
+
+CRITICAL: If FP Likelihood > 50%, you MUST conclude this is likely NOT surveillance.
+Common false positives include: neighbor's WiFi visible from multiple locations, coworker/family member's mobile hotspot, commuters on same route, public transit WiFi, nearby businesses.
 
 Format as:
 ## Assessment
-[Is this network following the user?]
+[Is this network following the user? OR why this is likely a coincidence]
 
 ## Device Analysis
-[What type of device is this likely?]
+[What type of device is this likely? OR "Likely benign - neighbor/commuter/family device"]
 
 ## Safety Concern
-[Physical safety assessment]
+[Physical safety assessment OR "No safety concern - likely coincidental overlap"]
 
 ## Immediate Actions
-1. [Action 1]
+1. [Action 1 - OR "No action needed"]
 2. [Action 2]
 3. [Action 3]"""
 
@@ -653,7 +730,10 @@ Encryption: ${a.currentEncryption.displayName}
 Movement: ${a.movementType.displayName} (${String.format("%.0f", a.speedKmh)} km/h)
 Cell Trust: ${a.cellTrustScore}%
 ${if (a.impossibleSpeed) "⚠️ IMPOSSIBLE MOVEMENT DETECTED" else ""}
-${if (a.encryptionDowngraded) "⚠️ ENCRYPTION DOWNGRADED" else ""}"""
+${if (a.encryptionDowngraded) "⚠️ ENCRYPTION DOWNGRADED" else ""}
+${if (a.falsePositiveLikelihood > 30f) "⚠️ FP LIKELIHOOD: ${String.format("%.0f", a.falsePositiveLikelihood)}% - MAY BE NORMAL HANDOFF" else ""}
+${if (a.isLikelyNormalHandoff) "⚠️ LIKELY NORMAL CELL HANDOFF" else ""}
+${if (a.isLikely5gBeamSteering) "⚠️ LIKELY 5G BEAM STEERING" else ""}"""
             }
             is EnrichedDetectorData.Gnss -> {
                 val a = data.analysis
@@ -664,7 +744,10 @@ Jamming Likelihood: ${String.format("%.0f", a.jammingLikelihood)}%
 Geometry Score: ${String.format("%.0f", a.geometryScore * 100)}%
 C/N0: ${String.format("%.1f", a.currentCn0Mean)} dB-Hz
 ${if (a.cn0TooUniform) "⚠️ SIGNAL UNIFORMITY SUSPICIOUS" else ""}
-${if (a.lowElevHighSignalCount > 0) "⚠️ ${a.lowElevHighSignalCount} LOW-ELEV HIGH-SIGNAL SATELLITES" else ""}"""
+${if (a.lowElevHighSignalCount > 0) "⚠️ ${a.lowElevHighSignalCount} LOW-ELEV HIGH-SIGNAL SATELLITES" else ""}
+${if (a.falsePositiveLikelihood > 30f) "⚠️ FP LIKELIHOOD: ${String.format("%.0f", a.falsePositiveLikelihood)}% - MAY BE NORMAL GPS" else ""}
+${if (a.isLikelyUrbanMultipath) "⚠️ LIKELY URBAN MULTIPATH (building reflections)" else ""}
+${if (a.isLikelyIndoorSignalLoss) "⚠️ LIKELY INDOOR SIGNAL ATTENUATION" else ""}"""
             }
             is EnrichedDetectorData.Ultrasonic -> {
                 val a = data.analysis
@@ -675,7 +758,10 @@ Category: ${a.sourceCategory.displayName}
 Frequency: ${a.frequencyHz} Hz
 Cross-Location: ${if (a.followingUser) "YES - ${a.locationsDetected} locations" else "No"}
 Tracking Likelihood: ${String.format("%.0f", a.trackingLikelihood)}%
-Persistence: ${String.format("%.0f", a.persistenceScore * 100)}%"""
+Persistence: ${String.format("%.0f", a.persistenceScore * 100)}%
+${if (a.falsePositiveLikelihood > 30f) "⚠️ FP LIKELIHOOD: ${String.format("%.0f", a.falsePositiveLikelihood)}% - MAY BE NOISE" else ""}
+${if (a.isLikelyAmbientNoise) "⚠️ LIKELY AMBIENT NOISE (${a.concurrentBeaconCount} concurrent beacons)" else ""}
+${if (a.isLikelyDeviceArtifact) "⚠️ LIKELY DEVICE ARTIFACT" else ""}"""
             }
             is EnrichedDetectorData.WifiFollowing -> {
                 val a = data.analysis
@@ -686,7 +772,10 @@ Sightings: ${a.sightingCount} times at ${a.distinctLocations} locations
 Path Correlation: ${String.format("%.0f", a.pathCorrelation * 100)}%
 ${if (a.vehicleMounted) "⚠️ VEHICLE MOUNTED DEVICE" else ""}
 ${if (a.possibleFootSurveillance) "⚠️ POSSIBLE FOOT SURVEILLANCE" else ""}
-${if (a.leadsUser) "⚠️ NETWORK LEADS USER (arrives before you)" else ""}"""
+${if (a.leadsUser) "⚠️ NETWORK LEADS USER (arrives before you)" else ""}
+${if (a.falsePositiveLikelihood > 30f) "⚠️ FP LIKELIHOOD: ${String.format("%.0f", a.falsePositiveLikelihood)}% - MAY BE COINCIDENCE" else ""}
+${if (a.isLikelyNeighborNetwork) "⚠️ LIKELY NEIGHBOR/BUSINESS WIFI" else ""}
+${if (a.isLikelyCommuterDevice) "⚠️ LIKELY COMMUTER ON SAME ROUTE" else ""}"""
             }
             is EnrichedDetectorData.Satellite -> {
                 """

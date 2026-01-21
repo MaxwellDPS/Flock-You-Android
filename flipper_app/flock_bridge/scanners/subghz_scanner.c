@@ -547,3 +547,46 @@ void subghz_scanner_reset_decoder(SubGhzScanner* scanner) {
 
     furi_mutex_release(scanner->mutex);
 }
+
+void subghz_scanner_recreate_receiver(SubGhzScanner* scanner) {
+    if (!scanner) return;
+
+    bool was_running = scanner->running;
+    uint32_t freq = scanner->current_frequency;
+
+    // Stop if running
+    if (was_running) {
+        subghz_scanner_stop(scanner);
+    }
+
+    furi_mutex_acquire(scanner->mutex, FuriWaitForever);
+
+    // Free old receiver
+    if (scanner->receiver) {
+        subghz_receiver_free(scanner->receiver);
+        scanner->receiver = NULL;
+    }
+
+    // Create new receiver - this frees all internal decoder allocations
+    scanner->receiver = subghz_receiver_alloc_init(scanner->environment);
+    if (scanner->receiver) {
+        subghz_receiver_set_filter(scanner->receiver, SubGhzProtocolFlag_Decodable);
+        subghz_receiver_set_rx_callback(scanner->receiver, subghz_receiver_callback, scanner);
+        FURI_LOG_I(TAG, "SubGHz receiver recreated (memory freed)");
+    } else {
+        FURI_LOG_E(TAG, "Failed to recreate SubGHz receiver!");
+    }
+
+    // Clear history
+    memset(scanner->signal_history, 0, sizeof(scanner->signal_history));
+    scanner->history_head = 0;
+    scanner->high_rssi_start = 0;
+    scanner->jamming_detected = false;
+
+    furi_mutex_release(scanner->mutex);
+
+    // Restart if was running
+    if (was_running && scanner->receiver) {
+        subghz_scanner_start(scanner, freq);
+    }
+}

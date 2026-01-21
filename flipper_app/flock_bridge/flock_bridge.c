@@ -220,7 +220,45 @@ static void on_nfc_detection(const FlockNfcDetection* detection, void* context) 
 // ============================================================================
 
 // Buffer timeout in ticks (500ms) - discard partial data waiting too long
-#define RX_BUFFER_TIMEOUT_MS 500
+#define RX_BUFFER_TIMEOUT_MS 200  // Reduced for faster recovery after garbage data
+
+// Check if a message type is valid/known
+static bool is_valid_message_type(uint8_t type) {
+    switch (type) {
+    case FlockMsgTypeHeartbeat:
+    case FlockMsgTypeWifiScanRequest:
+    case FlockMsgTypeWifiScanResult:
+    case FlockMsgTypeSubGhzScanRequest:
+    case FlockMsgTypeSubGhzScanResult:
+    case FlockMsgTypeStatusRequest:
+    case FlockMsgTypeStatusResponse:
+    case FlockMsgTypeWipsAlert:
+    case FlockMsgTypeBleScanRequest:
+    case FlockMsgTypeBleScanResult:
+    case FlockMsgTypeIrScanRequest:
+    case FlockMsgTypeIrScanResult:
+    case FlockMsgTypeNfcScanRequest:
+    case FlockMsgTypeNfcScanResult:
+    case FlockMsgTypeLfProbeTx:
+    case FlockMsgTypeIrStrobeTx:
+    case FlockMsgTypeWifiProbeTx:
+    case FlockMsgTypeBleActiveScan:
+    case FlockMsgTypeZigbeeBeaconTx:
+    case FlockMsgTypeGpioPulseTx:
+    case FlockMsgTypeSubGhzReplayTx:
+    case FlockMsgTypeWiegandReplayTx:
+    case FlockMsgTypeMagSpoofTx:
+    case FlockMsgTypeIButtonEmulate:
+    case FlockMsgTypeNrf24InjectTx:
+    case FlockMsgTypeSubGhzConfig:
+    case FlockMsgTypeIrConfig:
+    case FlockMsgTypeNrf24Config:
+    case FlockMsgTypeError:
+        return true;
+    default:
+        return false;
+    }
+}
 
 static void flock_bridge_data_received(void* context, uint8_t* data, size_t length) {
     FlockBridgeApp* app = context;
@@ -299,6 +337,23 @@ static void flock_bridge_data_received(void* context, uint8_t* data, size_t leng
             resync_attempts++;
 
             // If we've discarded too many bytes, clear buffer entirely
+            if (resync_attempts >= max_resync) {
+                FURI_LOG_W(TAG, "Resync failed after %zu bytes, clearing buffer", resync_attempts);
+                app->rx_buffer_len = 0;
+                app->rx_buffer_timestamp = 0;
+                break;
+            }
+            continue;
+        }
+
+        // Validate message type - reject unknown types to prevent waiting for garbage payloads
+        if (!is_valid_message_type(header.type)) {
+            FURI_LOG_W(TAG, "Unknown message type: 0x%02X, discarding", header.type);
+            // Discard first byte and try to resync
+            memmove(app->rx_buffer, app->rx_buffer + 1, app->rx_buffer_len - 1);
+            app->rx_buffer_len--;
+            resync_attempts++;
+
             if (resync_attempts >= max_resync) {
                 FURI_LOG_W(TAG, "Resync failed after %zu bytes, clearing buffer", resync_attempts);
                 app->rx_buffer_len = 0;

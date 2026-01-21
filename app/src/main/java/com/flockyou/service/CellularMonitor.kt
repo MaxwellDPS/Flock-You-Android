@@ -216,7 +216,15 @@ class CellularMonitor(
         val signalDeltaDbm: Int,                       // Change in signal strength
         val signalSpikeDetected: Boolean,
         val currentSignalDbm: Int,
-        val signalQuality: String                      // "Excellent", "Good", "Fair", "Poor"
+        val signalQuality: String,                     // "Excellent", "Good", "Fair", "Poor"
+
+        // False Positive Heuristics
+        val falsePositiveLikelihood: Float = 0f,       // 0-100%
+        val fpIndicators: List<String> = emptyList(),
+        val isLikelyNormalHandoff: Boolean = false,    // Normal cell tower switching
+        val isLikelyCarrierBehavior: Boolean = false,  // Known aggressive carrier handoff patterns
+        val isLikelyEdgeCoverage: Boolean = false,     // User at edge of cell coverage
+        val isLikely5gBeamSteering: Boolean = false    // 5G beam management causing handoffs
     )
     
     /**

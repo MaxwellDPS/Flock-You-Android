@@ -303,7 +303,14 @@ class GnssSatelliteMonitor(
         val spoofingLikelihood: Float,           // 0-100%
         val jammingLikelihood: Float,            // 0-100%
         val spoofingIndicators: List<String>,
-        val jammingIndicators: List<String>
+        val jammingIndicators: List<String>,
+
+        // False Positive Heuristics
+        val falsePositiveLikelihood: Float = 0f, // 0-100%
+        val fpIndicators: List<String> = emptyList(),
+        val isLikelyNormalOperation: Boolean = false,
+        val isLikelyUrbanMultipath: Boolean = false,
+        val isLikelyIndoorSignalLoss: Boolean = false
     )
 
     // ==================== Lifecycle ====================

@@ -59,9 +59,9 @@ class UltrasonicDetector(
 
         // Detection thresholds
         private const val FFT_SIZE = 4096 // Good frequency resolution (~10.7 Hz per bin)
-        private const val DETECTION_THRESHOLD_DB = 25.0 // Signal must be this many dB above noise floor (increased from 20)
+        private const val DETECTION_THRESHOLD_DB = 30.0 // Signal must be this many dB above noise floor (increased to reduce FPs)
         private const val BEACON_DURATION_THRESHOLD_MS = 500L // Must persist for 500ms
-        private const val MIN_DETECTIONS_FOR_ANOMALY = 2 // Require multiple detections before reporting
+        private const val MIN_DETECTIONS_TO_CONFIRM = 3 // Require multiple detections before showing in UI
         private const val ANOMALY_COOLDOWN_MS = 60_000L // 1 minute between alerts
         // Default timing values (can be overridden by updateScanTiming)
         private const val DEFAULT_SCAN_DURATION_MS = 5_000L // 5 second scan windows
@@ -206,7 +206,14 @@ class UltrasonicDetector(
 
         // Risk Assessment
         val trackingLikelihood: Float,            // 0-100%
-        val riskIndicators: List<String>
+        val riskIndicators: List<String>,
+
+        // False Positive Heuristics
+        val falsePositiveLikelihood: Float = 0f,  // 0-100%
+        val fpIndicators: List<String> = emptyList(),
+        val concurrentBeaconCount: Int = 0,       // How many beacons detected at same time
+        val isLikelyAmbientNoise: Boolean = false,
+        val isLikelyDeviceArtifact: Boolean = false
     )
 
     data class UltrasonicAnomaly(
@@ -593,7 +600,7 @@ class UltrasonicDetector(
                 }
                 beacon = existing
                 // Report anomaly when detection count reaches threshold (only once)
-                shouldReportAnomaly = existing.detectionCount == MIN_DETECTIONS_FOR_ANOMALY
+                shouldReportAnomaly = existing.detectionCount == MIN_DETECTIONS_TO_CONFIRM
             } else {
                 // New beacon detected - create but don't report anomaly yet (wait for persistence)
                 val initialAmplitudeHistory = mutableListOf(avgAmplitude)
@@ -633,43 +640,65 @@ class UltrasonicDetector(
             if (shouldReportAnomaly) {
                 val analysis = buildBeaconAnalysis(beacon)
 
-                addTimelineEvent(
-                    type = UltrasonicEventType.BEACON_DETECTED,
-                    title = "📢 Confirmed Beacon: ${freq}Hz",
-                    description = "${possibleSource} (${String.format("%.0f", analysis.trackingLikelihood)}% tracking likelihood)",
-                    frequency = freq,
-                    threatLevel = if (isKnownBeacon) ThreatLevel.HIGH else ThreatLevel.MEDIUM
-                )
+                // Suppress if FP likelihood is too high (likely noise)
+                if (analysis.falsePositiveLikelihood > 60f) {
+                    Log.d(TAG, "Suppressing beacon ${freq}Hz - FP likelihood ${analysis.falsePositiveLikelihood}%")
+                    // Still add to timeline but with low severity
+                    addTimelineEvent(
+                        type = UltrasonicEventType.BEACON_DETECTED,
+                        title = "⚠️ Possible Noise: ${freq}Hz",
+                        description = "Likely false positive (${String.format("%.0f", analysis.falsePositiveLikelihood)}% FP likelihood)",
+                        frequency = freq,
+                        threatLevel = ThreatLevel.INFO
+                    )
+                } else {
+                    addTimelineEvent(
+                        type = UltrasonicEventType.BEACON_DETECTED,
+                        title = "📢 Confirmed Beacon: ${freq}Hz",
+                        description = "${possibleSource} (${String.format("%.0f", analysis.trackingLikelihood)}% tracking likelihood)",
+                        frequency = freq,
+                        threatLevel = if (isKnownBeacon) ThreatLevel.HIGH else ThreatLevel.MEDIUM
+                    )
 
-                val anomalyType = when {
-                    possibleSource.contains("SilverPush") || possibleSource.contains("Alphonso") ->
-                        UltrasonicAnomalyType.ADVERTISING_BEACON
-                    possibleSource.contains("Retail") ->
-                        UltrasonicAnomalyType.RETAIL_BEACON
-                    possibleSource.contains("Cross-Device") ->
-                        UltrasonicAnomalyType.CROSS_DEVICE_TRACKING
-                    isKnownBeacon ->
-                        UltrasonicAnomalyType.TRACKING_BEACON
-                    else ->
-                        UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
+                    val anomalyType = when {
+                        possibleSource.contains("SilverPush") || possibleSource.contains("Alphonso") ->
+                            UltrasonicAnomalyType.ADVERTISING_BEACON
+                        possibleSource.contains("Retail") ->
+                            UltrasonicAnomalyType.RETAIL_BEACON
+                        possibleSource.contains("Cross-Device") ->
+                            UltrasonicAnomalyType.CROSS_DEVICE_TRACKING
+                        isKnownBeacon ->
+                            UltrasonicAnomalyType.TRACKING_BEACON
+                        else ->
+                            UltrasonicAnomalyType.UNKNOWN_ULTRASONIC
+                    }
+
+                    // Reduce confidence if FP likelihood is elevated
+                    val baseConfidence = when {
+                        analysis.trackingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
+                        analysis.trackingLikelihood >= 60 || isKnownBeacon -> AnomalyConfidence.HIGH
+                        analysis.trackingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
+                        else -> AnomalyConfidence.LOW
+                    }
+                    val confidence = if (analysis.falsePositiveLikelihood > 40f) {
+                        // Downgrade confidence if FP indicators are present
+                        when (baseConfidence) {
+                            AnomalyConfidence.CRITICAL -> AnomalyConfidence.HIGH
+                            AnomalyConfidence.HIGH -> AnomalyConfidence.MEDIUM
+                            else -> AnomalyConfidence.LOW
+                        }
+                    } else baseConfidence
+
+                    reportAnomaly(
+                        type = anomalyType,
+                        description = "Ultrasonic tracking beacon detected at ${freq}Hz - tracking likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%",
+                        technicalDetails = buildBeaconTechnicalDetails(analysis),
+                        frequency = freq,
+                        amplitudeDb = peakAmplitude,
+                        confidence = confidence,
+                        contributingFactors = buildBeaconContributingFactors(analysis)
+                    )
                 }
-
-                val confidence = when {
-                    analysis.trackingLikelihood >= 80 -> AnomalyConfidence.CRITICAL
-                    analysis.trackingLikelihood >= 60 || isKnownBeacon -> AnomalyConfidence.HIGH
-                    analysis.trackingLikelihood >= 40 -> AnomalyConfidence.MEDIUM
-                    else -> AnomalyConfidence.LOW
-                }
-
-                reportAnomaly(
-                    type = anomalyType,
-                    description = "Ultrasonic tracking beacon detected at ${freq}Hz - tracking likelihood: ${String.format("%.0f", analysis.trackingLikelihood)}%",
-                    technicalDetails = buildBeaconTechnicalDetails(analysis),
-                    frequency = freq,
-                    amplitudeDb = peakAmplitude,
-                    confidence = confidence,
-                    contributingFactors = buildBeaconContributingFactors(analysis)
-                )
             }
         }
 
@@ -686,7 +715,10 @@ class UltrasonicDetector(
             )
         }
 
-        _activeBeacons.value = activeBeacons.values.toList()
+        // Only show confirmed beacons in UI (detected multiple times)
+        _activeBeacons.value = activeBeacons.values
+            .filter { it.detectionCount >= MIN_DETECTIONS_TO_CONFIRM }
+            .toList()
     }
 
     private fun updateStatus(detectedFrequencies: Map<Int, MutableList<Double>>) {
@@ -694,11 +726,13 @@ class UltrasonicDetector(
             it.value.maxOrNull() ?: Double.MIN_VALUE
         }
 
+        // Only count confirmed beacons for threat level
+        val confirmedBeacons = activeBeacons.filter { it.value.detectionCount >= MIN_DETECTIONS_TO_CONFIRM }
         val threatLevel = when {
-            activeBeacons.any { beacon ->
+            confirmedBeacons.any { beacon ->
                 TrackerDatabase.findUltrasonicByFrequency(beacon.key, FREQUENCY_TOLERANCE) != null
             } -> ThreatLevel.HIGH
-            activeBeacons.isNotEmpty() -> ThreatLevel.MEDIUM
+            confirmedBeacons.isNotEmpty() -> ThreatLevel.MEDIUM
             detectedFrequencies.isNotEmpty() -> ThreatLevel.LOW
             else -> ThreatLevel.INFO
         }
@@ -708,7 +742,7 @@ class UltrasonicDetector(
             lastScanTime = System.currentTimeMillis(),
             noiseFloorDb = noiseFloorDb,
             ultrasonicActivityDetected = detectedFrequencies.isNotEmpty(),
-            activeBeaconCount = activeBeacons.size,
+            activeBeaconCount = confirmedBeacons.size,  // Only count confirmed beacons
             peakFrequency = peakEntry?.key,
             peakAmplitudeDb = peakEntry?.value?.maxOrNull(),
             threatLevel = threatLevel
@@ -852,13 +886,15 @@ class UltrasonicDetector(
             firstDetected = System.currentTimeMillis(),
             lastDetected = System.currentTimeMillis(),
             peakAmplitudeDb = testAmplitude,
-            detectionCount = 1,
+            detectionCount = MIN_DETECTIONS_TO_CONFIRM,  // Ensure test beacon shows in UI
             possibleSource = "TEST: SilverPush/Ad Tracking",
             latitude = currentLatitude,
             longitude = currentLongitude
         )
         activeBeacons[testFrequency] = beacon
-        _activeBeacons.value = activeBeacons.values.toList()
+        _activeBeacons.value = activeBeacons.values
+            .filter { it.detectionCount >= MIN_DETECTIONS_TO_CONFIRM }
+            .toList()
 
         addTimelineEvent(
             type = UltrasonicEventType.BEACON_DETECTED,
@@ -883,12 +919,13 @@ class UltrasonicDetector(
             )
         )
 
+        val confirmedCount = activeBeacons.count { it.value.detectionCount >= MIN_DETECTIONS_TO_CONFIRM }
         _status.value = UltrasonicStatus(
             isScanning = isMonitoring,
             lastScanTime = System.currentTimeMillis(),
             noiseFloorDb = noiseFloorDb,
             ultrasonicActivityDetected = true,
-            activeBeaconCount = activeBeacons.size,
+            activeBeaconCount = confirmedCount,
             peakFrequency = testFrequency,
             peakAmplitudeDb = testAmplitude,
             threatLevel = ThreatLevel.HIGH
@@ -1077,6 +1114,84 @@ class UltrasonicDetector(
         if (snrDb > 20) trackingLikelihood += 10f
         if (category == SourceCategory.TRACKING) trackingLikelihood += 10f
 
+        // ==================== FALSE POSITIVE HEURISTICS ====================
+        val fpIndicators = mutableListOf<String>()
+        var fpScore = 0f
+
+        // Count concurrent beacons (detected within 5 seconds of this one)
+        val concurrentWindow = 5000L
+        val concurrentBeacons = activeBeacons.count { (_, otherBeacon) ->
+            otherBeacon.frequency != beacon.frequency &&
+            abs(otherBeacon.firstDetected - beacon.firstDetected) < concurrentWindow
+        }
+
+        // FP Indicator 1: Many beacons detected simultaneously (ambient noise pattern)
+        if (concurrentBeacons >= 5) {
+            fpScore += 30f
+            fpIndicators.add("Detected with $concurrentBeacons other frequencies simultaneously (noise burst pattern)")
+        } else if (concurrentBeacons >= 3) {
+            fpScore += 15f
+            fpIndicators.add("Detected with $concurrentBeacons other frequencies (possible ambient noise)")
+        }
+
+        // FP Indicator 2: Low persistence / few detections
+        if (beacon.detectionCount <= MIN_DETECTIONS_TO_CONFIRM) {
+            fpScore += 20f
+            fpIndicators.add("Low detection count (${beacon.detectionCount}) - may be transient noise")
+        }
+
+        // FP Indicator 3: Very short detection duration
+        if (detectionDuration < 10_000 && beacon.detectionCount <= 3) {
+            fpScore += 15f
+            fpIndicators.add("Very brief detection (<10s) - typical of noise spikes")
+        }
+
+        // FP Indicator 4: High amplitude variance (unstable = noise)
+        if (amplitudeVariance > 50f) {
+            fpScore += 20f
+            fpIndicators.add("High amplitude variance (${String.format("%.1f", amplitudeVariance)}) - unstable signal")
+        } else if (amplitudeVariance > 25f) {
+            fpScore += 10f
+            fpIndicators.add("Moderate amplitude variance - somewhat unstable")
+        }
+
+        // FP Indicator 5: Unknown source with low SNR
+        if (matchedSource == KnownBeaconType.UNKNOWN && snrDb < 25) {
+            fpScore += 15f
+            fpIndicators.add("Unknown source with weak signal - likely background noise")
+        }
+
+        // FP Indicator 6: No cross-location detection after extended time
+        if (!followingUser && detectionDuration > 120_000) {
+            fpScore += 10f
+            fpIndicators.add("Single location only after 2+ minutes - may be local interference")
+        }
+
+        // FP Indicator 7: FLAT amplitude profile (constant level = electronic noise)
+        if (profile == AmplitudeProfile.STEADY && matchedSource == KnownBeaconType.UNKNOWN) {
+            fpScore += 15f
+            fpIndicators.add("Flat amplitude profile - typical of electronic interference")
+        }
+
+        // FP Indicator 8: Frequency near common device harmonics
+        val isNearHarmonic = listOf(18000, 19000, 20000, 21000, 22000)
+            .any { abs(beacon.frequency - it) < 50 }
+        if (isNearHarmonic && matchedSource == KnownBeaconType.UNKNOWN) {
+            fpScore += 10f
+            fpIndicators.add("Frequency near common electronic harmonics")
+        }
+
+        // Reduce FP score if we have strong tracking indicators
+        if (followingUser) fpScore -= 25f
+        if (persistenceScore > 0.7f) fpScore -= 20f
+        if (matchedSource != KnownBeaconType.UNKNOWN && confidence > 70f) fpScore -= 30f
+        if (profile == AmplitudeProfile.PULSING) fpScore -= 15f
+
+        val isLikelyAmbientNoise = concurrentBeacons >= 5 || (concurrentBeacons >= 3 && matchedSource == KnownBeaconType.UNKNOWN)
+        val isLikelyDeviceArtifact = profile == AmplitudeProfile.STEADY &&
+            matchedSource == KnownBeaconType.UNKNOWN &&
+            !followingUser
+
         return BeaconAnalysis(
             peakAmplitudeDb = beacon.peakAmplitudeDb,
             avgAmplitudeDb = avgAmplitude,
@@ -1094,7 +1209,12 @@ class UltrasonicDetector(
             noiseFloorDb = noiseFloorDb,
             snrDb = snrDb,
             trackingLikelihood = trackingLikelihood.coerceIn(0f, 100f),
-            riskIndicators = riskIndicators
+            riskIndicators = riskIndicators,
+            falsePositiveLikelihood = fpScore.coerceIn(0f, 100f),
+            fpIndicators = fpIndicators,
+            concurrentBeaconCount = concurrentBeacons,
+            isLikelyAmbientNoise = isLikelyAmbientNoise,
+            isLikelyDeviceArtifact = isLikelyDeviceArtifact
         )
     }
 
@@ -1131,6 +1251,23 @@ class UltrasonicDetector(
             parts.add("⚠️ Beacon appears to follow user movement")
         }
 
+        // False positive indicators
+        if (analysis.falsePositiveLikelihood > 30f) {
+            parts.add("")
+            parts.add("--- FALSE POSITIVE ANALYSIS ---")
+            parts.add("FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%")
+            if (analysis.concurrentBeaconCount > 0) {
+                parts.add("Concurrent beacons: ${analysis.concurrentBeaconCount}")
+            }
+            if (analysis.isLikelyAmbientNoise) {
+                parts.add("⚠️ Likely ambient noise pattern")
+            }
+            if (analysis.isLikelyDeviceArtifact) {
+                parts.add("⚠️ Likely device artifact")
+            }
+            analysis.fpIndicators.forEach { parts.add("• $it") }
+        }
+
         return parts.joinToString("\n")
     }
 
@@ -1138,7 +1275,12 @@ class UltrasonicDetector(
      * Build contributing factors from analysis
      */
     private fun buildBeaconContributingFactors(analysis: BeaconAnalysis): List<String> {
-        return analysis.riskIndicators
+        val factors = analysis.riskIndicators.toMutableList()
+        // Add FP indicators as negative factors if present
+        if (analysis.falsePositiveLikelihood > 40f) {
+            factors.add("⚠️ ${String.format("%.0f", analysis.falsePositiveLikelihood)}% false positive likelihood")
+        }
+        return factors
     }
 
     /**

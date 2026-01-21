@@ -143,3 +143,10 @@ const char* subghz_scanner_get_protocol_name(SubGhzProtocolId proto_id);
  * Call periodically to prevent memory growth from RF noise.
  */
 void subghz_scanner_reset_decoder(SubGhzScanner* scanner);
+
+/**
+ * Recreate the receiver to completely free all internal memory.
+ * This is more aggressive than reset - frees and reallocates the receiver.
+ * Use for periodic memory cleanup during long-running sessions.
+ */
+void subghz_scanner_recreate_receiver(SubGhzScanner* scanner);

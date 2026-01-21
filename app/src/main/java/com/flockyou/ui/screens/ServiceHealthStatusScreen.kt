@@ -8,6 +8,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,6 +18,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -34,7 +38,7 @@ import java.util.*
  * Service Health Status Screen - Displays the health status of all background detectors
  * and subsystems. Shows real-time monitoring of detector health, errors, and restart counts.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ServiceHealthStatusScreen(
     viewModel: MainViewModel = hiltViewModel(),
@@ -51,8 +55,9 @@ fun ServiceHealthStatusScreen(
         Log.d("ServiceHealthScreen", "State update: isBound=$isBound, isScanning=$isScanning, scanStatus=$scanStatus, detectors=${detectorHealth.size}")
     }
 
-    var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Overview", "Live Activity", "Detectors", "Threading", "Errors")
+    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -114,13 +119,17 @@ fun ServiceHealthStatusScreen(
 
             // Tab row
             ScrollableTabRow(
-                selectedTabIndex = selectedTab,
+                selectedTabIndex = pagerState.currentPage,
                 edgePadding = 0.dp
             ) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(index)
+                            }
+                        },
                         text = { Text(title) },
                         icon = {
                             when (index) {
@@ -135,26 +144,31 @@ fun ServiceHealthStatusScreen(
                 }
             }
 
-            // Tab content
-            when (selectedTab) {
-                0 -> HealthOverviewContent(
-                    detectorHealth = detectorHealth,
-                    scanStatus = scanStatus,
-                    isScanning = isScanning,
-                    isBound = isBound,
-                    uiState = uiState
-                )
-                1 -> LiveActivityContent(
-                    uiState = uiState,
-                    isScanning = isScanning,
-                    isBound = isBound
-                )
-                2 -> DetectorHealthContent(detectorHealth = detectorHealth)
-                3 -> ThreadingMonitorContent(uiState = uiState)
-                4 -> ErrorsContent(
-                    detectorHealth = detectorHealth,
-                    recentErrors = uiState.recentErrors
-                )
+            // Swipeable tab content
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (page) {
+                    0 -> HealthOverviewContent(
+                        detectorHealth = detectorHealth,
+                        scanStatus = scanStatus,
+                        isScanning = isScanning,
+                        isBound = isBound,
+                        uiState = uiState
+                    )
+                    1 -> LiveActivityContent(
+                        uiState = uiState,
+                        isScanning = isScanning,
+                        isBound = isBound
+                    )
+                    2 -> DetectorHealthContent(detectorHealth = detectorHealth)
+                    3 -> ThreadingMonitorContent(uiState = uiState)
+                    4 -> ErrorsContent(
+                        detectorHealth = detectorHealth,
+                        recentErrors = uiState.recentErrors
+                    )
+                }
             }
         }
     }
