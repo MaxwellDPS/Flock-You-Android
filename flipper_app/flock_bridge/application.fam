@@ -15,6 +15,7 @@ App(
         "helpers/*.c",
         "protocol/*.c",
         "scanners/*.c",
+        "scenes/*.c",
     ],
     requires=[
         "gui",

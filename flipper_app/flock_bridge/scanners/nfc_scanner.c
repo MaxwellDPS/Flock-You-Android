@@ -206,6 +206,12 @@ static void nfc_scanner_callback(NfcScannerEvent event, void* context) {
             detection.last_seen = now;
             detection.detection_count = 1;
 
+            // Set type name based on detected card type
+            // NOTE: UID/SAK/ATQA are not available through NfcScanner API
+            // These would require using the NFC poller API with a more complex flow
+            const char* card_name = flock_nfc_scanner_get_card_name(detection.card_type);
+            strncpy((char*)detection.base.type_name, card_name, sizeof(detection.base.type_name) - 1);
+
             // Update stats
             scanner->stats.total_detections++;
 

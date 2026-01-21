@@ -24,65 +24,11 @@ typedef struct __attribute__((packed)) {
     FlockRadioSettings settings;
 } FlockSettingsFile;
 
-// ============================================================================
-// Scene Handler Declarations
-// ============================================================================
-
-// Main scene
-static void flock_bridge_scene_main_on_enter(void* context);
-static bool flock_bridge_scene_main_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_main_on_exit(void* context);
-
-// Status scene
-static void flock_bridge_scene_status_on_enter(void* context);
-static bool flock_bridge_scene_status_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_status_on_exit(void* context);
-
-// WiFi Scan scene
-static void flock_bridge_scene_wifi_scan_on_enter(void* context);
-static bool flock_bridge_scene_wifi_scan_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_wifi_scan_on_exit(void* context);
-
-// SubGHz Scan scene
-static void flock_bridge_scene_subghz_scan_on_enter(void* context);
-static bool flock_bridge_scene_subghz_scan_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_subghz_scan_on_exit(void* context);
-
-// BLE Scan scene
-static void flock_bridge_scene_ble_scan_on_enter(void* context);
-static bool flock_bridge_scene_ble_scan_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_ble_scan_on_exit(void* context);
-
-// IR Scan scene
-static void flock_bridge_scene_ir_scan_on_enter(void* context);
-static bool flock_bridge_scene_ir_scan_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_ir_scan_on_exit(void* context);
-
-// NFC Scan scene
-static void flock_bridge_scene_nfc_scan_on_enter(void* context);
-static bool flock_bridge_scene_nfc_scan_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_nfc_scan_on_exit(void* context);
-
-// WIPS scene
-static void flock_bridge_scene_wips_on_enter(void* context);
-static bool flock_bridge_scene_wips_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_wips_on_exit(void* context);
-
-// Settings scene
-static void flock_bridge_scene_settings_on_enter(void* context);
-static bool flock_bridge_scene_settings_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_settings_on_exit(void* context);
-
-// Connection scene
-static void flock_bridge_scene_connection_on_enter(void* context);
-static bool flock_bridge_scene_connection_on_event(void* context, SceneManagerEvent event);
-static void flock_bridge_scene_connection_on_exit(void* context);
-
-// Event callbacks
-static bool flock_bridge_custom_event_callback(void* context, uint32_t event);
+// Scene handler declarations from scenes/ directory
+#include "scenes/scenes.h"
 
 // ============================================================================
-// Scene Handler Arrays
+// Scene Handler Arrays (must be in main file for proper linking)
 // ============================================================================
 
 void (*const flock_bridge_scene_on_enter_handlers[])(void*) = {
@@ -131,6 +77,9 @@ const SceneManagerHandlers flock_bridge_scene_handlers = {
     .scene_num = FlockBridgeSceneCount,
 };
 
+// Event callbacks
+static bool flock_bridge_custom_event_callback(void* context, uint32_t event);
+
 // ============================================================================
 // Detection Callbacks - Send detections to connected device
 // ============================================================================
@@ -170,7 +119,7 @@ static void flock_bridge_bt_state_changed(void* context, bool connected) {
     furi_mutex_release(app->mutex);
 }
 
-#if 0 // Disabled for memory testing
+#if 0 // DISABLED - testing crash
 static void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     FlockBridgeApp* app = context;
     if (!app) return;
@@ -1241,21 +1190,61 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
 
     // View Dispatcher
     app->view_dispatcher = view_dispatcher_alloc();
+    if (!app->view_dispatcher) {
+        FURI_LOG_E(TAG, "Failed to allocate view_dispatcher");
+        furi_mutex_free(app->mutex);
+        free(app);
+        return NULL;
+    }
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
-    // Scene Manager
+    // Scene Manager - validate handler struct before allocating
+    if (!flock_bridge_scene_handlers.on_enter_handlers ||
+        !flock_bridge_scene_handlers.on_event_handlers ||
+        !flock_bridge_scene_handlers.on_exit_handlers ||
+        flock_bridge_scene_handlers.scene_num == 0) {
+        FURI_LOG_E(TAG, "Invalid scene handlers configuration");
+        view_dispatcher_free(app->view_dispatcher);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return NULL;
+    }
     app->scene_manager = scene_manager_alloc(&flock_bridge_scene_handlers, app);
+    if (!app->scene_manager) {
+        FURI_LOG_E(TAG, "Failed to allocate scene_manager");
+        view_dispatcher_free(app->view_dispatcher);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return NULL;
+    }
 
     // Allocate views
     app->widget_main = widget_alloc();
     app->widget_status = widget_alloc();
-    app->submenu = submenu_alloc();
+    app->submenu_main = submenu_alloc();
+    app->submenu_settings = submenu_alloc();
     app->popup = popup_alloc();
 
+    // Verify critical view allocations
+    if (!app->widget_main || !app->widget_status || !app->submenu_main || !app->submenu_settings) {
+        FURI_LOG_E(TAG, "Failed to allocate views");
+        if (app->widget_main) widget_free(app->widget_main);
+        if (app->widget_status) widget_free(app->widget_status);
+        if (app->submenu_main) submenu_free(app->submenu_main);
+        if (app->submenu_settings) submenu_free(app->submenu_settings);
+        if (app->popup) popup_free(app->popup);
+        scene_manager_free(app->scene_manager);
+        view_dispatcher_free(app->view_dispatcher);
+        furi_mutex_free(app->mutex);
+        free(app);
+        return NULL;
+    }
+
     // Add views to dispatcher
+    view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewMenu, submenu_get_view(app->submenu_main));
     view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewMain, widget_get_view(app->widget_main));
     view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewStatus, widget_get_view(app->widget_status));
-    view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewSettings, submenu_get_view(app->submenu));
+    view_dispatcher_add_view(app->view_dispatcher, FlockBridgeViewSettings, submenu_get_view(app->submenu_settings));
 
     // Set navigation and custom event callbacks
     view_dispatcher_set_navigation_event_callback(app->view_dispatcher, flock_bridge_navigation_event_callback);
@@ -1294,7 +1283,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     // Load settings from storage
     flock_bridge_load_settings(app);
 
-    // DISABLED FOR MEMORY TESTING - External radio and scanners use too much RAM
+    // DISABLED - testing crash
     #if 0
     // Allocate external radio manager
     app->external_radio = external_radio_alloc();
@@ -1340,6 +1329,12 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         };
         detection_scheduler_configure(app->detection_scheduler, &sched_config);
 
+        // Set BT serial for time-multiplexed BLE scanning
+        // This allows BLE scanning even when connected via Bluetooth
+        if (app->bt_serial) {
+            detection_scheduler_set_bt_serial(app->detection_scheduler, app->bt_serial);
+        }
+
         // Mark scanners as ready
         app->subghz_ready = true;
         app->ble_ready = true;
@@ -1347,8 +1342,8 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         app->nfc_ready = true;
     }
     #endif
-    // Scanners disabled - just USB CDC for now
-    FURI_LOG_I(TAG, "Scanners disabled for memory testing");
+    // Scanners enabled
+    FURI_LOG_I(TAG, "Detection scanners initialized");
 
     // Initialize state
     g_app = app;
@@ -1401,6 +1396,7 @@ void flock_bridge_app_free(FlockBridgeApp* app) {
     g_app = NULL;
 
     // Remove views from dispatcher
+    view_dispatcher_remove_view(app->view_dispatcher, FlockBridgeViewMenu);
     view_dispatcher_remove_view(app->view_dispatcher, FlockBridgeViewMain);
     view_dispatcher_remove_view(app->view_dispatcher, FlockBridgeViewStatus);
     view_dispatcher_remove_view(app->view_dispatcher, FlockBridgeViewSettings);
@@ -1408,7 +1404,8 @@ void flock_bridge_app_free(FlockBridgeApp* app) {
     // Free views
     widget_free(app->widget_main);
     widget_free(app->widget_status);
-    submenu_free(app->submenu);
+    submenu_free(app->submenu_main);
+    submenu_free(app->submenu_settings);
     popup_free(app->popup);
 
     // Free scene manager and view dispatcher
@@ -1438,634 +1435,6 @@ bool flock_bridge_navigation_event_callback(void* context) {
 static bool flock_bridge_custom_event_callback(void* context, uint32_t event) {
     FlockBridgeApp* app = context;
     return scene_manager_handle_custom_event(app->scene_manager, event);
-}
-
-// ============================================================================
-// Main Scene
-// ============================================================================
-
-static void widget_main_input_callback(GuiButtonType result, InputType type, void* context) {
-    FlockBridgeApp* app = context;
-    if (type == InputTypeShort && result == GuiButtonTypeCenter) {
-        // OK pressed - switch to status scene
-        scene_manager_next_scene(app->scene_manager, FlockBridgeSceneStatus);
-    }
-}
-
-static void flock_bridge_scene_main_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 5, AlignCenter, AlignTop, FontPrimary, "Flock Bridge");
-    widget_add_string_element(app->widget_main, 64, 20, AlignCenter, AlignTop, FontSecondary,
-        flock_bridge_get_connection_status(app));
-    widget_add_string_element(app->widget_main, 64, 35, AlignCenter, AlignTop, FontSecondary, "Press OK for status");
-    widget_add_string_element(app->widget_main, 64, 50, AlignCenter, AlignTop, FontSecondary, "Hold Back to exit");
-
-    // Add button callback for OK press
-    widget_add_button_element(app->widget_main, GuiButtonTypeCenter, "Status", widget_main_input_callback, app);
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_main_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        switch (event.event) {
-        // Connection events - green blink
-        case FlockBridgeEventUsbConnected:
-            app->usb_connected = true;
-            flock_bridge_set_connection_mode(app, FlockConnectionUsb);
-            notification_message(app->notifications, &sequence_blink_green_100);
-            consumed = true;
-            break;
-        case FlockBridgeEventUsbDisconnected:
-            app->usb_connected = false;
-            flock_bridge_set_connection_mode(app, FlockConnectionNone);
-            notification_message(app->notifications, &sequence_blink_red_100);
-            consumed = true;
-            break;
-        case FlockBridgeEventBtConnected:
-            app->bt_connected = true;
-            flock_bridge_set_connection_mode(app, FlockConnectionBluetooth);
-            notification_message(app->notifications, &sequence_blink_green_100);
-            consumed = true;
-            break;
-        case FlockBridgeEventBtDisconnected:
-            app->bt_connected = false;
-            flock_bridge_set_connection_mode(app, FlockConnectionNone);
-            notification_message(app->notifications, &sequence_blink_red_100);
-            consumed = true;
-            break;
-
-        // Detection events - yellow blink
-        case FlockBridgeEventSubGhzDetection:
-            notification_message(app->notifications, &sequence_blink_yellow_10);
-            consumed = true;
-            break;
-        case FlockBridgeEventBleScanComplete:
-            notification_message(app->notifications, &sequence_blink_yellow_10);
-            consumed = true;
-            break;
-        case FlockBridgeEventNfcDetection:
-            notification_message(app->notifications, &sequence_blink_yellow_10);
-            consumed = true;
-            break;
-        case FlockBridgeEventIrDetection:
-            notification_message(app->notifications, &sequence_blink_yellow_10);
-            consumed = true;
-            break;
-        case FlockBridgeEventWifiScanComplete:
-            notification_message(app->notifications, &sequence_blink_magenta_10);
-            consumed = true;
-            break;
-
-        // WIPS alert - red blink with longer duration
-        case FlockBridgeEventWipsAlert:
-            notification_message(app->notifications, &sequence_blink_red_100);
-            consumed = true;
-            break;
-
-        default:
-            break;
-        }
-    } else if (event.type == SceneManagerEventTypeBack) {
-        // Allow back to exit
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_main_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// Status Scene
-// ============================================================================
-
-// Status refresh interval (500ms for smooth updates)
-#define STATUS_REFRESH_INTERVAL_MS 500
-
-// Helper to refresh status widget content
-static void flock_bridge_status_refresh(FlockBridgeApp* app) {
-    widget_reset(app->widget_status);
-
-    // Title with connection indicator
-    const char* conn_status = flock_bridge_get_connection_status(app);
-    widget_add_string_element(app->widget_status, 64, 2, AlignCenter, AlignTop, FontPrimary, conn_status);
-
-    char buf[40];
-
-    // Messages sent/received
-    snprintf(buf, sizeof(buf), "TX: %lu  RX: %lu", app->messages_sent, app->messages_received);
-    widget_add_string_element(app->widget_status, 64, 16, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Detection counts
-    snprintf(buf, sizeof(buf), "SubGHz:%lu BLE:%lu NFC:%lu",
-        app->subghz_detection_count, app->ble_scan_count, app->nfc_detection_count);
-    widget_add_string_element(app->widget_status, 64, 28, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // WIPS alerts and uptime
-    uint32_t uptime_sec = (furi_get_tick() - app->uptime_start) / 1000;
-    snprintf(buf, sizeof(buf), "WIPS:%lu  Up:%lus", app->wips_alert_count, uptime_sec);
-    widget_add_string_element(app->widget_status, 64, 40, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // WiFi/IR counts
-    snprintf(buf, sizeof(buf), "WiFi:%lu IR:%lu", app->wifi_scan_count, app->ir_detection_count);
-    widget_add_string_element(app->widget_status, 64, 52, AlignCenter, AlignTop, FontSecondary, buf);
-}
-
-// Timer callback for status refresh
-static void flock_bridge_status_timer_callback(void* context) {
-    FlockBridgeApp* app = context;
-    // Send custom event to trigger UI refresh on main thread
-    view_dispatcher_send_custom_event(app->view_dispatcher, FlockBridgeEventRefreshStatus);
-}
-
-static void flock_bridge_scene_status_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    // Initial status refresh
-    flock_bridge_status_refresh(app);
-
-    // Create and start the status update timer
-    app->status_timer = furi_timer_alloc(flock_bridge_status_timer_callback, FuriTimerTypePeriodic, app);
-    furi_timer_start(app->status_timer, furi_ms_to_ticks(STATUS_REFRESH_INTERVAL_MS));
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewStatus);
-}
-
-static bool flock_bridge_scene_status_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventRefreshStatus) {
-            // Refresh the status display
-            flock_bridge_status_refresh(app);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_status_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-
-    // Stop and free the timer
-    if (app->status_timer) {
-        furi_timer_stop(app->status_timer);
-        furi_timer_free(app->status_timer);
-        app->status_timer = NULL;
-    }
-
-    widget_reset(app->widget_status);
-}
-
-// ============================================================================
-// WiFi Scan Scene
-// ============================================================================
-
-static void flock_bridge_scene_wifi_scan_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "WiFi Scanner");
-
-    // Check if ESP32 is connected
-    if (app->wifi_board_connected) {
-        char buf[40];
-        snprintf(buf, sizeof(buf), "Networks: %lu", app->wifi_scan_count);
-        widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "ESP32 Connected");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Scanning active...");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 20, AlignCenter, AlignTop, FontSecondary, "ESP32 Required");
-        widget_add_string_element(app->widget_main, 64, 34, AlignCenter, AlignTop, FontSecondary, "Connect WiFi board");
-        widget_add_string_element(app->widget_main, 64, 48, AlignCenter, AlignTop, FontSecondary, "to GPIO header");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_wifi_scan_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventWifiScanComplete) {
-            // Refresh the display when scan completes
-            flock_bridge_scene_wifi_scan_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_cyan_10);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_wifi_scan_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// Sub-GHz Scan Scene
-// ============================================================================
-
-static void flock_bridge_scene_subghz_scan_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "Sub-GHz Scanner");
-
-    char buf[40];
-
-    // Show detection count
-    snprintf(buf, sizeof(buf), "Detections: %lu", app->subghz_detection_count);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show scanner status
-    if (app->subghz_ready) {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Ready");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Freq hopping active");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Disabled");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "(Memory limited mode)");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_subghz_scan_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventSubGhzDetection) {
-            // Refresh display on new detection
-            flock_bridge_scene_subghz_scan_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_yellow_10);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_subghz_scan_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// BLE Scan Scene
-// ============================================================================
-
-static void flock_bridge_scene_ble_scan_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "BLE Scanner");
-
-    char buf[40];
-
-    // Show device count
-    snprintf(buf, sizeof(buf), "Devices: %lu", app->ble_scan_count);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show scanner status
-    if (app->ble_ready) {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Ready");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Tracker detection ON");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Disabled");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "(BT Serial active)");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_ble_scan_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventBleScanComplete) {
-            // Refresh display on scan complete
-            flock_bridge_scene_ble_scan_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_blue_10);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_ble_scan_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// IR Scan Scene
-// ============================================================================
-
-static void flock_bridge_scene_ir_scan_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "IR Scanner");
-
-    char buf[40];
-
-    // Show detection count
-    snprintf(buf, sizeof(buf), "Signals: %lu", app->ir_detection_count);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show scanner status
-    if (app->ir_ready) {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Receiver Active");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Passive monitoring");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Disabled");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "(Memory limited mode)");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_ir_scan_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventIrDetection) {
-            // Refresh display on detection
-            flock_bridge_scene_ir_scan_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_magenta_10);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_ir_scan_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// NFC Scan Scene
-// ============================================================================
-
-static void flock_bridge_scene_nfc_scan_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "NFC Scanner");
-
-    char buf[40];
-
-    // Show detection count
-    snprintf(buf, sizeof(buf), "Tags: %lu", app->nfc_detection_count);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show scanner status
-    if (app->nfc_ready) {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Polling Active");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Place tag near device");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Scanner Disabled");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "(Memory limited mode)");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_nfc_scan_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventNfcDetection) {
-            // Refresh display on detection
-            flock_bridge_scene_nfc_scan_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_green_10);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_nfc_scan_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// WIPS Scene (Wireless Intrusion Prevention)
-// ============================================================================
-
-static void flock_bridge_scene_wips_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "WIPS Engine");
-
-    char buf[40];
-
-    // Show alert count
-    snprintf(buf, sizeof(buf), "Alerts: %lu", app->wips_alert_count);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show WIPS status
-    if (app->wips_engine) {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Engine Active");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Evil Twin/Deauth detect");
-    } else {
-        widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, "Engine Disabled");
-        widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, "Requires ESP32 WiFi");
-    }
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_wips_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        if (event.event == FlockBridgeEventWipsAlert) {
-            // Refresh display and alert on WIPS detection
-            flock_bridge_scene_wips_on_enter(app);
-            notification_message(app->notifications, &sequence_blink_red_100);
-            consumed = true;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_wips_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
-}
-
-// ============================================================================
-// Settings Scene
-// ============================================================================
-
-// Submenu callback for settings
-static void flock_bridge_settings_submenu_callback(void* context, uint32_t index) {
-    FlockBridgeApp* app = context;
-
-    // Toggle settings based on index
-    switch (index) {
-    case 0: // Sub-GHz
-        app->radio_settings.enable_subghz = !app->radio_settings.enable_subghz;
-        break;
-    case 1: // BLE
-        app->radio_settings.enable_ble = !app->radio_settings.enable_ble;
-        break;
-    case 2: // WiFi
-        app->radio_settings.enable_wifi = !app->radio_settings.enable_wifi;
-        break;
-    case 3: // IR
-        app->radio_settings.enable_ir = !app->radio_settings.enable_ir;
-        break;
-    case 4: // NFC
-        app->radio_settings.enable_nfc = !app->radio_settings.enable_nfc;
-        break;
-    case 5: // Save settings
-        flock_bridge_save_settings(app);
-        notification_message(app->notifications, &sequence_blink_green_100);
-        break;
-    }
-
-    // Refresh the menu
-    flock_bridge_scene_settings_on_enter(app);
-}
-
-static void flock_bridge_scene_settings_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    submenu_reset(app->submenu);
-    submenu_set_header(app->submenu, "Radio Settings");
-
-    char buf[32];
-
-    // Sub-GHz toggle
-    snprintf(buf, sizeof(buf), "Sub-GHz: %s", app->radio_settings.enable_subghz ? "ON" : "OFF");
-    submenu_add_item(app->submenu, buf, 0, flock_bridge_settings_submenu_callback, app);
-
-    // BLE toggle
-    snprintf(buf, sizeof(buf), "BLE: %s", app->radio_settings.enable_ble ? "ON" : "OFF");
-    submenu_add_item(app->submenu, buf, 1, flock_bridge_settings_submenu_callback, app);
-
-    // WiFi toggle
-    snprintf(buf, sizeof(buf), "WiFi: %s", app->radio_settings.enable_wifi ? "ON" : "OFF");
-    submenu_add_item(app->submenu, buf, 2, flock_bridge_settings_submenu_callback, app);
-
-    // IR toggle
-    snprintf(buf, sizeof(buf), "IR: %s", app->radio_settings.enable_ir ? "ON" : "OFF");
-    submenu_add_item(app->submenu, buf, 3, flock_bridge_settings_submenu_callback, app);
-
-    // NFC toggle
-    snprintf(buf, sizeof(buf), "NFC: %s", app->radio_settings.enable_nfc ? "ON" : "OFF");
-    submenu_add_item(app->submenu, buf, 4, flock_bridge_settings_submenu_callback, app);
-
-    // Save option
-    submenu_add_item(app->submenu, "Save Settings", 5, flock_bridge_settings_submenu_callback, app);
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewSettings);
-}
-
-static bool flock_bridge_scene_settings_on_event(void* context, SceneManagerEvent event) {
-    UNUSED(context);
-    UNUSED(event);
-    return false;
-}
-
-static void flock_bridge_scene_settings_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    submenu_reset(app->submenu);
-}
-
-// ============================================================================
-// Connection Scene
-// ============================================================================
-
-static void flock_bridge_scene_connection_on_enter(void* context) {
-    FlockBridgeApp* app = context;
-
-    widget_reset(app->widget_main);
-    widget_add_string_element(app->widget_main, 64, 2, AlignCenter, AlignTop, FontPrimary, "Connection");
-
-    // Show current connection mode
-    const char* mode_str = "None";
-    switch (app->connection_mode) {
-    case FlockConnectionBluetooth:
-        mode_str = "Bluetooth";
-        break;
-    case FlockConnectionUsb:
-        mode_str = "USB CDC";
-        break;
-    default:
-        mode_str = "Disconnected";
-        break;
-    }
-
-    char buf[40];
-    snprintf(buf, sizeof(buf), "Mode: %s", mode_str);
-    widget_add_string_element(app->widget_main, 64, 18, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show connection details
-    snprintf(buf, sizeof(buf), "USB: %s", app->usb_connected ? "Connected" : "No");
-    widget_add_string_element(app->widget_main, 64, 32, AlignCenter, AlignTop, FontSecondary, buf);
-
-    snprintf(buf, sizeof(buf), "BT: %s", app->bt_connected ? "Connected" : "Advertising");
-    widget_add_string_element(app->widget_main, 64, 46, AlignCenter, AlignTop, FontSecondary, buf);
-
-    // Show message counts
-    snprintf(buf, sizeof(buf), "TX:%lu RX:%lu", app->messages_sent, app->messages_received);
-    widget_add_string_element(app->widget_main, 64, 58, AlignCenter, AlignTop, FontSecondary, buf);
-
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlockBridgeViewMain);
-}
-
-static bool flock_bridge_scene_connection_on_event(void* context, SceneManagerEvent event) {
-    FlockBridgeApp* app = context;
-    bool consumed = false;
-
-    if (event.type == SceneManagerEventTypeCustom) {
-        switch (event.event) {
-        case FlockBridgeEventUsbConnected:
-        case FlockBridgeEventUsbDisconnected:
-        case FlockBridgeEventBtConnected:
-        case FlockBridgeEventBtDisconnected:
-            // Refresh display on connection change
-            flock_bridge_scene_connection_on_enter(app);
-            consumed = true;
-            break;
-        default:
-            break;
-        }
-    }
-
-    return consumed;
-}
-
-static void flock_bridge_scene_connection_on_exit(void* context) {
-    FlockBridgeApp* app = context;
-    widget_reset(app->widget_main);
 }
 
 // ============================================================================

@@ -4,10 +4,14 @@
 #include "ir_scanner.h"
 #include "nfc_scanner.h"
 #include "wifi_scanner.h"
+#include "../helpers/bt_serial.h"
 #include <string.h>
 #include <stdlib.h>
 
 #define TAG "DetectionScheduler"
+
+// Time-multiplex BLE scan settings
+#define BLE_MULTIPLEX_SCAN_DURATION_MS 2000  // How long to scan when time-multiplexing
 
 // ============================================================================
 // Scheduler Structure
@@ -52,6 +56,10 @@ struct DetectionScheduler {
     bool subghz_paused;
     bool ble_paused;
     bool wifi_paused;
+
+    // BT serial for time-multiplexed BLE scanning
+    FlockBtSerial* bt_serial;
+    bool ble_scan_in_progress;  // True during time-multiplexed scan
 };
 
 // ============================================================================
@@ -349,18 +357,12 @@ static int32_t scheduler_thread_func(void* context) {
         }
 
         // ====================================================================
-        // BLE Burst Scanning (periodic)
+        // BLE Burst Scanning (periodic) - Time-multiplexed with BT serial
         // ====================================================================
         if (scheduler->config.enable_ble && !scheduler->ble_paused) {
             if ((now - last_ble_scan) >= scheduler->config.ble_scan_interval_ms) {
-                // Start internal BLE scan
-                if (use_internal_ble && scheduler->ble_internal &&
-                    !ble_scanner_is_running(scheduler->ble_internal)) {
-                    FURI_LOG_I(TAG, "Starting internal BLE burst scan");
-                    ble_scanner_start(scheduler->ble_internal);
-                }
 
-                // Start external BLE scan
+                // External BLE scan (doesn't conflict with BT serial)
                 if (use_external_ble && scheduler->external_radio) {
                     FURI_LOG_I(TAG, "Starting external BLE burst scan");
                     external_radio_send_command(
@@ -369,11 +371,63 @@ static int32_t scheduler_thread_func(void* context) {
                         NULL, 0);
                 }
 
-                last_ble_scan = now;
+                // Internal BLE scan - requires time-multiplexing with BT serial
+                if (use_internal_ble && scheduler->ble_internal &&
+                    !ble_scanner_is_running(scheduler->ble_internal) &&
+                    !scheduler->ble_scan_in_progress) {
 
-                furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
-                scheduler->stats.ble_scans_completed++;
-                furi_mutex_release(scheduler->mutex);
+                    bool can_scan = true;
+
+                    // If BT serial is active, we need to pause it first
+                    if (scheduler->bt_serial &&
+                        flock_bt_serial_is_running(scheduler->bt_serial)) {
+
+                        FURI_LOG_I(TAG, "Pausing BT serial for BLE scan");
+                        if (!flock_bt_serial_pause(scheduler->bt_serial)) {
+                            FURI_LOG_W(TAG, "Failed to pause BT serial, skipping BLE scan");
+                            can_scan = false;
+                        }
+                    }
+
+                    if (can_scan) {
+                        FURI_LOG_I(TAG, "Starting internal BLE burst scan (time-multiplexed)");
+                        scheduler->ble_scan_in_progress = true;
+
+                        if (!ble_scanner_start(scheduler->ble_internal)) {
+                            FURI_LOG_E(TAG, "Failed to start BLE scan");
+                            scheduler->ble_scan_in_progress = false;
+
+                            // Resume BT serial if we paused it
+                            if (scheduler->bt_serial &&
+                                flock_bt_serial_is_paused(scheduler->bt_serial)) {
+                                flock_bt_serial_resume(scheduler->bt_serial);
+                            }
+                        }
+                    }
+                }
+
+                // Check if internal BLE scan completed, resume BT serial
+                if (scheduler->ble_scan_in_progress &&
+                    scheduler->ble_internal &&
+                    !ble_scanner_is_running(scheduler->ble_internal)) {
+
+                    scheduler->ble_scan_in_progress = false;
+
+                    // Resume BT serial after scan completes
+                    if (scheduler->bt_serial &&
+                        flock_bt_serial_is_paused(scheduler->bt_serial)) {
+                        FURI_LOG_I(TAG, "Resuming BT serial after BLE scan");
+                        if (!flock_bt_serial_resume(scheduler->bt_serial)) {
+                            FURI_LOG_E(TAG, "Failed to resume BT serial!");
+                        }
+                    }
+
+                    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+                    scheduler->stats.ble_scans_completed++;
+                    furi_mutex_release(scheduler->mutex);
+                }
+
+                last_ble_scan = now;
             }
         }
 
@@ -471,11 +525,26 @@ DetectionScheduler* detection_scheduler_alloc(void) {
     scheduler->config.radio_sources.ble_source = RadioSourceAuto;
     scheduler->config.radio_sources.wifi_source = RadioSourceExternal;  // No internal WiFi
 
-    // Allocate internal scanners
+    // Allocate internal scanners with null checks
     scheduler->subghz_internal = subghz_scanner_alloc();
+    if (!scheduler->subghz_internal) {
+        FURI_LOG_E(TAG, "Failed to allocate SubGhz scanner");
+    }
+
     scheduler->ble_internal = ble_scanner_alloc();
+    if (!scheduler->ble_internal) {
+        FURI_LOG_E(TAG, "Failed to allocate BLE scanner");
+    }
+
     scheduler->ir = ir_scanner_alloc();
+    if (!scheduler->ir) {
+        FURI_LOG_E(TAG, "Failed to allocate IR scanner");
+    }
+
     scheduler->nfc = flock_nfc_scanner_alloc();
+    if (!scheduler->nfc) {
+        FURI_LOG_E(TAG, "Failed to allocate NFC scanner");
+    }
 
     // Configure internal scanner callbacks
     if (scheduler->subghz_internal) {
@@ -800,4 +869,43 @@ const char* detection_scheduler_get_source_name(RadioSourceMode mode) {
     case RadioSourceBoth: return "Both";
     default: return "Unknown";
     }
+}
+
+void detection_scheduler_set_bt_serial(
+    DetectionScheduler* scheduler,
+    FlockBtSerial* bt_serial) {
+
+    if (!scheduler) return;
+
+    furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
+    scheduler->bt_serial = bt_serial;
+    furi_mutex_release(scheduler->mutex);
+
+    if (bt_serial) {
+        FURI_LOG_I(TAG, "BT serial set - time-multiplexed BLE scanning enabled");
+    } else {
+        FURI_LOG_I(TAG, "BT serial cleared - time-multiplexed BLE scanning disabled");
+    }
+}
+
+bool detection_scheduler_can_ble_scan(DetectionScheduler* scheduler) {
+    if (!scheduler) return false;
+
+    // Can scan if:
+    // 1. External BLE radio is available (doesn't need time-multiplexing), OR
+    // 2. BT serial is available for time-multiplexing
+
+    bool ext_available = scheduler->external_radio &&
+                         external_radio_is_connected(scheduler->external_radio);
+    uint32_t ext_caps = ext_available ?
+        external_radio_get_capabilities(scheduler->external_radio) : 0;
+    bool ext_ble_available = (ext_caps & EXT_RADIO_CAP_BLE_SCAN) != 0;
+
+    // External BLE available
+    if (ext_ble_available) return true;
+
+    // Internal BLE with time-multiplexing available
+    if (scheduler->ble_internal && scheduler->bt_serial) return true;
+
+    return false;
 }

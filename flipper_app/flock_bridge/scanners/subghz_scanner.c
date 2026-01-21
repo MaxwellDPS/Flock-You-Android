@@ -256,17 +256,23 @@ static void subghz_receiver_callback(SubGhzReceiver* receiver, SubGhzProtocolDec
 
     scanner->detection_count++;
 
-    // Invoke callback
-    if (scanner->config.callback) {
-        scanner->config.callback(&detection, signal_type, scanner->config.callback_context);
+    // Copy callback info before releasing mutex to avoid deadlock
+    // (user callback might call back into scanner API)
+    SubGhzScanCallback callback = scanner->config.callback;
+    void* callback_context = scanner->config.callback_context;
+
+    furi_string_free(protocol_data);
+
+    // Release mutex BEFORE invoking callback to prevent deadlock
+    furi_mutex_release(scanner->mutex);
+
+    // Now invoke callback outside of mutex protection
+    if (callback) {
+        callback(&detection, signal_type, callback_context);
     }
 
     FURI_LOG_I(TAG, "Detection: %s @ %lu Hz (RSSI: %d)",
         detection.protocol_name, detection.frequency, detection.rssi);
-
-    furi_string_free(protocol_data);
-
-    furi_mutex_release(scanner->mutex);
 }
 
 // ============================================================================

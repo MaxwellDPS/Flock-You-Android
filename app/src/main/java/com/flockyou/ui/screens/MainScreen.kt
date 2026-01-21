@@ -10,6 +10,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -23,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.Divider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +37,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.data.model.*
+import com.flockyou.scanner.flipper.FlipperClient
+import com.flockyou.scanner.flipper.FlipperConnectionState
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
@@ -52,7 +57,7 @@ import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import kotlinx.coroutines.delay
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel = hiltViewModel(),
@@ -77,7 +82,7 @@ fun MainScreen(
     // Use pagerState as single source of truth for tab position
     val pagerState = rememberPagerState(
         initialPage = uiState.selectedTab,
-        pageCount = { 3 }
+        pageCount = { 4 }  // Home, History, Cellular, Flipper
     )
     val coroutineScope = rememberCoroutineScope()
 
@@ -96,7 +101,9 @@ fun MainScreen(
                 delay(1500) // Give time for data to refresh
                 isRefreshing = false
                 // Show completion snackbar with detection delta
-                val newDetections = uiState.totalCount - preRefreshCount
+                // Read current value directly from viewModel to avoid stale closure
+                val currentCount = viewModel.uiState.value.totalCount
+                val newDetections = currentCount - preRefreshCount
                 val message = when {
                     newDetections > 0 -> "Updated - $newDetections new detection${if (newDetections > 1) "s" else ""}"
                     newDetections < 0 -> "Updated - Removed ${-newDetections} detection${if (-newDetections > 1) "s" else ""}"
@@ -243,6 +250,57 @@ fun MainScreen(
                     selected = pagerState.currentPage == 2,
                     onClick = { navigateToPage(2) }
                 )
+                NavigationBarItem(
+                    icon = {
+                        BadgedBox(
+                            badge = {
+                                when (uiState.flipperConnectionState) {
+                                    FlipperConnectionState.READY -> {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.tertiary
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                        }
+                                    }
+                                    FlipperConnectionState.CONNECTING,
+                                    FlipperConnectionState.CONNECTED,
+                                    FlipperConnectionState.DISCOVERING_SERVICES -> {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.secondary
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Sync,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                        }
+                                    }
+                                    FlipperConnectionState.ERROR -> {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Warning,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                        }
+                                    }
+                                    else -> {} // No badge when disconnected
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Usb, contentDescription = "Flipper")
+                        }
+                    },
+                    label = { Text("Flipper") },
+                    selected = pagerState.currentPage == 3,
+                    onClick = { navigateToPage(3) }
+                )
             }
         }
     ) { paddingValues ->
@@ -312,7 +370,7 @@ fun MainScreen(
                                 onNavigateToSatelliteDetection = onNavigateToSatelliteDetection,
                                 onNavigateToWifiSecurity = onNavigateToWifiSecurity,
                                 wifiAnomalyCount = uiState.rogueWifiAnomalies.size,
-                                rfAnomalyCount = uiState.rfAnomalies.size,
+                                rfAnomalyCount = viewModel.getFilteredRfAnomalies().size,
                                 ultrasonicBeaconCount = uiState.ultrasonicBeacons.size,
                                 satelliteAnomalyCount = uiState.satelliteAnomalies.size
                             )
@@ -525,6 +583,19 @@ fun MainScreen(
                             onToggleScan = { viewModel.toggleScanning() },
                             onClearCellularHistory = { viewModel.clearCellularHistory() },
                             onClearSatelliteHistory = { viewModel.clearSatelliteHistory() }
+                        )
+                    }
+                    3 -> {
+                        // Flipper Zero tab content
+                        FlipperTabContent(
+                            modifier = Modifier.fillMaxSize(),
+                            connectionState = uiState.flipperConnectionState,
+                            connectionType = uiState.flipperConnectionType,
+                            flipperStatus = uiState.flipperStatus,
+                            isScanning = uiState.flipperIsScanning,
+                            detectionCount = uiState.flipperDetectionCount,
+                            wipsAlertCount = uiState.flipperWipsAlertCount,
+                            lastError = uiState.flipperLastError
                         )
                     }
                 }
@@ -2053,7 +2124,7 @@ private fun CellularTabContent(
             
             items(
                 items = seenCellTowers,
-                key = { it.cellId }
+                key = { "${it.mcc}-${it.mnc}-${it.lac}-${it.cellId}" }
             ) { tower ->
                 CellTowerHistoryCard(tower = tower, dateFormat = dateFormat)
             }
@@ -2158,7 +2229,7 @@ private fun CellularTabContent(
             
             items(
                 items = satelliteAnomalies.take(10),
-                key = { "${it.type}-${it.timestamp}" }
+                key = { "${it.type}-${it.timestamp}-${it.hashCode()}" }
             ) { anomaly ->
                 SatelliteAnomalyHistoryCard(anomaly = anomaly, dateFormat = dateFormat)
             }
@@ -2657,5 +2728,636 @@ fun PermissionRecoveryButton(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(text)
+    }
+}
+
+// ============================================================================
+// Flipper Zero Tab Content
+// ============================================================================
+
+@Composable
+fun FlipperTabContent(
+    modifier: Modifier = Modifier,
+    connectionState: FlipperConnectionState,
+    connectionType: FlipperClient.ConnectionType,
+    flipperStatus: com.flockyou.scanner.flipper.FlipperStatusResponse?,
+    isScanning: Boolean,
+    detectionCount: Int,
+    wipsAlertCount: Int,
+    lastError: String?
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Connection Status Card
+        item(key = "flipper_connection") {
+            FlipperConnectionCard(
+                connectionState = connectionState,
+                connectionType = connectionType,
+                lastError = lastError
+            )
+        }
+
+        // Show content based on connection state
+        when (connectionState) {
+            FlipperConnectionState.READY -> {
+                // Flipper Status Card
+                item(key = "flipper_status") {
+                    FlipperStatusCard(
+                        flipperStatus = flipperStatus,
+                        isScanning = isScanning
+                    )
+                }
+
+                // Scan Statistics Card
+                item(key = "flipper_stats") {
+                    FlipperScanStatsCard(
+                        detectionCount = detectionCount,
+                        wipsAlertCount = wipsAlertCount,
+                        flipperStatus = flipperStatus
+                    )
+                }
+
+                // Capabilities Card
+                item(key = "flipper_capabilities") {
+                    FlipperCapabilitiesCard(
+                        flipperStatus = flipperStatus
+                    )
+                }
+            }
+            FlipperConnectionState.DISCONNECTED -> {
+                // Show connection prompt when disconnected
+                item(key = "flipper_disconnected") {
+                    FlipperDisconnectedCard()
+                }
+            }
+            FlipperConnectionState.CONNECTING,
+            FlipperConnectionState.CONNECTED,
+            FlipperConnectionState.DISCOVERING_SERVICES -> {
+                // Show connecting state
+                item(key = "flipper_connecting") {
+                    FlipperConnectingCard()
+                }
+            }
+            FlipperConnectionState.ERROR -> {
+                // Show error state with retry option
+                item(key = "flipper_error") {
+                    FlipperErrorCard(lastError = lastError)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlipperConnectionCard(
+    connectionState: FlipperConnectionState,
+    connectionType: FlipperClient.ConnectionType,
+    lastError: String?
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (connectionState) {
+                FlipperConnectionState.READY -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                FlipperConnectionState.ERROR -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                FlipperConnectionState.CONNECTING,
+                FlipperConnectionState.CONNECTED,
+                FlipperConnectionState.DISCOVERING_SERVICES -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = when (connectionState) {
+                        FlipperConnectionState.READY -> Icons.Default.CheckCircle
+                        FlipperConnectionState.ERROR -> Icons.Default.Error
+                        FlipperConnectionState.CONNECTING,
+                        FlipperConnectionState.CONNECTED,
+                        FlipperConnectionState.DISCOVERING_SERVICES -> Icons.Default.Sync
+                        else -> Icons.Default.UsbOff
+                    },
+                    contentDescription = null,
+                    tint = when (connectionState) {
+                        FlipperConnectionState.READY -> MaterialTheme.colorScheme.primary
+                        FlipperConnectionState.ERROR -> MaterialTheme.colorScheme.error
+                        FlipperConnectionState.CONNECTING,
+                        FlipperConnectionState.CONNECTED,
+                        FlipperConnectionState.DISCOVERING_SERVICES -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Flipper Zero",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = when (connectionState) {
+                            FlipperConnectionState.READY -> "Connected via ${connectionType.name}"
+                            FlipperConnectionState.CONNECTING -> "Connecting..."
+                            FlipperConnectionState.CONNECTED -> "Handshaking..."
+                            FlipperConnectionState.DISCOVERING_SERVICES -> "Discovering services..."
+                            FlipperConnectionState.ERROR -> lastError ?: "Connection error"
+                            FlipperConnectionState.DISCONNECTED -> "Not connected"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // Connection type badge
+                if (connectionState == FlipperConnectionState.READY) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (connectionType == FlipperClient.ConnectionType.USB)
+                                    Icons.Default.Usb else Icons.Default.Bluetooth,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = connectionType.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlipperStatusCard(
+    flipperStatus: com.flockyou.scanner.flipper.FlipperStatusResponse?,
+    isScanning: Boolean
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "DEVICE STATUS",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (flipperStatus != null) {
+                // Battery row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = when {
+                                flipperStatus.batteryPercent > 80 -> Icons.Default.BatteryFull
+                                flipperStatus.batteryPercent > 50 -> Icons.Default.Battery5Bar
+                                flipperStatus.batteryPercent > 20 -> Icons.Default.Battery3Bar
+                                else -> Icons.Default.Battery1Bar
+                            },
+                            contentDescription = null,
+                            tint = when {
+                                flipperStatus.batteryPercent > 20 -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.error
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Battery")
+                    }
+                    Text(
+                        text = "${flipperStatus.batteryPercent}%",
+                        fontWeight = FontWeight.Bold,
+                        color = if (flipperStatus.batteryPercent > 20)
+                            MaterialTheme.colorScheme.onSurface
+                        else
+                            MaterialTheme.colorScheme.error
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Uptime row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Uptime")
+                    }
+                    Text(
+                        text = formatUptime(flipperStatus.uptimeSeconds),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Scanning status row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Radar,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = if (isScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scanning")
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = if (isScanning)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                        else
+                            MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = if (isScanning) "ACTIVE" else "IDLE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = "Waiting for status update...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlipperScanStatsCard(
+    detectionCount: Int,
+    wipsAlertCount: Int,
+    flipperStatus: com.flockyou.scanner.flipper.FlipperStatusResponse?
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "SCAN STATISTICS",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Stats grid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(
+                    label = "Detections",
+                    value = detectionCount.toString(),
+                    icon = Icons.Default.Sensors
+                )
+                StatItem(
+                    label = "WIPS Alerts",
+                    value = wipsAlertCount.toString(),
+                    icon = Icons.Default.Warning,
+                    valueColor = if (wipsAlertCount > 0) MaterialTheme.colorScheme.error else null
+                )
+            }
+
+            if (flipperStatus != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Detailed stats from Flipper
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    MiniStatItem("WiFi", flipperStatus.wifiScanCount.toString())
+                    MiniStatItem("Sub-GHz", flipperStatus.subGhzDetectionCount.toString())
+                    MiniStatItem("BLE", flipperStatus.bleScanCount.toString())
+                    MiniStatItem("NFC", flipperStatus.nfcDetectionCount.toString())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatItem(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    valueColor: Color? = null
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = valueColor ?: MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = valueColor ?: MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun MiniStatItem(
+    label: String,
+    value: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlipperCapabilitiesCard(
+    flipperStatus: com.flockyou.scanner.flipper.FlipperStatusResponse?
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "CAPABILITIES",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (flipperStatus != null) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CapabilityChip("WiFi", flipperStatus.wifiBoardConnected)
+                    CapabilityChip("Sub-GHz", flipperStatus.subGhzReady)
+                    CapabilityChip("BLE", flipperStatus.bleReady)
+                    CapabilityChip("IR", flipperStatus.irReady)
+                    CapabilityChip("NFC", flipperStatus.nfcReady)
+                }
+            } else {
+                Text(
+                    text = "Loading capabilities...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityChip(
+    label: String,
+    isAvailable: Boolean
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (isAvailable)
+            MaterialTheme.colorScheme.primaryContainer
+        else
+            MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isAvailable) Icons.Default.Check else Icons.Default.Close,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = if (isAvailable)
+                    MaterialTheme.colorScheme.primary
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isAvailable)
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                else
+                    MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun FlipperDisconnectedCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.UsbOff,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Flipper Zero Not Connected",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Connect your Flipper Zero via USB or Bluetooth to extend scanning capabilities with WiFi Board, Sub-GHz, and more.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Go to Settings → Flipper Zero to connect",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun FlipperConnectingCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(48.dp),
+                color = MaterialTheme.colorScheme.secondary
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Connecting to Flipper Zero...",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Establishing connection and discovering services",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun FlipperErrorCard(lastError: String?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.Error,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Connection Error",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = lastError ?: "Failed to connect to Flipper Zero",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Go to Settings → Flipper Zero to retry",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+private fun formatUptime(seconds: Long): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m ${secs}s"
+        else -> "${secs}s"
     }
 }

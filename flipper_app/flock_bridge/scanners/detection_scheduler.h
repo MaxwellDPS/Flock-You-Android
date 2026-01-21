@@ -292,3 +292,18 @@ void detection_scheduler_get_radio_sources(
  * Get radio source mode name.
  */
 const char* detection_scheduler_get_source_name(RadioSourceMode mode);
+
+/**
+ * Set BT serial for time-multiplexed BLE scanning.
+ * When set, BLE scanning will pause BT serial, scan, then resume.
+ * This allows BLE scanning even when connected via Bluetooth.
+ */
+void detection_scheduler_set_bt_serial(
+    DetectionScheduler* scheduler,
+    struct FlockBtSerial* bt_serial);
+
+/**
+ * Check if time-multiplexed BLE scanning is available.
+ * Returns true if BT serial is set and can be paused for scanning.
+ */
+bool detection_scheduler_can_ble_scan(DetectionScheduler* scheduler);

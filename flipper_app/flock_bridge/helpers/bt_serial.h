@@ -57,3 +57,27 @@ void flock_bt_serial_set_state_callback(
     FlockBtSerial* bt,
     void (*callback)(void* context, bool connected),
     void* context);
+
+/**
+ * Pause Bluetooth Serial to allow BLE scanning.
+ * The profile is stopped but the BT record remains open for quick resume.
+ * Returns true if paused successfully (or was already paused).
+ */
+bool flock_bt_serial_pause(FlockBtSerial* bt);
+
+/**
+ * Resume Bluetooth Serial after BLE scanning.
+ * Restarts the serial profile and begins advertising again.
+ * Returns true if resumed successfully.
+ */
+bool flock_bt_serial_resume(FlockBtSerial* bt);
+
+/**
+ * Check if Bluetooth Serial is currently paused.
+ */
+bool flock_bt_serial_is_paused(FlockBtSerial* bt);
+
+/**
+ * Check if Bluetooth Serial is running (started and not paused).
+ */
+bool flock_bt_serial_is_running(FlockBtSerial* bt);

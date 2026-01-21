@@ -662,6 +662,18 @@ fun DetectionCard(
                     // Standardized display: "Device Type / Category • Primary Identifier"
                     // Format: Cellular: "Network Type • Cell ID"
                     //         WiFi/BLE: "Manufacturer • MAC"
+                    // Collect OUI lookup results once, before the when block
+                    val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
+
+                    // Trigger OUI lookup for WIFI and BLUETOOTH_LE protocols if manufacturer is unknown
+                    val macAddress = detection.macAddress
+                    LaunchedEffect(macAddress, detection.protocol) {
+                        if ((detection.protocol == DetectionProtocol.WIFI || detection.protocol == DetectionProtocol.BLUETOOTH_LE)
+                            && detection.manufacturer == null && macAddress != null) {
+                            ouiLookupViewModel.lookupManufacturer(macAddress)
+                        }
+                    }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -683,14 +695,8 @@ fun DetectionCard(
                             }
                             DetectionProtocol.WIFI -> {
                                 // WiFi: "Manufacturer • MAC" or "SSID • MAC"
-                                val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
                                 val resolvedManufacturer = detection.manufacturer
-                                    ?: detection.macAddress?.let { mac ->
-                                        LaunchedEffect(mac) {
-                                            ouiLookupViewModel.lookupManufacturer(mac)
-                                        }
-                                        ouiLookupViewModel.getCachedManufacturer(mac)
-                                    }
+                                    ?: macAddress?.let { ouiLookupViewModel.getCachedManufacturer(it) }
                                 val identifier = detection.macAddress ?: detection.ssid ?: "Unknown"
                                 if (resolvedManufacturer != null) {
                                     "$resolvedManufacturer • $identifier"
@@ -700,14 +706,8 @@ fun DetectionCard(
                             }
                             DetectionProtocol.BLUETOOTH_LE -> {
                                 // BLE: "Manufacturer • MAC"
-                                val lookupResults by ouiLookupViewModel.lookupResults.collectAsState()
                                 val resolvedManufacturer = detection.manufacturer
-                                    ?: detection.macAddress?.let { mac ->
-                                        LaunchedEffect(mac) {
-                                            ouiLookupViewModel.lookupManufacturer(mac)
-                                        }
-                                        ouiLookupViewModel.getCachedManufacturer(mac)
-                                    }
+                                    ?: macAddress?.let { ouiLookupViewModel.getCachedManufacturer(it) }
                                 val identifier = detection.macAddress ?: "Unknown"
                                 if (resolvedManufacturer != null) {
                                     "$resolvedManufacturer • $identifier"

@@ -217,9 +217,9 @@ class RfSignalAnalyzer(
         val ssid: String,
         val manufacturer: String,
         val firstSeen: Long,
-        var lastSeen: Long,
-        var rssi: Int,
-        var seenCount: Int = 1,
+        val lastSeen: Long,
+        val rssi: Int,
+        val seenCount: Int = 1,
         val latitude: Double?,
         val longitude: Double?,
         val estimatedDistance: String
@@ -790,10 +790,13 @@ class RfSignalAnalyzer(
                 }
 
                 if (existing != null) {
-                    // Already tracking this drone
-                    existing.lastSeen = now
-                    existing.rssi = result.level
-                    existing.seenCount++
+                    // Already tracking this drone - create updated copy
+                    val updatedDrone = existing.copy(
+                        lastSeen = now,
+                        rssi = result.level,
+                        seenCount = existing.seenCount + 1
+                    )
+                    detectedDrones[bssid] = updatedDrone
                 } else {
                     // New potential drone - track sightings before alerting
                     val sightings = pendingDroneSightings.getOrDefault(bssid, 0) + 1
@@ -1332,6 +1335,196 @@ class RfSignalAnalyzer(
 
     fun destroy() {
         stopMonitoring()
+    }
+
+    /**
+     * Export debug information for tuning detection algorithms.
+     * Returns a JSON-formatted string with all internal state.
+     */
+    fun exportDebugInfo(): String {
+        val sb = StringBuilder()
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
+        val now = System.currentTimeMillis()
+
+        sb.appendLine("=== FLOCK-YOU RF SIGNAL ANALYZER DEBUG EXPORT ===")
+        sb.appendLine("Export Time: ${dateFormat.format(java.util.Date(now))}")
+        sb.appendLine("Monitoring Active: $isMonitoring")
+        sb.appendLine()
+
+        // Baseline values
+        sb.appendLine("=== BASELINE VALUES ===")
+        sb.appendLine("Baseline Network Count: ${baselineNetworkCount ?: "not established"}")
+        sb.appendLine("Baseline Signal Strength: ${baselineSignalStrength?.let { "${it}dBm" } ?: "not established"}")
+        sb.appendLine("Signal History Size: ${signalHistory.size}/$SIGNAL_HISTORY_SIZE")
+        sb.appendLine("Last Scan Network Count: $lastScanNetworkCount")
+        sb.appendLine("Last Scan Timestamp: ${if (lastScanTimestamp > 0) dateFormat.format(java.util.Date(lastScanTimestamp)) else "never"}")
+        sb.appendLine()
+
+        // Consecutive reading counters
+        sb.appendLine("=== DETECTION COUNTERS ===")
+        sb.appendLine("Consecutive Jammer Readings: $consecutiveJammerReadings/$MIN_CONSECUTIVE_ANOMALOUS_READINGS")
+        sb.appendLine("Consecutive Interference Readings: $consecutiveInterferenceReadings/$MIN_CONSECUTIVE_ANOMALOUS_READINGS")
+        sb.appendLine("Pending Drone Sightings: ${pendingDroneSightings.size}")
+        pendingDroneSightings.forEach { (bssid, count) ->
+            sb.appendLine("  - $bssid: $count/$MIN_DRONE_SIGHTINGS sightings")
+        }
+        sb.appendLine()
+
+        // Detection thresholds
+        sb.appendLine("=== DETECTION THRESHOLDS ===")
+        sb.appendLine("Jammer Detection Window: ${JAMMER_DETECTION_WINDOW_MS}ms")
+        sb.appendLine("Normal Network Floor: $NORMAL_NETWORK_FLOOR networks")
+        sb.appendLine("Jammer Signal Drop Threshold: ${JAMMER_SIGNAL_DROP_THRESHOLD}dBm")
+        sb.appendLine("Jammer Network Drop Ratio: $JAMMER_NETWORK_DROP_RATIO")
+        sb.appendLine("Anomaly Cooldown: ${ANOMALY_COOLDOWN_MS}ms")
+        sb.appendLine("Dense Network Threshold: $DENSE_NETWORK_THRESHOLD")
+        sb.appendLine("Min Baseline Samples: $MIN_BASELINE_SAMPLES")
+        sb.appendLine("Min Consecutive Anomalous Readings: $MIN_CONSECUTIVE_ANOMALOUS_READINGS")
+        sb.appendLine("Min Drone Sightings: $MIN_DRONE_SIGHTINGS")
+        sb.appendLine("Signal Interference Threshold: ${SIGNAL_INTERFERENCE_THRESHOLD_DBM}dBm")
+        sb.appendLine("Hidden Network Suspicious Ratio: $HIDDEN_NETWORK_SUSPICIOUS_RATIO")
+        sb.appendLine("Min Surveillance Cameras: $MIN_SURVEILLANCE_CAMERAS")
+        sb.appendLine("Enable Hidden Network RF Anomaly: $enableHiddenNetworkRfAnomaly")
+        sb.appendLine()
+
+        // Last anomaly times
+        sb.appendLine("=== ANOMALY COOLDOWNS ===")
+        if (lastAnomalyTimes.isEmpty()) {
+            sb.appendLine("No anomalies reported yet")
+        } else {
+            lastAnomalyTimes.forEach { (type, time) ->
+                val timeSince = now - time
+                val cooldownRemaining = ANOMALY_COOLDOWN_MS - timeSince
+                sb.appendLine("${type.displayName}: ${dateFormat.format(java.util.Date(time))}")
+                sb.appendLine("  Time since: ${timeSince / 1000}s, Cooldown remaining: ${if (cooldownRemaining > 0) "${cooldownRemaining / 1000}s" else "ready"}")
+            }
+        }
+        sb.appendLine()
+
+        // Current RF status
+        sb.appendLine("=== CURRENT RF STATUS ===")
+        val status = _rfStatus.value
+        if (status != null) {
+            sb.appendLine("Total Networks: ${status.totalNetworks}")
+            sb.appendLine("Band Distribution: 2.4GHz=${status.band24GHz}, 5GHz=${status.band5GHz}, 6GHz=${status.band6GHz}")
+            sb.appendLine("Average Signal Strength: ${status.averageSignalStrength}dBm")
+            sb.appendLine("Noise Level: ${status.noiseLevel.displayName}")
+            sb.appendLine("Channel Congestion: ${status.channelCongestion.displayName}")
+            sb.appendLine("Environment Risk: ${status.environmentRisk.displayName}")
+            sb.appendLine("Jammer Suspected: ${status.jammerSuspected}")
+            sb.appendLine("Drones Detected: ${status.dronesDetected}")
+            sb.appendLine("Surveillance Cameras: ${status.surveillanceCameras}")
+            sb.appendLine("Last Scan: ${dateFormat.format(java.util.Date(status.lastScanTime))}")
+        } else {
+            sb.appendLine("No status available")
+        }
+        sb.appendLine()
+
+        // Signal history (last 20 snapshots)
+        sb.appendLine("=== SIGNAL HISTORY (last 20 snapshots) ===")
+        val recentHistory = signalHistory.takeLast(20)
+        if (recentHistory.isEmpty()) {
+            sb.appendLine("No history available")
+        } else {
+            recentHistory.forEachIndexed { index, snapshot ->
+                sb.appendLine("--- Snapshot ${index + 1} (${dateFormat.format(java.util.Date(snapshot.timestamp))}) ---")
+                sb.appendLine("  Networks: ${snapshot.wifiNetworkCount} (2.4GHz=${snapshot.band24Count}, 5GHz=${snapshot.band5Count}, 6GHz=${snapshot.band6Count})")
+                sb.appendLine("  Signal: avg=${snapshot.averageSignalStrength}dBm, strongest=${snapshot.strongestSignal}dBm, weakest=${snapshot.weakestSignal}dBm")
+                sb.appendLine("  Open Networks: ${snapshot.openNetworkCount}, Hidden: ${snapshot.hiddenNetworkCount}")
+                sb.appendLine("  Drones: ${snapshot.droneNetworkCount}, Cameras: ${snapshot.surveillanceCameraCount}")
+                sb.appendLine("  Channels: ${snapshot.channelDistribution.entries.sortedBy { it.key }.joinToString(", ") { "ch${it.key}=${it.value}" }}")
+
+                // Hidden network analysis if available
+                snapshot.hiddenNetworkAnalysis?.let { analysis ->
+                    sb.appendLine("  Hidden Network Analysis:")
+                    sb.appendLine("    Hidden Avg Signal: ${analysis.hiddenAvgSignalStrength}dBm vs Visible: ${analysis.visibleAvgSignalStrength}dBm")
+                    sb.appendLine("    Hidden Stronger Than Visible: ${analysis.hiddenSignalStrongerThanVisible}")
+                    sb.appendLine("    Signal Variance: ${String.format("%.2f", analysis.hiddenSignalVariance)}, Clusters: ${analysis.signalClusterCount}")
+                    sb.appendLine("    Hidden Bands: 2.4GHz=${analysis.hiddenBand24Count}, 5GHz=${analysis.hiddenBand5Count}, 6GHz=${analysis.hiddenBand6Count}")
+                    sb.appendLine("    Channel Concentration: ${analysis.channelConcentration}")
+                    sb.appendLine("    OUIs: ${analysis.uniqueOuiCount} unique, ${analysis.sharedOuiCount} shared, ${analysis.knownSurveillanceOuiCount} surveillance")
+                    sb.appendLine("    Temporal: ${analysis.persistentHiddenBssids} persistent, ${analysis.newHiddenBssidsThisScan} new, simultaneous=${analysis.simultaneousAppearance}")
+                }
+            }
+        }
+        sb.appendLine()
+
+        // Detected anomalies
+        sb.appendLine("=== DETECTED ANOMALIES (${detectedAnomalies.size}) ===")
+        if (detectedAnomalies.isEmpty()) {
+            sb.appendLine("No anomalies detected")
+        } else {
+            detectedAnomalies.sortedByDescending { it.timestamp }.forEach { anomaly ->
+                sb.appendLine("--- ${anomaly.type.displayName} (${anomaly.id.take(8)}) ---")
+                sb.appendLine("  Time: ${dateFormat.format(java.util.Date(anomaly.timestamp))}")
+                sb.appendLine("  Severity: ${anomaly.severity}, Confidence: ${anomaly.confidence.displayName}")
+                sb.appendLine("  Advanced Only: ${anomaly.isAdvancedOnly}")
+                sb.appendLine("  Description: ${anomaly.description}")
+                sb.appendLine("  Technical Details: ${anomaly.technicalDetails}")
+                if (anomaly.contributingFactors.isNotEmpty()) {
+                    sb.appendLine("  Contributing Factors:")
+                    anomaly.contributingFactors.forEach { factor ->
+                        sb.appendLine("    - $factor")
+                    }
+                }
+                if (anomaly.latitude != null && anomaly.longitude != null) {
+                    sb.appendLine("  Location: ${anomaly.latitude}, ${anomaly.longitude}")
+                }
+            }
+        }
+        sb.appendLine()
+
+        // Detected drones
+        sb.appendLine("=== DETECTED DRONES (${detectedDrones.size}) ===")
+        if (detectedDrones.isEmpty()) {
+            sb.appendLine("No drones detected")
+        } else {
+            detectedDrones.values.sortedByDescending { it.lastSeen }.forEach { drone ->
+                sb.appendLine("--- ${drone.manufacturer} (${drone.bssid}) ---")
+                sb.appendLine("  SSID: ${drone.ssid}")
+                sb.appendLine("  First Seen: ${dateFormat.format(java.util.Date(drone.firstSeen))}")
+                sb.appendLine("  Last Seen: ${dateFormat.format(java.util.Date(drone.lastSeen))}")
+                sb.appendLine("  Seen Count: ${drone.seenCount}")
+                sb.appendLine("  RSSI: ${drone.rssi}dBm, Est. Distance: ${drone.estimatedDistance}")
+                if (drone.latitude != null && drone.longitude != null) {
+                    sb.appendLine("  Location: ${drone.latitude}, ${drone.longitude}")
+                }
+            }
+        }
+        sb.appendLine()
+
+        // Hidden network tracking
+        sb.appendLine("=== HIDDEN NETWORK TRACKING ===")
+        sb.appendLine("Tracked Hidden BSSIDs: ${hiddenBssidHistory.size}")
+        sb.appendLine("Last Scan Hidden BSSIDs: ${lastHiddenBssidSet.size}")
+        if (hiddenBssidHistory.isNotEmpty()) {
+            sb.appendLine("Persistent Hidden Networks (seen 3+ times):")
+            hiddenBssidHistory.filter { it.value.size >= 3 }
+                .forEach { (bssid, timestamps) ->
+                    sb.appendLine("  $bssid: ${timestamps.size} sightings")
+                }
+        }
+        sb.appendLine()
+
+        // Event history
+        sb.appendLine("=== EVENT HISTORY (last 20) ===")
+        val recentEvents = eventHistory.take(20)
+        if (recentEvents.isEmpty()) {
+            sb.appendLine("No events recorded")
+        } else {
+            recentEvents.forEach { event ->
+                sb.appendLine("${dateFormat.format(java.util.Date(event.timestamp))} [${event.type.displayName}] ${event.title}")
+                sb.appendLine("  ${event.description}")
+                if (event.isAnomaly) {
+                    sb.appendLine("  Threat Level: ${event.threatLevel}")
+                }
+            }
+        }
+        sb.appendLine()
+
+        sb.appendLine("=== END DEBUG EXPORT ===")
+
+        return sb.toString()
     }
 
     /**

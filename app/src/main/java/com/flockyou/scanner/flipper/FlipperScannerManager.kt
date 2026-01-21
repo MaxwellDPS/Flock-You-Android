@@ -99,9 +99,9 @@ class FlipperScannerManager @Inject constructor(
             // Observe connection state
             scope.launch {
                 client.connectionState.collect { state ->
-                    _connectionState.value = state
+                    _connectionState.update { state }
                     if (state == FlipperConnectionState.ERROR) {
-                        _lastError.value = "Connection error"
+                        _lastError.update { "Connection error" }
                     }
                 }
             }
@@ -109,7 +109,7 @@ class FlipperScannerManager @Inject constructor(
             // Observe connection type
             scope.launch {
                 client.connectionType.collect { type ->
-                    _connectionType.value = type
+                    _connectionType.update { type }
                 }
             }
 
@@ -130,7 +130,7 @@ class FlipperScannerManager @Inject constructor(
             // Observe status
             scope.launch {
                 client.status.collect { status ->
-                    _flipperStatus.value = status
+                    _flipperStatus.update { status }
                 }
             }
         }
@@ -138,12 +138,12 @@ class FlipperScannerManager @Inject constructor(
             Log.i(TAG, "FlipperScannerManager initialized")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing FlipperClient", e)
-            _lastError.value = "Failed to initialize: ${e.message}"
-            _connectionState.value = FlipperConnectionState.ERROR
+            _lastError.update { "Failed to initialize: ${e.message}" }
+            _connectionState.update { FlipperConnectionState.ERROR }
         } catch (e: Error) {
             Log.e(TAG, "Fatal error initializing FlipperClient", e)
-            _lastError.value = "Fatal error: ${e.message}"
-            _connectionState.value = FlipperConnectionState.ERROR
+            _lastError.update { "Fatal error: ${e.message}" }
+            _connectionState.update { FlipperConnectionState.ERROR }
         }
     }
 
@@ -342,14 +342,14 @@ class FlipperScannerManager @Inject constructor(
     fun startScanning(patterns: List<SurveillancePattern> = emptyList()) {
         if (_isRunning.value) return
         if (!isConnected()) {
-            _lastError.value = "Not connected to Flipper"
+            _lastError.update { "Not connected to Flipper" }
             return
         }
 
         surveillancePatterns = patterns
-        _isRunning.value = true
-        _detectionCount.value = 0
-        _wipsAlertCount.value = 0
+        _isRunning.update { true }
+        _detectionCount.update { 0 }
+        _wipsAlertCount.update { 0 }
 
         startScanLoops()
         Log.i(TAG, "Flipper scanning started")
@@ -361,7 +361,7 @@ class FlipperScannerManager @Inject constructor(
     fun stopScanning() {
         if (!_isRunning.value) return
 
-        _isRunning.value = false
+        _isRunning.update { false }
         cancelScanLoops()
         Log.i(TAG, "Flipper scanning stopped")
     }
@@ -513,11 +513,11 @@ class FlipperScannerManager @Inject constructor(
             }
 
             is FlipperMessage.StatusResponse -> {
-                _flipperStatus.value = message.status
+                _flipperStatus.update { message.status }
             }
 
             is FlipperMessage.Error -> {
-                _lastError.value = "Flipper error ${message.code}: ${message.message}"
+                _lastError.update { "Flipper error ${message.code}: ${message.message}" }
                 Log.e(TAG, "Flipper error: ${message.code} - ${message.message}")
             }
 
@@ -545,7 +545,7 @@ class FlipperScannerManager @Inject constructor(
 
         if (!shouldProcess) return
 
-        _wipsAlertCount.value++
+        _wipsAlertCount.update { it + 1 }
 
         val detection = detectionAdapter.wipsEventToDetection(
             event, currentLatitude, currentLongitude
@@ -559,7 +559,7 @@ class FlipperScannerManager @Inject constructor(
         try {
             val isNew = detectionRepository.upsertDetection(detection)
             if (isNew) {
-                _detectionCount.value++
+                _detectionCount.update { it + 1 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save detection", e)

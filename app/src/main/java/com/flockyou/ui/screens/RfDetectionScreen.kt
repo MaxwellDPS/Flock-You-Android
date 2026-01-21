@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.flockyou.ui.screens
 
+import android.content.Intent
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,11 +51,18 @@ fun RfDetectionScreen(
     onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // Request fresh data when screen opens
+    LaunchedEffect(Unit) {
+        viewModel.requestRefresh()
+    }
 
     val rfStatus = uiState.rfStatus
-    val rfAnomalies = uiState.rfAnomalies
+    val rfAnomalies = viewModel.getFilteredRfAnomalies()
     val detectedDrones = uiState.detectedDrones
     val isScanning = uiState.isScanning
+    val advancedMode = uiState.advancedMode
 
     val tabs = listOf("Status", "Anomalies", "Drones")
 
@@ -87,7 +96,26 @@ fun RfDetectionScreen(
                     }
                 },
                 actions = {
-                    // Clear button removed - no clear function in viewModel
+                    // Export debug info button - only shown in advanced mode
+                    if (advancedMode) {
+                        IconButton(
+                            onClick = {
+                                val debugInfo = viewModel.exportRfDebugInfo()
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You RF Debug Export")
+                                    putExtra(Intent.EXTRA_TEXT, debugInfo)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Export Debug Info"))
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = "Export Debug Info",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
             )
         }

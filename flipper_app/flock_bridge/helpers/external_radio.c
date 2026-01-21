@@ -106,6 +106,12 @@ static void external_radio_serial_callback(
             break;
 
         case RxStatePayload:
+            // Bounds check to prevent buffer overflow (defensive programming)
+            if (manager->rx_payload_idx >= EXT_RADIO_MAX_PAYLOAD) {
+                FURI_LOG_E(TAG, "Payload index overflow: %d", manager->rx_payload_idx);
+                manager->rx_state = RxStateWaitStart;
+                break;
+            }
             manager->rx_buffer[manager->rx_payload_idx++] = byte;
             manager->rx_crc ^= byte;
             if (manager->rx_payload_idx >= manager->rx_payload_len) {

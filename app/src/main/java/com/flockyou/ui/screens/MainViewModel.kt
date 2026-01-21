@@ -23,6 +23,10 @@ import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.network.OrbotHelper
 import com.flockyou.network.TorAwareHttpClient
 import com.flockyou.network.TorConnectionStatus
+import com.flockyou.scanner.flipper.FlipperClient
+import com.flockyou.scanner.flipper.FlipperConnectionState
+import com.flockyou.scanner.flipper.FlipperScannerManager
+import com.flockyou.scanner.flipper.FlipperStatusResponse
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.RfSignalAnalyzer
 import com.flockyou.service.RogueWifiMonitor
@@ -100,7 +104,15 @@ data class MainUiState(
     // AI Analysis
     val analyzingDetectionId: String? = null,
     val analysisResult: com.flockyou.data.AiAnalysisResult? = null,
-    val isAiAnalysisAvailable: Boolean = false
+    val isAiAnalysisAvailable: Boolean = false,
+    // Flipper Zero
+    val flipperConnectionState: FlipperConnectionState = FlipperConnectionState.DISCONNECTED,
+    val flipperConnectionType: FlipperClient.ConnectionType = FlipperClient.ConnectionType.NONE,
+    val flipperStatus: FlipperStatusResponse? = null,
+    val flipperIsScanning: Boolean = false,
+    val flipperDetectionCount: Int = 0,
+    val flipperWipsAlertCount: Int = 0,
+    val flipperLastError: String? = null
 )
 
 @HiltViewModel
@@ -117,7 +129,8 @@ class MainViewModel @Inject constructor(
     private val torAwareHttpClient: TorAwareHttpClient,
     private val workManager: WorkManager,
     private val detectionAnalyzer: com.flockyou.ai.DetectionAnalyzer,
-    private val serviceConnection: ScanningServiceConnection  // Injected singleton
+    private val serviceConnection: ScanningServiceConnection,  // Injected singleton
+    private val flipperScannerManager: FlipperScannerManager  // Flipper Zero integration
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -176,8 +189,6 @@ class MainViewModel @Inject constructor(
     init {
         // The serviceConnection is now a singleton injected via Hilt
         // It is automatically bound when created by the provider
-        // Request the current state when ViewModel is initialized
-        serviceConnection.requestState()
 
         // Consolidated IPC state collection - combines all service connection flows into a single collection
         // This reduces context switching overhead and makes state updates more atomic
@@ -420,15 +431,19 @@ class MainViewModel @Inject constructor(
         // Check Orbot status periodically
         viewModelScope.launch {
             while (true) {
-                _isOrbotInstalled.value = orbotHelper.isOrbotInstalled()
-                if (_isOrbotInstalled.value) {
-                    val settings = networkSettings.value
-                    _isOrbotRunning.value = orbotHelper.isOrbotRunning(
-                        settings.torProxyHost,
-                        settings.torProxyPort
-                    )
-                } else {
-                    _isOrbotRunning.value = false
+                try {
+                    _isOrbotInstalled.value = orbotHelper.isOrbotInstalled()
+                    if (_isOrbotInstalled.value) {
+                        val settings = networkSettings.value
+                        _isOrbotRunning.value = orbotHelper.isOrbotRunning(
+                            settings.torProxyHost,
+                            settings.torProxyPort
+                        )
+                    } else {
+                        _isOrbotRunning.value = false
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainViewModel", "Error checking Orbot status", e)
                 }
                 delay(5000) // Check every 5 seconds
             }
@@ -447,6 +462,45 @@ class MainViewModel @Inject constructor(
                 _uiState.update { it.copy(recentErrors = errors) }
             }
         }
+
+        // Observe Flipper Zero state
+        viewModelScope.launch {
+            combine(
+                flipperScannerManager.connectionState,
+                flipperScannerManager.connectionType,
+                flipperScannerManager.flipperStatus,
+                flipperScannerManager.isRunning,
+                flipperScannerManager.detectionCount,
+                flipperScannerManager.wipsAlertCount,
+                flipperScannerManager.lastError
+            ) { connectionState, connectionType, status, isRunning, detectionCount, wipsAlertCount, lastError ->
+                FlipperStateUpdate(
+                    connectionState = connectionState,
+                    connectionType = connectionType,
+                    status = status,
+                    isScanning = isRunning,
+                    detectionCount = detectionCount,
+                    wipsAlertCount = wipsAlertCount,
+                    lastError = lastError
+                )
+            }.collect { update ->
+                _uiState.update {
+                    it.copy(
+                        flipperConnectionState = update.connectionState,
+                        flipperConnectionType = update.connectionType,
+                        flipperStatus = update.status,
+                        flipperIsScanning = update.isScanning,
+                        flipperDetectionCount = update.detectionCount,
+                        flipperWipsAlertCount = update.wipsAlertCount,
+                        flipperLastError = update.lastError
+                    )
+                }
+            }
+        }
+
+        // Request the current state after all collectors are set up
+        // This ensures state updates will be properly received
+        serviceConnection.requestState()
     }
 
     // Data classes for consolidated state updates
@@ -474,6 +528,16 @@ class MainViewModel @Inject constructor(
         val anomalies: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>,
         val events: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>,
         val measurements: com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData?
+    )
+
+    private data class FlipperStateUpdate(
+        val connectionState: FlipperConnectionState,
+        val connectionType: FlipperClient.ConnectionType,
+        val status: FlipperStatusResponse?,
+        val isScanning: Boolean,
+        val detectionCount: Int,
+        val wipsAlertCount: Int,
+        val lastError: String?
     )
 
     override fun onCleared() {
@@ -917,5 +981,181 @@ class MainViewModel @Inject constructor(
     fun isAiAnalysisAvailable(): Boolean {
         // Rule-based analysis is always available as a fallback
         return true
+    }
+
+    // ========== RF Debug Export ==========
+
+    /**
+     * Export RF detection debug information for algorithm tuning.
+     * Returns a formatted string containing all RF-related state.
+     */
+    fun exportRfDebugInfo(): String {
+        val state = _uiState.value
+        val sb = StringBuilder()
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
+        val now = System.currentTimeMillis()
+
+        sb.appendLine("=== FLOCK-YOU RF DETECTION DEBUG EXPORT ===")
+        sb.appendLine("Export Time: ${dateFormat.format(java.util.Date(now))}")
+        sb.appendLine("App Version: ${getAppVersion()}")
+        sb.appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        sb.appendLine("Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
+        sb.appendLine("Advanced Mode: ${state.advancedMode}")
+        sb.appendLine("Scanning Active: ${state.isScanning}")
+        sb.appendLine()
+
+        // Current RF Status
+        sb.appendLine("=== CURRENT RF STATUS ===")
+        val rfStatus = state.rfStatus
+        if (rfStatus != null) {
+            sb.appendLine("Total Networks: ${rfStatus.totalNetworks}")
+            sb.appendLine("Band Distribution: 2.4GHz=${rfStatus.band24GHz}, 5GHz=${rfStatus.band5GHz}, 6GHz=${rfStatus.band6GHz}")
+            sb.appendLine("Average Signal Strength: ${rfStatus.averageSignalStrength}dBm")
+            sb.appendLine("Noise Level: ${rfStatus.noiseLevel.displayName} ${rfStatus.noiseLevel.emoji}")
+            sb.appendLine("Channel Congestion: ${rfStatus.channelCongestion.displayName}")
+            sb.appendLine("Environment Risk: ${rfStatus.environmentRisk.displayName} ${rfStatus.environmentRisk.emoji}")
+            sb.appendLine("Jammer Suspected: ${rfStatus.jammerSuspected}")
+            sb.appendLine("Drones Detected: ${rfStatus.dronesDetected}")
+            sb.appendLine("Surveillance Cameras: ${rfStatus.surveillanceCameras}")
+            sb.appendLine("Last Scan: ${dateFormat.format(java.util.Date(rfStatus.lastScanTime))}")
+        } else {
+            sb.appendLine("No RF status available (scanning may not have started)")
+        }
+        sb.appendLine()
+
+        // All RF Anomalies (including advanced-only)
+        sb.appendLine("=== ALL RF ANOMALIES (${state.rfAnomalies.size} total) ===")
+        if (state.rfAnomalies.isEmpty()) {
+            sb.appendLine("No anomalies detected")
+        } else {
+            state.rfAnomalies.sortedByDescending { it.timestamp }.forEach { anomaly ->
+                sb.appendLine("--- ${anomaly.type.emoji} ${anomaly.type.displayName} ---")
+                sb.appendLine("  ID: ${anomaly.id}")
+                sb.appendLine("  Time: ${dateFormat.format(java.util.Date(anomaly.timestamp))}")
+                sb.appendLine("  Display Name: ${anomaly.displayName}")
+                sb.appendLine("  Severity: ${anomaly.severity}")
+                sb.appendLine("  Confidence: ${anomaly.confidence.displayName}")
+                sb.appendLine("  Advanced Only: ${anomaly.isAdvancedOnly}")
+                sb.appendLine("  Description: ${anomaly.description}")
+                sb.appendLine("  Technical Details:")
+                anomaly.technicalDetails.lines().forEach { line ->
+                    sb.appendLine("    $line")
+                }
+                if (anomaly.contributingFactors.isNotEmpty()) {
+                    sb.appendLine("  Contributing Factors:")
+                    anomaly.contributingFactors.forEach { factor ->
+                        sb.appendLine("    - $factor")
+                    }
+                }
+                if (anomaly.latitude != null && anomaly.longitude != null) {
+                    sb.appendLine("  Location: ${anomaly.latitude}, ${anomaly.longitude}")
+                }
+                sb.appendLine()
+            }
+        }
+
+        // Detected Drones
+        sb.appendLine("=== DETECTED DRONES (${state.detectedDrones.size}) ===")
+        if (state.detectedDrones.isEmpty()) {
+            sb.appendLine("No drones detected")
+        } else {
+            state.detectedDrones.sortedByDescending { it.lastSeen }.forEach { drone ->
+                sb.appendLine("--- ${drone.manufacturer} Drone ---")
+                sb.appendLine("  BSSID: ${drone.bssid}")
+                sb.appendLine("  SSID: ${drone.ssid}")
+                sb.appendLine("  First Seen: ${dateFormat.format(java.util.Date(drone.firstSeen))}")
+                sb.appendLine("  Last Seen: ${dateFormat.format(java.util.Date(drone.lastSeen))}")
+                sb.appendLine("  Seen Count: ${drone.seenCount}")
+                sb.appendLine("  RSSI: ${drone.rssi}dBm")
+                sb.appendLine("  Estimated Distance: ${drone.estimatedDistance}")
+                if (drone.latitude != null && drone.longitude != null) {
+                    sb.appendLine("  Location: ${drone.latitude}, ${drone.longitude}")
+                }
+                sb.appendLine()
+            }
+        }
+
+        // Rogue WiFi Status (related to RF analysis)
+        sb.appendLine("=== ROGUE WIFI STATUS ===")
+        val rogueStatus = state.rogueWifiStatus
+        if (rogueStatus != null) {
+            sb.appendLine("Total Networks: ${rogueStatus.totalNetworks}")
+            sb.appendLine("Open Networks: ${rogueStatus.openNetworks}")
+            sb.appendLine("Suspicious Networks: ${rogueStatus.suspiciousCount}")
+            sb.appendLine("Known Safe: ${rogueStatus.knownSafe}")
+            sb.appendLine("Risk Level: ${rogueStatus.riskLevel}")
+        } else {
+            sb.appendLine("No rogue WiFi status available")
+        }
+        sb.appendLine()
+
+        // Suspicious Networks
+        sb.appendLine("=== SUSPICIOUS NETWORKS (${state.suspiciousNetworks.size}) ===")
+        if (state.suspiciousNetworks.isEmpty()) {
+            sb.appendLine("No suspicious networks detected")
+        } else {
+            state.suspiciousNetworks.forEach { network ->
+                sb.appendLine("--- ${network.ssid} ---")
+                sb.appendLine("  BSSID: ${network.bssid}")
+                sb.appendLine("  Reason: ${network.reason}")
+                sb.appendLine("  Risk Score: ${network.riskScore}")
+                sb.appendLine("  RSSI: ${network.rssi}dBm")
+                sb.appendLine()
+            }
+        }
+
+        // Scan Statistics
+        sb.appendLine("=== SCAN STATISTICS ===")
+        val stats = state.scanStats
+        sb.appendLine("Total BLE Scans: ${stats.totalBleScans}")
+        sb.appendLine("Total WiFi Scans: ${stats.totalWifiScans}")
+        sb.appendLine("BLE Devices Seen: ${stats.bleDevicesSeen}")
+        sb.appendLine("WiFi Networks Seen: ${stats.wifiNetworksSeen}")
+        sb.appendLine("Detections Created: ${stats.detectionsCreated}")
+        sb.appendLine("Last BLE Scan: ${if (stats.lastBleScanTime > 0) dateFormat.format(java.util.Date(stats.lastBleScanTime)) else "never"}")
+        sb.appendLine("Last WiFi Scan: ${if (stats.lastWifiScanTime > 0) dateFormat.format(java.util.Date(stats.lastWifiScanTime)) else "never"}")
+        sb.appendLine()
+
+        // Detector Health Status
+        sb.appendLine("=== DETECTOR HEALTH STATUS ===")
+        if (state.detectorHealth.isEmpty()) {
+            sb.appendLine("No detector health data available")
+        } else {
+            state.detectorHealth.forEach { (name, health) ->
+                sb.appendLine("$name:")
+                sb.appendLine("  Running: ${health.isRunning}")
+                sb.appendLine("  Healthy: ${health.isHealthy}")
+                sb.appendLine("  Last Success: ${if (health.lastSuccessTime > 0) dateFormat.format(java.util.Date(health.lastSuccessTime)) else "never"}")
+                sb.appendLine("  Last Error: ${health.lastError ?: "none"}")
+                sb.appendLine("  Consecutive Errors: ${health.consecutiveErrors}")
+            }
+        }
+        sb.appendLine()
+
+        // Recent Errors
+        sb.appendLine("=== RECENT ERRORS (${state.recentErrors.size}) ===")
+        if (state.recentErrors.isEmpty()) {
+            sb.appendLine("No recent errors")
+        } else {
+            state.recentErrors.forEach { error ->
+                sb.appendLine("${dateFormat.format(java.util.Date(error.timestamp))} [${error.source}]: ${error.message}")
+            }
+        }
+        sb.appendLine()
+
+        sb.appendLine("=== END DEBUG EXPORT ===")
+        sb.appendLine()
+        sb.appendLine("Please share this export to help improve detection accuracy.")
+
+        return sb.toString()
+    }
+
+    private fun getAppVersion(): String {
+        return try {
+            val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+            "${packageInfo.versionName} (${packageInfo.longVersionCode})"
+        } catch (e: Exception) {
+            "unknown"
+        }
     }
 }

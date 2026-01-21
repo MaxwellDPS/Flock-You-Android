@@ -8,7 +8,6 @@
 #include <gui/view_dispatcher.h>
 #include <gui/scene_manager.h>
 #include <gui/modules/widget.h>
-#include <gui/modules/variable_item_list.h>
 #include <gui/modules/submenu.h>
 #include <gui/modules/popup.h>
 #include <notification/notification_messages.h>
@@ -65,7 +64,8 @@ typedef struct {
 // ============================================================================
 
 typedef enum {
-    FlockBridgeViewMain,
+    FlockBridgeViewMenu,        // Main navigation menu (submenu)
+    FlockBridgeViewMain,        // Info/detail widget display
     FlockBridgeViewStatus,
     FlockBridgeViewWifiScan,
     FlockBridgeViewSubGhzScan,
@@ -152,9 +152,9 @@ struct FlockBridgeApp {
     // Views
     Widget* widget_main;
     Widget* widget_status;
-    VariableItemList* var_item_list;
-    Submenu* submenu;
-    Popup* popup;
+    Submenu* submenu_main;     // Main navigation menu
+    Submenu* submenu_settings; // Settings menu
+    Popup* popup;              // For alerts and confirmations
 
     // Connection Mode
     FlockConnectionMode connection_mode;

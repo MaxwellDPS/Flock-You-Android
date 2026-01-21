@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -277,7 +278,7 @@ object ScanningServiceIpc {
                     }
                     MSG_BOOST_STATUS -> {
                         val isActive = msg.data?.getBoolean(KEY_BOOST_MODE_ACTIVE, false) ?: false
-                        connection._isBoostModeActive.value = isActive
+                        connection._isBoostModeActive.update { isActive }
                         Log.d(TAG, "Boost mode status: $isActive")
                     }
                     else -> super.handleMessage(msg)
@@ -472,8 +473,8 @@ class ScanningServiceConnection(private val context: Context) {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(tag, "onServiceConnected called, service=$service")
             serviceMessenger = Messenger(service)
-            _isBound.value = true
-            _lastConnectionError.value = null
+            _isBound.update { true }
+            _lastConnectionError.update { null }
             reconnectAttempt = 0 // Reset reconnection counter on successful connection
             Log.d(tag, "Service connected, isBound=${_isBound.value}")
 
@@ -491,15 +492,15 @@ class ScanningServiceConnection(private val context: Context) {
                 Log.d(tag, "Initial state request sent")
             } catch (e: RemoteException) {
                 Log.e(tag, "Failed to register client", e)
-                _lastConnectionError.value = "Failed to register: ${e.message}"
+                _lastConnectionError.update { "Failed to register: ${e.message}" }
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.d(tag, "Service disconnected unexpectedly")
             serviceMessenger = null
-            _isBound.value = false
-            _lastConnectionError.value = "Service disconnected"
+            _isBound.update { false }
+            _lastConnectionError.update { "Service disconnected" }
 
             // Attempt to reconnect automatically
             scheduleReconnect()
@@ -512,7 +513,7 @@ class ScanningServiceConnection(private val context: Context) {
     private fun scheduleReconnect() {
         if (reconnectAttempt >= maxReconnectAttempts) {
             Log.e(tag, "Max reconnection attempts ($maxReconnectAttempts) reached, giving up")
-            _lastConnectionError.value = "Connection lost after $maxReconnectAttempts attempts"
+            _lastConnectionError.update { "Connection lost after $maxReconnectAttempts attempts" }
             return
         }
 
@@ -563,12 +564,12 @@ class ScanningServiceConnection(private val context: Context) {
             Log.d(tag, "bindService result: $result")
 
             if (!result) {
-                _lastConnectionError.value = "Failed to initiate service bind"
+                _lastConnectionError.update { "Failed to initiate service bind" }
                 scheduleReconnect()
             }
         } catch (e: Exception) {
             Log.e(tag, "Exception during bind", e)
-            _lastConnectionError.value = "Bind failed: ${e.message}"
+            _lastConnectionError.update { "Bind failed: ${e.message}" }
             scheduleReconnect()
         }
     }
@@ -597,7 +598,7 @@ class ScanningServiceConnection(private val context: Context) {
         } catch (e: Exception) {
             Log.e(tag, "Exception during unbind", e)
         }
-        _isBound.value = false
+        _isBound.update { false }
         serviceMessenger = null
 
         // Clean up the handler thread
@@ -621,7 +622,7 @@ class ScanningServiceConnection(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(tag, "Exception during force unbind", e)
             }
-            _isBound.value = false
+            _isBound.update { false }
             serviceMessenger = null
         }
 
@@ -733,8 +734,8 @@ class ScanningServiceConnection(private val context: Context) {
             Log.e(tag, "Failed to send clear seen devices command", e)
         }
         // Also clear local state immediately for responsive UI
-        _seenBleDevices.value = emptyList()
-        _seenWifiNetworks.value = emptyList()
+        _seenBleDevices.update { emptyList() }
+        _seenWifiNetworks.update { emptyList() }
     }
 
     /**
@@ -748,8 +749,8 @@ class ScanningServiceConnection(private val context: Context) {
             Log.e(tag, "Failed to send reset detection count command", e)
         }
         // Also clear local state immediately for responsive UI
-        _detectionCount.value = 0
-        _lastDetection.value = null
+        _detectionCount.update { 0 }
+        _lastDetection.update { null }
     }
 
     /**
@@ -763,9 +764,9 @@ class ScanningServiceConnection(private val context: Context) {
             Log.e(tag, "Failed to send clear cellular history command", e)
         }
         // Also clear local state immediately for responsive UI
-        _seenCellTowers.value = emptyList()
-        _cellularEvents.value = emptyList()
-        _cellularAnomalies.value = emptyList()
+        _seenCellTowers.update { emptyList() }
+        _cellularEvents.update { emptyList() }
+        _cellularAnomalies.update { emptyList() }
     }
 
     /**
@@ -779,8 +780,8 @@ class ScanningServiceConnection(private val context: Context) {
             Log.e(tag, "Failed to send clear satellite history command", e)
         }
         // Also clear local state immediately for responsive UI
-        _satelliteHistory.value = emptyList()
-        _satelliteAnomalies.value = emptyList()
+        _satelliteHistory.update { emptyList() }
+        _satelliteAnomalies.update { emptyList() }
     }
 
     /**
@@ -854,22 +855,22 @@ class ScanningServiceConnection(private val context: Context) {
         cellularStatus: String,
         satelliteStatus: String
     ) {
-        _isScanning.value = isScanning
-        _detectionCount.value = detectionCount
-        _scanStatus.value = scanStatus
-        _bleStatus.value = bleStatus
-        _wifiStatus.value = wifiStatus
-        _locationStatus.value = locationStatus
-        _cellularStatus.value = cellularStatus
-        _satelliteStatus.value = satelliteStatus
+        _isScanning.update { isScanning }
+        _detectionCount.update { detectionCount }
+        _scanStatus.update { scanStatus }
+        _bleStatus.update { bleStatus }
+        _wifiStatus.update { wifiStatus }
+        _locationStatus.update { locationStatus }
+        _cellularStatus.update { cellularStatus }
+        _satelliteStatus.update { satelliteStatus }
     }
 
     internal fun updateScanning(isScanning: Boolean) {
-        _isScanning.value = isScanning
+        _isScanning.update { isScanning }
     }
 
     internal fun updateDetectionCount(count: Int) {
-        _detectionCount.value = count
+        _detectionCount.update { count }
     }
 
     internal fun updateSubsystemStatus(
@@ -879,11 +880,11 @@ class ScanningServiceConnection(private val context: Context) {
         cellularStatus: String?,
         satelliteStatus: String?
     ) {
-        bleStatus?.let { _bleStatus.value = it }
-        wifiStatus?.let { _wifiStatus.value = it }
-        locationStatus?.let { _locationStatus.value = it }
-        cellularStatus?.let { _cellularStatus.value = it }
-        satelliteStatus?.let { _satelliteStatus.value = it }
+        bleStatus?.let { status -> _bleStatus.update { status } }
+        wifiStatus?.let { status -> _wifiStatus.update { status } }
+        locationStatus?.let { status -> _locationStatus.update { status } }
+        cellularStatus?.let { status -> _cellularStatus.update { status } }
+        satelliteStatus?.let { status -> _satelliteStatus.update { status } }
     }
 
     internal fun updateSeenBleDevices(json: String?) {
@@ -891,7 +892,7 @@ class ScanningServiceConnection(private val context: Context) {
         try {
             val type = object : TypeToken<List<ScanningService.SeenDevice>>() {}.type
             val devices: List<ScanningService.SeenDevice> = ScanningServiceIpc.gson.fromJson(json, type)
-            _seenBleDevices.value = devices
+            _seenBleDevices.update { devices }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse seen BLE devices JSON", e)
         }
@@ -902,7 +903,7 @@ class ScanningServiceConnection(private val context: Context) {
         try {
             val type = object : TypeToken<List<ScanningService.SeenDevice>>() {}.type
             val networks: List<ScanningService.SeenDevice> = ScanningServiceIpc.gson.fromJson(json, type)
-            _seenWifiNetworks.value = networks
+            _seenWifiNetworks.update { networks }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse seen WiFi networks JSON", e)
         }
@@ -916,19 +917,23 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             cellStatusJson?.let {
-                _cellStatus.value = ScanningServiceIpc.gson.fromJson(it, CellularMonitor.CellStatus::class.java)
+                val status = ScanningServiceIpc.gson.fromJson(it, CellularMonitor.CellStatus::class.java)
+                _cellStatus.update { status }
             }
             seenTowersJson?.let {
                 val type = object : TypeToken<List<CellularMonitor.SeenCellTower>>() {}.type
-                _seenCellTowers.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val towers: List<CellularMonitor.SeenCellTower> = ScanningServiceIpc.gson.fromJson(it, type)
+                _seenCellTowers.update { towers }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<CellularMonitor.CellularAnomaly>>() {}.type
-                _cellularAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<CellularMonitor.CellularAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _cellularAnomalies.update { anomalies }
             }
             eventsJson?.let {
                 val type = object : TypeToken<List<CellularMonitor.CellularEvent>>() {}.type
-                _cellularEvents.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val events: List<CellularMonitor.CellularEvent> = ScanningServiceIpc.gson.fromJson(it, type)
+                _cellularEvents.update { events }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse cellular data JSON", e)
@@ -942,15 +947,18 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             stateJson?.let {
-                _satelliteState.value = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState::class.java)
+                val state = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState::class.java)
+                _satelliteState.update { state }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>>() {}.type
-                _satelliteAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _satelliteAnomalies.update { anomalies }
             }
             historyJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionEvent>>() {}.type
-                _satelliteHistory.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val history: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionEvent> = ScanningServiceIpc.gson.fromJson(it, type)
+                _satelliteHistory.update { history }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse satellite data JSON", e)
@@ -964,15 +972,18 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             statusJson?.let {
-                _rogueWifiStatus.value = ScanningServiceIpc.gson.fromJson(it, RogueWifiMonitor.WifiEnvironmentStatus::class.java)
+                val status = ScanningServiceIpc.gson.fromJson(it, RogueWifiMonitor.WifiEnvironmentStatus::class.java)
+                _rogueWifiStatus.update { status }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<RogueWifiMonitor.WifiAnomaly>>() {}.type
-                _rogueWifiAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<RogueWifiMonitor.WifiAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _rogueWifiAnomalies.update { anomalies }
             }
             suspiciousJson?.let {
                 val type = object : TypeToken<List<RogueWifiMonitor.SuspiciousNetwork>>() {}.type
-                _suspiciousNetworks.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val networks: List<RogueWifiMonitor.SuspiciousNetwork> = ScanningServiceIpc.gson.fromJson(it, type)
+                _suspiciousNetworks.update { networks }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse rogue WiFi data JSON", e)
@@ -986,15 +997,18 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             statusJson?.let {
-                _rfStatus.value = ScanningServiceIpc.gson.fromJson(it, RfSignalAnalyzer.RfEnvironmentStatus::class.java)
+                val status = ScanningServiceIpc.gson.fromJson(it, RfSignalAnalyzer.RfEnvironmentStatus::class.java)
+                _rfStatus.update { status }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<RfSignalAnalyzer.RfAnomaly>>() {}.type
-                _rfAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<RfSignalAnalyzer.RfAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _rfAnomalies.update { anomalies }
             }
             dronesJson?.let {
                 val type = object : TypeToken<List<RfSignalAnalyzer.DroneInfo>>() {}.type
-                _detectedDrones.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val drones: List<RfSignalAnalyzer.DroneInfo> = ScanningServiceIpc.gson.fromJson(it, type)
+                _detectedDrones.update { drones }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse RF data JSON", e)
@@ -1008,15 +1022,18 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             statusJson?.let {
-                _ultrasonicStatus.value = ScanningServiceIpc.gson.fromJson(it, UltrasonicDetector.UltrasonicStatus::class.java)
+                val status = ScanningServiceIpc.gson.fromJson(it, UltrasonicDetector.UltrasonicStatus::class.java)
+                _ultrasonicStatus.update { status }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<UltrasonicDetector.UltrasonicAnomaly>>() {}.type
-                _ultrasonicAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<UltrasonicDetector.UltrasonicAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _ultrasonicAnomalies.update { anomalies }
             }
             beaconsJson?.let {
                 val type = object : TypeToken<List<UltrasonicDetector.BeaconDetection>>() {}.type
-                _ultrasonicBeacons.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val beacons: List<UltrasonicDetector.BeaconDetection> = ScanningServiceIpc.gson.fromJson(it, type)
+                _ultrasonicBeacons.update { beacons }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse ultrasonic data JSON", e)
@@ -1025,11 +1042,12 @@ class ScanningServiceConnection(private val context: Context) {
 
     internal fun updateLastDetection(json: String?) {
         if (json == null) {
-            _lastDetection.value = null
+            _lastDetection.update { null }
             return
         }
         try {
-            _lastDetection.value = ScanningServiceIpc.gson.fromJson(json, com.flockyou.data.model.Detection::class.java)
+            val detection = ScanningServiceIpc.gson.fromJson(json, com.flockyou.data.model.Detection::class.java)
+            _lastDetection.update { detection }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse last detection JSON", e)
         }
@@ -1037,13 +1055,13 @@ class ScanningServiceConnection(private val context: Context) {
 
     internal fun updateActiveDetections(json: String?) {
         if (json == null) {
-            _activeDetections.value = emptyList()
+            _activeDetections.update { emptyList() }
             return
         }
         try {
             val type = object : TypeToken<List<com.flockyou.data.model.Detection>>() {}.type
             val detections: List<com.flockyou.data.model.Detection> = ScanningServiceIpc.gson.fromJson(json, type)
-            _activeDetections.value = detections
+            _activeDetections.update { detections }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse active detections JSON", e)
         }
@@ -1058,22 +1076,27 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             statusJson?.let {
-                _gnssStatus.value = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus::class.java)
+                val status = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssEnvironmentStatus::class.java)
+                _gnssStatus.update { status }
             }
             satellitesJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo>>() {}.type
-                _gnssSatellites.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val satellites: List<com.flockyou.monitoring.GnssSatelliteMonitor.SatelliteInfo> = ScanningServiceIpc.gson.fromJson(it, type)
+                _gnssSatellites.update { satellites }
             }
             anomaliesJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly>>() {}.type
-                _gnssAnomalies.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val anomalies: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssAnomaly> = ScanningServiceIpc.gson.fromJson(it, type)
+                _gnssAnomalies.update { anomalies }
             }
             eventsJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent>>() {}.type
-                _gnssEvents.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val events: List<com.flockyou.monitoring.GnssSatelliteMonitor.GnssEvent> = ScanningServiceIpc.gson.fromJson(it, type)
+                _gnssEvents.update { events }
             }
             measurementsJson?.let {
-                _gnssMeasurements.value = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData::class.java)
+                val measurements = ScanningServiceIpc.gson.fromJson(it, com.flockyou.monitoring.GnssSatelliteMonitor.GnssMeasurementData::class.java)
+                _gnssMeasurements.update { measurements }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse GNSS data JSON", e)
@@ -1091,7 +1114,7 @@ class ScanningServiceConnection(private val context: Context) {
             val health: Map<String, ScanningService.DetectorHealthStatus> = ScanningServiceIpc.gson.fromJson(json, type)
             Log.d(tag, "Parsed detector health: ${health.size} detectors, running=${health.values.count { it.isRunning }}")
             Log.d(tag, "Current _detectorHealth value before update: ${_detectorHealth.value.size} detectors")
-            _detectorHealth.value = health
+            _detectorHealth.update { health }
             Log.d(tag, "_detectorHealth value after update: ${_detectorHealth.value.size} detectors")
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse detector health JSON: $json", e)
@@ -1103,7 +1126,7 @@ class ScanningServiceConnection(private val context: Context) {
         try {
             val type = object : TypeToken<List<ScanningService.ScanError>>() {}.type
             val errors: List<ScanningService.ScanError> = ScanningServiceIpc.gson.fromJson(json, type)
-            _errorLog.value = errors
+            _errorLog.update { errors }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse error log JSON", e)
         }
@@ -1117,7 +1140,7 @@ class ScanningServiceConnection(private val context: Context) {
         if (json == null) return
         try {
             val stats: ScanningService.ScanStatistics = ScanningServiceIpc.gson.fromJson(json, ScanningService.ScanStatistics::class.java)
-            _scanStats.value = stats
+            _scanStats.update { stats }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse scan stats JSON", e)
         }
@@ -1130,18 +1153,21 @@ class ScanningServiceConnection(private val context: Context) {
     ) {
         try {
             systemStateJson?.let {
-                _threadingSystemState.value = ScanningServiceIpc.gson.fromJson(
+                val state = ScanningServiceIpc.gson.fromJson(
                     it,
                     com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState::class.java
                 )
+                _threadingSystemState.update { state }
             }
             scannerStatesJson?.let {
                 val type = object : TypeToken<Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState>>() {}.type
-                _threadingScannerStates.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val states: Map<String, com.flockyou.monitoring.ScannerThreadingMonitor.ScannerThreadState> = ScanningServiceIpc.gson.fromJson(it, type)
+                _threadingScannerStates.update { states }
             }
             alertsJson?.let {
                 val type = object : TypeToken<List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert>>() {}.type
-                _threadingAlerts.value = ScanningServiceIpc.gson.fromJson(it, type)
+                val alerts: List<com.flockyou.monitoring.ScannerThreadingMonitor.ThreadingAlert> = ScanningServiceIpc.gson.fromJson(it, type)
+                _threadingAlerts.update { alerts }
             }
         } catch (e: Exception) {
             Log.e(tag, "Failed to parse threading data JSON", e)

@@ -16,6 +16,7 @@ struct FlockBtSerial {
     FuriHalBleProfileBase* profile;
     bool connected;
     bool running;
+    bool paused;  // True when temporarily stopped for BLE scanning
 
     FuriStreamBuffer* rx_stream;
     FuriMutex* mutex;
@@ -288,4 +289,104 @@ void flock_bt_serial_set_state_callback(
     bt->state_callback = callback;
     bt->state_callback_context = context;
     furi_mutex_release(bt->mutex);
+}
+
+bool flock_bt_serial_pause(FlockBtSerial* bt) {
+    if (!bt) return false;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+
+    // Already paused or not running
+    if (bt->paused || !bt->running) {
+        furi_mutex_release(bt->mutex);
+        return true;
+    }
+
+    FURI_LOG_I(TAG, "Pausing Bluetooth Serial for BLE scanning");
+
+    // Remember if we were connected (client will need to reconnect after resume)
+    bool was_connected = bt->connected;
+    if (was_connected) {
+        FURI_LOG_W(TAG, "BLE client will be disconnected during scan");
+    }
+
+    // Stop the serial profile event callback
+    if (bt->profile) {
+        ble_profile_serial_set_event_callback(bt->profile, 0, NULL, NULL);
+    }
+
+    // Restore default BT profile (stops serial, allows scanning)
+    if (bt->bt) {
+        bt_profile_restore_default(bt->bt);
+    }
+
+    bt->profile = NULL;
+    bt->connected = false;
+    bt->paused = true;
+
+    furi_mutex_release(bt->mutex);
+
+    // Notify state change if we were connected
+    if (was_connected && bt->state_callback) {
+        bt->state_callback(bt->state_callback_context, false);
+    }
+
+    FURI_LOG_I(TAG, "Bluetooth Serial paused");
+    return true;
+}
+
+bool flock_bt_serial_resume(FlockBtSerial* bt) {
+    if (!bt) return false;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+
+    // Not paused or not running
+    if (!bt->paused || !bt->running) {
+        furi_mutex_release(bt->mutex);
+        return !bt->paused;  // Return true if already resumed
+    }
+
+    FURI_LOG_I(TAG, "Resuming Bluetooth Serial after BLE scanning");
+
+    // Restart the serial profile
+    bt->profile = bt_profile_start(bt->bt, ble_profile_serial, NULL);
+    if (!bt->profile) {
+        FURI_LOG_E(TAG, "Failed to restart BT serial profile");
+        furi_mutex_release(bt->mutex);
+        return false;
+    }
+
+    // Re-register the serial event callback
+    ble_profile_serial_set_event_callback(
+        bt->profile,
+        BT_SERIAL_BUFFER_SIZE,
+        bt_serial_event_callback,
+        bt);
+
+    bt->paused = false;
+
+    furi_mutex_release(bt->mutex);
+
+    FURI_LOG_I(TAG, "Bluetooth Serial resumed - advertising");
+    return true;
+}
+
+bool flock_bt_serial_is_paused(FlockBtSerial* bt) {
+    if (!bt) return false;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+    bool paused = bt->paused;
+    furi_mutex_release(bt->mutex);
+
+    return paused;
+}
+
+bool flock_bt_serial_is_running(FlockBtSerial* bt) {
+    if (!bt) return false;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+    bool running = bt->running && !bt->paused;
+    furi_mutex_release(bt->mutex);
+
+    return running;
 }

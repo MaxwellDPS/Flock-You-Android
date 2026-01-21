@@ -371,4 +371,200 @@ object TestDataFactory {
             matchedPatterns = null
         )
     }
+
+    // ==================== Custom Rule Helpers ====================
+
+    /**
+     * Create a custom rule for testing
+     */
+    fun createCustomRule(
+        name: String = "Test Custom Rule",
+        pattern: String = "(?i)^TEST-.*",
+        type: RuleType = RuleType.SSID_REGEX,
+        deviceType: DeviceType = DeviceType.UNKNOWN_SURVEILLANCE,
+        threatScore: Int = 75,
+        enabled: Boolean = true
+    ): CustomRule {
+        return CustomRule(
+            name = name,
+            pattern = pattern,
+            type = type,
+            deviceType = deviceType,
+            threatScore = threatScore,
+            description = "Test rule for $name",
+            enabled = enabled
+        )
+    }
+
+    /**
+     * Create multiple custom rules for testing
+     */
+    fun createMultipleCustomRules(count: Int): List<CustomRule> {
+        return List(count) { index ->
+            createCustomRule(
+                name = "Custom Rule $index",
+                pattern = "PATTERN_$index.*",
+                type = when (index % 3) {
+                    0 -> RuleType.SSID_REGEX
+                    1 -> RuleType.BLE_NAME_REGEX
+                    else -> RuleType.MAC_PREFIX
+                },
+                threatScore = 50 + (index % 50)
+            )
+        }
+    }
+
+    /**
+     * Create custom rules for different scanner types
+     */
+    fun createCustomRulesForAllScannerTypes(): List<CustomRule> {
+        return listOf(
+            createCustomRule(name = "WiFi SSID Rule", type = RuleType.SSID_REGEX),
+            createCustomRule(name = "WiFi MAC Rule", type = RuleType.MAC_PREFIX, pattern = "AA:BB:CC"),
+            createCustomRule(name = "BLE Name Rule", type = RuleType.BLE_NAME_REGEX),
+            createCustomRule(name = "BLE UUID Rule", type = RuleType.BLE_SERVICE_UUID, pattern = "0000ABCD-0000-1000-8000-00805f9b34fb"),
+            createCustomRule(name = "Cellular MCC Rule", type = RuleType.CELLULAR_MCC_MNC, pattern = "310-260"),
+            createCustomRule(name = "Cellular LAC Rule", type = RuleType.CELLULAR_LAC_RANGE, pattern = "1000-2000"),
+            createCustomRule(name = "Satellite Rule", type = RuleType.SATELLITE_NETWORK_ID, pattern = "STARLINK-*"),
+            createCustomRule(name = "RF Rule", type = RuleType.RF_FREQUENCY_RANGE, pattern = "2400-2500"),
+            createCustomRule(name = "Ultrasonic Rule", type = RuleType.ULTRASONIC_FREQUENCY, pattern = "18000-22000")
+        )
+    }
+
+    // ==================== Heuristic Rule Helpers ====================
+
+    /**
+     * Create a heuristic rule for testing
+     */
+    fun createHeuristicRule(
+        name: String = "Test Heuristic Rule",
+        description: String = "Test heuristic for behavioral detection",
+        field: HeuristicField = HeuristicField.CELL_SIGNAL_CHANGE,
+        operator: HeuristicOperator = HeuristicOperator.GREATER_THAN,
+        value: String = "25",
+        deviceType: DeviceType = DeviceType.STINGRAY_IMSI,
+        threatScore: Int = 85,
+        enabled: Boolean = true
+    ): HeuristicRule {
+        return HeuristicRule(
+            name = name,
+            description = description,
+            scannerType = field.scannerType,
+            conditions = listOf(
+                HeuristicCondition(
+                    field = field,
+                    operator = operator,
+                    value = value
+                )
+            ),
+            conditionLogic = ConditionLogic.AND,
+            deviceType = deviceType,
+            threatScore = threatScore,
+            enabled = enabled
+        )
+    }
+
+    /**
+     * Create multiple heuristic rules for testing
+     */
+    fun createMultipleHeuristicRules(count: Int): List<HeuristicRule> {
+        val fields = listOf(
+            HeuristicField.CELL_SIGNAL_CHANGE,
+            HeuristicField.WIFI_SIGNAL_CHANGE,
+            HeuristicField.BLE_RSSI_THRESHOLD,
+            HeuristicField.RF_SIGNAL_DROP,
+            HeuristicField.GNSS_POSITION_JUMP
+        )
+
+        return List(count) { index ->
+            createHeuristicRule(
+                name = "Heuristic Rule $index",
+                description = "Test heuristic rule number $index",
+                field = fields[index % fields.size],
+                threatScore = 60 + (index % 40)
+            )
+        }
+    }
+
+    /**
+     * Create heuristic rules for different scanner types
+     */
+    fun createHeuristicRulesForAllScannerTypes(): List<HeuristicRule> {
+        return listOf(
+            createHeuristicRule(
+                name = "Cellular Downgrade Detection",
+                field = HeuristicField.CELL_ENCRYPTION_LEVEL,
+                operator = HeuristicOperator.LESS_THAN,
+                value = "3"
+            ),
+            createHeuristicRule(
+                name = "WiFi Signal Anomaly",
+                field = HeuristicField.WIFI_SIGNAL_CHANGE,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "20"
+            ),
+            createHeuristicRule(
+                name = "BLE Tracking Detection",
+                field = HeuristicField.BLE_TRACKING_DURATION,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "300000"
+            ),
+            createHeuristicRule(
+                name = "RF Jamming Detection",
+                field = HeuristicField.RF_SIGNAL_DROP,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "25"
+            ),
+            createHeuristicRule(
+                name = "GPS Spoofing Detection",
+                field = HeuristicField.GNSS_POSITION_JUMP,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "1000"
+            ),
+            createHeuristicRule(
+                name = "Satellite Anomaly",
+                field = HeuristicField.SAT_SWITCH_COUNT,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "3"
+            ),
+            createHeuristicRule(
+                name = "Ultrasonic Beacon Detection",
+                field = HeuristicField.ULTRASONIC_DB_THRESHOLD,
+                operator = HeuristicOperator.GREATER_THAN,
+                value = "-40"
+            )
+        )
+    }
+
+    /**
+     * Create a complex heuristic rule with multiple conditions
+     */
+    fun createComplexHeuristicRule(): HeuristicRule {
+        return HeuristicRule(
+            name = "Advanced Stingray Detection",
+            description = "Multi-condition heuristic for IMSI catcher detection",
+            scannerType = ScannerType.CELLULAR,
+            conditions = listOf(
+                HeuristicCondition(
+                    field = HeuristicField.CELL_ENCRYPTION_LEVEL,
+                    operator = HeuristicOperator.LESS_THAN,
+                    value = "3"
+                ),
+                HeuristicCondition(
+                    field = HeuristicField.CELL_SIGNAL_CHANGE,
+                    operator = HeuristicOperator.GREATER_THAN,
+                    value = "25"
+                ),
+                HeuristicCondition(
+                    field = HeuristicField.CELL_SWITCH_COUNT,
+                    operator = HeuristicOperator.GREATER_THAN,
+                    value = "5"
+                )
+            ),
+            conditionLogic = ConditionLogic.OR,
+            deviceType = DeviceType.STINGRAY_IMSI,
+            threatScore = 95,
+            enabled = true
+        )
+    }
 }

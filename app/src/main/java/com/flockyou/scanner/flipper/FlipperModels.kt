@@ -288,6 +288,7 @@ enum class FlipperConnectionState {
     CONNECTING,
     CONNECTED,
     DISCOVERING_SERVICES,
+    LAUNCHING_FAP,  // FAP not running, sending CLI command to launch it
     READY,
     ERROR
 }

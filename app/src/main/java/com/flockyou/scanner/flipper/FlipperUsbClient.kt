@@ -30,6 +30,12 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         private const val FLIPPER_PRODUCT_ID = 0x5740 // Flipper Zero CDC
         private const val ACTION_USB_PERMISSION = "com.flockyou.USB_PERMISSION"
         private const val BAUD_RATE = 115200
+
+        // FAP launch configuration
+        private const val FAP_PATH = "/ext/apps/Tools/flock_bridge.fap"
+        private const val FAP_LAUNCH_COMMAND = "loader open $FAP_PATH\r\n"
+        private const val FAP_LAUNCH_DELAY_MS = 3000L
+        private const val FAP_RECONNECT_DELAY_MS = 500L
     }
 
     private val usbManager: UsbManager? = context.getSystemService(Context.USB_SERVICE) as? UsbManager
@@ -37,6 +43,10 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     private var usbConnection: UsbDeviceConnection? = null
     private var serialPort: UsbSerialPort? = null
     private var ioManager: SerialInputOutputManager? = null
+
+    // FAP launch tracking
+    private var isLaunchingFap = false
+    private var pendingDevice: UsbDevice? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val executor = Executors.newSingleThreadExecutor()
@@ -203,6 +213,9 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
     }
 
     private fun connectToDevice(device: UsbDevice) {
+        // Store device for potential FAP launch reconnection
+        pendingDevice = device
+
         scope.launch {
             try {
                 val manager = usbManager
@@ -235,11 +248,25 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
                     return@launch
                 }
 
+                val portCount = driver.ports.size
+                Log.i(TAG, "Found $portCount CDC port(s)")
+
+                // Single CDC port means FAP is not running - launch it via CLI
+                if (portCount == 1 && !isLaunchingFap) {
+                    Log.i(TAG, "Single CDC port detected - FAP not running, launching it")
+                    launchFapViaCli(device, driver, connection)
+                    return@launch
+                }
+
                 // Select the correct port:
                 // - In dual CDC mode (FAP running): use port 1 (Flock protocol)
-                // - In single CDC mode: use port 0 (CLI, but FAP not running)
-                val portIndex = if (driver.ports.size > 1) 1 else 0
-                Log.i(TAG, "Found ${driver.ports.size} CDC port(s), using port $portIndex")
+                // - After FAP launch reconnect: should now have 2 ports
+                val portIndex = if (portCount > 1) 1 else 0
+                Log.i(TAG, "Using port $portIndex")
+
+                // Reset FAP launch flag
+                isLaunchingFap = false
+
                 val port = driver.ports[portIndex]
                 port.open(connection)
                 port.setParameters(BAUD_RATE, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
@@ -267,12 +294,57 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
                 }
 
                 _connectionState.value = FlipperConnectionState.READY
-                Log.i(TAG, "Connected to Flipper Zero via USB on port $portIndex of ${driver.ports.size}")
+                Log.i(TAG, "Connected to Flipper Zero via USB on port $portIndex of $portCount")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed", e)
                 _connectionState.value = FlipperConnectionState.ERROR
+                isLaunchingFap = false
             }
+        }
+    }
+
+    private suspend fun launchFapViaCli(
+        device: UsbDevice,
+        driver: com.hoho.android.usbserial.driver.UsbSerialDriver,
+        connection: UsbDeviceConnection
+    ) {
+        isLaunchingFap = true
+        _connectionState.value = FlipperConnectionState.LAUNCHING_FAP
+        Log.i(TAG, "Launching FAP via CLI: $FAP_LAUNCH_COMMAND")
+
+        try {
+            // Open CLI port (port 0)
+            val cliPort = driver.ports[0]
+            cliPort.open(connection)
+            cliPort.setParameters(BAUD_RATE, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            cliPort.dtr = true
+            cliPort.rts = true
+
+            // Send the loader command
+            val data = FAP_LAUNCH_COMMAND.toByteArray(Charsets.UTF_8)
+            cliPort.write(data, 1000)
+            Log.i(TAG, "FAP launch command sent, waiting for FAP to start...")
+
+            // Close CLI port
+            cliPort.close()
+            connection.close()
+            usbConnection = null
+
+            // Wait for FAP to start and initialize dual CDC mode
+            delay(FAP_LAUNCH_DELAY_MS)
+
+            // Small delay before reconnecting
+            delay(FAP_RECONNECT_DELAY_MS)
+
+            // Reconnect - FAP should now be running with dual CDC mode
+            Log.i(TAG, "Reconnecting to device to connect to FAP on port 1...")
+            connect(device)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error launching FAP via CLI", e)
+            _connectionState.value = FlipperConnectionState.ERROR
+            isLaunchingFap = false
         }
     }
 
@@ -418,6 +490,8 @@ class FlipperUsbClient(private val context: Context) : AutoCloseable {
         usbConnection = null
 
         receiveBufferPosition = 0
+        isLaunchingFap = false
+        pendingDevice = null
         _connectionState.value = FlipperConnectionState.DISCONNECTED
     }
 

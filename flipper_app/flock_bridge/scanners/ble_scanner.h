@@ -7,11 +7,17 @@
 // ============================================================================
 // BLE Scanner
 // ============================================================================
-// Handles Bluetooth Low Energy scanning with:
-// - Device discovery
+// Handles Bluetooth Low Energy scanning and analysis:
+// - Basic signal detection via raw RF mode (RSSI only)
+// - Full advertisement parsing (when data from external hardware)
 // - Tracker detection (AirTag, Tile, SmartTag, etc.)
 // - BLE spam detection (Flipper attacks)
-// - Manufacturer data parsing
+// - "Following" detection via device history tracking
+//
+// NOTE: The Flipper Zero SDK does not expose full BLE scanning functions.
+// For complete BLE device discovery with advertisement parsing, external
+// hardware (ESP32 with BLE support) is required. The internal scanner
+// provides basic RSSI-level detection on BLE advertising channels.
 
 typedef struct BleScanner BleScanner;
 
@@ -157,3 +163,25 @@ const char* ble_scanner_get_tracker_name(BleTrackerType type);
  * Get spam type name.
  */
 const char* ble_scanner_get_spam_name(BleSpamType type);
+
+/**
+ * Process advertisement data from external hardware.
+ *
+ * Call this when external hardware (ESP32, etc.) provides raw BLE
+ * advertisement data. The scanner will parse the data, identify
+ * trackers/spam, update statistics, and invoke the callback.
+ *
+ * @param scanner       BleScanner instance
+ * @param address       6-byte MAC address
+ * @param address_type  Address type (public/random)
+ * @param rssi         Signal strength in dBm
+ * @param adv_data     Raw advertisement data (can be NULL)
+ * @param adv_data_len Length of advertisement data
+ */
+void ble_scanner_process_advertisement(
+    BleScanner* scanner,
+    const uint8_t* address,
+    uint8_t address_type,
+    int8_t rssi,
+    const uint8_t* adv_data,
+    size_t adv_data_len);

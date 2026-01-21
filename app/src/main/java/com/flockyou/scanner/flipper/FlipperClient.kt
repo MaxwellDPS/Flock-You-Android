@@ -60,11 +60,8 @@ class FlipperClient(private val context: Context) {
                         }
                     }
                 }
-                scope.launch {
-                    client.wipsEvents.collect { event ->
-                        _wipsEvents.emit(event)
-                    }
-                }
+                // Note: WIPS events are handled in handleMessage() via WipsAlert messages.
+                // Do NOT also collect from client.wipsEvents to avoid duplicate emissions.
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing Bluetooth client", e)
