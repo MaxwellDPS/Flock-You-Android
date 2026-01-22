@@ -323,8 +323,16 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
 bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
     if (!scanner || !scanner->device) return false;
 
-    // Log whether scanner is running to diagnose issues
-    FURI_LOG_I(TAG, "set_frequency(%lu Hz) - running=%d", frequency, scanner->running);
+    // If scanner is not running, start it first
+    if (!scanner->running) {
+        FURI_LOG_W(TAG, "Scanner not running, attempting to start at %lu Hz", frequency);
+        if (!subghz_scanner_start(scanner, frequency)) {
+            FURI_LOG_E(TAG, "Failed to auto-start scanner at %lu Hz", frequency);
+            return false;
+        }
+        FURI_LOG_I(TAG, "Scanner auto-started at %lu Hz", frequency);
+        return true;
+    }
 
     if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
         FURI_LOG_E(TAG, "Invalid frequency: %lu Hz", frequency);
@@ -332,7 +340,7 @@ bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
     }
 
     // Check if we should delay the frequency change to protect active decoding
-    if (scanner->running && subghz_decoder_is_active(scanner)) {
+    if (subghz_decoder_is_active(scanner)) {
         FURI_LOG_D(TAG, "Decode in progress - deferring frequency change from %lu to %lu Hz",
             scanner->current_frequency, frequency);
         // Return true but don't actually change - caller should retry
