@@ -320,10 +320,34 @@ tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }
  * Prerequisites:
  * - ufbt installed: pip install ufbt
  * - FLIPPER_FIRMWARE_PATH environment variable (optional)
+ *
+ * Set SKIP_FLIPPER_BUILD=true to skip Flipper-related tasks (e.g., in CI).
  */
 val flipperAppDir = file("${rootDir}/flipper_app/flock_bridge")
 val flipperBuildDir = file("${buildDir}/flipper")
 val fapOutputName = "flock_bridge.fap"
+
+// Check if Flipper build should be skipped (e.g., in CI without ufbt)
+val skipFlipperBuild = System.getenv("SKIP_FLIPPER_BUILD")?.toBoolean() == true ||
+    project.findProperty("skipFlipperBuild")?.toString()?.toBoolean() == true
+
+// Check if ufbt is available (cached result)
+val ufbtAvailable: Boolean by lazy {
+    if (skipFlipperBuild) {
+        println("Flipper build skipped via SKIP_FLIPPER_BUILD")
+        false
+    } else {
+        try {
+            val process = ProcessBuilder("ufbt", "--version")
+                .redirectErrorStream(true)
+                .start()
+            val exitCode = process.waitFor()
+            exitCode == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+}
 
 /**
  * Check if ufbt (micro Flipper Build Tool) is available.
@@ -333,18 +357,16 @@ tasks.register("checkUfbt") {
     description = "Check if ufbt is installed"
 
     doLast {
-        try {
-            val result = exec {
-                commandLine("ufbt", "--version")
-                isIgnoreExitValue = true
-            }
-            if (result.exitValue != 0) {
-                throw GradleException("ufbt not found. Install with: pip install ufbt")
-            }
-            println("ufbt found")
-        } catch (e: Exception) {
-            throw GradleException("ufbt not available: ${e.message}\nInstall with: pip install ufbt")
+        if (skipFlipperBuild) {
+            println("Flipper build skipped via SKIP_FLIPPER_BUILD environment variable")
+            return@doLast
         }
+        if (!ufbtAvailable) {
+            println("WARNING: ufbt not available. Flipper FAP will not be built.")
+            println("Install with: pip install ufbt")
+            return@doLast
+        }
+        println("ufbt found")
     }
 }
 
@@ -359,6 +381,8 @@ tasks.register("buildFlipperFap") {
 
     inputs.dir(flipperAppDir)
     outputs.file(file("${flipperBuildDir}/${fapOutputName}"))
+
+    onlyIf { ufbtAvailable }
 
     doLast {
         // Create build directory
@@ -401,10 +425,12 @@ tasks.register("cleanFlipperFap") {
     description = "Clean Flipper FAP build artifacts"
 
     doLast {
-        exec {
-            workingDir = flipperAppDir
-            commandLine("ufbt", "clean")
-            isIgnoreExitValue = true
+        if (ufbtAvailable) {
+            exec {
+                workingDir = flipperAppDir
+                commandLine("ufbt", "clean")
+                isIgnoreExitValue = true
+            }
         }
         delete(flipperBuildDir)
         println("Flipper build artifacts cleaned")
@@ -422,6 +448,8 @@ tasks.register("bundleFlipperFap") {
 
     val assetsFlipperDir = file("src/main/assets/flipper")
     val targetFap = file("${assetsFlipperDir}/${fapOutputName}")
+
+    onlyIf { ufbtAvailable }
 
     inputs.file(file("${flipperBuildDir}/${fapOutputName}"))
     outputs.file(targetFap)
@@ -459,6 +487,8 @@ tasks.register("installFlipperFap") {
     description = "Install FAP to connected Flipper Zero via USB"
     dependsOn("buildFlipperFap")
 
+    onlyIf { ufbtAvailable }
+
     doLast {
         val fapFile = file("${flipperBuildDir}/${fapOutputName}")
 
@@ -494,6 +524,8 @@ tasks.register("prepareFlipperFap") {
     group = "flipper"
     description = "Build and bundle the FAP for distribution"
     dependsOn("bundleFlipperFap")
+
+    onlyIf { ufbtAvailable }
 
     doLast {
         println("")
