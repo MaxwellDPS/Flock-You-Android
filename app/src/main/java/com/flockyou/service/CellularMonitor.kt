@@ -2417,7 +2417,7 @@ class CellularMonitor(
             macAddress = null,
             ssid = null,
             rssi = anomaly.signalStrength,
-            signalStrength = rssiToSignalStrength(anomaly.signalStrength),
+            signalStrength = cellularDbmToSignalStrength(anomaly.signalStrength),
             latitude = anomaly.latitude,
             longitude = anomaly.longitude,
             threatLevel = anomaly.severity,

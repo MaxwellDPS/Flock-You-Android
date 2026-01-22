@@ -195,8 +195,25 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Determine signing method
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "method=keystore" >> $GITHUB_OUTPUT
+            echo "Using configured keystore for signing"
+          elif [ -n "$STEP_CA_URL" ]; then
+            echo "method=step-ca" >> $GITHUB_OUTPUT
+            echo "Using Step CA for signing"
+          else
+            echo "method=ephemeral" >> $GITHUB_OUTPUT
+            echo "Using ephemeral self-signed certificate for signing"
+          fi
+
       - name: Decode Keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: steps.signing.outputs.method == 'keystore'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
@@ -204,9 +221,8 @@ jobs:
           echo "Keystore decoded"
 
       - name: Build Release APK (Signed)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: steps.signing.outputs.method == 'keystore'
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -219,7 +235,7 @@ jobs:
             --stacktrace
 
       - name: Install step CLI
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
+        if: steps.signing.outputs.method != 'keystore'
         run: |
           wget -q https://dl.smallstep.com/cli/docs-cli-install/latest/step-cli_amd64.deb
           sudo dpkg -i step-cli_amd64.deb
@@ -232,7 +248,7 @@ jobs:
       # ===========================================
       - name: Configure Step CA
         id: step-ca-config
-        if: ${{ secrets.KEYSTORE_BASE64 == '' && secrets.STEP_CA_URL != '' }}
+        if: steps.signing.outputs.method == 'step-ca'
         env:
           STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
           STEP_CA_ROOT_CRT: ${{ secrets.STEP_CA_ROOT_CRT }}
@@ -256,7 +272,7 @@ jobs:
 
       - name: Request Certificate from Step CA (JWK Auth)
         id: step-ca-cert
-        if: ${{ secrets.KEYSTORE_BASE64 == '' && secrets.STEP_CA_URL != '' }}
+        if: steps.signing.outputs.method == 'step-ca'
         env:
           STEP_CA_URL: ${{ secrets.STEP_CA_URL }}
           STEP_CA_JWK_PROVISIONER: ${{ secrets.STEP_CA_JWK_PROVISIONER }}
@@ -321,14 +337,11 @@ jobs:
           echo "Certificate fingerprint:"
           step certificate fingerprint ca-cert.pem
 
-          # Store signing type for summary
-          echo "signing_type=ca" >> $GITHUB_OUTPUT
-
           # Cleanup sensitive files
           rm -f /tmp/jwk-key.json ca-cert.pem ca-cert-key.pem ca-cert-chain.pem ca-root.pem ca-cert-pub.pem /tmp/step-ca-root.crt
 
       - name: Build Release APK (CA Signed)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' && secrets.STEP_CA_URL != '' }}
+        if: steps.signing.outputs.method == 'step-ca'
         run: |
           echo "Building with CA-signed certificate from Step CA"
           ./gradlew assemble${{ matrix.flavor }}Release \
@@ -343,7 +356,7 @@ jobs:
       # Used when no keystore or CA is configured
       # ===========================================
       - name: Generate Ephemeral Self-Signed Certificate
-        if: ${{ secrets.KEYSTORE_BASE64 == '' && secrets.STEP_CA_URL == '' }}
+        if: steps.signing.outputs.method == 'ephemeral'
         run: |
           echo "Generating ephemeral self-signed certificate with step CLI..."
 
@@ -381,7 +394,7 @@ jobs:
           rm -f ephemeral-cert.pem ephemeral-key.pem
 
       - name: Build Release APK (Ephemeral Signed)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' && secrets.STEP_CA_URL == '' }}
+        if: steps.signing.outputs.method == 'ephemeral'
         run: |
           echo "No keystore or CA configured, building with ephemeral self-signed certificate"
           ./gradlew assemble${{ matrix.flavor }}Release \

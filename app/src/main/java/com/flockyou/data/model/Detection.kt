@@ -291,7 +291,8 @@ enum class DetectionSource(val displayName: String) {
 }
 
 /**
- * Converts RSSI value to SignalStrength
+ * Converts RSSI value to SignalStrength for WiFi/BLE
+ * WiFi/BLE typically ranges from -30 dBm (excellent) to -90 dBm (very weak)
  */
 fun rssiToSignalStrength(rssi: Int): SignalStrength = when {
     rssi > -50 -> SignalStrength.EXCELLENT
@@ -299,6 +300,23 @@ fun rssiToSignalStrength(rssi: Int): SignalStrength = when {
     rssi > -70 -> SignalStrength.MEDIUM
     rssi > -80 -> SignalStrength.WEAK
     else -> SignalStrength.VERY_WEAK
+}
+
+/**
+ * Converts cellular dBm to SignalStrength
+ * Cellular signals are typically weaker than WiFi/BLE:
+ * - LTE: -50 dBm (excellent) to -120 dBm (no signal)
+ * - 5G NR: -80 dBm (excellent) to -120 dBm (no signal)
+ * - GSM/WCDMA: -70 dBm (excellent) to -110 dBm (no signal)
+ *
+ * These thresholds are calibrated for typical 4G/LTE signals.
+ */
+fun cellularDbmToSignalStrength(dbm: Int): SignalStrength = when {
+    dbm > -70 -> SignalStrength.EXCELLENT   // Very strong cellular signal
+    dbm > -85 -> SignalStrength.GOOD        // Good 4G/LTE coverage
+    dbm > -100 -> SignalStrength.MEDIUM     // Moderate signal, still usable
+    dbm > -110 -> SignalStrength.WEAK       // Weak signal, may drop calls
+    else -> SignalStrength.VERY_WEAK        // Very weak or no signal
 }
 
 /**
