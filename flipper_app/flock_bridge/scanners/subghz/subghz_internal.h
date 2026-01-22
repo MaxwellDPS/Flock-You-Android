@@ -142,12 +142,6 @@ void subghz_decoder_receiver_callback(
 void subghz_decoder_capture_callback(bool level, uint32_t duration, void* context);
 
 /**
- * Check if decoder is actively processing a signal.
- * Returns true if decode is in progress or within cooldown period.
- */
-bool subghz_decoder_is_active(SubGhzScanner* scanner);
-
-/**
  * Mark decode as complete (called after successful decode callback).
  */
 void subghz_decoder_mark_complete(SubGhzScanner* scanner);

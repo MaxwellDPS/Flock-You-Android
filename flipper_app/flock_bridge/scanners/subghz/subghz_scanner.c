@@ -136,15 +136,10 @@ SubGhzScanner* subghz_scanner_alloc(void) {
     // Load settings with error handling
     scanner->setting = subghz_setting_alloc();
     if (scanner->setting) {
-        // Try to load user settings, fall back gracefully if not found
-        if (subghz_setting_load(scanner->setting, EXT_PATH("subghz/assets/setting_user"))) {
-            scanner->settings_loaded = true;
-            FURI_LOG_I(TAG, "User settings loaded from SD card");
-        } else {
-            FURI_LOG_W(TAG, "Failed to load user settings - using defaults (this is OK)");
-            // Settings object is still valid with defaults
-            scanner->settings_loaded = false;
-        }
+        // Load user settings (subghz_setting_load returns void, so we assume success)
+        subghz_setting_load(scanner->setting, EXT_PATH("subghz/assets/setting_user"));
+        scanner->settings_loaded = true;
+        FURI_LOG_I(TAG, "User settings loaded from SD card");
     } else {
         FURI_LOG_W(TAG, "Failed to allocate settings - using built-in defaults");
     }
@@ -428,7 +423,7 @@ void subghz_scanner_reset_decoder(SubGhzScanner* scanner) {
 // ============================================================================
 
 bool subghz_scanner_set_preset(SubGhzScanner* scanner, SubGhzPresetType preset) {
-    if (!scanner || preset >= SubGhzPresetCount) return false;
+    if (!scanner || preset >= SubGhzPresetTypeCount) return false;
 
     // Don't switch if decode is in progress
     if (scanner->running && subghz_decoder_is_active(scanner)) {
@@ -467,7 +462,7 @@ void subghz_scanner_cycle_preset(SubGhzScanner* scanner) {
     if (!scanner) return;
 
     // Cycle to next preset
-    SubGhzPresetType next = (scanner->current_preset + 1) % SubGhzPresetCount;
+    SubGhzPresetType next = (scanner->current_preset + 1) % SubGhzPresetTypeCount;
     subghz_scanner_set_preset(scanner, next);
 }
 

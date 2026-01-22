@@ -53,9 +53,9 @@ void handle_nrf24_inject_tx(FlockBridgeApp* app, const uint8_t* buffer, size_t l
         return;
     }
 
-    // Check for NRF24 capability
+    // Check for NRF24 inject capability
     uint32_t caps = external_radio_get_capabilities(app->external_radio);
-    if (!(caps & EXT_RADIO_CAP_NRF24)) {
+    if (!(caps & EXT_RADIO_CAP_NRF24_INJECT)) {
         size_t len = flock_protocol_create_error(
             FLOCK_ERR_HARDWARE_FAIL, "NRF24 not supported by radio",
             app->tx_buffer, sizeof(app->tx_buffer));

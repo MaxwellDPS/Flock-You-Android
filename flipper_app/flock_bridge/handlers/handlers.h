@@ -21,6 +21,8 @@
 
 void on_subghz_detection(const FlockSubGhzDetection* detection, void* context);
 void on_ble_detection(const FlockBleDevice* device, void* context);
+void on_wifi_detection(const FlockWifiNetwork* network, void* context);
+void on_wifi_deauth(const uint8_t* bssid, const uint8_t* target, uint8_t reason, uint32_t count, void* context);
 void on_ir_detection(const FlockIrDetection* detection, void* context);
 void on_nfc_detection(const FlockNfcDetection* detection, void* context);
 

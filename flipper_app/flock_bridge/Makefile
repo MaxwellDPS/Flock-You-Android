@@ -174,12 +174,15 @@ info:
 	@echo "  make dist      - Create distribution package"
 	@echo ""
 	@echo "Test commands:"
-	@echo "  make test      - Run unit tests (no Flipper needed)"
-	@echo "  make test-e2e  - Run e2e tests (Flipper required)"
-	@echo "  make test-all  - Run all tests"
-	@echo "  make test-cdc  - Test USB CDC communication"
+	@echo "  make test          - Run unit tests (no Flipper needed)"
+	@echo "  make test-e2e      - Run e2e tests (Flipper required)"
+	@echo "  make test-all      - Run all tests"
+	@echo "  make test-cdc      - Test USB CDC communication"
+	@echo "  make test-subghz-ble - Test SubGHz and BLE scanners"
+	@echo "  make test-subghz   - Test SubGHz scanner only"
+	@echo "  make test-ble      - Test BLE scanner only"
 	@echo "  make test-coverage - Run tests with coverage"
-	@echo "  make test-deps - Install test dependencies"
+	@echo "  make test-deps     - Install test dependencies"
 
 # =============================================================================
 # Testing
@@ -236,6 +239,24 @@ test-protocol:
 test-cdc:
 	@echo "Testing USB CDC communication..."
 	cd $(TEST_DIR) && python3 test_dual_cdc.py
+
+# Test SubGHz and BLE scanners (requires Flipper with FAP running)
+.PHONY: test-subghz-ble
+test-subghz-ble:
+	@echo "Testing SubGHz and BLE scanners..."
+	cd $(TEST_DIR) && $(PYTEST) e2e/test_subghz_ble.py $(PYTEST_OPTS) --flipper-required
+
+# Test SubGHz scanner only (requires Flipper with FAP running)
+.PHONY: test-subghz
+test-subghz:
+	@echo "Testing SubGHz scanner..."
+	cd $(TEST_DIR) && $(PYTEST) e2e/test_subghz_ble.py::TestSubGhzScanner $(PYTEST_OPTS) --flipper-required
+
+# Test BLE scanner only (requires Flipper with FAP running)
+.PHONY: test-ble
+test-ble:
+	@echo "Testing BLE scanner..."
+	cd $(TEST_DIR) && $(PYTEST) e2e/test_subghz_ble.py::TestBleScanner $(PYTEST_OPTS) --flipper-required
 
 # Lint test code
 .PHONY: test-lint

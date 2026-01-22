@@ -64,7 +64,7 @@ typedef enum {
     SubGhzPresetOok270,       // OOK, 270kHz bandwidth - narrowband
     SubGhzPreset2FSKDev238,   // 2-FSK, 2.38kHz deviation - sensors
     SubGhzPreset2FSKDev476,   // 2-FSK, 4.76kHz deviation - keyfobs
-    SubGhzPresetCount
+    SubGhzPresetTypeCount
 } SubGhzPresetType;
 
 // ============================================================================

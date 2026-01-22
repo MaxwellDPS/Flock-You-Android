@@ -62,15 +62,11 @@ void handle_ir_strobe_tx(FlockBridgeApp* app, const uint8_t* buffer, size_t leng
 
     // Generate strobe pattern
     for (uint32_t cycle = 0; cycle < total_cycles; cycle++) {
-        // Turn on IR LED with carrier
-        furi_hal_infrared_async_tx_set_signal(
-            InfraredTxSetSignalSilence);  // Prepare TX
-
         // Note: For a true strobe, we want visible/near-IR light
         // Flipper's IR LED is at 940nm (invisible), but this tests the concept
         // For visible strobe testing, an external LED array would be needed
 
-        // Simple approach: toggle carrier for strobe effect
+        // Toggle carrier for strobe effect
         furi_hal_infrared_async_tx_start(IR_CARRIER_FREQ, IR_DUTY_CYCLE);
         furi_delay_ms(on_time_ms);
         furi_hal_infrared_async_tx_stop();

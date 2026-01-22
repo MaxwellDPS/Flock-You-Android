@@ -50,11 +50,11 @@ static void flock_bridge_status_refresh(FlockBridgeApp* app) {
     uint32_t uptime_hr = uptime_min / 60;
     const char* hw_status = app->external_radio_connected ? "Ext:OK" : "Ext:--";
     if (uptime_hr > 0) {
-        snprintf(buf, sizeof(buf), "Up:%luh%lum  %s", uptime_hr, uptime_min % 60, hw_status);
+        snprintf(buf, sizeof(buf), "Up:%luh%lum  %s", (unsigned long)uptime_hr, (unsigned long)(uptime_min % 60), hw_status);
     } else if (uptime_min > 0) {
-        snprintf(buf, sizeof(buf), "Up:%lum%lus  %s", uptime_min, uptime_sec % 60, hw_status);
+        snprintf(buf, sizeof(buf), "Up:%lum%lus  %s", (unsigned long)uptime_min, (unsigned long)(uptime_sec % 60), hw_status);
     } else {
-        snprintf(buf, sizeof(buf), "Up:%lus  %s", uptime_sec, hw_status);
+        snprintf(buf, sizeof(buf), "Up:%lus  %s", (unsigned long)uptime_sec, hw_status);
     }
     widget_add_string_element(app->widget_status, 64, 55, AlignCenter, AlignTop, FontSecondary, buf);
 }

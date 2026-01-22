@@ -119,7 +119,7 @@ int32_t scheduler_thread_func(void* context) {
         } else {
             // USB CDC is active - IR will run in time-multiplexed burst mode
             FURI_LOG_I(TAG, "IR scanner will use time-multiplexed mode (USB CDC active)");
-            FURI_LOG_I(TAG, "IR burst scan every %lu ms for %lu ms",
+            FURI_LOG_I(TAG, "IR burst scan every %d ms for %d ms",
                 IR_SCAN_INTERVAL_MS, IR_SCAN_DURATION_MS);
         }
     }

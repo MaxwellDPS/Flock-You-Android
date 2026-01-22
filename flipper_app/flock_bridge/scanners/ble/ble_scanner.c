@@ -422,7 +422,7 @@ void ble_scanner_handle_external_device(
     uint16_t adv_data_len = (data[8] << 8) | data[9];
 
     // Validate advertisement data length
-    if (10 + adv_data_len > len) {
+    if ((size_t)(10 + adv_data_len) > len) {
         FURI_LOG_W(TAG, "External BLE packet truncated: adv_len=%u, available=%zu",
             adv_data_len, len - 10);
         adv_data_len = len - 10;  // Use what we have

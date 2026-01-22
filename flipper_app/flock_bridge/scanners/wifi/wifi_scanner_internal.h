@@ -21,49 +21,8 @@
 #define MAX_PROBES 32
 #define NETWORK_TIMEOUT_MS 30000  // Remove networks not seen in 30 seconds
 
-// ============================================================================
-// External Radio Protocol Commands (ESP32)
-// ============================================================================
-
-// Commands sent to ESP32
-#define ExtRadioCmdWifiScanStart    0x20
-#define ExtRadioCmdWifiScanStop     0x21
-#define ExtRadioCmdWifiSetChannel   0x22
-
-// Responses from ESP32
-#define ExtRadioRespWifiNetwork     0x30
-#define ExtRadioRespWifiProbe       0x31
-#define ExtRadioRespWifiDeauth      0x32
-#define ExtRadioRespWifiScanDone    0x33
-
-// ============================================================================
-// External Radio Protocol Structures
-// ============================================================================
-
-typedef struct {
-    char ssid[33];
-    uint8_t bssid[6];
-    int8_t rssi;
-    uint8_t channel;
-    uint8_t security;
-    uint8_t hidden;
-    uint16_t frame_count;
-} ExtWifiNetwork;
-
-typedef struct {
-    uint8_t sta_mac[6];
-    char ssid[33];
-    int8_t rssi;
-    uint8_t channel;
-} ExtWifiProbe;
-
-typedef struct {
-    uint8_t bssid[6];
-    uint8_t target_mac[6];
-    uint8_t reason;
-    int8_t rssi;
-    uint32_t count;
-} ExtWifiDeauth;
+// Note: External radio protocol commands and structures are defined in
+// ../../helpers/external_radio.h (included via wifi_scanner.h)
 
 // ============================================================================
 // Scanner Structure (Internal)

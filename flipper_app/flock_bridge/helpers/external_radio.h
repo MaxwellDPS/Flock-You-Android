@@ -91,6 +91,12 @@ typedef enum {
     ExtRadioCmdNrf24Tx = 0x44,
     ExtRadioCmdNrf24Config = 0x45,
     ExtRadioCmdNrf24Mousejack = 0x46,
+
+    // Zigbee commands (0x50-0x5F)
+    ExtRadioCmdZigbeeScanStart = 0x50,
+    ExtRadioCmdZigbeeScanStop = 0x51,
+    ExtRadioCmdZigbeeBeacon = 0x52,
+    ExtRadioCmdZigbeeSetChannel = 0x53,
 } ExtRadioCommand;
 
 // Response types (External -> Flipper)
@@ -147,6 +153,7 @@ typedef struct __attribute__((packed)) {
 #define EXT_RADIO_CAP_NRF24_SNIFF    (1 << 8)
 #define EXT_RADIO_CAP_NRF24_INJECT   (1 << 9)
 #define EXT_RADIO_CAP_NRF24_MOUSEJACK (1 << 10)
+#define EXT_RADIO_CAP_ZIGBEE         (1 << 11)
 
 // WiFi network from external radio
 typedef struct __attribute__((packed)) {

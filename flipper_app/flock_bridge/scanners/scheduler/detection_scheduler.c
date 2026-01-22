@@ -468,7 +468,7 @@ void detection_scheduler_set_usb_cdc(
 
     if (usb_cdc) {
         FURI_LOG_I(TAG, "USB CDC set - time-multiplexed IR scanning enabled");
-        FURI_LOG_I(TAG, "IR will use burst mode: %lu ms every %lu ms",
+        FURI_LOG_I(TAG, "IR will use burst mode: %d ms every %d ms",
             IR_SCAN_DURATION_MS, IR_SCAN_INTERVAL_MS);
     } else {
         FURI_LOG_I(TAG, "USB CDC cleared - IR scanning will run continuously");

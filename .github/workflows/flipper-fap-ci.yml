@@ -142,16 +142,12 @@ jobs:
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
   # ===========================================
-  # Build for Multiple SDK Versions (optional)
+  # Build for SDK latest (on pull requests)
   # ===========================================
-  build-matrix:
-    name: Build (SDK ${{ matrix.sdk }})
+  build-sdk-latest:
+    name: Build (SDK latest)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        sdk: ['latest', 'release']
 
     steps:
       - name: Checkout repository
@@ -167,10 +163,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install ufbt
 
-      - name: Update ufbt SDK (${{ matrix.sdk }})
+      - name: Update ufbt SDK (latest)
         run: |
           cd flipper_app/flock_bridge
-          ufbt update --channel=${{ matrix.sdk }}
+          ufbt update --channel=latest
 
       - name: Build FAP
         run: |
@@ -180,6 +176,45 @@ jobs:
       - name: Upload FAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flock_bridge-${{ matrix.sdk }}-${{ github.sha }}
+          name: flock_bridge-latest-${{ github.sha }}
+          path: flipper_app/flock_bridge/dist/flock_bridge.fap
+          retention-days: 7
+
+  # ===========================================
+  # Build for SDK release (on pull requests)
+  # ===========================================
+  build-sdk-release:
+    name: Build (SDK release)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ufbt
+        run: |
+          python -m pip install --upgrade pip
+          pip install ufbt
+
+      - name: Update ufbt SDK (release)
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt update --channel=release
+
+      - name: Build FAP
+        run: |
+          cd flipper_app/flock_bridge
+          ufbt
+
+      - name: Upload FAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flock_bridge-release-${{ github.sha }}
           path: flipper_app/flock_bridge/dist/flock_bridge.fap
           retention-days: 7
