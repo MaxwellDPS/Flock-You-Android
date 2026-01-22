@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -495,7 +496,7 @@ fun PermissionScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "Flock You needs the following permissions to detect surveillance devices:",
+            text = stringResource(R.string.permission_intro),
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -612,7 +613,7 @@ fun BatteryOptimizationScreen(
 
         if (isOptimizationDisabled) {
             Text(
-                text = "Flock You can now run reliably in the background without being killed by Android's battery management.",
+                text = stringResource(R.string.battery_optimization_success),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -630,8 +631,7 @@ fun BatteryOptimizationScreen(
             }
         } else {
             Text(
-                text = "For reliable background scanning, Flock You needs to be exempt from battery optimization. " +
-                        "This prevents Android from killing the scanning service when the app is in the background.",
+                text = stringResource(R.string.battery_optimization_request),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

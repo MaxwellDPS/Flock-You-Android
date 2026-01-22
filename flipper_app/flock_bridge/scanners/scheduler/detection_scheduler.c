@@ -218,7 +218,7 @@ bool detection_scheduler_start(DetectionScheduler* scheduler) {
     scheduler->subghz_frequency_index = 0;
 
     scheduler->scheduler_thread = furi_thread_alloc_ex(
-        "DetectionScheduler", 4096, scheduler_thread_func, scheduler);
+        "DetectionScheduler", 2048, scheduler_thread_func, scheduler);  // Reduced from 4096
     furi_thread_start(scheduler->scheduler_thread);
 
     furi_mutex_release(scheduler->mutex);

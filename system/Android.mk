@@ -8,6 +8,19 @@
 #   2. Build the APK: ./gradlew assembleOemRelease (or assembleSystemRelease)
 #   3. Copy the APK to this directory as FlockYou.apk
 #   4. Add "FlockYou" to PRODUCT_PACKAGES in your device.mk
+#
+# OEM Package Name Configuration:
+# ================================
+# If using a custom OEM package name (set via OEM_PACKAGE_NAME in gradle.properties),
+# you must regenerate the permission XML files:
+#   ./gradlew generateOemSystemFiles
+#
+# This generates the correct XML files in build/generated/oem/ with your custom
+# package name. Copy those files to this directory to replace the default ones.
+#
+# Alternatively, you can manually update the package attribute in:
+#   - privapp-permissions-flockyou.xml
+#   - default-permissions-flockyou.xml
 
 LOCAL_PATH := $(call my-dir)
 

@@ -66,6 +66,7 @@ struct SubGhzScanner {
 
     // State
     bool running;
+    bool device_begun;  // Track if subghz_devices_begin() was called
     uint32_t current_frequency;
     uint32_t detection_count;
 

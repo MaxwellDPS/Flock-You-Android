@@ -11,6 +11,19 @@
 //
 // For platform-signed builds (OEM mode), use certificate: "platform"
 // For pre-signed builds (System mode), use certificate: "PRESIGNED"
+//
+// OEM Package Name Configuration:
+// ================================
+// If using a custom OEM package name (set via OEM_PACKAGE_NAME in gradle.properties),
+// you must regenerate the permission XML files:
+//   ./gradlew generateOemSystemFiles
+//
+// This generates the correct XML files in build/generated/oem/ with your custom
+// package name. Copy those files to this directory to replace the default ones.
+//
+// Alternatively, you can manually update the package attribute in:
+//   - privapp-permissions-flockyou.xml
+//   - default-permissions-flockyou.xml
 
 android_app_import {
     name: "FlockYou",

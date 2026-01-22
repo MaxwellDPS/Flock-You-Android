@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.flockyou.R
 import com.flockyou.data.model.Detection
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.security.SecureKeyManager
@@ -231,7 +232,7 @@ class ExportDetectionsUseCase @Inject constructor(
         sb.appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
         sb.appendLine("""<kml xmlns="http://www.opengis.net/kml/2.2">""")
         sb.appendLine("""  <Document>""")
-        sb.appendLine("""    <name>Flock You Detections</name>""")
+        sb.appendLine("""    <name>${context.getString(R.string.kml_export_name)}</name>""")
         sb.appendLine("""    <description>Exported surveillance device detections</description>""")
 
         // Define styles for different threat levels

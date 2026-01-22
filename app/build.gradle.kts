@@ -6,6 +6,29 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// OEM configurable application ID
+// OEM partners can set OEM_PACKAGE_NAME in gradle.properties to use their own package name
+val oemPackageName: String = project.findProperty("OEM_PACKAGE_NAME")?.toString() ?: "com.flockyou"
+val defaultPackageName = "com.flockyou"
+
+// ================================================================
+// OEM Feature Flags Configuration
+// ================================================================
+// Read feature flags from gradle.properties (can be overridden via command line)
+// Example: ./gradlew assembleOemRelease -POEM_FEATURE_FLIPPER_ENABLED=false
+
+fun getOemFeatureFlag(name: String, defaultValue: Boolean = true): Boolean {
+    return project.findProperty(name)?.toString()?.toBoolean() ?: defaultValue
+}
+
+val oemFeatureFlipperEnabled = getOemFeatureFlag("OEM_FEATURE_FLIPPER_ENABLED")
+val oemFeatureUltrasonicEnabled = getOemFeatureFlag("OEM_FEATURE_ULTRASONIC_ENABLED")
+val oemFeatureAndroidAutoEnabled = getOemFeatureFlag("OEM_FEATURE_ANDROID_AUTO_ENABLED")
+val oemFeatureNukeEnabled = getOemFeatureFlag("OEM_FEATURE_NUKE_ENABLED")
+val oemFeatureAiEnabled = getOemFeatureFlag("OEM_FEATURE_AI_ENABLED")
+val oemFeatureTorEnabled = getOemFeatureFlag("OEM_FEATURE_TOR_ENABLED")
+val oemFeatureMapEnabled = getOemFeatureFlag("OEM_FEATURE_MAP_ENABLED")
+
 android {
     namespace = "com.flockyou"
     compileSdk = 34
@@ -26,6 +49,50 @@ android {
         buildConfigField("boolean", "IS_SYSTEM_BUILD", "false")
         buildConfigField("boolean", "IS_OEM_BUILD", "false")
         buildConfigField("String", "BUILD_MODE", "\"sideload\"")
+
+        // ================================================================
+        // Network URL Configuration (OEM-overridable)
+        // ================================================================
+        // These URLs can be overridden via gradle.properties for OEM customization.
+        // Usage: ./gradlew assembleOemRelease -PURL_GITHUB_REPO="https://custom.repo.com"
+
+        // External Service URLs
+        buildConfigField("String", "URL_GITHUB_REPO",
+            "\"${project.findProperty("URL_GITHUB_REPO") ?: "https://github.com/MaxwellDPS/Flock-You-Android"}\"")
+
+        // AI Model Download URLs (Hugging Face)
+        buildConfigField("String", "URL_AI_MODEL_GEMMA3_1B",
+            "\"${project.findProperty("URL_AI_MODEL_GEMMA3_1B") ?: "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task"}\"")
+        buildConfigField("String", "URL_AI_MODEL_GEMMA_2B_CPU",
+            "\"${project.findProperty("URL_AI_MODEL_GEMMA_2B_CPU") ?: "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma-1.1-2b-it-cpu-int4.bin"}\"")
+        buildConfigField("String", "URL_AI_MODEL_GEMMA_2B_GPU",
+            "\"${project.findProperty("URL_AI_MODEL_GEMMA_2B_GPU") ?: "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma2-2b-it-cpu-int8.task"}\"")
+
+        // Map Tile Server URLs (OpenStreetMap)
+        buildConfigField("String", "URL_MAP_TILE_A",
+            "\"${project.findProperty("URL_MAP_TILE_A") ?: "https://a.tile.openstreetmap.org/"}\"")
+        buildConfigField("String", "URL_MAP_TILE_B",
+            "\"${project.findProperty("URL_MAP_TILE_B") ?: "https://b.tile.openstreetmap.org/"}\"")
+        buildConfigField("String", "URL_MAP_TILE_C",
+            "\"${project.findProperty("URL_MAP_TILE_C") ?: "https://c.tile.openstreetmap.org/"}\"")
+
+        // Network Check URLs
+        buildConfigField("String", "URL_TOR_CHECK",
+            "\"${project.findProperty("URL_TOR_CHECK") ?: "https://check.torproject.org/api/ip"}\"")
+        buildConfigField("String", "URL_IP_LOOKUP",
+            "\"${project.findProperty("URL_IP_LOOKUP") ?: "http://ip-api.com/json"}\"")
+
+        // DNS Check URLs (for network RTT measurement)
+        buildConfigField("String", "URL_DNS_CHECK_CLOUDFLARE",
+            "\"${project.findProperty("URL_DNS_CHECK_CLOUDFLARE") ?: "https://1.1.1.1"}\"")
+        buildConfigField("String", "URL_DNS_CHECK_GOOGLE",
+            "\"${project.findProperty("URL_DNS_CHECK_GOOGLE") ?: "https://dns.google"}\"")
+        buildConfigField("String", "URL_DNS_CHECK_OPENDNS",
+            "\"${project.findProperty("URL_DNS_CHECK_OPENDNS") ?: "https://208.67.222.222"}\"")
+
+        // Data Source URLs
+        buildConfigField("String", "URL_OUI_DATABASE",
+            "\"${project.findProperty("URL_OUI_DATABASE") ?: "https://standards-oui.ieee.org/oui/oui.csv"}\"")
     }
 
     // Product flavors for different installation modes
@@ -42,6 +109,15 @@ android {
             buildConfigField("boolean", "IS_OEM_BUILD", "false")
             buildConfigField("String", "BUILD_MODE", "\"sideload\"")
 
+            // Sideload builds have all features enabled
+            buildConfigField("boolean", "FEATURE_FLIPPER_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_ULTRASONIC_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_ANDROID_AUTO_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_NUKE_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_AI_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_TOR_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_MAP_ENABLED", "true")
+
             // Standard manifest - no special OEM configurations
             manifestPlaceholders["appLabel"] = "@string/app_name"
         }
@@ -56,19 +132,43 @@ android {
             buildConfigField("boolean", "IS_OEM_BUILD", "false")
             buildConfigField("String", "BUILD_MODE", "\"system\"")
 
+            // System builds have all features enabled
+            buildConfigField("boolean", "FEATURE_FLIPPER_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_ULTRASONIC_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_ANDROID_AUTO_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_NUKE_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_AI_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_TOR_ENABLED", "true")
+            buildConfigField("boolean", "FEATURE_MAP_ENABLED", "true")
+
             // System app label suffix for identification
             manifestPlaceholders["appLabel"] = "@string/app_name_system"
         }
 
         // OEM embedded version (signed with platform certificate)
+        // OEM partners can customize the application ID via OEM_PACKAGE_NAME in gradle.properties
         create("oem") {
             dimension = "installMode"
+            // Use OEM-specified package name if provided, otherwise default to com.flockyou
+            applicationId = oemPackageName
             applicationIdSuffix = ""
             versionNameSuffix = "-oem"
 
             buildConfigField("boolean", "IS_SYSTEM_BUILD", "true")
             buildConfigField("boolean", "IS_OEM_BUILD", "true")
             buildConfigField("String", "BUILD_MODE", "\"oem\"")
+            // Expose the configured package name for runtime checks
+            buildConfigField("String", "OEM_PACKAGE_NAME", "\"$oemPackageName\"")
+
+            // OEM builds use configurable feature flags (read from gradle.properties)
+            // OEMs can override these in their local gradle.properties or via command line
+            buildConfigField("boolean", "FEATURE_FLIPPER_ENABLED", "$oemFeatureFlipperEnabled")
+            buildConfigField("boolean", "FEATURE_ULTRASONIC_ENABLED", "$oemFeatureUltrasonicEnabled")
+            buildConfigField("boolean", "FEATURE_ANDROID_AUTO_ENABLED", "$oemFeatureAndroidAutoEnabled")
+            buildConfigField("boolean", "FEATURE_NUKE_ENABLED", "$oemFeatureNukeEnabled")
+            buildConfigField("boolean", "FEATURE_AI_ENABLED", "$oemFeatureAiEnabled")
+            buildConfigField("boolean", "FEATURE_TOR_ENABLED", "$oemFeatureTorEnabled")
+            buildConfigField("boolean", "FEATURE_MAP_ENABLED", "$oemFeatureMapEnabled")
 
             // OEM app label suffix
             manifestPlaceholders["appLabel"] = "@string/app_name_oem"
@@ -544,4 +644,256 @@ tasks.register("prepareFlipperFap") {
 // Automatically bundle FAP for release builds
 tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }.configureEach {
     dependsOn("bundleFlipperFap")
+}
+
+// ================================================================
+// OEM System Integration Tasks
+// ================================================================
+
+/**
+ * Generate privapp-permissions XML file dynamically based on the configured application ID.
+ * This is required for OEM partners who use custom package names.
+ *
+ * Run manually: ./gradlew generatePrivappPermissions
+ * Runs automatically before OEM release builds.
+ *
+ * Output: build/generated/oem/privapp-permissions-<package>.xml
+ */
+tasks.register("generatePrivappPermissions") {
+    group = "oem"
+    description = "Generate privapp-permissions XML with the configured OEM package name"
+
+    val systemDir = file("${rootDir}/system")
+    val outputFile = file("${layout.buildDirectory.get()}/generated/oem/privapp-permissions-${oemPackageName.replace(".", "-")}.xml")
+
+    inputs.property("packageName", oemPackageName)
+    outputs.file(outputFile)
+
+    doLast {
+        // Create output directory
+        outputFile.parentFile.mkdirs()
+
+        val xmlContent = """<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Privileged permission whitelist for ${if (oemPackageName != defaultPackageName) "OEM partner build" else "Flock You"}.
+    Generated automatically by: ./gradlew generatePrivappPermissions
+
+    Package: $oemPackageName
+
+    This file should be placed in:
+    /system/etc/permissions/privapp-permissions-flockyou.xml
+
+    or for newer Android versions:
+    /system_ext/etc/permissions/privapp-permissions-flockyou.xml
+
+    The APK should be installed to:
+    /system/priv-app/FlockYou/FlockYou.apk
+
+    or for newer Android versions:
+    /system_ext/priv-app/FlockYou/FlockYou.apk
+-->
+<permissions>
+    <privapp-permissions package="$oemPackageName">
+        <!-- Bluetooth privileged: Bypass BLE duty cycling for continuous scanning -->
+        <permission name="android.permission.BLUETOOTH_PRIVILEGED"/>
+
+        <!-- MAC address access: Get real hardware addresses instead of randomized ones -->
+        <permission name="android.permission.PEERS_MAC_ADDRESS"/>
+        <permission name="android.permission.LOCAL_MAC_ADDRESS"/>
+
+        <!-- Privileged phone state: Access IMEI/IMSI for IMSI catcher detection -->
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+
+        <!-- Internal connectivity: Control WiFi scan throttling -->
+        <permission name="android.permission.CONNECTIVITY_INTERNAL"/>
+        <permission name="android.permission.NETWORK_SETTINGS"/>
+
+        <!-- Process management: Keep service running persistently -->
+        <permission name="android.permission.PERSISTENT_ACTIVITY"/>
+        <permission name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"/>
+
+        <!-- Multi-user support for shared devices -->
+        <permission name="android.permission.INTERACT_ACROSS_USERS"/>
+        <permission name="android.permission.MANAGE_USERS"/>
+
+        <!-- Usage stats for battery optimization -->
+        <permission name="android.permission.PACKAGE_USAGE_STATS"/>
+    </privapp-permissions>
+</permissions>
+"""
+        outputFile.writeText(xmlContent)
+
+        println("Generated privapp-permissions XML:")
+        println("  Package: $oemPackageName")
+        println("  Output: ${outputFile.absolutePath}")
+
+        // Also update the source file if using a custom package name
+        if (oemPackageName != defaultPackageName) {
+            println("")
+            println("NOTE: Copy this file to your system integration:")
+            println("  cp ${outputFile.absolutePath} /path/to/aosp/vendor/flockyou/privapp-permissions-flockyou.xml")
+        }
+    }
+}
+
+/**
+ * Generate default-permissions XML file dynamically based on the configured application ID.
+ * This pre-grants runtime permissions on first boot.
+ *
+ * Run manually: ./gradlew generateDefaultPermissions
+ * Runs automatically before OEM release builds.
+ */
+tasks.register("generateDefaultPermissions") {
+    group = "oem"
+    description = "Generate default-permissions XML with the configured OEM package name"
+
+    val outputFile = file("${layout.buildDirectory.get()}/generated/oem/default-permissions-${oemPackageName.replace(".", "-")}.xml")
+
+    inputs.property("packageName", oemPackageName)
+    outputs.file(outputFile)
+
+    doLast {
+        outputFile.parentFile.mkdirs()
+
+        val xmlContent = """<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Default runtime permissions for ${if (oemPackageName != defaultPackageName) "OEM partner build" else "Flock You"} on first boot.
+    Generated automatically by: ./gradlew generateDefaultPermissions
+
+    Package: $oemPackageName
+
+    This file pre-grants runtime permissions so users don't need to
+    manually grant them after installing. This is optional but recommended
+    for OEM/system app deployments.
+
+    Installation path:
+    /system_ext/etc/default-permissions/default-permissions-flockyou.xml
+
+    Note: This requires the ROM to support default permission grants.
+    GrapheneOS and most AOSP-based ROMs support this.
+-->
+<exceptions>
+    <exception package="$oemPackageName">
+        <!-- Location permissions for WiFi/cellular scanning -->
+        <permission name="android.permission.ACCESS_FINE_LOCATION" fixed="false"/>
+        <permission name="android.permission.ACCESS_COARSE_LOCATION" fixed="false"/>
+        <permission name="android.permission.ACCESS_BACKGROUND_LOCATION" fixed="false"/>
+
+        <!-- Bluetooth permissions for BLE scanning -->
+        <permission name="android.permission.BLUETOOTH_SCAN" fixed="false"/>
+        <permission name="android.permission.BLUETOOTH_CONNECT" fixed="false"/>
+
+        <!-- Phone state for cellular monitoring -->
+        <permission name="android.permission.READ_PHONE_STATE" fixed="false"/>
+
+        <!-- Notifications -->
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false"/>
+
+        <!-- Nearby devices (Android 12+) -->
+        <permission name="android.permission.NEARBY_WIFI_DEVICES" fixed="false"/>
+    </exception>
+</exceptions>
+"""
+        outputFile.writeText(xmlContent)
+
+        println("Generated default-permissions XML:")
+        println("  Package: $oemPackageName")
+        println("  Output: ${outputFile.absolutePath}")
+    }
+}
+
+/**
+ * Generate all OEM system integration files.
+ * This creates the necessary XML files and also generates a setup script.
+ *
+ * Run: ./gradlew generateOemSystemFiles
+ */
+tasks.register("generateOemSystemFiles") {
+    group = "oem"
+    description = "Generate all system integration files for OEM deployment"
+    dependsOn("generatePrivappPermissions", "generateDefaultPermissions")
+
+    val outputDir = file("${layout.buildDirectory.get()}/generated/oem")
+    val scriptFile = file("${outputDir}/setup-oem-integration.sh")
+
+    doLast {
+        // Generate a setup script for OEM partners
+        val scriptContent = """#!/bin/bash
+# OEM System Integration Setup Script
+# Generated by: ./gradlew generateOemSystemFiles
+#
+# Package Name: $oemPackageName
+#
+# This script copies the generated files to the appropriate locations
+# for AOSP/ROM integration.
+
+set -e
+
+SCRIPT_DIR="${'$'}(cd "${'$'}(dirname "${'$'}{BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_NAME="$oemPackageName"
+
+echo "=========================================="
+echo "OEM System Integration for: ${'$'}PACKAGE_NAME"
+echo "=========================================="
+echo ""
+
+# Check if AOSP root is provided
+if [ -z "${'$'}1" ]; then
+    echo "Usage: ${'$'}0 <aosp-root> [vendor-path]"
+    echo ""
+    echo "Arguments:"
+    echo "  aosp-root    - Path to AOSP source tree"
+    echo "  vendor-path  - Optional: vendor directory name (default: flockyou)"
+    echo ""
+    echo "Example:"
+    echo "  ${'$'}0 /path/to/aosp flockyou"
+    echo "  ${'$'}0 /path/to/grapheneos partner_security"
+    exit 1
+fi
+
+AOSP_ROOT="${'$'}1"
+VENDOR_PATH="${'$'}{2:-flockyou}"
+TARGET_DIR="${'$'}AOSP_ROOT/vendor/${'$'}VENDOR_PATH"
+
+echo "AOSP Root: ${'$'}AOSP_ROOT"
+echo "Target: ${'$'}TARGET_DIR"
+echo ""
+
+# Create target directory
+mkdir -p "${'$'}TARGET_DIR"
+
+# Copy XML files
+echo "Copying permission files..."
+cp "${'$'}SCRIPT_DIR/privapp-permissions-${oemPackageName.replace(".", "-")}.xml" "${'$'}TARGET_DIR/privapp-permissions-flockyou.xml"
+cp "${'$'}SCRIPT_DIR/default-permissions-${oemPackageName.replace(".", "-")}.xml" "${'$'}TARGET_DIR/default-permissions-flockyou.xml"
+
+echo ""
+echo "Files copied successfully!"
+echo ""
+echo "Next steps:"
+echo "1. Copy your signed APK to: ${'$'}TARGET_DIR/FlockYou.apk"
+echo "2. Update Android.bp/Android.mk in ${'$'}TARGET_DIR if needed"
+echo "3. Add 'FlockYou' to PRODUCT_PACKAGES in your device.mk"
+echo "4. Build your ROM"
+"""
+        scriptFile.writeText(scriptContent)
+        scriptFile.setExecutable(true)
+
+        println("")
+        println("=== OEM System Files Generated ===")
+        println("Output directory: ${outputDir.absolutePath}")
+        println("")
+        println("Files:")
+        println("  - privapp-permissions-${oemPackageName.replace(".", "-")}.xml")
+        println("  - default-permissions-${oemPackageName.replace(".", "-")}.xml")
+        println("  - setup-oem-integration.sh")
+        println("")
+        println("Run the setup script:")
+        println("  ${scriptFile.absolutePath} /path/to/aosp [vendor-name]")
+    }
+}
+
+// Hook OEM file generation into OEM release builds
+tasks.matching { it.name == "assembleOemRelease" }.configureEach {
+    dependsOn("generateOemSystemFiles")
 }

@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
+import com.flockyou.R
 import com.flockyou.data.BroadcastSettings
 import com.flockyou.data.BroadcastSettingsRepository
 import com.flockyou.data.DetectionSettingsRepository
@@ -189,6 +190,14 @@ class MainViewModel @Inject constructor(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = PrivacySettings()
+        )
+
+    // Detection Settings (patterns, thresholds, presets)
+    val detectionSettings: StateFlow<com.flockyou.data.DetectionSettings> = settingsRepository.settings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = com.flockyou.data.DetectionSettings()
         )
 
     // Flipper UI Settings
@@ -923,7 +932,30 @@ class MainViewModel @Inject constructor(
             settingsRepository.setAdvancedMode(enabled)
         }
     }
-    
+
+    /**
+     * Apply a protection preset, persisting all patterns and thresholds.
+     */
+    fun applyProtectionPreset(preset: com.flockyou.data.ProtectionPreset) {
+        viewModelScope.launch {
+            settingsRepository.applyPreset(preset)
+        }
+    }
+
+    /**
+     * Toggle global detection types (cellular, satellite, BLE, WiFi).
+     */
+    fun setGlobalDetectionEnabled(
+        cellular: Boolean? = null,
+        satellite: Boolean? = null,
+        ble: Boolean? = null,
+        wifi: Boolean? = null
+    ) {
+        viewModelScope.launch {
+            settingsRepository.setGlobalDetectionEnabled(cellular, satellite, ble, wifi)
+        }
+    }
+
     fun getFilteredDetections(): List<Detection> {
         val state = _uiState.value
         return state.detections.filter { detection ->
@@ -1708,7 +1740,7 @@ class MainViewModel @Inject constructor(
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
         val now = System.currentTimeMillis()
 
-        sb.appendLine("=== FLOCK-YOU DETECTION DEBUG EXPORT ===")
+        sb.appendLine("=== ${getApplication<Application>().getString(R.string.debug_export_header)} ===")
         sb.appendLine("Export Time: ${dateFormat.format(java.util.Date(now))}")
         sb.appendLine("App Version: ${getAppVersion()}")
         sb.appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
@@ -2187,7 +2219,7 @@ class MainViewModel @Inject constructor(
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
         val now = System.currentTimeMillis()
 
-        sb.appendLine("=== FLOCK-YOU RF DETECTION DEBUG EXPORT ===")
+        sb.appendLine("=== ${getApplication<Application>().getString(R.string.rf_debug_export_header)} ===")
         sb.appendLine("Export Time: ${dateFormat.format(java.util.Date(now))}")
         sb.appendLine("App Version: ${getAppVersion()}")
         sb.appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")

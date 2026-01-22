@@ -11,8 +11,16 @@
 
     Note: This requires the ROM to support default permission grants.
     GrapheneOS and most AOSP-based ROMs support this.
+
+    OEM PARTNERS: If you have configured a custom package name via OEM_PACKAGE_NAME
+    in gradle.properties, you must regenerate this file:
+        ./gradlew generateOemSystemFiles
+
+    The generated file will be in: app/build/generated/oem/
+    Copy it here to replace this template, or manually update the package attribute below.
 -->
 <exceptions>
+    <!-- PACKAGE_NAME_PLACEHOLDER: Update this to match your OEM_PACKAGE_NAME if customized -->
     <exception package="com.flockyou">
         <!-- Location permissions for WiFi/cellular scanning -->
         <permission name="android.permission.ACCESS_FINE_LOCATION" fixed="false"/>

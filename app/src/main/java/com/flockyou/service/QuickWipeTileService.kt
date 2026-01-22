@@ -8,6 +8,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.flockyou.R
 import com.flockyou.data.PrivacySettingsRepository
 import com.flockyou.data.repository.DetectionRepository
 import com.flockyou.data.repository.EphemeralDetectionRepository
@@ -155,7 +156,7 @@ class QuickWipeTileService : TileService() {
         qsTile?.let { tile ->
             tile.state = Tile.STATE_INACTIVE
             tile.label = "Quick Wipe"
-            tile.contentDescription = "Clear all Flock You detection history"
+            tile.contentDescription = getString(R.string.quick_wipe_content_description)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 tile.subtitle = "Clear history"
             }

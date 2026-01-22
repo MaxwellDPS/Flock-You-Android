@@ -1,101 +1,152 @@
 package com.flockyou.ui.theme
 
 import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.colorResource
 import androidx.core.view.WindowCompat
+import com.flockyou.R
 
-// Custom color palette for surveillance detection theme
-val md_theme_dark_primary = Color(0xFF00E676)          // Neon green for active scanning
-val md_theme_dark_onPrimary = Color(0xFF003915)
-val md_theme_dark_primaryContainer = Color(0xFF005222)
-val md_theme_dark_onPrimaryContainer = Color(0xFF6AFF94)
-val md_theme_dark_secondary = Color(0xFFFFB74D)        // Amber for warnings
-val md_theme_dark_onSecondary = Color(0xFF422C00)
-val md_theme_dark_secondaryContainer = Color(0xFF5E4100)
-val md_theme_dark_onSecondaryContainer = Color(0xFFFFDDB6)
-val md_theme_dark_tertiary = Color(0xFF64B5F6)         // Blue for info
-val md_theme_dark_onTertiary = Color(0xFF003355)
-val md_theme_dark_tertiaryContainer = Color(0xFF004477)
-val md_theme_dark_onTertiaryContainer = Color(0xFFD1E4FF)
-val md_theme_dark_error = Color(0xFFFF5252)            // Red for critical threats
-val md_theme_dark_errorContainer = Color(0xFF93000A)
-val md_theme_dark_onError = Color(0xFF690005)
-val md_theme_dark_onErrorContainer = Color(0xFFFFDAD6)
-val md_theme_dark_background = Color(0xFF0D1117)       // Dark background
-val md_theme_dark_onBackground = Color(0xFFE1E3E1)
-val md_theme_dark_surface = Color(0xFF161B22)          // Dark surface
-val md_theme_dark_onSurface = Color(0xFFE1E3E1)
-val md_theme_dark_surfaceVariant = Color(0xFF1F2937)
-val md_theme_dark_onSurfaceVariant = Color(0xFFC0C8C4)
-val md_theme_dark_outline = Color(0xFF8A938E)
-val md_theme_dark_inverseOnSurface = Color(0xFF191C1A)
-val md_theme_dark_inverseSurface = Color(0xFFE1E3E1)
-val md_theme_dark_inversePrimary = Color(0xFF006D35)
-val md_theme_dark_surfaceTint = Color(0xFF00E676)
+/**
+ * Resource-based color accessors for the surveillance detection theme.
+ * All colors are loaded from colors.xml to allow OEM customization.
+ */
+object AppColors {
+    // Theme colors - accessed via colorResource() in Composable context
+    val Primary: Color @Composable get() = colorResource(R.color.md_theme_dark_primary)
+    val OnPrimary: Color @Composable get() = colorResource(R.color.md_theme_dark_onPrimary)
+    val PrimaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_primaryContainer)
+    val OnPrimaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_onPrimaryContainer)
+    val Secondary: Color @Composable get() = colorResource(R.color.md_theme_dark_secondary)
+    val OnSecondary: Color @Composable get() = colorResource(R.color.md_theme_dark_onSecondary)
+    val SecondaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_secondaryContainer)
+    val OnSecondaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_onSecondaryContainer)
+    val Tertiary: Color @Composable get() = colorResource(R.color.md_theme_dark_tertiary)
+    val OnTertiary: Color @Composable get() = colorResource(R.color.md_theme_dark_onTertiary)
+    val TertiaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_tertiaryContainer)
+    val OnTertiaryContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_onTertiaryContainer)
+    val Error: Color @Composable get() = colorResource(R.color.md_theme_dark_error)
+    val ErrorContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_errorContainer)
+    val OnError: Color @Composable get() = colorResource(R.color.md_theme_dark_onError)
+    val OnErrorContainer: Color @Composable get() = colorResource(R.color.md_theme_dark_onErrorContainer)
+    val Background: Color @Composable get() = colorResource(R.color.md_theme_dark_background)
+    val OnBackground: Color @Composable get() = colorResource(R.color.md_theme_dark_onBackground)
+    val Surface: Color @Composable get() = colorResource(R.color.md_theme_dark_surface)
+    val OnSurface: Color @Composable get() = colorResource(R.color.md_theme_dark_onSurface)
+    val SurfaceVariant: Color @Composable get() = colorResource(R.color.md_theme_dark_surfaceVariant)
+    val OnSurfaceVariant: Color @Composable get() = colorResource(R.color.md_theme_dark_onSurfaceVariant)
+    val Outline: Color @Composable get() = colorResource(R.color.md_theme_dark_outline)
+    val InverseOnSurface: Color @Composable get() = colorResource(R.color.md_theme_dark_inverseOnSurface)
+    val InverseSurface: Color @Composable get() = colorResource(R.color.md_theme_dark_inverseSurface)
+    val InversePrimary: Color @Composable get() = colorResource(R.color.md_theme_dark_inversePrimary)
+    val SurfaceTint: Color @Composable get() = colorResource(R.color.md_theme_dark_surfaceTint)
 
-// Threat level colors
-val ThreatCritical = Color(0xFFFF1744)
-val ThreatHigh = Color(0xFFFF5722)
-val ThreatMedium = Color(0xFFFFB300)
-val ThreatLow = Color(0xFF8BC34A)
-val ThreatInfo = Color(0xFF64B5F6)
+    // Threat level colors
+    val ThreatCritical: Color @Composable get() = colorResource(R.color.threat_critical)
+    val ThreatHigh: Color @Composable get() = colorResource(R.color.threat_high)
+    val ThreatMedium: Color @Composable get() = colorResource(R.color.threat_medium)
+    val ThreatLow: Color @Composable get() = colorResource(R.color.threat_low)
+    val ThreatInfo: Color @Composable get() = colorResource(R.color.threat_info)
 
-// Signal strength colors
-val SignalExcellent = Color(0xFF00E676)
-val SignalGood = Color(0xFF8BC34A)
-val SignalMedium = Color(0xFFFFEB3B)
-val SignalWeak = Color(0xFFFF9800)
-val SignalVeryWeak = Color(0xFFFF5722)
+    // Signal strength colors
+    val SignalExcellent: Color @Composable get() = colorResource(R.color.signal_excellent)
+    val SignalGood: Color @Composable get() = colorResource(R.color.signal_good)
+    val SignalMedium: Color @Composable get() = colorResource(R.color.signal_medium)
+    val SignalWeak: Color @Composable get() = colorResource(R.color.signal_weak)
+    val SignalVeryWeak: Color @Composable get() = colorResource(R.color.signal_very_weak)
 
-// Status colors for subsystems and indicators
-val StatusActive = Color(0xFF4CAF50)
-val StatusError = Color(0xFFF44336)
-val StatusWarning = Color(0xFFFF9800)
-val StatusDisabled = Color(0xFFFFC107)
-val StatusInactive = Color(0xFF9E9E9E)
+    // Status colors for subsystems and indicators
+    val StatusActive: Color @Composable get() = colorResource(R.color.status_active)
+    val StatusError: Color @Composable get() = colorResource(R.color.status_error)
+    val StatusWarning: Color @Composable get() = colorResource(R.color.status_warning)
+    val StatusDisabled: Color @Composable get() = colorResource(R.color.status_disabled)
+    val StatusInactive: Color @Composable get() = colorResource(R.color.status_inactive)
 
-// Network generation colors
-val Network5G = Color(0xFF2196F3)
-val Network4G = Color(0xFF4CAF50)
-val Network3G = Color(0xFFFFC107)
-val Network2G = Color(0xFFF44336)
+    // Network generation colors
+    val Network5G: Color @Composable get() = colorResource(R.color.network_5g)
+    val Network4G: Color @Composable get() = colorResource(R.color.network_4g)
+    val Network3G: Color @Composable get() = colorResource(R.color.network_3g)
+    val Network2G: Color @Composable get() = colorResource(R.color.network_2g)
+}
 
-private val DarkColorScheme = darkColorScheme(
-    primary = md_theme_dark_primary,
-    onPrimary = md_theme_dark_onPrimary,
-    primaryContainer = md_theme_dark_primaryContainer,
-    onPrimaryContainer = md_theme_dark_onPrimaryContainer,
-    secondary = md_theme_dark_secondary,
-    onSecondary = md_theme_dark_onSecondary,
-    secondaryContainer = md_theme_dark_secondaryContainer,
-    onSecondaryContainer = md_theme_dark_onSecondaryContainer,
-    tertiary = md_theme_dark_tertiary,
-    onTertiary = md_theme_dark_onTertiary,
-    tertiaryContainer = md_theme_dark_tertiaryContainer,
-    onTertiaryContainer = md_theme_dark_onTertiaryContainer,
-    error = md_theme_dark_error,
-    errorContainer = md_theme_dark_errorContainer,
-    onError = md_theme_dark_onError,
-    onErrorContainer = md_theme_dark_onErrorContainer,
-    background = md_theme_dark_background,
-    onBackground = md_theme_dark_onBackground,
-    surface = md_theme_dark_surface,
-    onSurface = md_theme_dark_onSurface,
-    surfaceVariant = md_theme_dark_surfaceVariant,
-    onSurfaceVariant = md_theme_dark_onSurfaceVariant,
-    outline = md_theme_dark_outline,
-    inverseOnSurface = md_theme_dark_inverseOnSurface,
-    inverseSurface = md_theme_dark_inverseSurface,
-    inversePrimary = md_theme_dark_inversePrimary,
-    surfaceTint = md_theme_dark_surfaceTint
+// Legacy color aliases for backwards compatibility
+// These are deprecated - use AppColors object instead
+@Deprecated("Use AppColors.ThreatCritical instead", ReplaceWith("AppColors.ThreatCritical"))
+val ThreatCritical: Color @Composable get() = AppColors.ThreatCritical
+@Deprecated("Use AppColors.ThreatHigh instead", ReplaceWith("AppColors.ThreatHigh"))
+val ThreatHigh: Color @Composable get() = AppColors.ThreatHigh
+@Deprecated("Use AppColors.ThreatMedium instead", ReplaceWith("AppColors.ThreatMedium"))
+val ThreatMedium: Color @Composable get() = AppColors.ThreatMedium
+@Deprecated("Use AppColors.ThreatLow instead", ReplaceWith("AppColors.ThreatLow"))
+val ThreatLow: Color @Composable get() = AppColors.ThreatLow
+@Deprecated("Use AppColors.ThreatInfo instead", ReplaceWith("AppColors.ThreatInfo"))
+val ThreatInfo: Color @Composable get() = AppColors.ThreatInfo
+@Deprecated("Use AppColors.SignalExcellent instead", ReplaceWith("AppColors.SignalExcellent"))
+val SignalExcellent: Color @Composable get() = AppColors.SignalExcellent
+@Deprecated("Use AppColors.SignalGood instead", ReplaceWith("AppColors.SignalGood"))
+val SignalGood: Color @Composable get() = AppColors.SignalGood
+@Deprecated("Use AppColors.SignalMedium instead", ReplaceWith("AppColors.SignalMedium"))
+val SignalMedium: Color @Composable get() = AppColors.SignalMedium
+@Deprecated("Use AppColors.SignalWeak instead", ReplaceWith("AppColors.SignalWeak"))
+val SignalWeak: Color @Composable get() = AppColors.SignalWeak
+@Deprecated("Use AppColors.SignalVeryWeak instead", ReplaceWith("AppColors.SignalVeryWeak"))
+val SignalVeryWeak: Color @Composable get() = AppColors.SignalVeryWeak
+@Deprecated("Use AppColors.StatusActive instead", ReplaceWith("AppColors.StatusActive"))
+val StatusActive: Color @Composable get() = AppColors.StatusActive
+@Deprecated("Use AppColors.StatusError instead", ReplaceWith("AppColors.StatusError"))
+val StatusError: Color @Composable get() = AppColors.StatusError
+@Deprecated("Use AppColors.StatusWarning instead", ReplaceWith("AppColors.StatusWarning"))
+val StatusWarning: Color @Composable get() = AppColors.StatusWarning
+@Deprecated("Use AppColors.StatusDisabled instead", ReplaceWith("AppColors.StatusDisabled"))
+val StatusDisabled: Color @Composable get() = AppColors.StatusDisabled
+@Deprecated("Use AppColors.StatusInactive instead", ReplaceWith("AppColors.StatusInactive"))
+val StatusInactive: Color @Composable get() = AppColors.StatusInactive
+@Deprecated("Use AppColors.Network5G instead", ReplaceWith("AppColors.Network5G"))
+val Network5G: Color @Composable get() = AppColors.Network5G
+@Deprecated("Use AppColors.Network4G instead", ReplaceWith("AppColors.Network4G"))
+val Network4G: Color @Composable get() = AppColors.Network4G
+@Deprecated("Use AppColors.Network3G instead", ReplaceWith("AppColors.Network3G"))
+val Network3G: Color @Composable get() = AppColors.Network3G
+@Deprecated("Use AppColors.Network2G instead", ReplaceWith("AppColors.Network2G"))
+val Network2G: Color @Composable get() = AppColors.Network2G
+
+/**
+ * Creates a dark color scheme from resource-based colors.
+ * Must be called within a Composable context.
+ */
+@Composable
+private fun createDarkColorScheme(): ColorScheme = darkColorScheme(
+    primary = colorResource(R.color.md_theme_dark_primary),
+    onPrimary = colorResource(R.color.md_theme_dark_onPrimary),
+    primaryContainer = colorResource(R.color.md_theme_dark_primaryContainer),
+    onPrimaryContainer = colorResource(R.color.md_theme_dark_onPrimaryContainer),
+    secondary = colorResource(R.color.md_theme_dark_secondary),
+    onSecondary = colorResource(R.color.md_theme_dark_onSecondary),
+    secondaryContainer = colorResource(R.color.md_theme_dark_secondaryContainer),
+    onSecondaryContainer = colorResource(R.color.md_theme_dark_onSecondaryContainer),
+    tertiary = colorResource(R.color.md_theme_dark_tertiary),
+    onTertiary = colorResource(R.color.md_theme_dark_onTertiary),
+    tertiaryContainer = colorResource(R.color.md_theme_dark_tertiaryContainer),
+    onTertiaryContainer = colorResource(R.color.md_theme_dark_onTertiaryContainer),
+    error = colorResource(R.color.md_theme_dark_error),
+    errorContainer = colorResource(R.color.md_theme_dark_errorContainer),
+    onError = colorResource(R.color.md_theme_dark_onError),
+    onErrorContainer = colorResource(R.color.md_theme_dark_onErrorContainer),
+    background = colorResource(R.color.md_theme_dark_background),
+    onBackground = colorResource(R.color.md_theme_dark_onBackground),
+    surface = colorResource(R.color.md_theme_dark_surface),
+    onSurface = colorResource(R.color.md_theme_dark_onSurface),
+    surfaceVariant = colorResource(R.color.md_theme_dark_surfaceVariant),
+    onSurfaceVariant = colorResource(R.color.md_theme_dark_onSurfaceVariant),
+    outline = colorResource(R.color.md_theme_dark_outline),
+    inverseOnSurface = colorResource(R.color.md_theme_dark_inverseOnSurface),
+    inverseSurface = colorResource(R.color.md_theme_dark_inverseSurface),
+    inversePrimary = colorResource(R.color.md_theme_dark_inversePrimary),
+    surfaceTint = colorResource(R.color.md_theme_dark_surfaceTint)
 )
 
 @Suppress("UNUSED_PARAMETER")
@@ -107,8 +158,8 @@ fun FlockYouTheme(
 ) {
     // Note: darkTheme and dynamicColor are kept for API compatibility
     // but this app always uses the dark tactical theme
-    val colorScheme = DarkColorScheme
-    
+    val colorScheme = createDarkColorScheme()
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

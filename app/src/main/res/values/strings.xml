@@ -320,6 +320,47 @@
     <!-- App Title -->
     <string name="app_title_flock">FLOCK</string>
     <string name="app_title_you">YOU</string>
+    <string name="app_title_full">Flock You</string>
+    <string name="app_title_full_spaced">FLOCK YOU</string>
+
+    <!-- Brand Strings for UI -->
+    <string name="lock_screen_title">Flock You is Locked</string>
+    <string name="unlock_app_title">Unlock Flock You</string>
+    <string name="permission_intro">Flock You needs the following permissions to detect surveillance devices:</string>
+    <string name="battery_optimization_success">Flock You can now run reliably in the background without being killed by Android\'s battery management.</string>
+    <string name="battery_optimization_request">For reliable background scanning, Flock You needs to be exempt from battery optimization. This prevents Android from killing the scanning service when the app is in the background.</string>
+
+    <!-- Notification Strings -->
+    <string name="notification_scanning_title">Flock You - Scanning</string>
+
+    <!-- Share/Export Strings -->
+    <string name="share_detection_subject">Flock You Detection</string>
+    <string name="share_detection_export_subject">Flock You Detection Export</string>
+    <string name="share_detection_alert_title">Flock You Detection Alert</string>
+    <string name="share_detection_signature">-- Shared from Flock You app</string>
+    <string name="debug_export_subject">Flock-You Debug Export</string>
+    <string name="debug_export_header">FLOCK-YOU DETECTION DEBUG EXPORT</string>
+    <string name="rf_debug_export_header">FLOCK-YOU RF DETECTION DEBUG EXPORT</string>
+    <string name="rf_signal_analyzer_export_header">FLOCK-YOU RF SIGNAL ANALYZER DEBUG EXPORT</string>
+    <string name="kml_export_name">Flock You Detections</string>
+
+    <!-- Quick Wipe -->
+    <string name="quick_wipe_content_description">Clear all Flock You detection history</string>
+
+    <!-- About Section -->
+    <string name="about_app_subtitle">Surveillance detection for the privacy-conscious</string>
+
+    <!-- Flipper Setup -->
+    <string name="flipper_intro_description">Flipper Zero is a portable multi-tool for pentesters and hardware enthusiasts. When paired with Flock You, it extends your surveillance detection capabilities.</string>
+    <string name="flipper_bridge_description">A companion app runs on your Flipper Zero to enable communication with Flock You.</string>
+    <string name="flipper_download_step">Get flock_bridge.fap from the Flock You GitHub releases</string>
+    <string name="flipper_usb_auto_launch">When connecting via USB, Flock You will attempt to launch Flock Bridge automatically if it\'s installed.</string>
+
+    <!-- Permission Setup Wizard -->
+    <string name="permission_wizard_app_description">Flock You detects surveillance devices around you, including:\n\n• ALPR cameras (license plate readers)\n• Gunshot detectors that also listen for screams\n• Cell site simulators (StingRay/IMSI catchers)\n• Rogue WiFi access points\n• Hidden cameras and tracking beacons\n• Police body cameras and vehicle systems</string>
+
+    <!-- User-Agent Header -->
+    <string name="user_agent">FlockYou/1.0</string>
 
     <!-- Quick Settings -->
     <string name="quick_wipe_label">Quick Wipe</string>

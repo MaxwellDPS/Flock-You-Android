@@ -27,12 +27,13 @@ import com.flockyou.ui.theme.*
  * Get gradient colors for threat level.
  * Returns a pair of (primary color, secondary color) for the gradient.
  */
+@Composable
 private fun ThreatLevel.toGradientColors(): Pair<Color, Color> = when (this) {
-    ThreatLevel.CRITICAL -> Pair(ThreatCritical, Color(0xFFB71C1C))
-    ThreatLevel.HIGH -> Pair(ThreatHigh, Color(0xFFBF360C))
-    ThreatLevel.MEDIUM -> Pair(ThreatMedium, Color(0xFFFF6F00))
-    ThreatLevel.LOW -> Pair(ThreatLow, Color(0xFF558B2F))
-    ThreatLevel.INFO -> Pair(ThreatInfo, Color(0xFF1565C0))
+    ThreatLevel.CRITICAL -> Pair(AppColors.ThreatCritical, Color(0xFFB71C1C))
+    ThreatLevel.HIGH -> Pair(AppColors.ThreatHigh, Color(0xFFBF360C))
+    ThreatLevel.MEDIUM -> Pair(AppColors.ThreatMedium, Color(0xFFFF6F00))
+    ThreatLevel.LOW -> Pair(AppColors.ThreatLow, Color(0xFF558B2F))
+    ThreatLevel.INFO -> Pair(AppColors.ThreatInfo, Color(0xFF1565C0))
 }
 
 /**

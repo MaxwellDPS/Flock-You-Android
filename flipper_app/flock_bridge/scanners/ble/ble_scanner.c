@@ -336,7 +336,7 @@ bool ble_scanner_start(BleScanner* scanner) {
 
     // Start worker thread
     scanner->worker_thread = furi_thread_alloc_ex(
-        "BleScanWorker", 2048, ble_scanner_worker, scanner);
+        "BleScanWorker", 1024, ble_scanner_worker, scanner);  // Reduced from 2048
     furi_thread_start(scanner->worker_thread);
 
     FURI_LOG_I(TAG, "BLE scan started (RF test mode)");

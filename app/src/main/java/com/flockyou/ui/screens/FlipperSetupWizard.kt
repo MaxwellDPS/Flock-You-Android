@@ -17,8 +17,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.flockyou.R
 
 /**
  * Multi-step setup wizard for first-time Flipper Zero users.
@@ -186,7 +188,7 @@ private fun WhatIsFlipperPage() {
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "Flipper Zero is a portable multi-tool for pentesters and hardware enthusiasts. When paired with Flock You, it extends your surveillance detection capabilities.",
+            text = stringResource(R.string.flipper_intro_description),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -360,7 +362,7 @@ private fun InstallFlockBridgePage() {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "A companion app runs on your Flipper Zero to enable communication with Flock You.",
+            text = stringResource(R.string.flipper_bridge_description),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -389,7 +391,7 @@ private fun InstallFlockBridgePage() {
                 InstallStep(
                     number = 1,
                     title = "Download the FAP",
-                    description = "Get flock_bridge.fap from the Flock You GitHub releases"
+                    description = stringResource(R.string.flipper_download_step)
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -467,7 +469,7 @@ private fun InstallFlockBridgePage() {
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "When connecting via USB, Flock You will attempt to launch Flock Bridge automatically if it's installed.",
+                    text = stringResource(R.string.flipper_usb_auto_launch),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )

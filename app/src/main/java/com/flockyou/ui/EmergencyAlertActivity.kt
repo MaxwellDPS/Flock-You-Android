@@ -37,8 +37,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import com.flockyou.MainActivity
+import com.flockyou.R
 import com.flockyou.data.model.ThreatLevel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -562,7 +564,7 @@ private fun EmergencyAlertScreen(
 
             // Minimal footer
             Text(
-                text = "FLOCK YOU",
+                text = stringResource(R.string.app_title_full_spaced),
                 fontSize = 10.sp,
                 color = Color.White.copy(alpha = 0.25f),
                 letterSpacing = 3.sp

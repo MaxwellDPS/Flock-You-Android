@@ -213,7 +213,7 @@ bool wifi_scanner_start(WifiScanner* scanner) {
 
     // Start worker thread
     scanner->worker_thread = furi_thread_alloc_ex(
-        "WifiScanWorker", 2048, wifi_scanner_worker, scanner);
+        "WifiScanWorker", 1024, wifi_scanner_worker, scanner);  // Reduced from 2048
     furi_thread_start(scanner->worker_thread);
 
     return true;

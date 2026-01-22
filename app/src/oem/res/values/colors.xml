@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OEM-specific color overrides -->
+<!-- Override these values to match your brand colors -->
+<resources>
+    <!-- Uncomment and modify to change brand colors -->
+    <!-- <color name="brand_primary">#YOUR_COLOR</color> -->
+    <!-- <color name="brand_secondary">#YOUR_COLOR</color> -->
+</resources>

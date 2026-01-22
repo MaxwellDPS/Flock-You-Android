@@ -113,14 +113,34 @@ class OemReadinessE2ETest {
 
     @Test
     fun branding_noHardcodedBrandReferences() {
-        // This is a documentation test - developers should manually verify
-        // that no hardcoded "Flock You" strings exist outside of resources
+        // This test verifies that the package name follows expected patterns.
+        // For OEM builds, the package name is configurable via OEM_PACKAGE_NAME.
+        // For sideload/system builds, it should be com.flockyou (possibly with .debug suffix).
         val packageName = context.packageName
-        assertEquals(
-            "Package name should use base identifier",
-            "com.flockyou",
-            packageName.substringBefore(".debug")
-        )
+        val basePackageName = packageName.substringBefore(".debug")
+
+        // For OEM builds, check against the configured OEM package name
+        if (BuildConfig.IS_OEM_BUILD) {
+            // OEM_PACKAGE_NAME is available in OEM builds
+            val expectedOemPackage = try {
+                BuildConfig::class.java.getField("OEM_PACKAGE_NAME").get(null) as String
+            } catch (e: NoSuchFieldException) {
+                // Fallback if field doesn't exist (shouldn't happen in OEM build)
+                "com.flockyou"
+            }
+            assertEquals(
+                "OEM package name should match configured OEM_PACKAGE_NAME",
+                expectedOemPackage,
+                basePackageName
+            )
+        } else {
+            // For sideload/system builds, package name should be com.flockyou
+            assertEquals(
+                "Package name should use base identifier for non-OEM builds",
+                "com.flockyou",
+                basePackageName
+            )
+        }
     }
 
     // ==================== Configuration Externalization Tests ====================
@@ -345,10 +365,21 @@ class OemReadinessE2ETest {
         val packageInfo = pm.getPackageInfo(context.packageName, 0)
 
         assertNotNull("Package info must exist", packageInfo)
-        assertTrue(
+
+        // Package name should match the context's package name (which may be OEM-customized)
+        assertEquals(
             "Package name must match context",
-            packageInfo.packageName.startsWith("com.flockyou")
+            context.packageName,
+            packageInfo.packageName
         )
+
+        // For non-OEM builds, verify it starts with the default base
+        if (!BuildConfig.IS_OEM_BUILD) {
+            assertTrue(
+                "Non-OEM package name must start with com.flockyou",
+                packageInfo.packageName.startsWith("com.flockyou")
+            )
+        }
     }
 
     @Test

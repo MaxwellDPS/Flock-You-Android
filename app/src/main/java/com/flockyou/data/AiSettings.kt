@@ -1,6 +1,7 @@
 package com.flockyou.data
 
 import android.content.Context
+import com.flockyou.config.NetworkConfig
 import android.content.SharedPreferences
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
@@ -117,6 +118,7 @@ enum class AiModel(
     // MediaPipe-compatible Gemma 3 models (latest, recommended)
     // Official litert-community Gemma 3 1B model optimized for both GPU and CPU
     // See: https://huggingface.co/litert-community/Gemma3-1B-IT
+    // Download URL is configurable via NetworkConfig for OEM customization
     GEMMA3_1B(
         id = "gemma3-1b",
         displayName = "Gemma 3 1B",
@@ -124,13 +126,14 @@ enum class AiModel(
         sizeMb = 529,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 26,
-        // Official litert-community repository - GPU optimized
-        downloadUrl = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+        // URL resolved at runtime via NetworkConfig for OEM customization
+        downloadUrl = null, // Use getDownloadUrl() instead
         quantization = "INT4 QAT",
         modelFormat = ModelFormat.TASK,
         apiStability = ApiStability.STABLE
     ),
     // MediaPipe-compatible Gemma 2 models
+    // Download URLs are configurable via NetworkConfig for OEM customization
     GEMMA_2B_CPU(
         id = "gemma-2b-cpu",
         displayName = "Gemma 2B (CPU)",
@@ -138,8 +141,8 @@ enum class AiModel(
         sizeMb = 1350,
         capabilities = listOf("Text generation", "Reasoning", "Summarization"),
         minAndroidVersion = 26,
-        // Public repository - no authentication required (uses .bin format)
-        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma-1.1-2b-it-cpu-int4.bin",
+        // URL resolved at runtime via NetworkConfig for OEM customization
+        downloadUrl = null, // Use getDownloadUrl() instead
         quantization = "INT4",
         modelFormat = ModelFormat.TASK, // MediaPipe also supports .bin files
         apiStability = ApiStability.STABLE
@@ -151,8 +154,8 @@ enum class AiModel(
         sizeMb = 3200,
         capabilities = listOf("Text generation", "Reasoning", "Summarization", "Higher accuracy"),
         minAndroidVersion = 28,
-        // Public repository - no authentication required
-        downloadUrl = "https://huggingface.co/t-ghosh/gemma-tflite/resolve/main/gemma2-2b-it-cpu-int8.task",
+        // URL resolved at runtime via NetworkConfig for OEM customization
+        downloadUrl = null, // Use getDownloadUrl() instead
         quantization = "INT8",
         modelFormat = ModelFormat.TASK,
         apiStability = ApiStability.STABLE
@@ -167,6 +170,19 @@ enum class AiModel(
                 android.util.Log.w(TAG, "Unknown model ID '$id', falling back to RULE_BASED")
             }
             return model ?: RULE_BASED
+        }
+
+        /**
+         * Get the download URL for a model.
+         * URLs are resolved at runtime via NetworkConfig to support OEM customization.
+         */
+        fun getDownloadUrl(model: AiModel): String? {
+            return when (model) {
+                GEMMA3_1B -> NetworkConfig.AI_MODEL_GEMMA3_1B_URL
+                GEMMA_2B_CPU -> NetworkConfig.AI_MODEL_GEMMA_2B_CPU_URL
+                GEMMA_2B_GPU -> NetworkConfig.AI_MODEL_GEMMA_2B_GPU_URL
+                else -> model.downloadUrl // Return static URL for other models (if any)
+            }
         }
 
         /**
@@ -189,11 +205,12 @@ enum class AiModel(
 
         /**
          * Get the file extension for the model format.
-         * Extracts extension from downloadUrl if available, otherwise uses format default.
+         * Extracts extension from download URL (resolved via NetworkConfig) if available.
          */
         fun getFileExtension(model: AiModel): String {
-            // If model has a download URL, extract extension from it
-            model.downloadUrl?.let { url ->
+            // Get download URL via NetworkConfig for runtime resolution
+            val url = getDownloadUrl(model)
+            if (url != null) {
                 return when {
                     url.endsWith(".task") -> ".task"
                     url.endsWith(".bin") -> ".bin"

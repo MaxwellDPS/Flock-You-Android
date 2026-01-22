@@ -19,9 +19,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.flockyou.R
 import com.flockyou.data.LockMethod
 import com.flockyou.data.SecuritySettings
 import com.flockyou.security.AppLockManager
@@ -85,7 +87,7 @@ fun LockScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Flock You is Locked",
+                text = stringResource(R.string.lock_screen_title),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -380,7 +382,7 @@ private fun triggerBiometric(
             )
 
             val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Unlock Flock You")
+                .setTitle(context.getString(R.string.unlock_app_title))
                 .setSubtitle("Authenticate to access the app")
                 .setNegativeButtonText("Use PIN")
                 .build()

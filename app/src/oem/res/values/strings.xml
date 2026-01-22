@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OEM-specific string overrides -->
+<!-- Override these values to rebrand the application -->
+<resources>
+    <!-- Uncomment and modify to change app branding -->
+    <!-- <string name="app_name">Partner Surveillance Detector</string> -->
+    <!-- <string name="app_name_oem">Partner Detector (OEM)</string> -->
+    <!-- <string name="app_description">Your custom description</string> -->
+</resources>

@@ -1448,7 +1448,7 @@ class ScanningService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Flock You Scanning",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Surveillance device detection service"
@@ -1469,7 +1469,7 @@ class ScanningService : Service() {
         )
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Flock You - Scanning")
+            .setContentTitle(getString(R.string.notification_scanning_title))
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_radar)
             .setContentIntent(pendingIntent)

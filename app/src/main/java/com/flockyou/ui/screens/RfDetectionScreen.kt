@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.flockyou.R
 import com.flockyou.service.RfSignalAnalyzer
 import com.flockyou.service.RfSignalAnalyzer.*
 import kotlinx.coroutines.launch
@@ -103,7 +104,7 @@ fun RfDetectionScreen(
                                 val debugInfo = viewModel.exportAllDebugInfo()
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You Debug Export")
+                                    putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.debug_export_subject))
                                     putExtra(Intent.EXTRA_TEXT, debugInfo)
                                 }
                                 context.startActivity(Intent.createChooser(shareIntent, "Export Debug Info"))

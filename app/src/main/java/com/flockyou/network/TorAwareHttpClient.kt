@@ -1,6 +1,7 @@
 package com.flockyou.network
 
 import android.util.Log
+import com.flockyou.config.NetworkConfig
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.NetworkSettingsRepository
 import kotlinx.coroutines.Dispatchers
@@ -177,7 +178,7 @@ class TorAwareHttpClient @Inject constructor(
 
             // Use Tor Project's check API
             val request = Request.Builder()
-                .url("https://check.torproject.org/api/ip")
+                .url(NetworkConfig.TOR_CHECK_URL)
                 .build()
 
             val response = client.newCall(request).execute()
@@ -242,7 +243,7 @@ class TorAwareHttpClient @Inject constructor(
     private fun getIpCountry(client: OkHttpClient, ip: String): Pair<String?, String?> {
         return try {
             val request = Request.Builder()
-                .url("http://ip-api.com/json/$ip?fields=country,countryCode")
+                .url("${NetworkConfig.IP_LOOKUP_URL}/$ip?fields=country,countryCode")
                 .build()
 
             val response = client.newCall(request).execute()

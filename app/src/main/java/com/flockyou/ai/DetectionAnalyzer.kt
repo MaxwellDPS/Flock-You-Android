@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.flockyou.R
 import com.flockyou.data.*
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DeviceType
@@ -2527,7 +2528,8 @@ Provide your analysis with specific recommendations for this detection.
                 return@withContext success
             }
 
-            val downloadUrl = model.downloadUrl
+            // Get download URL via NetworkConfig for OEM customization support
+            val downloadUrl = AiModel.getDownloadUrl(model)
             if (downloadUrl == null) {
                 // Model requires manual download (e.g., from Kaggle)
                 Log.w(TAG, "Model ${model.id} requires manual download. ${AiModel.getDownloadInstructions(model)}")
@@ -2597,7 +2599,7 @@ Provide your analysis with specific recommendations for this detection.
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
         val requestBuilder = Request.Builder()
             .url(downloadUrl)
-            .addHeader("User-Agent", "FlockYou/1.0")
+            .addHeader("User-Agent", context.getString(R.string.user_agent))
 
         // Add Hugging Face authorization header if token is provided
         if (!hfToken.isNullOrBlank()) {

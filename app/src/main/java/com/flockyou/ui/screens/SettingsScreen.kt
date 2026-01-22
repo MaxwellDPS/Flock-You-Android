@@ -21,11 +21,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.flockyou.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.flockyou.config.NetworkConfig
 import com.flockyou.data.NetworkSettings
 import com.flockyou.data.OuiSettings
 import com.flockyou.data.PrivacySettings
@@ -67,6 +70,8 @@ fun SettingsScreen(
     val scanStats = uiState.scanStats
     val ouiSettings by viewModel.ouiSettings.collectAsState()
     val isOuiUpdating by viewModel.isOuiUpdating.collectAsState()
+    // Detection settings - persisted via DataStore
+    val detectionSettings by viewModel.detectionSettings.collectAsState()
     var showScanSettings by remember { mutableStateOf(false) }
     var batteryOptimizationIgnored by remember {
         mutableStateOf(isBatteryOptimizationIgnored(context))
@@ -89,15 +94,17 @@ fun SettingsScreen(
         }
     }
     
-    // Scan timing settings state - using default values since config is stored in DataStore
-    // These are just initial UI state; actual config comes from ScanSettingsRepository
+    // Scan timing settings state - these remain local for scan interval/duration
     var wifiInterval by remember { mutableStateOf(35) }
     var bleDuration by remember { mutableStateOf(10) }
-    var enableBle by remember { mutableStateOf(true) }
-    var enableWifi by remember { mutableStateOf(true) }
-    var enableCellular by remember { mutableStateOf(true) }
-    var enableSatellite by remember { mutableStateOf(true) }
     var trackSeenDevices by remember { mutableStateOf(true) }
+
+    // Detection toggles are now derived from persisted detectionSettings
+    // Use derivedStateOf to avoid recomposition issues
+    val enableBle by remember(detectionSettings) { mutableStateOf(detectionSettings.enableBleDetection) }
+    val enableWifi by remember(detectionSettings) { mutableStateOf(detectionSettings.enableWifiDetection) }
+    val enableCellular by remember(detectionSettings) { mutableStateOf(detectionSettings.enableCellularDetection) }
+    val enableSatellite by remember(detectionSettings) { mutableStateOf(detectionSettings.enableSatelliteDetection) }
 
     // Section expansion states
     var detectionExpanded by remember { mutableStateOf(true) }
@@ -112,8 +119,8 @@ fun SettingsScreen(
     var bleExpanded by remember { mutableStateOf(false) }
     var wifiExpanded by remember { mutableStateOf(false) }
 
-    // Protection preset state
-    var currentPreset by remember { mutableStateOf(ProtectionPreset.BALANCED) }
+    // Protection preset state - derived from persisted detectionSettings
+    val currentPreset by remember(detectionSettings) { mutableStateOf(detectionSettings.currentPreset) }
     var showPresetBottomSheet by remember { mutableStateOf(false) }
     
     Scaffold(
@@ -145,31 +152,37 @@ fun SettingsScreen(
                     cellularEnabled = enableCellular,
                     satelliteEnabled = enableSatellite,
                     onToggleBle = { enabled ->
-                        enableBle = enabled
+                        // Persist to DataStore via ViewModel
+                        viewModel.setGlobalDetectionEnabled(ble = enabled)
                         updateScanSettings(
                             wifiInterval, bleDuration,
-                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                            enabled, enableWifi, enableCellular, trackSeenDevices
                         )
                     },
                     onToggleWifi = { enabled ->
-                        enableWifi = enabled
+                        // Persist to DataStore via ViewModel
+                        viewModel.setGlobalDetectionEnabled(wifi = enabled)
                         updateScanSettings(
                             wifiInterval, bleDuration,
-                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                            enableBle, enabled, enableCellular, trackSeenDevices
                         )
                     },
                     onToggleCellular = { enabled ->
-                        enableCellular = enabled
+                        // Persist to DataStore via ViewModel
+                        viewModel.setGlobalDetectionEnabled(cellular = enabled)
                         updateScanSettings(
                             wifiInterval, bleDuration,
-                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                            enableBle, enableWifi, enabled, trackSeenDevices
                         )
                     },
                     onToggleSatellite = { enabled ->
-                        enableSatellite = enabled
-                        // TODO: Add satellite to scan settings when supported
+                        // Persist to DataStore via ViewModel
+                        viewModel.setGlobalDetectionEnabled(satellite = enabled)
                     },
-                    activePatternCount = 42, // TODO: Wire to actual pattern count from ViewModel
+                    activePatternCount = detectionSettings.enabledBlePatterns.size +
+                            detectionSettings.enabledWifiPatterns.size +
+                            detectionSettings.enabledCellularPatterns.size +
+                            detectionSettings.enabledSatellitePatterns.size,
                     isScanning = uiState.isScanning
                 )
             }
@@ -179,34 +192,19 @@ fun SettingsScreen(
                 ProtectionPresetSelector(
                     currentPreset = currentPreset,
                     onPresetSelected = { preset ->
-                        currentPreset = preset
-                        // Apply preset settings
-                        when (preset) {
-                            ProtectionPreset.ESSENTIAL -> {
-                                enableBle = true
-                                enableWifi = false
-                                enableCellular = true
-                                enableSatellite = false
-                            }
-                            ProtectionPreset.BALANCED -> {
-                                enableBle = true
-                                enableWifi = true
-                                enableCellular = true
-                                enableSatellite = false
-                            }
-                            ProtectionPreset.PARANOID -> {
-                                enableBle = true
-                                enableWifi = true
-                                enableCellular = true
-                                enableSatellite = true
-                            }
-                            ProtectionPreset.CUSTOM -> {
-                                // Keep current settings
-                            }
+                        // Persist the preset via ViewModel - this updates all patterns and thresholds
+                        viewModel.applyProtectionPreset(preset)
+                        // Also update ScanningService settings for immediate effect
+                        val presetEnableBle = preset != ProtectionPreset.CUSTOM || enableBle
+                        val presetEnableWifi = when (preset) {
+                            ProtectionPreset.ESSENTIAL -> false
+                            ProtectionPreset.CUSTOM -> enableWifi
+                            else -> true
                         }
+                        val presetEnableCellular = true
                         updateScanSettings(
                             wifiInterval, bleDuration,
-                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                            presetEnableBle, presetEnableWifi, presetEnableCellular, trackSeenDevices
                         )
                     },
                     showBottomSheet = showPresetBottomSheet,
@@ -240,14 +238,14 @@ fun SettingsScreen(
                     DetectionCategoryCard(
                         category = DetectionCategory.CELLULAR,
                         categoryEnabled = enableCellular,
-                        enabledPatternCount = 5,
-                        totalPatternCount = 8,
+                        enabledPatternCount = detectionSettings.enabledCellularPatterns.size,
+                        totalPatternCount = com.flockyou.data.CellularPattern.values().size,
                         expanded = cellularExpanded,
                         onCategoryToggle = { enabled ->
-                            enableCellular = enabled
+                            viewModel.setGlobalDetectionEnabled(cellular = enabled)
                             updateScanSettings(
                                 wifiInterval, bleDuration,
-                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                                enableBle, enableWifi, enabled, trackSeenDevices
                             )
                         },
                         onExpandClick = { cellularExpanded = !cellularExpanded },
@@ -273,11 +271,11 @@ fun SettingsScreen(
                     DetectionCategoryCard(
                         category = DetectionCategory.SATELLITE,
                         categoryEnabled = enableSatellite,
-                        enabledPatternCount = 3,
-                        totalPatternCount = 5,
+                        enabledPatternCount = detectionSettings.enabledSatellitePatterns.size,
+                        totalPatternCount = com.flockyou.data.SatellitePattern.values().size,
                         expanded = satelliteExpanded,
                         onCategoryToggle = { enabled ->
-                            enableSatellite = enabled
+                            viewModel.setGlobalDetectionEnabled(satellite = enabled)
                         },
                         onExpandClick = { satelliteExpanded = !satelliteExpanded },
                         patterns = listOf(
@@ -301,14 +299,14 @@ fun SettingsScreen(
                     DetectionCategoryCard(
                         category = DetectionCategory.BLE,
                         categoryEnabled = enableBle,
-                        enabledPatternCount = 12,
-                        totalPatternCount = 15,
+                        enabledPatternCount = detectionSettings.enabledBlePatterns.size,
+                        totalPatternCount = com.flockyou.data.BlePattern.values().size,
                         expanded = bleExpanded,
                         onCategoryToggle = { enabled ->
-                            enableBle = enabled
+                            viewModel.setGlobalDetectionEnabled(ble = enabled)
                             updateScanSettings(
                                 wifiInterval, bleDuration,
-                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                                enabled, enableWifi, enableCellular, trackSeenDevices
                             )
                         },
                         onExpandClick = { bleExpanded = !bleExpanded },
@@ -348,14 +346,14 @@ fun SettingsScreen(
                     DetectionCategoryCard(
                         category = DetectionCategory.WIFI,
                         categoryEnabled = enableWifi,
-                        enabledPatternCount = 8,
-                        totalPatternCount = 10,
+                        enabledPatternCount = detectionSettings.enabledWifiPatterns.size,
+                        totalPatternCount = com.flockyou.data.WifiPattern.values().size,
                         expanded = wifiExpanded,
                         onCategoryToggle = { enabled ->
-                            enableWifi = enabled
+                            viewModel.setGlobalDetectionEnabled(wifi = enabled)
                             updateScanSettings(
                                 wifiInterval, bleDuration,
-                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                                enableBle, enabled, enableCellular, trackSeenDevices
                             )
                         },
                         onExpandClick = { wifiExpanded = !wifiExpanded },
@@ -878,8 +876,8 @@ fun SettingsScreen(
             item {
                 SettingsItem(
                     icon = Icons.Default.Info,
-                    title = "Flock You",
-                    subtitle = "Surveillance detection for the privacy-conscious",
+                    title = stringResource(R.string.app_title_full),
+                    subtitle = stringResource(R.string.about_app_subtitle),
                     onClick = { }
                 )
             }
@@ -890,7 +888,7 @@ fun SettingsScreen(
                     title = "Open Source",
                     subtitle = "View source code on GitHub",
                     onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/MaxwellDPS/Flock-You-Android"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(NetworkConfig.GITHUB_REPO_URL))
                         context.startActivity(intent)
                     }
                 )

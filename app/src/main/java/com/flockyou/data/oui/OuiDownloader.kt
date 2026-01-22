@@ -2,6 +2,7 @@ package com.flockyou.data.oui
 
 import android.content.Context
 import android.util.Log
+import com.flockyou.config.NetworkConfig
 import com.flockyou.data.model.OuiEntry
 import com.flockyou.network.TorAwareHttpClient
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,7 +26,6 @@ class OuiDownloader @Inject constructor(
 ) {
     companion object {
         private const val TAG = "OuiDownloader"
-        const val IEEE_OUI_CSV_URL = "https://standards-oui.ieee.org/oui/oui.csv"
         private const val BUNDLED_OUI_ASSET = "oui.csv"
 
         // Maximum allowed length for organization name (prevents buffer overflow attacks)
@@ -43,12 +43,13 @@ class OuiDownloader @Inject constructor(
     suspend fun downloadAndParse(): OuiDownloadResult = withContext(Dispatchers.IO) {
         try {
             val isTorActive = torAwareHttpClient.isTorActive()
-            Log.d(TAG, "Starting OUI download from $IEEE_OUI_CSV_URL (Tor: $isTorActive)")
+            val ouiUrl = NetworkConfig.OUI_DATABASE_URL
+            Log.d(TAG, "Starting OUI download from $ouiUrl (Tor: $isTorActive)")
 
             val httpClient = torAwareHttpClient.getClient()
 
             val request = Request.Builder()
-                .url(IEEE_OUI_CSV_URL)
+                .url(ouiUrl)
                 .header("Accept", "text/csv,text/plain,*/*")
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .build()

@@ -13,8 +13,16 @@
 
     or for newer Android versions:
     /system_ext/priv-app/FlockYou/FlockYou.apk
+
+    OEM PARTNERS: If you have configured a custom package name via OEM_PACKAGE_NAME
+    in gradle.properties, you must regenerate this file:
+        ./gradlew generateOemSystemFiles
+
+    The generated file will be in: app/build/generated/oem/
+    Copy it here to replace this template, or manually update the package attribute below.
 -->
 <permissions>
+    <!-- PACKAGE_NAME_PLACEHOLDER: Update this to match your OEM_PACKAGE_NAME if customized -->
     <privapp-permissions package="com.flockyou">
         <!-- Bluetooth privileged: Bypass BLE duty cycling for continuous scanning -->
         <permission name="android.permission.BLUETOOTH_PRIVILEGED"/>

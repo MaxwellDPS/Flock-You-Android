@@ -26,9 +26,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.flockyou.R
 
 /**
  * Permission category with associated detection methods
@@ -179,7 +181,7 @@ private fun WelcomePage(
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Flock You",
+            text = stringResource(R.string.app_title_full),
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground
@@ -212,13 +214,7 @@ private fun WelcomePage(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Flock You detects surveillance devices around you, including:\n\n" +
-                            "• ALPR cameras (license plate readers)\n" +
-                            "• Gunshot detectors that also listen for screams\n" +
-                            "• Cell site simulators (StingRay/IMSI catchers)\n" +
-                            "• Rogue WiFi access points\n" +
-                            "• Hidden cameras and tracking beacons\n" +
-                            "• Police body cameras and vehicle systems",
+                    text = stringResource(R.string.permission_wizard_app_description),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )

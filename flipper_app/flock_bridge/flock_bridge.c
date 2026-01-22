@@ -106,8 +106,14 @@ static void flock_bridge_bt_state_changed(void* context, bool connected) {
 // ============================================================================
 
 FlockBridgeApp* flock_bridge_app_alloc(void) {
+    FURI_LOG_I(TAG, "Allocating FlockBridgeApp (%zu bytes)", sizeof(FlockBridgeApp));
+
     FlockBridgeApp* app = malloc(sizeof(FlockBridgeApp));
-    if (!app) return NULL;
+    if (!app) {
+        FURI_LOG_E(TAG, "Failed malloc for FlockBridgeApp");
+        return NULL;
+    }
+    FURI_LOG_I(TAG, "FlockBridgeApp malloc OK");
 
     memset(app, 0, sizeof(FlockBridgeApp));
 
@@ -196,7 +202,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
     app->radio_settings.subghz_source = FlockRadioSourceInternal;
     app->radio_settings.ble_source = FlockRadioSourceInternal;
     app->radio_settings.wifi_source = FlockRadioSourceExternal;
-    app->radio_settings.enable_subghz = false;
+    app->radio_settings.enable_subghz = true;  // Enabled for testing with reduced memory
     app->radio_settings.enable_ble = false;
     app->radio_settings.enable_wifi = false;
     app->radio_settings.enable_ir = false;
@@ -214,6 +220,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
 
     // Only allocate detection scheduler if at least one scanner is enabled
     if (any_scanner_enabled) {
+        FURI_LOG_I(TAG, "Scanners enabled - allocating external radio manager");
         // Allocate external radio manager
         app->external_radio = external_radio_alloc();
         if (app->external_radio) {
@@ -226,6 +233,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         }
 
         // Allocate detection scheduler
+        FURI_LOG_I(TAG, "Allocating detection scheduler");
         app->detection_scheduler = detection_scheduler_alloc();
         if (app->detection_scheduler) {
             detection_scheduler_set_external_radio(app->detection_scheduler, app->external_radio);
@@ -371,6 +379,8 @@ static bool flock_bridge_custom_event_callback(void* context, uint32_t event) {
 
 int32_t flock_bridge_app(void* p) {
     UNUSED(p);
+
+    FURI_LOG_I(TAG, "=== FlockBridge entry point ===");
 
     FlockBridgeApp* app = flock_bridge_app_alloc();
     if (!app) {

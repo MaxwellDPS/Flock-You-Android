@@ -111,58 +111,17 @@ SubGhzScanner* subghz_scanner_alloc(void) {
         free(scanner);
         return NULL;
     }
-    FURI_LOG_I(TAG, "CC1101 device acquired successfully");
+    FURI_LOG_I(TAG, "CC1101 device handle acquired: %p", (void*)scanner->device);
+    scanner->device_begun = false;  // Will be set true when begin() succeeds in start()
 
-    // Initialize Sub-GHz environment
-    scanner->environment = subghz_environment_alloc();
-    if (!scanner->environment) {
-        FURI_LOG_E(TAG, "CRITICAL: Failed to allocate Sub-GHz environment");
-        subghz_devices_deinit();
-        furi_mutex_free(scanner->mutex);
-        free(scanner);
-        return NULL;
-    }
+    // Defer heavy allocations (environment, receiver) to start() to reduce peak memory
+    scanner->environment = NULL;
+    scanner->receiver = NULL;
+    scanner->setting = NULL;
+    scanner->settings_loaded = false;
+    scanner->protocol_registry_loaded = false;
 
-    // Set protocol registry with error checking
-    const void* registry = (const void*)&subghz_protocol_registry;
-    if (!registry) {
-        FURI_LOG_E(TAG, "CRITICAL: Protocol registry is NULL - no protocols will be decoded!");
-    } else {
-        subghz_environment_set_protocol_registry(scanner->environment, (void*)registry);
-        scanner->protocol_registry_loaded = true;
-        FURI_LOG_I(TAG, "Protocol registry loaded successfully");
-    }
-
-    // Load settings with error handling
-    scanner->setting = subghz_setting_alloc();
-    if (scanner->setting) {
-        // Load user settings (subghz_setting_load returns void, so we assume success)
-        subghz_setting_load(scanner->setting, EXT_PATH("subghz/assets/setting_user"));
-        scanner->settings_loaded = true;
-        FURI_LOG_I(TAG, "User settings loaded from SD card");
-    } else {
-        FURI_LOG_W(TAG, "Failed to allocate settings - using built-in defaults");
-    }
-
-    // Create receiver with validation
-    scanner->receiver = subghz_receiver_alloc_init(scanner->environment);
-    if (!scanner->receiver) {
-        FURI_LOG_E(TAG, "CRITICAL: Failed to create Sub-GHz receiver!");
-        if (scanner->setting) subghz_setting_free(scanner->setting);
-        subghz_environment_free(scanner->environment);
-        subghz_devices_deinit();
-        furi_mutex_free(scanner->mutex);
-        free(scanner);
-        return NULL;
-    }
-
-    subghz_receiver_set_filter(scanner->receiver, SubGhzProtocolFlag_Decodable);
-    subghz_receiver_set_rx_callback(scanner->receiver, subghz_decoder_receiver_callback, scanner);
-
-    FURI_LOG_I(TAG, "Sub-GHz scanner allocated (registry:%s, settings:%s, preset:%s)",
-        scanner->protocol_registry_loaded ? "OK" : "FAIL",
-        scanner->settings_loaded ? "loaded" : "defaults",
-        subghz_preset_name(scanner->current_preset));
+    FURI_LOG_I(TAG, "Sub-GHz scanner allocated (deferred init for memory savings)");
 
     return scanner;
 }
@@ -215,11 +174,6 @@ void subghz_scanner_configure(SubGhzScanner* scanner, const SubGhzScannerConfig*
 bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
     if (!scanner || scanner->running || !scanner->device) return false;
 
-    // Warn if protocol registry failed to load
-    if (!scanner->protocol_registry_loaded) {
-        FURI_LOG_W(TAG, "WARNING: Starting scanner without protocol registry - no signals will decode!");
-    }
-
     FURI_LOG_I(TAG, "Starting Sub-GHz scanner at %lu Hz with preset %s",
         frequency, subghz_preset_name(scanner->current_preset));
 
@@ -232,19 +186,67 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
     scanner->decode_in_progress = false;
     scanner->decode_start_time = 0;
 
-    // Begin device access
-    if (!subghz_devices_begin(scanner->device)) {
-        FURI_LOG_E(TAG, "Failed to begin device - CC1101 may be in use");
-        furi_mutex_release(scanner->mutex);
-        return false;
+    // Begin device access (if not already begun at alloc time)
+    // NOTE: On mntm firmware, begin() consistently fails.
+    // This appears to be a firmware issue where the CC1101 is always marked as "in use".
+    if (!scanner->device_begun) {
+        if (subghz_devices_begin(scanner->device)) {
+            scanner->device_begun = true;
+            FURI_LOG_I(TAG, "CC1101 device begun successfully");
+        } else {
+            FURI_LOG_E(TAG, "Failed to begin CC1101 - device locked (mntm firmware issue?)");
+            furi_mutex_release(scanner->mutex);
+            return false;
+        }
     }
 
     // Check frequency validity
     if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
         FURI_LOG_E(TAG, "Invalid frequency: %lu Hz - check regional settings", frequency);
         subghz_devices_end(scanner->device);
+        scanner->device_begun = false;
         furi_mutex_release(scanner->mutex);
         return false;
+    }
+
+    // Deferred allocation: allocate environment and receiver now that we're committed
+    // This reduces peak memory usage by not allocating until actually needed
+    if (!scanner->environment) {
+        FURI_LOG_I(TAG, "Allocating SubGHz environment (deferred)");
+        scanner->environment = subghz_environment_alloc();
+        if (!scanner->environment) {
+            FURI_LOG_E(TAG, "Failed to allocate SubGHz environment - OOM");
+            subghz_devices_end(scanner->device);
+            scanner->device_begun = false;
+            furi_mutex_release(scanner->mutex);
+            return false;
+        }
+
+        // Set protocol registry using built-in protocols
+        subghz_environment_set_protocol_registry(
+            scanner->environment, (void*)&subghz_protocol_registry);
+        scanner->protocol_registry_loaded = true;
+        FURI_LOG_I(TAG, "Protocol registry set (built-in)");
+    }
+
+    if (!scanner->receiver) {
+        FURI_LOG_I(TAG, "Allocating SubGHz receiver (deferred)");
+        scanner->receiver = subghz_receiver_alloc_init(scanner->environment);
+        if (!scanner->receiver) {
+            FURI_LOG_E(TAG, "Failed to allocate SubGHz receiver - OOM");
+            subghz_environment_free(scanner->environment);
+            scanner->environment = NULL;
+            scanner->protocol_registry_loaded = false;
+            subghz_devices_end(scanner->device);
+            scanner->device_begun = false;
+            furi_mutex_release(scanner->mutex);
+            return false;
+        }
+
+        subghz_receiver_set_filter(scanner->receiver, SubGhzProtocolFlag_Decodable);
+        subghz_receiver_set_rx_callback(
+            scanner->receiver, subghz_decoder_receiver_callback, scanner);
+        FURI_LOG_I(TAG, "SubGHz receiver initialized with callback");
     }
 
     // Reset and configure device
@@ -272,7 +274,7 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
 
     // Start worker thread
     scanner->worker_thread = furi_thread_alloc_ex(
-        "SubGhzScanWorker", 2048, subghz_scanner_worker, scanner);
+        "SubGhzScanWorker", 1024, subghz_scanner_worker, scanner);  // Reduced from 2048
     furi_thread_start(scanner->worker_thread);
 
     furi_mutex_release(scanner->mutex);
@@ -306,7 +308,11 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
         subghz_devices_stop_async_rx(scanner->device);
         subghz_devices_idle(scanner->device);
         subghz_devices_sleep(scanner->device);
-        subghz_devices_end(scanner->device);
+        if (scanner->device_begun) {
+            subghz_devices_end(scanner->device);
+            scanner->device_begun = false;
+            FURI_LOG_I(TAG, "CC1101 device released");
+        }
     }
 
     scanner->running = false;

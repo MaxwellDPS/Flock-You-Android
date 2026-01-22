@@ -20,6 +20,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
+import com.flockyou.config.NetworkConfig
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DetectionMethod
 import com.flockyou.data.model.DetectionProtocol
@@ -1477,11 +1478,8 @@ class SatelliteMonitor(
     private suspend fun measureNetworkRtt(): Long? = withContext(Dispatchers.IO) {
         try {
             val measurements = mutableListOf<Long>()
-            val endpoints = listOf(
-                "https://1.1.1.1",           // Cloudflare DNS
-                "https://dns.google",        // Google DNS
-                "https://208.67.222.222"     // OpenDNS
-            )
+            // Use configurable DNS check URLs for OEM customization
+            val endpoints = NetworkConfig.DNS_CHECK_URLS
 
             // Take 3 measurements with different endpoints for reliability
             for (i in 0 until 3) {

@@ -107,7 +107,7 @@ bool external_radio_start(ExternalRadioManager* manager) {
     manager->should_stop = false;
 
     manager->worker_thread = furi_thread_alloc_ex(
-        "ExtRadioWorker", 2048, external_radio_worker, manager);
+        "ExtRadioWorker", 1024, external_radio_worker, manager);  // Reduced from 2048
     if (!manager->worker_thread) {
         FURI_LOG_E(TAG, "Failed to allocate worker thread");
         // Clean up serial

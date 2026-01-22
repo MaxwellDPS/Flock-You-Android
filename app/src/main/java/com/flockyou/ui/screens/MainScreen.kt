@@ -52,7 +52,9 @@ import com.flockyou.scanner.flipper.FlipperConnectionState
 import com.flockyou.scanner.flipper.FlipperOnboardingSettings
 import com.flockyou.service.CellularMonitor
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.flockyou.R
 import com.flockyou.service.ScanningService
 import java.text.SimpleDateFormat
 import java.util.*
@@ -78,6 +80,7 @@ import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import android.graphics.drawable.GradientDrawable
+import com.flockyou.config.NetworkConfig
 import com.flockyou.detection.ThreatScoring
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class, ExperimentalLayoutApi::class)
@@ -177,12 +180,12 @@ fun MainScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "FLOCK",
+                            text = stringResource(R.string.app_title_flock),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = " YOU",
+                            text = " ${stringResource(R.string.app_title_you)}",
                             fontWeight = FontWeight.Light
                         )
                     }
@@ -239,7 +242,7 @@ fun MainScreen(
                                 val debugInfo = viewModel.exportAllDebugInfo()
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Flock-You Debug Export")
+                                    putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.debug_export_subject))
                                     putExtra(Intent.EXTRA_TEXT, debugInfo)
                                 }
                                 context.startActivity(Intent.createChooser(shareIntent, "Export Debug Info"))
@@ -880,10 +883,10 @@ fun MainScreen(
                 selectedDetection = null
             },
             onShare = {
-                val shareText = buildDetectionShareText(detection)
+                val shareText = buildDetectionShareText(detection, context)
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "Flock You Detection: ${detection.deviceType.displayName}")
+                    putExtra(Intent.EXTRA_SUBJECT, "${context.getString(R.string.share_detection_subject)}: ${detection.deviceType.displayName}")
                     putExtra(Intent.EXTRA_TEXT, shareText)
                 }
                 context.startActivity(Intent.createChooser(shareIntent, "Share Detection"))
@@ -904,7 +907,7 @@ fun MainScreen(
                 val exportText = buildDetectionExportJson(detection)
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/json"
-                    putExtra(Intent.EXTRA_SUBJECT, "Flock You Detection Export")
+                    putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.share_detection_export_subject))
                     putExtra(Intent.EXTRA_TEXT, exportText)
                 }
                 context.startActivity(Intent.createChooser(shareIntent, "Export Detection"))
@@ -5312,20 +5315,23 @@ private fun DiscoveredDeviceItem(
 
 /**
  * HTTPS tile source for OpenStreetMap embedded maps.
+ * Tile server URLs are configurable via NetworkConfig for OEM customization.
  */
-private val DETAIL_SHEET_TILE_SOURCE = object : OnlineTileSourceBase(
-    "Mapnik-HTTPS-Detail",
-    0,
-    19,
-    256,
-    ".png",
-    arrayOf("https://a.tile.openstreetmap.org/", "https://b.tile.openstreetmap.org/", "https://c.tile.openstreetmap.org/")
-) {
-    override fun getTileURLString(pMapTileIndex: Long): String {
-        val zoom = MapTileIndex.getZoom(pMapTileIndex)
-        val x = MapTileIndex.getX(pMapTileIndex)
-        val y = MapTileIndex.getY(pMapTileIndex)
-        return "${baseUrl}$zoom/$x/$y$mImageFilenameEnding"
+private val DETAIL_SHEET_TILE_SOURCE: OnlineTileSourceBase by lazy {
+    object : OnlineTileSourceBase(
+        "Mapnik-HTTPS-Detail",
+        0,
+        19,
+        256,
+        ".png",
+        NetworkConfig.MAP_TILE_SERVERS.toTypedArray()
+    ) {
+        override fun getTileURLString(pMapTileIndex: Long): String {
+            val zoom = MapTileIndex.getZoom(pMapTileIndex)
+            val x = MapTileIndex.getX(pMapTileIndex)
+            val y = MapTileIndex.getY(pMapTileIndex)
+            return "${baseUrl}$zoom/$x/$y$mImageFilenameEnding"
+        }
     }
 }
 
@@ -5352,10 +5358,10 @@ private fun createDetailMapMarkerDrawable(threatLevel: ThreatLevel): android.gra
 /**
  * Build a shareable text summary of a detection
  */
-private fun buildDetectionShareText(detection: Detection): String {
+private fun buildDetectionShareText(detection: Detection, context: android.content.Context): String {
     val dateFormat = java.text.SimpleDateFormat("MMM dd, yyyy HH:mm:ss", java.util.Locale.getDefault())
     return buildString {
-        appendLine("Flock You Detection Alert")
+        appendLine(context.getString(R.string.share_detection_alert_title))
         appendLine("=" .repeat(30))
         appendLine()
         appendLine("Device: ${detection.deviceType.displayName}")
@@ -5383,7 +5389,7 @@ private fun buildDetectionShareText(detection: Detection): String {
             appendLine("Note: $it")
         }
         appendLine()
-        appendLine("-- Shared from Flock You app")
+        appendLine(context.getString(R.string.share_detection_signature))
     }
 }
 

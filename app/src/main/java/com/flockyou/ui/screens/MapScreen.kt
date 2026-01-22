@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.flockyou.config.NetworkConfig
 import com.flockyou.data.model.*
 import com.flockyou.service.ScanningService
 import com.flockyou.ui.components.ThreatBadge
@@ -682,25 +683,24 @@ private fun LegendItem(
 /**
  * HTTPS tile source for OpenStreetMap.
  * Uses HTTPS to prevent MITM attacks on map tile requests.
+ * Tile server URLs are configurable via NetworkConfig for OEM customization.
  */
-private val HTTPS_MAPNIK = object : OnlineTileSourceBase(
-    "Mapnik-HTTPS",
-    0,
-    19,
-    256,
-    ".png",
-    arrayOf(
-        "https://a.tile.openstreetmap.org/",
-        "https://b.tile.openstreetmap.org/",
-        "https://c.tile.openstreetmap.org/"
-    ),
-    "© OpenStreetMap contributors"
-) {
-    override fun getTileURLString(pMapTileIndex: Long): String {
-        val zoom = MapTileIndex.getZoom(pMapTileIndex)
-        val x = MapTileIndex.getX(pMapTileIndex)
-        val y = MapTileIndex.getY(pMapTileIndex)
-        return baseUrl + zoom + "/" + x + "/" + y + mImageFilenameEnding
+private val HTTPS_MAPNIK: OnlineTileSourceBase by lazy {
+    object : OnlineTileSourceBase(
+        "Mapnik-HTTPS",
+        0,
+        19,
+        256,
+        ".png",
+        NetworkConfig.MAP_TILE_SERVERS.toTypedArray(),
+        "(c) OpenStreetMap contributors"
+    ) {
+        override fun getTileURLString(pMapTileIndex: Long): String {
+            val zoom = MapTileIndex.getZoom(pMapTileIndex)
+            val x = MapTileIndex.getX(pMapTileIndex)
+            val y = MapTileIndex.getY(pMapTileIndex)
+            return baseUrl + zoom + "/" + x + "/" + y + mImageFilenameEnding
+        }
     }
 }
 

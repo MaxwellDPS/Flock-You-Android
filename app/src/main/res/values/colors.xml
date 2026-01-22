@@ -1,12 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0D1117</color>
-    <color name="primary">#00E676</color>
-    <color name="background">#0D1117</color>
-    <color name="surface">#161B22</color>
+    <!-- ============================================== -->
+    <!-- Brand / Theme Colors                           -->
+    <!-- Material Design 3 Dark Color Scheme            -->
+    <!-- ============================================== -->
+
+    <!-- Primary colors - Neon green for active scanning -->
+    <color name="md_theme_dark_primary">#00E676</color>
+    <color name="md_theme_dark_onPrimary">#003915</color>
+    <color name="md_theme_dark_primaryContainer">#005222</color>
+    <color name="md_theme_dark_onPrimaryContainer">#6AFF94</color>
+
+    <!-- Secondary colors - Amber for warnings -->
+    <color name="md_theme_dark_secondary">#FFB74D</color>
+    <color name="md_theme_dark_onSecondary">#422C00</color>
+    <color name="md_theme_dark_secondaryContainer">#5E4100</color>
+    <color name="md_theme_dark_onSecondaryContainer">#FFDDB6</color>
+
+    <!-- Tertiary colors - Blue for info -->
+    <color name="md_theme_dark_tertiary">#64B5F6</color>
+    <color name="md_theme_dark_onTertiary">#003355</color>
+    <color name="md_theme_dark_tertiaryContainer">#004477</color>
+    <color name="md_theme_dark_onTertiaryContainer">#D1E4FF</color>
+
+    <!-- Error colors - Red for critical threats -->
+    <color name="md_theme_dark_error">#FF5252</color>
+    <color name="md_theme_dark_errorContainer">#93000A</color>
+    <color name="md_theme_dark_onError">#690005</color>
+    <color name="md_theme_dark_onErrorContainer">#FFDAD6</color>
+
+    <!-- Background and surface colors -->
+    <color name="md_theme_dark_background">#0D1117</color>
+    <color name="md_theme_dark_onBackground">#E1E3E1</color>
+    <color name="md_theme_dark_surface">#161B22</color>
+    <color name="md_theme_dark_onSurface">#E1E3E1</color>
+    <color name="md_theme_dark_surfaceVariant">#1F2937</color>
+    <color name="md_theme_dark_onSurfaceVariant">#C0C8C4</color>
+
+    <!-- Other theme colors -->
+    <color name="md_theme_dark_outline">#8A938E</color>
+    <color name="md_theme_dark_inverseOnSurface">#191C1A</color>
+    <color name="md_theme_dark_inverseSurface">#E1E3E1</color>
+    <color name="md_theme_dark_inversePrimary">#006D35</color>
+    <color name="md_theme_dark_surfaceTint">#00E676</color>
+
+    <!-- ============================================== -->
+    <!-- Threat Level Colors                            -->
+    <!-- ============================================== -->
     <color name="threat_critical">#FF1744</color>
     <color name="threat_high">#FF5722</color>
     <color name="threat_medium">#FFB300</color>
     <color name="threat_low">#8BC34A</color>
     <color name="threat_info">#64B5F6</color>
+
+    <!-- ============================================== -->
+    <!-- Signal Strength Colors                         -->
+    <!-- ============================================== -->
+    <color name="signal_excellent">#00E676</color>
+    <color name="signal_good">#8BC34A</color>
+    <color name="signal_medium">#FFEB3B</color>
+    <color name="signal_weak">#FF9800</color>
+    <color name="signal_very_weak">#FF5722</color>
+
+    <!-- ============================================== -->
+    <!-- Status Colors                                  -->
+    <!-- For subsystems and indicators                  -->
+    <!-- ============================================== -->
+    <color name="status_active">#4CAF50</color>
+    <color name="status_error">#F44336</color>
+    <color name="status_warning">#FF9800</color>
+    <color name="status_disabled">#FFC107</color>
+    <color name="status_inactive">#9E9E9E</color>
+
+    <!-- ============================================== -->
+    <!-- Network Generation Colors                      -->
+    <!-- ============================================== -->
+    <color name="network_5g">#2196F3</color>
+    <color name="network_4g">#4CAF50</color>
+    <color name="network_3g">#FFC107</color>
+    <color name="network_2g">#F44336</color>
+
+    <!-- ============================================== -->
+    <!-- Emergency Alert Colors                         -->
+    <!-- ============================================== -->
+    <color name="emergency_alert_bar">#B71C1C</color>
+
+    <!-- ============================================== -->
+    <!-- Icon Colors                                    -->
+    <!-- ============================================== -->
+    <color name="icon_white">#FFFFFF</color>
+    <color name="transparent">#00000000</color>
+
+    <!-- ============================================== -->
+    <!-- Legacy / Shorthand Aliases                     -->
+    <!-- For backwards compatibility                    -->
+    <!-- ============================================== -->
+    <color name="primary">@color/md_theme_dark_primary</color>
+    <color name="background">@color/md_theme_dark_background</color>
+    <color name="surface">@color/md_theme_dark_surface</color>
+    <color name="ic_launcher_background">@color/md_theme_dark_background</color>
 </resources>

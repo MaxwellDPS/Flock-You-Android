@@ -3,6 +3,7 @@ package com.flockyou.service
 import android.content.Context
 import android.net.wifi.ScanResult
 import android.util.Log
+import com.flockyou.R
 import com.flockyou.data.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -1352,7 +1353,7 @@ class RfSignalAnalyzer(
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
         val now = System.currentTimeMillis()
 
-        sb.appendLine("=== FLOCK-YOU RF SIGNAL ANALYZER DEBUG EXPORT ===")
+        sb.appendLine("=== ${context.getString(R.string.rf_signal_analyzer_export_header)} ===")
         sb.appendLine("Export Time: ${dateFormat.format(java.util.Date(now))}")
         sb.appendLine("Monitoring Active: $isMonitoring")
         sb.appendLine()
