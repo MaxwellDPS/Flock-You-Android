@@ -46,7 +46,7 @@ jobs:
         run: chmod +x gradlew
       
       - name: 🔐 Decode Keystore
-        if: env.KEYSTORE_BASE64 != ''
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |

@@ -70,6 +70,15 @@ import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import kotlinx.coroutines.delay
+import androidx.compose.ui.viewinterop.AndroidView
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import android.graphics.drawable.GradientDrawable
+import com.flockyou.detection.ThreatScoring
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1626,57 +1635,130 @@ fun DetectionDetailSheet(
                 )
             }
             
-            // Location Section
+            // Location Section with Embedded Map
             if (detection.latitude != null && detection.longitude != null) {
                 item {
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "📍 Location",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                
-                item {
-                    DetailRow(
-                        label = "Coordinates",
-                        value = "%.6f, %.6f".format(detection.latitude, detection.longitude)
-                    )
-                }
-                
-                item {
-                    // Clickable location card to open in maps
+
+                    var isMapExpanded by remember { mutableStateOf(false) }
+                    val context = LocalContext.current
+
+                    // Initialize osmdroid config
+                    LaunchedEffect(Unit) {
+                        Configuration.getInstance().apply {
+                            userAgentValue = context.packageName
+                        }
+                    }
+
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                         )
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Map,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = "View on Map",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "Tap detection card to see on app map",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // Header row - clickable to expand/collapse
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { isMapExpanded = !isMapExpanded },
+                                color = Color.Transparent
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Location",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "%.6f, %.6f".format(detection.latitude, detection.longitude),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (isMapExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (isMapExpanded) "Collapse map" else "Expand map",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            // Embedded map - shown when expanded
+                            AnimatedVisibility(
+                                visible = isMapExpanded,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column {
+                                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                                    // Embedded OSM Map
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                                    ) {
+                                        val lat = detection.latitude!!
+                                        val lon = detection.longitude!!
+
+                                        AndroidView(
+                                            modifier = Modifier.fillMaxSize(),
+                                            factory = { ctx ->
+                                                MapView(ctx).apply {
+                                                    setTileSource(DETAIL_SHEET_TILE_SOURCE)
+                                                    setMultiTouchControls(true)
+                                                    controller.setZoom(16.0)
+                                                    controller.setCenter(GeoPoint(lat, lon))
+
+                                                    // Add marker for detection location
+                                                    val marker = Marker(this).apply {
+                                                        position = GeoPoint(lat, lon)
+                                                        title = detection.deviceType.displayName
+                                                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                                        icon = createDetailMapMarkerDrawable(detection.threatLevel)
+                                                    }
+                                                    overlays.add(marker)
+                                                }
+                                            },
+                                            update = { map ->
+                                                map.controller.setCenter(GeoPoint(lat, lon))
+                                                map.invalidate()
+                                            }
+                                        )
+
+                                        // OSM Attribution overlay
+                                        Surface(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(4.dp),
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                                        ) {
+                                            Text(
+                                                text = "© OpenStreetMap",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1772,6 +1854,258 @@ fun DetectionDetailSheet(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+
+            // Advanced Mode: Heuristics & Scoring Analysis Section
+            if (advancedMode) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "📊 Heuristics Analysis",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Impact Factor Analysis
+                            val impactFactor = remember(detection.deviceType) {
+                                ThreatScoring.getImpactFactor(detection.deviceType)
+                            }
+                            val impactDescription = when {
+                                impactFactor >= 2.0 -> "Critical - Can intercept all communications"
+                                impactFactor >= 1.8 -> "Severe - Can cause physical harm"
+                                impactFactor >= 1.5 -> "High - Stalking/tracking risk"
+                                impactFactor >= 1.2 -> "Moderate - Privacy violation"
+                                impactFactor >= 1.0 -> "Standard - Known surveillance"
+                                impactFactor >= 0.7 -> "Low - Consumer IoT device"
+                                else -> "Minimal - Infrastructure/Traffic"
+                            }
+
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Impact Factor",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = when {
+                                            impactFactor >= 1.8 -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+                                            impactFactor >= 1.2 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = "%.1fx".format(impactFactor),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = when {
+                                                impactFactor >= 1.8 -> MaterialTheme.colorScheme.error
+                                                impactFactor >= 1.2 -> MaterialTheme.colorScheme.tertiary
+                                                else -> MaterialTheme.colorScheme.primary
+                                            },
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = impactDescription,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                            // Signal Confidence Analysis
+                            val signalConfidenceData = remember(detection.rssi) {
+                                when {
+                                    detection.rssi > -50 -> Pair("Excellent", "+10%")
+                                    detection.rssi > -60 -> Pair("Good", "+5%")
+                                    detection.rssi > -80 -> Pair("Medium", "±0%")
+                                    detection.rssi > -90 -> Pair("Weak", "-10%")
+                                    else -> Pair("Very Weak", "-20%")
+                                }
+                            }
+                            val signalConfidenceColor = when {
+                                detection.rssi > -60 -> MaterialTheme.colorScheme.primary
+                                detection.rssi > -80 -> MaterialTheme.colorScheme.onSurfaceVariant
+                                detection.rssi > -90 -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.error
+                            }
+
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Signal Confidence",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        text = "${signalConfidenceData.first} (${signalConfidenceData.second})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = signalConfidenceColor
+                                    )
+                                }
+                                Text(
+                                    text = "Based on RSSI: ${detection.rssi} dBm",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                            // Persistence Analysis
+                            val persistenceBonus = remember(detection.seenCount) {
+                                when {
+                                    detection.seenCount >= 10 -> Triple("High Persistence", "+20%", "Seen frequently - increased confidence")
+                                    detection.seenCount >= 5 -> Triple("Moderate Persistence", "+10%", "Multiple sightings confirm presence")
+                                    detection.seenCount >= 2 -> Triple("Low Persistence", "+5%", "Seen more than once")
+                                    else -> Triple("Single Detection", "-20%", "Only seen once - lower confidence")
+                                }
+                            }
+
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Persistence Factor",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        text = "${persistenceBonus.first} (${persistenceBonus.second})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (detection.seenCount > 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
+                                Text(
+                                    text = "${persistenceBonus.third} (seen ${detection.seenCount}x)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                            // Detection Method Analysis
+                            Column {
+                                Text(
+                                    text = "Detection Method",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = detection.detectionMethod.displayName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = detection.detectionMethod.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Matched Patterns (if available)
+                            detection.matchedPatterns?.let { patterns ->
+                                if (patterns.isNotEmpty() && patterns != "[]" && patterns != "null") {
+                                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                                    Column {
+                                        Text(
+                                            text = "Matched Patterns",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = patterns,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Score Calculation Summary
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                            Column {
+                                Text(
+                                    text = "Score Calculation",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "threat_score = base_likelihood × impact_factor × confidence",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Final Score:",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        text = "${detection.threatScore}/100 → ${detection.threatLevel.displayName}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = threatColor
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4949,4 +5283,43 @@ private fun DiscoveredDeviceItem(
         }
     }
     Spacer(modifier = Modifier.height(8.dp))
+}
+
+/**
+ * HTTPS tile source for OpenStreetMap embedded maps.
+ */
+private val DETAIL_SHEET_TILE_SOURCE = object : OnlineTileSourceBase(
+    "Mapnik-HTTPS-Detail",
+    0,
+    19,
+    256,
+    ".png",
+    arrayOf("https://a.tile.openstreetmap.org/", "https://b.tile.openstreetmap.org/", "https://c.tile.openstreetmap.org/")
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String {
+        val zoom = MapTileIndex.getZoom(pMapTileIndex)
+        val x = MapTileIndex.getX(pMapTileIndex)
+        val y = MapTileIndex.getY(pMapTileIndex)
+        return "${baseUrl}$zoom/$x/$y$mImageFilenameEnding"
+    }
+}
+
+/**
+ * Creates a marker drawable for the embedded map
+ */
+private fun createDetailMapMarkerDrawable(threatLevel: ThreatLevel): android.graphics.drawable.Drawable {
+    val color = when (threatLevel) {
+        ThreatLevel.CRITICAL -> android.graphics.Color.parseColor("#D32F2F")
+        ThreatLevel.HIGH -> android.graphics.Color.parseColor("#F57C00")
+        ThreatLevel.MEDIUM -> android.graphics.Color.parseColor("#FBC02D")
+        ThreatLevel.LOW -> android.graphics.Color.parseColor("#388E3C")
+        ThreatLevel.INFO -> android.graphics.Color.parseColor("#1976D2")
+    }
+
+    return GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+        setStroke(3, android.graphics.Color.WHITE)
+        setSize(32, 32)
+    }
 }
