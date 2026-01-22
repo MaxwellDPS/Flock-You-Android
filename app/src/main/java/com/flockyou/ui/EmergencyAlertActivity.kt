@@ -19,6 +19,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -255,241 +256,319 @@ private fun EmergencyAlertScreen(
     onDismiss: () -> Unit,
     onViewDetails: () -> Unit
 ) {
-    // Pulsating background animation
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.7f,
+    val infiniteTransition = rememberInfiniteTransition(label = "alerts")
+
+    // Smooth breathing pulse for background
+    val breathePulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
+            animation = tween(2000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulseAlpha"
+        label = "breathe"
     )
 
-    // Flashing icon animation
-    val iconAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
+    // Subtle glow ring animation
+    val ringScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ring"
+    )
+
+    // Icon pulse - gentler than before
+    val iconPulse by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(400, easing = LinearEasing),
+            animation = tween(600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "iconAlpha"
+        label = "icon"
     )
 
-    val backgroundColor = when (threatLevel) {
-        ThreatLevel.CRITICAL -> Color(0xFFB71C1C) // Dark red
-        ThreatLevel.HIGH -> Color(0xFFD32F2F) // Red
-        ThreatLevel.MEDIUM -> Color(0xFFFF6F00) // Orange
-        else -> Color(0xFFE65100) // Deep orange
+    // Modern color palette based on threat level
+    val accentColor = when (threatLevel) {
+        ThreatLevel.CRITICAL -> Color(0xFFFF3D71)
+        ThreatLevel.HIGH -> Color(0xFFFF6B6B)
+        ThreatLevel.MEDIUM -> Color(0xFFFFAA00)
+        else -> Color(0xFFFF9500)
     }
 
-    val highlightColor = when (threatLevel) {
-        ThreatLevel.CRITICAL -> Color(0xFFFF1744) // Bright red
-        ThreatLevel.HIGH -> Color(0xFFFF5252) // Light red
-        ThreatLevel.MEDIUM -> Color(0xFFFFAB00) // Amber
-        else -> Color(0xFFFF9100) // Orange
+    val accentGlow = when (threatLevel) {
+        ThreatLevel.CRITICAL -> Color(0xFFFF1744)
+        ThreatLevel.HIGH -> Color(0xFFFF5252)
+        ThreatLevel.MEDIUM -> Color(0xFFFFD740)
+        else -> Color(0xFFFFAB40)
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        backgroundColor.copy(alpha = pulseAlpha),
-                        Color.Black.copy(alpha = 0.9f)
+            .background(Color(0xFF0A0A0F))
+    ) {
+        // Animated gradient overlay
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            accentColor.copy(alpha = 0.15f + (breathePulse * 0.1f)),
+                            Color.Transparent
+                        ),
+                        radius = 800f
                     )
                 )
-            )
-    ) {
+        )
+
+        // Top accent line
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            accentColor,
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp)
+                .padding(horizontal = 28.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(48.dp))
 
-            // Emergency header bar
+            // Minimal header badge
             Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = highlightColor,
-                shape = RoundedCornerShape(4.dp)
+                color = accentColor.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(24.dp)
             ) {
-                Text(
-                    text = "EMERGENCY ALERT",
+                Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(accentColor)
+                    )
+                    Text(
+                        text = "ALERT",
+                        color = accentColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 2.sp
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
 
-            // Flashing warning icon
+            // Animated icon with glow rings
             Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(CircleShape)
-                    .background(highlightColor.copy(alpha = iconAlpha * 0.3f)),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(140.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = "Warning",
-                    modifier = Modifier.size(80.dp),
-                    tint = Color.White.copy(alpha = iconAlpha)
+                // Outer glow ring
+                Box(
+                    modifier = Modifier
+                        .size(140.dp * ringScale)
+                        .clip(CircleShape)
+                        .background(accentGlow.copy(alpha = 0.08f * (2f - ringScale)))
                 )
+                // Middle ring
+                Box(
+                    modifier = Modifier
+                        .size(110.dp)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.12f))
+                )
+                // Inner circle
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    accentColor.copy(alpha = 0.25f),
+                                    accentColor.copy(alpha = 0.1f)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = Color.White.copy(alpha = iconPulse)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
-            // Alert title
+            // Title with better typography
             Text(
-                text = title,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Black,
+                text = title.uppercase(),
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center,
-                lineHeight = 32.sp
+                letterSpacing = 1.sp,
+                lineHeight = 28.sp
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Timestamp
+            // Timestamp - more subtle
             Text(
                 text = formatTimestamp(timestamp),
-                fontSize = 14.sp,
-                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.5f),
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
-            // Device type badge
+            // Device type chip
             Surface(
-                color = Color.White.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(20.dp)
-            ) {
-                Text(
-                    text = deviceType,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = highlightColor,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Message body
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.Black.copy(alpha = 0.4f),
+                color = Color.White.copy(alpha = 0.08f),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = message,
-                    modifier = Modifier.padding(20.dp),
-                    fontSize = 18.sp,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 26.sp
+                    text = deviceType,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    color = accentColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.5.sp
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
-            // Threat level indicator
-            Row(
+            // Message card - glassmorphism style
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+                color = Color.White.copy(alpha = 0.06f),
+                shape = RoundedCornerShape(20.dp)
             ) {
-                Text(
-                    text = "Threat Level: ",
-                    fontSize = 14.sp,
-                    color = Color.White.copy(alpha = 0.7f)
-                )
-                Surface(
-                    color = highlightColor,
-                    shape = RoundedCornerShape(4.dp)
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = threatLevel.name,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        text = message,
+                        fontSize = 16.sp,
+                        color = Color.White.copy(alpha = 0.9f),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 24.sp
                     )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // Threat level inline
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Threat Level",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.4f)
+                        )
+                        Surface(
+                            color = accentColor.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = threatLevel.name,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(32.dp))
 
-            // Action buttons
+            // Action buttons - modern style
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // View Details button
-                OutlinedButton(
-                    onClick = onViewDetails,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = Color.White
-                    ),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = Brush.horizontalGradient(
-                            listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.5f))
-                        )
-                    ),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "VIEW DETAILS",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Dismiss button (OK)
+                // Primary dismiss button
                 Button(
                     onClick = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
+                        .height(54.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = backgroundColor
+                        containerColor = accentColor
                     ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(14.dp)
                 ) {
                     Text(
-                        text = "OK",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "Dismiss",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+
+                // Secondary view details button
+                OutlinedButton(
+                    onClick = onViewDetails,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color.White.copy(alpha = 0.9f)
+                    ),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        text = "View Details",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
 
-            // Footer
+            // Minimal footer
             Text(
-                text = "Flock You - Surveillance Detection",
-                fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.4f)
+                text = "FLOCK YOU",
+                fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.25f),
+                letterSpacing = 3.sp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

@@ -1825,8 +1825,13 @@ fun SwipeableDetectionCard(
         ),
         onClick = {
             if (advancedMode) {
-                // In advanced mode, tap expands details
-                onExpandToggle()
+                if (isExpanded) {
+                    // Already expanded, open full details
+                    onClick()
+                } else {
+                    // First tap expands details
+                    onExpandToggle()
+                }
             } else {
                 // In simple mode, tap opens detail sheet
                 onClick()
