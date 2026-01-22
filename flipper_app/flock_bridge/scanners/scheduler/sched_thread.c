@@ -60,6 +60,7 @@ int32_t scheduler_thread_func(void* context) {
     uint32_t last_wifi_scan = 0;
     uint32_t last_ir_scan = 0;
     uint32_t last_memory_cleanup = 0;
+    uint32_t last_status_log = 0;
 
     // Determine which radios to use based on settings
     bool ext_available = scheduler->external_radio &&
@@ -128,15 +129,25 @@ int32_t scheduler_thread_func(void* context) {
         }
     }
 
-    // Start internal Sub-GHz at first frequency
+    // Start internal Sub-GHz - find first valid frequency for this region
     if (scheduler->config.enable_subghz && use_internal_subghz && scheduler->subghz_internal) {
-        uint32_t freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
-        bool started = subghz_scanner_start(scheduler->subghz_internal, freq);
-        if (started) {
-            scheduler->subghz_active = scheduler->subghz_internal;
-            FURI_LOG_I(TAG, "Internal Sub-GHz scanner started at %lu Hz", freq);
-        } else {
-            FURI_LOG_E(TAG, "FAILED to start Sub-GHz scanner at %lu Hz!", freq);
+        bool started = false;
+
+        // Try frequencies in order until we find one that's valid for this region
+        for (size_t i = 0; i < SUBGHZ_FREQUENCY_COUNT && !started; i++) {
+            uint32_t freq = SUBGHZ_FREQUENCIES[i];
+            started = subghz_scanner_start(scheduler->subghz_internal, freq);
+            if (started) {
+                scheduler->subghz_active = scheduler->subghz_internal;
+                scheduler->subghz_frequency_index = i;
+                FURI_LOG_I(TAG, "Internal Sub-GHz scanner started at %lu Hz (index %zu)", freq, i);
+            } else {
+                FURI_LOG_W(TAG, "Frequency %lu Hz not valid for region, trying next...", freq);
+            }
+        }
+
+        if (!started) {
+            FURI_LOG_E(TAG, "FAILED to start Sub-GHz scanner - no valid frequencies!");
         }
     } else {
         FURI_LOG_W(TAG, "SubGHz start SKIPPED: enable=%d, use_internal=%d, scanner=%p",
@@ -186,20 +197,48 @@ int32_t scheduler_thread_func(void* context) {
                 }
 
                 if (can_hop) {
-                    scheduler->subghz_frequency_index =
-                        (scheduler->subghz_frequency_index + 1) % SUBGHZ_FREQUENCY_COUNT;
+                    // Find next valid frequency (skip invalid ones)
+                    size_t start_index = scheduler->subghz_frequency_index;
+                    size_t attempts = 0;
+                    bool found_valid = false;
+                    uint32_t new_freq = 0;
 
-                    uint32_t new_freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
+                    while (attempts < SUBGHZ_FREQUENCY_COUNT) {
+                        scheduler->subghz_frequency_index =
+                            (scheduler->subghz_frequency_index + 1) % SUBGHZ_FREQUENCY_COUNT;
+                        new_freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
 
-                    if (use_internal_subghz && scheduler->subghz_internal) {
-                        // When changing frequency, also cycle the preset every full frequency rotation
-                        // This gives coverage of OOK and FSK modulations
-                        if (scheduler->subghz_frequency_index == 0) {
-                            subghz_scanner_cycle_preset(scheduler->subghz_internal);
-                            FURI_LOG_I(TAG, "Sub-GHz preset cycled after full frequency rotation");
+                        if (use_internal_subghz && scheduler->subghz_internal) {
+                            // When changing frequency, also cycle the preset every full frequency rotation
+                            // This gives coverage of OOK and FSK modulations
+                            if (scheduler->subghz_frequency_index == 0) {
+                                subghz_scanner_cycle_preset(scheduler->subghz_internal);
+                                FURI_LOG_I(TAG, "Sub-GHz preset cycled after full frequency rotation");
+                            }
+
+                            // Try to set the frequency - if scanner not running, restart it
+                            if (!subghz_scanner_is_running(scheduler->subghz_internal)) {
+                                // Scanner stopped - try to restart at this frequency
+                                if (subghz_scanner_start(scheduler->subghz_internal, new_freq)) {
+                                    scheduler->subghz_active = scheduler->subghz_internal;
+                                    found_valid = true;
+                                    FURI_LOG_I(TAG, "Sub-GHz scanner restarted at %lu Hz", new_freq);
+                                    break;
+                                }
+                            } else if (subghz_scanner_set_frequency(scheduler->subghz_internal, new_freq)) {
+                                found_valid = true;
+                                break;
+                            }
+                        } else {
+                            found_valid = true;
+                            break;
                         }
+                        attempts++;
+                    }
 
-                        subghz_scanner_set_frequency(scheduler->subghz_internal, new_freq);
+                    if (!found_valid) {
+                        FURI_LOG_E(TAG, "No valid frequencies found in hop cycle!");
+                        scheduler->subghz_frequency_index = start_index;
                     }
 
                     if (use_external_subghz && scheduler->external_radio) {
@@ -411,6 +450,19 @@ int32_t scheduler_thread_func(void* context) {
         furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
         scheduler->stats.uptime_seconds = (now - scheduler->start_time) / 1000;
         furi_mutex_release(scheduler->mutex);
+
+        // Periodic status log - shows scanner state every 10 seconds
+        // This helps diagnose issues since USB reconnects after app start
+        if ((now - last_status_log) >= 10000) {
+            last_status_log = now;
+            bool subghz_running = scheduler->subghz_internal ?
+                subghz_scanner_is_running(scheduler->subghz_internal) : false;
+            FURI_LOG_I(TAG, "STATUS: enable_subghz=%d, scanner=%p, running=%d, detections=%lu",
+                scheduler->config.enable_subghz,
+                (void*)scheduler->subghz_internal,
+                subghz_running,
+                scheduler->subghz_internal ? subghz_scanner_get_detection_count(scheduler->subghz_internal) : 0);
+        }
 
         furi_delay_ms(SCHEDULER_TICK_MS);
     }

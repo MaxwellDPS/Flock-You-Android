@@ -72,9 +72,14 @@ void detection_scheduler_configure(
 
     if (!scheduler || !config) return;
 
+    FURI_LOG_I(TAG, "Configure: enable_subghz=%d (before=%d)",
+        config->enable_subghz, scheduler->config.enable_subghz);
+
     furi_mutex_acquire(scheduler->mutex, FuriWaitForever);
     memcpy(&scheduler->config, config, sizeof(SchedulerConfig));
     furi_mutex_release(scheduler->mutex);
+
+    FURI_LOG_I(TAG, "Configure complete: enable_subghz=%d", scheduler->config.enable_subghz);
 }
 
 // ============================================================================

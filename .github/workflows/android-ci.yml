@@ -185,6 +185,47 @@ jobs:
           echo "gh attestation verify app-oem-debug.apk --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
+  test-oem:
+    name: Unit Tests (oem)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests (oem)
+        run: ./gradlew testoemDebugUnitTest --stacktrace --build-cache
+
+      - name: Upload Test Results (oem)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-oem
+          path: app/build/reports/tests/
+          retention-days: 7
+
   build-sideload:
     name: Build (sideload)
     runs-on: ubuntu-latest
@@ -307,6 +348,47 @@ jobs:
           echo "gh attestation verify app-sideload-debug.apk --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
+  test-sideload:
+    name: Unit Tests (sideload)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests (sideload)
+        run: ./gradlew testsideloadDebugUnitTest --stacktrace --build-cache
+
+      - name: Upload Test Results (sideload)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-sideload
+          path: app/build/reports/tests/
+          retention-days: 7
+
   build-system:
     name: Build (system)
     runs-on: ubuntu-latest
@@ -428,6 +510,47 @@ jobs:
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "gh attestation verify app-system-debug.apk --owner ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  test-system:
+    name: Unit Tests (system)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests (system)
+        run: ./gradlew testsystemDebugUnitTest --stacktrace --build-cache
+
+      - name: Upload Test Results (system)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-system
+          path: app/build/reports/tests/
+          retention-days: 7
 
   # ===========================================
   # Release Build Jobs - Only when release is requested
@@ -1655,130 +1778,4 @@ jobs:
         with:
           name: lint-results
           path: app/build/reports/lint-results-*.html
-          retention-days: 7
-
-  # ===========================================
-  # Unit Tests - Separate job for each flavor
-  # ===========================================
-  test-oem:
-    name: Unit Tests (oem)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Run Unit Tests (oem)
-        run: ./gradlew testoemDebugUnitTest --stacktrace --build-cache
-
-      - name: Upload Test Results (oem)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-oem
-          path: app/build/reports/tests/
-          retention-days: 7
-
-  test-sideload:
-    name: Unit Tests (sideload)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Run Unit Tests (sideload)
-        run: ./gradlew testsideloadDebugUnitTest --stacktrace --build-cache
-
-      - name: Upload Test Results (sideload)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-sideload
-          path: app/build/reports/tests/
-          retention-days: 7
-
-  test-system:
-    name: Unit Tests (system)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Run Unit Tests (system)
-        run: ./gradlew testsystemDebugUnitTest --stacktrace --build-cache
-
-      - name: Upload Test Results (system)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-system
-          path: app/build/reports/tests/
           retention-days: 7

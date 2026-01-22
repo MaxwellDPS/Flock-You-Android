@@ -234,7 +234,7 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
 
     // Begin device access
     if (!subghz_devices_begin(scanner->device)) {
-        FURI_LOG_E(TAG, "Failed to begin device - is CC1101 in use by another app?");
+        FURI_LOG_E(TAG, "Failed to begin device - CC1101 may be in use");
         furi_mutex_release(scanner->mutex);
         return false;
     }
@@ -323,15 +323,11 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
 bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
     if (!scanner || !scanner->device) return false;
 
-    // If scanner is not running, start it first
+    // Log if scanner is not running - indicates a problem
     if (!scanner->running) {
-        FURI_LOG_W(TAG, "Scanner not running, attempting to start at %lu Hz", frequency);
-        if (!subghz_scanner_start(scanner, frequency)) {
-            FURI_LOG_E(TAG, "Failed to auto-start scanner at %lu Hz", frequency);
-            return false;
-        }
-        FURI_LOG_I(TAG, "Scanner auto-started at %lu Hz", frequency);
-        return true;
+        // Don't try to auto-start - the scheduler should do that
+        FURI_LOG_W(TAG, "set_frequency called but scanner not running! (freq=%lu)", frequency);
+        return false;
     }
 
     if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
