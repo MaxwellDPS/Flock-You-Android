@@ -38,11 +38,33 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
-      
+
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
-      
+
+      - name: 📦 Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: 📦 Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-sideload-release-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-sideload-release-
+            ${{ runner.os }}-android-build-sideload-
+            ${{ runner.os }}-android-build-
+
       - name: 📝 Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -71,9 +93,10 @@ jobs:
               -Pandroid.injected.signing.store.file=${{ github.workspace }}/app/release-keystore.jks \
               -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
               -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-              -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+              -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
+              --build-cache
           else
-            ./gradlew assembleSideloadRelease
+            ./gradlew assembleSideloadRelease --build-cache
           fi
 
       - name: 📝 Rename APK

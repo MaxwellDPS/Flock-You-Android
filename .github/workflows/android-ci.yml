@@ -87,10 +87,31 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-oem-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-oem-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -111,11 +132,8 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
 
-      - name: Clean project
-        run: ./gradlew clean
-
       - name: Build Debug APK (oem)
-        run: ./gradlew assembleoemDebug --stacktrace
+        run: ./gradlew assembleoemDebug --stacktrace --build-cache
 
       - name: Upload Debug APK (oem)
         uses: actions/upload-artifact@v4
@@ -191,10 +209,31 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-sideload-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-sideload-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -215,11 +254,8 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
 
-      - name: Clean project
-        run: ./gradlew clean
-
       - name: Build Debug APK (sideload)
-        run: ./gradlew assemblesideloadDebug --stacktrace
+        run: ./gradlew assemblesideloadDebug --stacktrace --build-cache
 
       - name: Upload Debug APK (sideload)
         uses: actions/upload-artifact@v4
@@ -295,10 +331,31 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-system-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-system-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -319,11 +376,8 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
 
-      - name: Clean project
-        run: ./gradlew clean
-
       - name: Build Debug APK (system)
-        run: ./gradlew assemblesystemDebug --stacktrace
+        run: ./gradlew assemblesystemDebug --stacktrace --build-cache
 
       - name: Upload Debug APK (system)
         uses: actions/upload-artifact@v4
@@ -400,10 +454,32 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-oem-release-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-oem-release-
+            ${{ runner.os }}-android-build-oem-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -445,7 +521,7 @@ jobs:
             -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
             -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
             -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Install step CLI
         if: steps.signing.outputs.method != 'keystore'
@@ -546,7 +622,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ca-signed \
             -Pandroid.injected.signing.key.alias=ca-signed \
             -Pandroid.injected.signing.key.password=ca-signed \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Generate Ephemeral Self-Signed Certificate
         if: steps.signing.outputs.method == 'ephemeral'
@@ -589,7 +665,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ephemeral \
             -Pandroid.injected.signing.key.alias=ephemeral \
             -Pandroid.injected.signing.key.password=ephemeral \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Rename APK with version
         run: |
@@ -738,10 +814,32 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-sideload-release-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-sideload-release-
+            ${{ runner.os }}-android-build-sideload-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -783,7 +881,7 @@ jobs:
             -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
             -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
             -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Install step CLI
         if: steps.signing.outputs.method != 'keystore'
@@ -884,7 +982,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ca-signed \
             -Pandroid.injected.signing.key.alias=ca-signed \
             -Pandroid.injected.signing.key.password=ca-signed \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Generate Ephemeral Self-Signed Certificate
         if: steps.signing.outputs.method == 'ephemeral'
@@ -927,7 +1025,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ephemeral \
             -Pandroid.injected.signing.key.alias=ephemeral \
             -Pandroid.injected.signing.key.password=ephemeral \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Rename APK with version
         run: |
@@ -1076,10 +1174,32 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Android build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/build-cache
+            app/build/intermediates
+            app/build/kotlin
+          key: ${{ runner.os }}-android-build-system-release-${{ hashFiles('app/src/**', 'app/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-android-build-system-release-
+            ${{ runner.os }}-android-build-system-
+            ${{ runner.os }}-android-build-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -1121,7 +1241,7 @@ jobs:
             -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
             -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
             -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Install step CLI
         if: steps.signing.outputs.method != 'keystore'
@@ -1222,7 +1342,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ca-signed \
             -Pandroid.injected.signing.key.alias=ca-signed \
             -Pandroid.injected.signing.key.password=ca-signed \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Generate Ephemeral Self-Signed Certificate
         if: steps.signing.outputs.method == 'ephemeral'
@@ -1265,7 +1385,7 @@ jobs:
             -Pandroid.injected.signing.store.password=ephemeral \
             -Pandroid.injected.signing.key.alias=ephemeral \
             -Pandroid.injected.signing.key.password=ephemeral \
-            --stacktrace
+            --stacktrace --build-cache
 
       - name: Rename APK with version
         run: |
@@ -1508,16 +1628,25 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Run Lint
-        run: ./gradlew lint --stacktrace
+        run: ./gradlew lint --stacktrace --build-cache
         continue-on-error: true
 
       - name: Upload Lint Results
@@ -1544,16 +1673,25 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Run Unit Tests (oem)
-        run: ./gradlew testoemDebugUnitTest --stacktrace
+        run: ./gradlew testoemDebugUnitTest --stacktrace --build-cache
 
       - name: Upload Test Results (oem)
         uses: actions/upload-artifact@v4
@@ -1576,16 +1714,25 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Run Unit Tests (sideload)
-        run: ./gradlew testsideloadDebugUnitTest --stacktrace
+        run: ./gradlew testsideloadDebugUnitTest --stacktrace --build-cache
 
       - name: Upload Test Results (sideload)
         uses: actions/upload-artifact@v4
@@ -1608,16 +1755,25 @@ jobs:
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Run Unit Tests (system)
-        run: ./gradlew testsystemDebugUnitTest --stacktrace
+        run: ./gradlew testsystemDebugUnitTest --stacktrace --build-cache
 
       - name: Upload Test Results (system)
         uses: actions/upload-artifact@v4
