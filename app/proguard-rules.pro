@@ -120,6 +120,14 @@
 # Keep proto classes for MediaPipe
 -keep class com.google.mediapipe.tasks.genai.llminference.jni.proto.** { *; }
 
+# MediaPipe framework image classes (optional dependency for image features)
+-dontwarn com.google.mediapipe.framework.image.BitmapExtractor
+-dontwarn com.google.mediapipe.framework.image.ByteBufferExtractor
+-dontwarn com.google.mediapipe.framework.image.MPImage
+-dontwarn com.google.mediapipe.framework.image.MPImageProperties
+-dontwarn com.google.mediapipe.framework.image.MediaImageExtractor
+-dontwarn com.google.mediapipe.framework.image.**
+
 # ============================================================
 # ML Kit GenAI Prompt (Gemini Nano)
 # ============================================================
