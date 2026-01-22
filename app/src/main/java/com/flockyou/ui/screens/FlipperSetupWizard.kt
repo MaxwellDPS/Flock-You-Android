@@ -43,7 +43,7 @@ fun FlipperSetupWizard(
     ) {
         // Progress indicator
         LinearProgressIndicator(
-            progress = { (currentPage + 1).toFloat() / totalPages },
+            progress = (currentPage + 1).toFloat() / totalPages,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),

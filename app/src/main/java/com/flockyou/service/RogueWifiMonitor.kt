@@ -1046,23 +1046,50 @@ class RogueWifiMonitor(
             // Build enriched following analysis
             val analysis = buildFollowingAnalysis(bssid, sightings)
 
-            // Only report if we have significant following indicators AND minimum distance traveled
-            // User must have traveled at least minTrackingDistanceMeters (default: 1 mile / 1609m)
-            val meetsDistanceThreshold = analysis.totalDistanceTraveledMeters >= minTrackingDistanceMeters
-            val hasSignificantIndicators = analysis.distinctLocations >= 3 || analysis.followingConfidence >= 50
+            // ==================== REPORTING THRESHOLDS ====================
+            // TUNED: More conservative thresholds to reduce false positives
+            //
+            // Requirements to report:
+            // 1. Minimum distance threshold (default 1 mile)
+            // 2. Confidence above minimum threshold (accounting for FP likelihood)
+            // 3. NOT a clear false positive pattern
+            //
+            // The confidence score already incorporates FP likelihood subtraction,
+            // so we can use it directly for threshold decisions.
 
-            if (hasSignificantIndicators && meetsDistanceThreshold) {
+            val meetsDistanceThreshold = analysis.totalDistanceTraveledMeters >= minTrackingDistanceMeters
+
+            // Require higher confidence threshold for reporting (raised from 50 to 60)
+            // With the new FP-aware scoring, legitimate threats should still exceed this
+            val meetsConfidenceThreshold = analysis.followingConfidence >= 60
+
+            // Additional check: if FP likelihood is very high (>70%), suppress entirely
+            // unless confidence is also very high (real surveillance would have strong indicators)
+            val suppressDueToFP = analysis.falsePositiveLikelihood > 70f &&
+                analysis.followingConfidence < 80f
+
+            // Location requirement: need at least 3 TRULY distinct locations (100m apart)
+            // to show actual following behavior vs. just being in the same area
+            val meetsLocationThreshold = analysis.distinctLocations >= 3
+
+            val shouldReport = meetsDistanceThreshold &&
+                meetsConfidenceThreshold &&
+                meetsLocationThreshold &&
+                !suppressDueToFP
+
+            if (shouldReport) {
                 val history = networkHistory[bssid]
 
-                // Determine confidence based on enriched analysis
+                // Determine confidence level based on enriched analysis
+                // TUNED: Raised thresholds - CRITICAL should be rare
                 val confidence = when {
-                    analysis.followingConfidence >= 80 -> AnomalyConfidence.CRITICAL
-                    analysis.followingConfidence >= 60 -> AnomalyConfidence.HIGH
-                    analysis.followingConfidence >= 40 -> AnomalyConfidence.MEDIUM
+                    analysis.followingConfidence >= 85 -> AnomalyConfidence.CRITICAL  // Raised from 80
+                    analysis.followingConfidence >= 70 -> AnomalyConfidence.HIGH      // Raised from 60
+                    analysis.followingConfidence >= 55 -> AnomalyConfidence.MEDIUM    // Raised from 40
                     else -> AnomalyConfidence.LOW
                 }
 
-                // Build enriched description
+                // Build enriched description including FP context if relevant
                 val distanceMiles = analysis.totalDistanceTraveledMeters / 1609.0
                 val description = buildString {
                     append("Network appears to be following your movement")
@@ -1073,6 +1100,11 @@ class RogueWifiMonitor(
                     }
                     append(" for ${String.format("%.1f", distanceMiles)} mi")
                     append(" - confidence: ${String.format("%.0f", analysis.followingConfidence)}%")
+
+                    // Add FP context for transparency
+                    if (analysis.falsePositiveLikelihood > 30f) {
+                        append(" (FP likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%)")
+                    }
                 }
 
                 reportAnomaly(
@@ -1087,6 +1119,15 @@ class RogueWifiMonitor(
                 )
 
                 // Clear to avoid repeated alerts
+                sightings.clear()
+            } else if (analysis.falsePositiveLikelihood > 50f) {
+                // Log suppressed detection for debugging
+                Log.d(TAG, "FOLLOWING_NETWORK suppressed for $bssid: " +
+                    "confidence=${analysis.followingConfidence}%, " +
+                    "fpLikelihood=${analysis.falsePositiveLikelihood}%, " +
+                    "indicators=${analysis.fpIndicators.joinToString()}")
+
+                // Clear sightings to avoid repeated analysis
                 sightings.clear()
             }
         }
@@ -1139,7 +1180,9 @@ class RogueWifiMonitor(
     }
 
     private fun countPotentialEvilTwins(): Int {
-        return ssidToBssids.count { it.value.size >= 2 }
+        // Count actual evil twin anomalies that were reported after filtering out
+        // legitimate multi-AP scenarios (dual-band routers, mesh networks, etc.)
+        return detectedAnomalies.count { it.type == WifiAnomalyType.EVIL_TWIN }
     }
 
     private fun reportAnomaly(
@@ -1508,15 +1551,28 @@ class RogueWifiMonitor(
 
     /**
      * Build comprehensive following network analysis
+     *
+     * CONFIDENCE SCORING METHODOLOGY (tuned to reduce false positives):
+     *
+     * The confidence score represents how likely this is REAL surveillance vs. benign.
+     * Reaching 80%+ (CRITICAL) should require STRONG evidence across multiple dimensions.
+     *
+     * SCORING BREAKDOWN:
+     * - Base indicators add points (max ~60 without mitigating factors)
+     * - False positive heuristics SUBTRACT points significantly
+     * - Final confidence is clamped to 0-100
+     *
+     * IMPORTANT: A neighbor's WiFi seen during daily commute should NOT reach CRITICAL.
+     * Real surveillance shows: sustained following over time, multiple locations, no benign pattern.
      */
     private fun buildFollowingAnalysis(bssid: String, sightings: List<NetworkSighting>): FollowingNetworkAnalysis {
         val now = System.currentTimeMillis()
 
-        // Count distinct locations
+        // Count distinct locations (using 100m threshold instead of 50m to reduce over-counting)
         val distinctLocs = mutableListOf<Pair<Double, Double>>()
         for (sighting in sightings) {
             val isDistinct = distinctLocs.none { existing ->
-                haversineDistanceMeters(sighting.latitude, sighting.longitude, existing.first, existing.second) < 50
+                haversineDistanceMeters(sighting.latitude, sighting.longitude, existing.first, existing.second) < 100
             }
             if (isDistinct) {
                 distinctLocs.add(sighting.latitude to sighting.longitude)
@@ -1561,7 +1617,76 @@ class RogueWifiMonitor(
         val vehicleMounted = isVehicleMounted(sightings)
         val footSurveillance = isPossibleFootSurveillance(sightings)
 
-        // Risk indicators
+        // ==================== FALSE POSITIVE HEURISTICS ====================
+        // These patterns suggest benign explanations, NOT surveillance
+
+        val fpIndicators = mutableListOf<String>()
+        var fpLikelihood = 0f
+
+        // 1. Check for neighbor/business WiFi pattern
+        // If we see this network ONLY at locations very close together (all within 200m),
+        // it's likely a neighbor's WiFi or a business we pass regularly
+        val isLikelyNeighborNetwork = if (distinctLocs.size >= 2) {
+            val maxDistanceBetweenSightings = distinctLocs.flatMap { loc1 ->
+                distinctLocs.map { loc2 ->
+                    haversineDistanceMeters(loc1.first, loc1.second, loc2.first, loc2.second)
+                }
+            }.maxOrNull() ?: 0.0
+            maxDistanceBetweenSightings < 200.0
+        } else true  // Single location = definitely not following
+
+        if (isLikelyNeighborNetwork) {
+            fpIndicators.add("All sightings within 200m - likely neighbor/local business WiFi")
+            fpLikelihood += 40f
+        }
+
+        // 2. Check for personal hotspot / mobile hotspot pattern
+        // Very strong signal (-30 to -50 dBm) that's consistent = likely in same vehicle or nearby person
+        val isLikelyMobileHotspot = avgSignal > -55 && signalConsistency > 0.8f
+        if (isLikelyMobileHotspot) {
+            fpIndicators.add("Very strong consistent signal - likely personal/family hotspot")
+            fpLikelihood += 30f
+        }
+
+        // 3. Check for commuter pattern
+        // If time pattern is PERIODIC (regular intervals), this is likely a regular commute
+        // passing the same WiFi repeatedly
+        val isLikelyCommuterDevice = timePattern == TimePattern.PERIODIC && distinctLocs.size <= 3
+        if (isLikelyCommuterDevice) {
+            fpIndicators.add("Periodic pattern with few locations - likely daily commute route")
+            fpLikelihood += 35f
+        }
+
+        // 4. Check for public transit pattern
+        // On buses/trains, we'd see the bus WiFi at regular intervals along a route
+        val isLikelyPublicTransit = vehicleMounted && timePattern == TimePattern.PERIODIC
+        if (isLikelyPublicTransit) {
+            fpIndicators.add("Vehicle-mounted with periodic pattern - possibly public transit WiFi")
+            fpLikelihood += 25f
+        }
+
+        // 5. Short tracking duration is less concerning
+        // Real surveillance typically persists for extended periods
+        val shortDuration = trackingDuration < 600_000L  // Less than 10 minutes
+        if (shortDuration) {
+            fpIndicators.add("Short tracking duration (< 10 minutes)")
+            fpLikelihood += 15f
+        }
+
+        // 6. Low sighting count relative to duration = intermittent, not persistent
+        val sightingsPerMinute = if (trackingDuration > 0) {
+            sightings.size.toFloat() / (trackingDuration / 60_000f)
+        } else 0f
+        val lowPersistence = sightingsPerMinute < 0.5f && sightings.size < 10
+        if (lowPersistence) {
+            fpIndicators.add("Low sighting frequency - intermittent rather than persistent")
+            fpLikelihood += 10f
+        }
+
+        // Clamp FP likelihood
+        fpLikelihood = fpLikelihood.coerceIn(0f, 85f)
+
+        // ==================== RISK INDICATORS ====================
         val riskIndicators = mutableListOf<String>()
         if (distinctLocs.size >= 3) riskIndicators.add("Seen at ${distinctLocs.size} distinct locations")
         if (pathCorrelation > 0.7) riskIndicators.add("High path correlation (${String.format("%.0f", pathCorrelation * 100)}%)")
@@ -1569,18 +1694,54 @@ class RogueWifiMonitor(
         if (vehicleMounted) riskIndicators.add("Movement pattern suggests vehicle")
         if (footSurveillance) riskIndicators.add("Pattern suggests foot surveillance (close, walking pace)")
         if (signalTrend == SignalTrend.APPROACHING) riskIndicators.add("Signal strength increasing (approaching)")
-        if (trackingDuration > 180_000) riskIndicators.add("Tracking for ${trackingDuration / 60_000}+ minutes")
+        if (trackingDuration > 300_000) riskIndicators.add("Tracking for ${trackingDuration / 60_000}+ minutes")  // Raised to 5 min
         if (timePattern == TimePattern.CORRELATED) riskIndicators.add("Appearance pattern correlated with user movement")
 
-        // Calculate overall confidence
+        // ==================== CONFIDENCE CALCULATION ====================
+        // TUNED: More conservative scoring to prevent false CRITICAL alerts
+        //
+        // Old scoring easily reached 100% with:
+        //   5 locations (50) + path correlation (30) + mobile (15) + vehicle (10) = 105
+        //
+        // New scoring:
+        //   - Reduced per-factor weights
+        //   - Require sustained tracking (time-based boost)
+        //   - Subtract FP likelihood
+        //   - Maximum base score ~70 before FP subtraction
+
         var confidence = 0f
-        confidence += distinctLocs.size * 10f
-        confidence += pathCorrelation * 30f
-        if (likelyMobile) confidence += 15f
-        if (vehicleMounted) confidence += 10f
-        if (footSurveillance) confidence += 20f
-        if (trackingDuration > 180_000) confidence += 10f
-        if (timePattern == TimePattern.CORRELATED) confidence += 15f
+
+        // Location diversity (reduced from 10 per location to 5, capped)
+        confidence += minOf(distinctLocs.size * 5f, 25f)
+
+        // Path correlation (reduced from 30 to 20)
+        confidence += pathCorrelation * 20f
+
+        // Movement indicators (reduced individual weights)
+        if (likelyMobile) confidence += 10f
+        if (vehicleMounted) confidence += 5f  // Reduced from 10 - vehicles are common
+        if (footSurveillance) confidence += 15f  // Kept high - this is more concerning
+
+        // Time-based factors (require sustained tracking for high confidence)
+        if (trackingDuration > 600_000) confidence += 15f  // 10+ minutes = significant
+        else if (trackingDuration > 300_000) confidence += 8f  // 5-10 minutes = moderate
+        // Under 5 minutes gets no time bonus
+
+        // Pattern correlation
+        if (timePattern == TimePattern.CORRELATED) confidence += 10f
+
+        // Distance traveled boost (only add if significant distance)
+        val distanceMiles = totalDistanceTraveled / 1609.0
+        if (distanceMiles >= 3.0) confidence += 10f  // 3+ miles is significant
+        else if (distanceMiles >= 2.0) confidence += 5f
+
+        // ==================== APPLY FALSE POSITIVE REDUCTION ====================
+        // Subtract FP likelihood from confidence
+        // This ensures benign patterns significantly reduce the alert level
+        confidence -= fpLikelihood
+
+        // Ensure confidence stays in valid range
+        confidence = confidence.coerceIn(0f, 100f)
 
         return FollowingNetworkAnalysis(
             sightingCount = sightings.size,
@@ -1599,9 +1760,16 @@ class RogueWifiMonitor(
             likelyMobile = likelyMobile,
             vehicleMounted = vehicleMounted,
             possibleFootSurveillance = footSurveillance,
-            followingConfidence = confidence.coerceIn(0f, 100f),
+            followingConfidence = confidence,
             followingDurationMs = trackingDuration,
-            riskIndicators = riskIndicators
+            riskIndicators = riskIndicators,
+            // NEW: Populate FP analysis fields
+            falsePositiveLikelihood = fpLikelihood,
+            fpIndicators = fpIndicators,
+            isLikelyNeighborNetwork = isLikelyNeighborNetwork,
+            isLikelyMobileHotspot = isLikelyMobileHotspot,
+            isLikelyCommuterDevice = isLikelyCommuterDevice,
+            isLikelyPublicTransit = isLikelyPublicTransit
         )
     }
 
@@ -1614,6 +1782,7 @@ class RogueWifiMonitor(
         parts.add("Following Confidence: ${String.format("%.0f", analysis.followingConfidence)}%")
         parts.add("Sightings: ${analysis.sightingCount} at ${analysis.distinctLocations} distinct locations")
         parts.add("Tracking Duration: ${analysis.trackingDurationMs / 1000}s")
+        parts.add("Distance Traveled: ${String.format("%.2f", analysis.totalDistanceTraveledMeters / 1609.0)} mi")
 
         // Movement classification
         val deviceType = when {
@@ -1633,6 +1802,23 @@ class RogueWifiMonitor(
 
         // Time pattern
         parts.add("Time Pattern: ${analysis.timePattern.displayName}")
+
+        // False positive analysis (for transparency)
+        if (analysis.falsePositiveLikelihood > 0f) {
+            parts.add("")
+            parts.add("=== False Positive Analysis ===")
+            parts.add("FP Likelihood: ${String.format("%.0f", analysis.falsePositiveLikelihood)}%")
+            if (analysis.fpIndicators.isNotEmpty()) {
+                parts.add("FP Indicators:")
+                analysis.fpIndicators.forEach { indicator ->
+                    parts.add("  - $indicator")
+                }
+            }
+            if (analysis.isLikelyNeighborNetwork) parts.add("Likely neighbor/local network: Yes")
+            if (analysis.isLikelyMobileHotspot) parts.add("Likely mobile hotspot: Yes")
+            if (analysis.isLikelyCommuterDevice) parts.add("Likely commuter pattern: Yes")
+            if (analysis.isLikelyPublicTransit) parts.add("Likely public transit: Yes")
+        }
 
         return parts.joinToString("\n")
     }

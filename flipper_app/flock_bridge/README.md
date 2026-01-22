@@ -447,23 +447,113 @@ WipsConfig config = {
 
 ## External Hardware
 
+### GINTBN Multi-Board (Recommended)
+
+The **GINTBN Flipper Zero Modification Module** is the recommended expansion board, providing:
+
+- **ESP32** - WiFi scanning and monitor mode
+- **CC1101** - High-gain extended Sub-GHz (wider range than internal)
+- **nRF24L01+** - 2.4GHz sniffer and MouseJacker support
+
+**Features:**
+- Plug-and-play via GPIO header
+- Pre-flashed with ESP32 Marauder firmware (replaceable with Flock firmware)
+- SD card slot for data storage
+- All three radios accessible simultaneously
+
+**Flashing Flock Firmware:**
+```bash
+# Navigate to firmware directory
+cd flipper_app/esp32_firmware
+
+# Flash using Arduino IDE or PlatformIO
+# Select board: ESP32 Dev Module
+# Upload: flock_multiboard.ino
+```
+
 ### Supported Modules
 
 | Module | Interface | Capabilities |
 |--------|-----------|--------------|
+| **GINTBN Multi-Board** | UART | WiFi + Sub-GHz + nRF24 (all-in-one) |
 | ESP32-WROOM/WROVER | UART | WiFi scanning, BLE extended |
 | ESP8266 | UART | WiFi scanning (limited) |
-| CC1101 | UART | Extended Sub-GHz |
-| nRF24L01+ | UART | 2.4 GHz injection |
+| CC1101 | SPI (via ESP32) | Extended Sub-GHz |
+| nRF24L01+ | SPI (via ESP32) | 2.4 GHz sniffer/injection |
 | CC2500 | UART | 2.4 GHz proprietary |
 | SX1276/78 | UART | LoRa long-range |
 
-### Connection
+### Connection (GINTBN / ESP32)
 
-Connect to Flipper GPIO header:
-- **TX:** Pin 13 or 15 (LPUART)
-- **RX:** Pin 14 or 16 (LPUART)
-- **Baud Rate:** 115,200
+```
+Flipper GPIO Header:
+┌─────────────────────────────────────┐
+│  3.3V  GND  [13]TX  [14]RX         │
+│                                     │
+│  Pin 13 (TX) ──> ESP32 RX (GPIO 16)│
+│  Pin 14 (RX) <── ESP32 TX (GPIO 17)│
+│  GND ────────── GND                 │
+│  3.3V ───────── 3.3V (or USB power) │
+└─────────────────────────────────────┘
+```
+
+**Alternative LPUART (Pins 15/16):**
+- Pin 15 (TX) → ESP32 RX
+- Pin 16 (RX) ← ESP32 TX
+
+**Baud Rate:** 115,200
+
+### Multi-Board Internal Connections
+
+For GINTBN-style boards, the ESP32 connects to CC1101 and nRF24 via SPI:
+
+```
+ESP32 Pin Mapping:
+┌──────────────────────────────────────────┐
+│ SPI Bus (Shared):                        │
+│   GPIO 23 (MOSI) ─┬─> CC1101 MOSI        │
+│                   └─> nRF24 MOSI         │
+│   GPIO 19 (MISO) <┬── CC1101 MISO        │
+│                   └── nRF24 MISO         │
+│   GPIO 18 (SCK)  ─┬─> CC1101 SCK         │
+│                   └─> nRF24 SCK          │
+├──────────────────────────────────────────┤
+│ CC1101:                                  │
+│   GPIO 5  (CS)   ──> CC1101 CS           │
+│   GPIO 4  (GDO0) <── CC1101 GDO0         │
+│   GPIO 2  (GDO2) <── CC1101 GDO2         │
+├──────────────────────────────────────────┤
+│ nRF24L01+:                               │
+│   GPIO 15 (CS)   ──> nRF24 CSN           │
+│   GPIO 22 (CE)   ──> nRF24 CE            │
+│   GPIO 21 (IRQ)  <── nRF24 IRQ           │
+└──────────────────────────────────────────┘
+```
+
+### Firmware Files
+
+| File | Description |
+|------|-------------|
+| `esp32_firmware/flock_multiboard.ino` | Full multi-radio firmware (recommended) |
+| `esp32_firmware/flock_wifi_scanner.ino` | WiFi-only firmware (basic) |
+
+### Capability Detection
+
+The firmware reports capabilities based on detected hardware:
+
+| Capability | Flag | Description |
+|------------|------|-------------|
+| WiFi Scan | `0x001` | Basic WiFi scanning |
+| WiFi Monitor | `0x002` | Promiscuous mode |
+| WiFi Deauth | `0x004` | Deauth detection |
+| WiFi Inject | `0x008` | Frame injection |
+| Sub-GHz RX | `0x010` | CC1101 receive |
+| Sub-GHz TX | `0x020` | CC1101 transmit |
+| BLE Scan | `0x040` | BLE advertisement scan |
+| BLE Advertise | `0x080` | BLE advertising |
+| nRF24 Sniff | `0x100` | 2.4GHz packet sniffing |
+| nRF24 Inject | `0x200` | 2.4GHz packet injection |
+| nRF24 MouseJack | `0x400` | Wireless keyboard attack |
 
 ### Protocol
 
@@ -471,6 +561,13 @@ Binary protocol with CRC8:
 ```
 [0xAA][LEN_H][LEN_L][CMD][PAYLOAD...][CRC8]
 ```
+
+**Command Ranges:**
+- `0x01-0x0F` - System commands (ping, info, reset)
+- `0x10-0x1F` - WiFi commands
+- `0x20-0x2F` - Sub-GHz / CC1101 commands
+- `0x30-0x3F` - BLE commands
+- `0x40-0x4F` - nRF24 specific commands
 
 The external radio manager auto-detects connected hardware via heartbeat.
 

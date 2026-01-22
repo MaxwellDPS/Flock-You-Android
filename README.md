@@ -1,771 +1,559 @@
-# Flock You Android
-## Multi-layered surveillance device detection for Android
+# Flock-You
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Platform-Android-green?style=flat-square&logo=android" alt="Platform">
-  <img src="https://img.shields.io/badge/Min%20SDK-26%20(Android%208.0)-blue?style=flat-square" alt="Min SDK">
-  <img src="https://img.shields.io/badge/Target%20SDK-34%20(Android%2014)-blue?style=flat-square" alt="Target SDK">
-  <img src="https://img.shields.io/badge/License-MIT-orange?style=flat-square" alt="License">
-  <br/>
-  <a href="https://github.com/MaxwellDPS/Flock-You-Android/actions/workflows/android-ci.yml">
-    <img src="https://github.com/MaxwellDPS/Flock-You-Android/actions/workflows/android-ci.yml/badge.svg" alt="Android CI/CD">
-  </a>
-  <a href="https://github.com/MaxwellDPS/Flock-You-Android/attestations">
-    <img src="https://img.shields.io/badge/SLSA-Attested-brightgreen?style=flat-square&logo=slsa" alt="SLSA Attested">
-  </a>
-</p>
+**Open-Source Counter-Surveillance for Android**
 
-<p align="center">
-  <h3 align="center">Watch the Watchers 🥰</h3>
-  <h6>//APPROVED FOR RELEASE / DE-CONTROLED CHAOS//</h6>
-  
-  <p align="center"><b style="color: #eb2a2a;">CHAOS ANTI-ICE-ING TOOL</b></p>
-  <p align="center">WE SEE YOU TOO, <b>WE WONT FORGET <b style="color: #eb2a2a;">YOUR ACTIONS</b></b></p>
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-green.svg)](https://developer.android.com)
+[![Platform](https://img.shields.io/badge/platform-Flipper%20Zero-orange.svg)](https://flipperzero.one)
 
-   <p align="center"><b>Brought to you by <span style="color: #0883f6">CHAOS.CORP</span></b></p>
-</p>
+> **"Watch the Watchers"** - Know when surveillance equipment is nearby so you can protect your privacy, document police presence, or simply understand the surveillance landscape around you.
+
+Flock-You is a privacy-first surveillance detection application that empowers individuals to identify surveillance devices, trackers, IMSI catchers, and other monitoring equipment in their environment. All processing happens **entirely on-device** with zero cloud connectivity.
 
 ---
 
-> Inspired by the [Flock You](https://github.com/colonelpanichacks/flock-you) from @colonelpanichacks's ESP32 project. 
-This Android application extends the concept with significantly expanded detection capabilities. Beyond WiFi and Bluetooth LE scanning, it incorporates **cellular network analysis**, **satellite connection monitoring**, **RF signal analysis**, **rogue WiFi detection**, and **ultrasonic beacon detection**.
+## Table of Contents
 
-## Screenshots
+- [Features](#features)
+- [Detection Capabilities](#detection-capabilities)
+- [Privacy Architecture](#privacy-architecture)
+- [Flipper Zero Integration](#flipper-zero-integration)
+- [Installation](#installation)
+- [Build Variants](#build-variants)
+- [OEM Integration](#oem-integration)
+- [Contributing](#contributing)
+- [Security Considerations](#security-considerations)
+- [Resources](#resources)
+- [License](#license)
 
-| Main Screen | Detection Timeline | Satellite Monitor |
-|:-----------:|:------------------:|:-----------------:|
-| ![Main Screen](screenshots/main_screen.png) | ![Timeline](screenshots/timeline.png) | ![Satellite](screenshots/satellite.png) |
+---
 
-| Cellular Monitor | Settings | Rule Settings |
-|:----------------:|:--------:|:-------------:|
-| ![Cellular](screenshots/cellular.png) | ![Settings](screenshots/settings.png) | ![Rules](screenshots/rules.png) |
+## Features
 
-## 🎯 What It Detects
+### Multi-Spectrum Detection
+- **7 Detection Protocols**: BLE, WiFi, Cellular, GNSS, Ultrasonic, RF, and Satellite
+- **75+ Device Signatures**: From AirTags to IMSI catchers to Flock Safety cameras
+- **Real-Time Alerts**: Configurable notifications with threat severity levels
+- **Stalking Detection**: Behavioral analysis to identify trackers following you
 
-### WiFi & Bluetooth LE Detection
+### Privacy-First Design
+- **100% On-Device Processing**: No cloud, no telemetry, no analytics
+- **Encrypted Database**: SQLCipher AES-256-GCM encryption
+- **Ephemeral Mode**: Optional RAM-only storage that leaves no trace
+- **Configurable Retention**: Control how long detection history is kept
 
-#### Surveillance Cameras & ALPR
+### Security Features
+- **Duress PIN**: Secondary PIN that triggers secure wipe
+- **Nuke Manager**: Multi-pass secure data destruction
+- **Auto-Purge**: Wipe data on screen lock or failed auth attempts
+- **Dead Man's Switch**: Time-based automatic data destruction
 
-| Device Type | Detection Methods | Threat Level |
-|-------------|-------------------|--------------|
-| **Flock Safety ALPR** | SSID, BLE Name, MAC OUI | 🔴 HIGH |
-| **Flock Falcon/Sparrow/Condor** | SSID patterns | 🔴 HIGH |
-| **Vigilant (Motorola)** | SSID pattern | 🔴 HIGH |
-| **Genetec AutoVu** | SSID pattern | 🔴 HIGH |
-| **Penguin Surveillance** | SSID, BLE Name | 🟠 MEDIUM |
-| **Pigvision System** | SSID, BLE Name | 🟠 MEDIUM |
+### Hardware Integration
+- **Flipper Zero**: Extended scanning via Flock Bridge FAP
+- **External Radios**: ESP32, CC1101, nRF24L01+ support
+- **Multi-Board Support**: GINTBN and similar expansion modules
 
-#### Audio Surveillance
+---
 
-| Device Type | Detection Methods | Threat Level |
-|-------------|-------------------|--------------|
-| **Raven Gunshot Detector** | BLE Service UUIDs | 🔴 CRITICAL |
-| **ShotSpotter/SoundThinking** | BLE Name | 🔴 CRITICAL |
+## Detection Capabilities
 
-#### Police Technology
+### Bluetooth LE Trackers
 
-| Device Type | Detection Methods | Threat Level |
-|-------------|-------------------|--------------|
-| **StingRay/Hailstorm IMSI Catcher** | SSID pattern | 🔴 CRITICAL |
-| **Cellebrite UFED** | SSID, BLE Name | 🔴 CRITICAL |
-| **GrayKey** | SSID, BLE Name | 🔴 CRITICAL |
-| **Axon Body Cameras** | SSID, BLE Name, Signal Trigger | 🟠 MEDIUM |
-| **Motorola Body Cameras** | SSID, BLE Name | 🟠 MEDIUM |
-| **WatchGuard Cameras** | SSID, BLE Name | 🟠 MEDIUM |
-| **Digital Ally FirstVU** | SSID, BLE Name | 🟠 MEDIUM |
-| **Motorola APX Radios** | SSID, BLE Name | 🟡 LOW |
-| **L3Harris XG Radios** | SSID, BLE Name | 🟡 LOW |
-| **Police Lightbars** | BLE (Whelen, Federal Signal, Code 3) | 🟡 LOW |
+| Device | Detection Method | Stalking Analysis |
+|--------|------------------|-------------------|
+| **Apple AirTag** | Manufacturer data + Find My UUID | Multi-location tracking, possession signal |
+| **Tile** (Pro/Mate/Slim/Sticker) | Manufacturer ID 0x00C7 | Duration analysis, RSSI variance |
+| **Samsung SmartTag** | Service UUID 0xFD5A | Following pattern detection |
+| **Generic Trackers** | Heuristic patterns | Behavioral correlation |
 
-#### Infrastructure
+**Anti-Stalking Features:**
+- Detects trackers appearing at 3+ distinct locations
+- "Possession signal" when tracker has strong, consistent RSSI (-40 to -55 dBm)
+- Duration-based scoring for extended tracking periods
+- Guidance for physical search and evidence preservation
 
-| Device Type | Detection Methods | Threat Level |
-|-------------|-------------------|--------------|
-| **LTE Modems (Quectel, Telit, Sierra)** | MAC OUI | 🟡 LOW |
-| **Cradlepoint Routers** | MAC OUI | 🟡 LOW |
-| **Getac/Toughbook MDTs** | SSID pattern | ⚪ INFO |
+### WiFi Surveillance
 
-### Cellular Network Monitoring (IMSI Catcher Detection)
+| Device Type | Detection Method |
+|-------------|------------------|
+| **Flock Safety ALPR** | SSID pattern `(?i)^flock[_-]?.*` |
+| **License Plate Readers** | MAC OUI + SSID patterns |
+| **Surveillance Vans** | Mobile hotspot patterns |
+| **Hidden Cameras** | Manufacturer data analysis |
+| **Rogue Access Points** | Evil twin detection, karma attack detection |
+| **WiFi Pineapple** | Hak5 signature patterns |
+| **Drones** | DJI, Parrot, Skydio WiFi signatures |
 
-Real-time analysis of cellular connections with context-aware anomaly detection:
+**Advanced Detection:**
+- Following network detection (vehicle-mounted APs tracking movement)
+- Deauthentication flood monitoring
+- Hidden network with strong signal alerts
+- Channel congestion analysis
 
-| Anomaly Type | Threat Level | Description |
-|--------------|--------------|-------------|
-| **Encryption Downgrade** | 🔴 CRITICAL | Network forced from 4G/5G to 2G (weak encryption) |
-| **Suspicious Network ID** | 🔴 CRITICAL | Connected to test MCC/MNC (001-01, 999-99) |
-| **Rapid Cell Switching** | 🔴 HIGH | Abnormal tower handoffs (5-12/min based on movement) |
-| **Signal Spike** | 🔴 HIGH | Sudden signal change (>25 dBm in 5 seconds) |
-| **Unexpected Cell Change** | 🟠 MEDIUM | Tower changed without user movement |
-| **Location Area Anomaly** | 🟠 MEDIUM | LAC/TAC changed unexpectedly |
-| **Unknown Cell Tower** | 🟡 LOW | First time seeing this cell ID |
+### Cellular (IMSI Catcher Detection)
 
-**Features:**
-- Trusted cell tower learning (100-entry history)
-- Movement-aware analysis using GPS
-- Confidence scoring to reduce false positives
-- Global cooldown to prevent alert spam
+| Indicator | Severity | Description |
+|-----------|----------|-------------|
+| **Encryption Downgrade** | CRITICAL | Forced from 4G/5G to 2G |
+| **Unknown Cell Tower** | MEDIUM-HIGH | Cell not in trusted database |
+| **Stationary Cell Change** | MEDIUM | Tower change without movement |
+| **Rapid Switching** | MEDIUM | Abnormally fast tower changes |
+| **Signal Anomaly** | LOW-MEDIUM | Unexpected strength changes |
 
-### Satellite Connection Monitoring (NTN Detection)
+**Cellular Monitoring:**
+- Trusted cell tower learning
+- LAC/TAC anomaly detection
+- MCC/MNC validation
+- Cross-reference with location and movement
 
-Detects suspicious satellite network activity:
+### GNSS/GPS Security
 
-| Anomaly Type | Threat Level | Description |
-|--------------|--------------|-------------|
-| **Forced Satellite Handoff** | 🔴 CRITICAL | Suspicious switch to satellite from terrestrial |
-| **Unexpected NTN Connection** | 🔴 HIGH | Satellite connection when terrestrial available |
-| **T-Mobile Starlink D2C** | 🟠 MEDIUM | Direct-to-cell satellite detection |
-| **Skylo NTN (Pixel 9/10)** | 🟠 MEDIUM | Satellite SOS network detection |
-| **Timing Advance Anomaly** | 🟠 MEDIUM | Ephemeris mismatch detection |
-| **3GPP NTN Parameters** | 🟡 LOW | Release 17 band detection (L-band, S-band) |
+| Threat | Detection Method |
+|--------|------------------|
+| **Spoofing** | Signal uniformity, geometry validation, clock analysis |
+| **Jamming** | Satellite count drop, CN0 degradation, AGC anomalies |
+| **Multipath** | Urban canyon detection, variance analysis |
 
-### Rogue WiFi Monitoring
+**Satellite Analysis:**
+- Multi-constellation support (GPS, GLONASS, Galileo, BeiDou)
+- Carrier-to-noise ratio monitoring
+- Pseudorange consistency checks
+- Position solution validation
 
-Detects evil twin access points and wireless surveillance:
+### Ultrasonic Tracking
 
-| Threat Type | Threat Level | Description |
-|-------------|--------------|-------------|
-| **Evil Twin AP** | 🔴 CRITICAL | Same SSID from different MAC addresses |
-| **Deauth Attack** | 🔴 HIGH | Rapid WiFi disconnections (5+ in 1 minute) |
-| **Hidden Camera AP** | 🟠 MEDIUM | IoT camera SSID patterns and OUI prefixes |
-| **Surveillance Van** | 🟠 MEDIUM | Mobile hotspot surveillance patterns |
-| **Suspicious Open Network** | 🟠 MEDIUM | High-risk public WiFi patterns |
-| **Signal Strength Anomaly** | 🟡 LOW | Unusually strong signals from unknown APs |
+| Beacon Type | Frequency Range | Use Case |
+|-------------|-----------------|----------|
+| **Cross-Device Tracking** | 18-20 kHz | SilverPush, Alphonso |
+| **Advertising Beacons** | 17.5-19 kHz | TV ad synchronization |
+| **Retail Beacons** | 19-22 kHz | In-store location tracking |
 
-### RF Signal Analysis
+**Audio Analysis:**
+- FFT-based frequency detection
+- Pattern matching against known beacon signatures
+- Amplitude and duration filtering
+- Consent-based activation (requires user acknowledgment)
 
-Spectrum-based threat detection:
+### Satellite/NTN Monitoring
 
-| Threat Type | Threat Level | Description |
-|-------------|--------------|-------------|
-| **RF Jammer** | 🔴 CRITICAL | Sudden drops in all wireless signals |
-| **Drone Detection** | 🟠 MEDIUM | DJI, Parrot, Skydio, Autel, and 15+ manufacturers |
-| **Dense Network Area** | 🟠 MEDIUM | High concentration of networks (30+ = surveillance area) |
-| **Hidden Transmitter** | 🟡 LOW | Continuous RF sources |
+| Provider | Technology | Detection |
+|----------|------------|-----------|
+| **T-Mobile Starlink** | 3GPP Release 17 | Network identifier + timing |
+| **Skylo (Pixel SOS)** | NB-IoT NTN | Service UUID + parameters |
+| **Unknown NTN** | Various | Timing anomaly, unexpected handoff |
 
-**Supported Drone Manufacturers:**
-DJI (Phantom, Mavic, Spark, Inspire, Mini), Parrot (Anafi, Bebop), Skydio, Autel (EVO series), Yuneec, Hubsan, Holy Stone, Potensic, and police/tactical drones.
+**Satellite Heuristics:**
+- Unexpected satellite connection when terrestrial available
+- Timing inconsistent with claimed orbital position
+- Rapid/suspicious handoff patterns
+- Frequency mismatch for claimed satellite type
 
-### Ultrasonic Beacon Detection
+### RF Analysis
 
-Cross-device tracking via inaudible audio (17.5-22 kHz):
+| Detection | Method |
+|-----------|--------|
+| **RF Jammers** | Wideband interference patterns |
+| **Drones/UAV** | 2.4/5.8 GHz control signatures |
+| **Hidden Transmitters** | Unexpected RF energy detection |
+| **Spectrum Anomalies** | Baseline deviation analysis |
 
-| Threat Type | Threat Level | Description |
-|-------------|--------------|-------------|
-| **SilverPush Beacon** | 🔴 HIGH | Known advertising tracking beacon |
-| **Alphonso Beacon** | 🔴 HIGH | TV/retail audio tracking |
-| **Unknown Ultrasonic** | 🟠 MEDIUM | Persistent beacon (500ms+ duration) |
+---
 
-**Privacy Note:** Analyzes frequency spectrum only - does NOT record or store audio content.
+## Privacy Architecture
 
-## ✨ Features
-
-### Detection Methods
-- **WiFi Scanning**: SSID pattern matching and MAC address OUI lookup
-- **Bluetooth LE Scanning**: Device name patterns and service UUID fingerprinting
-- **Raven Detection**: Specialized BLE service UUID detection with firmware version estimation
-- **Axon Signal Detection**: Monitors BLE advertising rate spikes (20+ packets/sec) indicating body camera activation
-- **Cellular Monitoring**: Real-time IMSI catcher detection with trusted cell learning
-- **Satellite Monitoring**: NTN connection analysis for suspicious handoffs
-- **Rogue WiFi Detection**: Evil twin AP and deauthentication attack detection
-- **RF Signal Analysis**: Drone detection and jammer identification
-- **Ultrasonic Detection**: Cross-device tracking beacon identification (17.5-22 kHz)
-
-### Rich Device Information
-When a device is detected, you'll see:
-- **What it is**: Device type, manufacturer, model
-- **What it does**: Capabilities (ALPR, audio surveillance, phone forensics)
-- **Why it matters**: Privacy concerns (data retention, warrantless access)
-- **How close**: Estimated distance based on signal strength
-- **Technical details**: MAC address, SSID, firmware version
-
-### Customizable Notifications
-- 🔔 Per-threat-level alert toggles (Critical/High/Medium/Low/Info)
-- 🔊 Sound and vibration options
-- 📳 Multiple vibration patterns (Default, Urgent, Gentle, Long, SOS)
-- 🌙 Quiet hours with configurable schedule (Critical alerts always come through)
-- 🔒 Lock screen notification control
-- 📌 Persistent scanning status notification
-
-### Detection Rule Management
-- 📁 Toggle entire rule categories on/off:
-  - Flock Safety (ALPR cameras, Ravens)
-  - Police Technology (body cams, radios, forensics)
-  - Acoustic Sensors (gunshot detectors)
-  - Generic Surveillance (other patterns)
-- ✏️ Add custom regex rules for local devices
-- 🎚️ Set custom threat scores (0-100)
-- 🔄 Enable/disable individual rules
-
-### User Interface
-- **Main Screen**: Animated radar display with detection counter and last detection info
-- **Detection Timeline**: Full history of all detections with threat level filtering
-- **Cellular Timeline**: Real-time cellular network activity and anomaly events
-- **Satellite Screen**: Satellite connectivity status and NTN anomaly history
-- **RF Signals Screen**: RF environment analysis and drone detection results
-- **Nearby Devices**: All detected BLE/WiFi devices including unmatched
-- **Map View**: Detection locations with OpenStreetMap (no API key required)
-- **Settings**: Scan intervals, monitoring toggles, battery optimization
-- **Notification Settings**: Per-threat-level alerts, vibration patterns, quiet hours
-- **Rule Settings**: Toggle detection categories, add custom regex rules
-- **Detection Patterns**: View all 75+ built-in detection patterns
-- **Material 3 dark tactical theme** with threat level color coding
-
-### Android Auto Support (Optional)
-The app includes optional Android Auto integration for hands-free threat awareness while driving:
-
-| Feature | Description |
-|---------|-------------|
-| **Threat Status** | At-a-glance view of current threat level and active detection count |
-| **Recent Detections** | Scrollable list of the 5 most recent detections |
-| **Color-coded Alerts** | Threat levels displayed with matching colors (red/orange/yellow) |
-| **Glanceable Display** | Optimized for quick reads while driving |
-
-**Requirements:**
-- Android Auto compatible vehicle or head unit
-- Android 8.0+ (API 26+)
-
-**Note:** The Android Auto interface is read-only and designed for minimal distraction. All settings and detailed analysis should be done in the main app.
-
-## 📸 Detection Examples
-
-**Flock Safety ALPR Camera:**
 ```
-📸 Flock Safety ALPR
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 HIGH Threat (95/100)
-
-Capabilities:
-• License plate capture (up to 100 mph)
-• Vehicle make/model/color identification
-• Vehicle 'fingerprinting' (dents, stickers)
-• Real-time NCIC hotlist alerts
-• Cross-jurisdiction data sharing
-
-⚠️ Privacy Concerns:
-• Mass surveillance of vehicle movements
-• 30-day data retention
-• Shared across law enforcement network
-• Can be integrated with Palantir
+┌─────────────────────────────────────────────────────────────┐
+│                      YOUR DEVICE                             │
+│                                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │   BLE    │  │   WiFi   │  │ Cellular │  │   GNSS   │    │
+│  │ Scanner  │  │ Scanner  │  │ Monitor  │  │ Monitor  │    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
+│       │             │             │             │           │
+│       └─────────────┴──────┬──────┴─────────────┘           │
+│                            │                                 │
+│                   ┌────────▼────────┐                       │
+│                   │   Detection     │                       │
+│                   │   Processing    │                       │
+│                   └────────┬────────┘                       │
+│                            │                                 │
+│                   ┌────────▼────────┐                       │
+│                   │  Threat Scoring │                       │
+│                   │     Engine      │                       │
+│                   └────────┬────────┘                       │
+│                            │                                 │
+│                   ┌────────▼────────┐                       │
+│                   │   SQLCipher     │                       │
+│                   │  Encrypted DB   │                       │
+│                   └────────┬────────┘                       │
+│                            │                                 │
+│                   ┌────────▼────────┐                       │
+│                   │    User UI      │                       │
+│                   └─────────────────┘                       │
+└─────────────────────────────────────────────────────────────┘
+                            ║
+                     ══════╬══════  NO CONNECTION
+                            ║
+              ┌─────────────▼─────────────┐
+              │       Cloud Services       │  ← BLOCKED
+              └───────────────────────────┘
 ```
 
-**Raven Gunshot Detector:**
-```
-🦅 Raven Gunshot Detector
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 CRITICAL Threat (100/100)
-Firmware: 1.3.x (Latest)
+### Privacy Guarantees
 
-Capabilities:
-• Continuous audio monitoring
-• Gunshot detection and location
-• Human distress/scream detection
-• GPS location tracking
-• AI-powered audio analysis
+| Feature | Implementation |
+|---------|----------------|
+| **No Cloud Processing** | All algorithms run locally |
+| **No Telemetry** | Zero analytics or crash reporting |
+| **No Network Calls** | App functions fully offline |
+| **Encrypted Storage** | SQLCipher AES-256-GCM |
+| **Key Protection** | Android Keystore (hardware-backed when available) |
+| **Open Source** | Full code transparency |
 
-⚠️ Privacy Concerns:
-• Constant audio surveillance
-• 'Human distress' detection is vague
-• Audio recordings may capture conversations
-```
+### Data Retention Options
 
-**StingRay IMSI Catcher:**
-```
-📶 Cell Site Simulator
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 CRITICAL Threat (100/100)
-
-Capabilities:
-• Capture all phone identifiers in range
-• Track phone locations precisely
-• Intercept calls and SMS
-• Force phones to downgrade encryption
-• Deny cell service selectively
-
-⚠️ Privacy Concerns:
-• Mass surveillance of all phones nearby
-• Used under NDA - often hidden from courts
-• Can intercept content of calls/texts
-• No warrant required in many jurisdictions
-```
-
-**Cellebrite UFED:**
-```
-📱 Mobile Forensics Device
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 CRITICAL Threat (90/100)
-
-Capabilities:
-• Bypass phone lock screens
-• Extract deleted data
-• Access encrypted apps
-• Clone entire phone contents
-• Crack passwords/PINs
-
-⚠️ Privacy Concerns:
-• Complete phone data extraction
-• Often used without warrants
-• Can access encrypted messaging apps
-• Used at traffic stops in some jurisdictions
-```
-
-**Satellite Anomaly (NTN Detection):**
-```
-🛰️ Forced Satellite Handoff
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 CRITICAL Threat (95/100)
-
-Detection:
-• Unexpected switch from terrestrial to satellite
-• Terrestrial coverage was available
-• No user-initiated satellite mode
-
-⚠️ Privacy Concerns:
-• Possible forced network redirection
-• Satellite links may have different encryption
-• Traffic routing through non-standard paths
-• Potential for targeted interception
-```
-
-**Drone Detection:**
-```
-🚁 DJI Mavic Drone
-━━━━━━━━━━━━━━━━━━━━━━━━
-🟠 MEDIUM Threat (60/100)
-
-Detection Method: WiFi SSID Pattern
-• SSID: "Mavic-Pro-XXXX"
-• Signal: -65 dBm (~30m)
-
-⚠️ Privacy Concerns:
-• Aerial surveillance capability
-• Video/photo recording
-• May be equipped with tracking
-• Unknown operator
-```
-
-**Ultrasonic Beacon:**
-```
-🔊 Cross-Device Tracking Beacon
-━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 HIGH Threat (80/100)
-
-Detection:
-• Frequency: 18.2 kHz (inaudible)
-• Duration: 2.3 seconds
-• Pattern: SilverPush signature
-
-⚠️ Privacy Concerns:
-• Links your devices together
-• Tracks TV/radio ad exposure
-• Works across phone, tablet, computer
-• No user consent required
-```
-
-## 🔍 Detection Patterns
-
-### SSID Patterns (75+ patterns)
-
-| Category | Patterns | Devices |
-|----------|----------|---------|
-| **Flock Safety** | `flock*`, `fs_*`, `falcon*`, `sparrow*`, `condor*` | ALPR cameras |
-| **Audio Surveillance** | `raven*`, `shotspotter*`, `soundthinking*` | Gunshot detectors |
-| **Motorola** | `moto*`, `apx*`, `astro*`, `v300*`, `v500*`, `watchguard*`, `vigilant*` | Body cams, radios, ALPR |
-| **Axon** | `axon*`, `body*`, `flex*`, `taser*`, `evidence*` | Body cams, TASERs |
-| **L3Harris** | `l3harris*`, `stingray*`, `hailstorm*`, `xg*` | IMSI catchers, radios |
-| **Forensics** | `cellebrite*`, `ufed*`, `graykey*`, `magnet*` | Phone extraction |
-| **Other ALPR** | `genetec*`, `autovu*`, `alpr*`, `lpr*` | License plate readers |
-
-### MAC Address OUI Prefixes
-Flock cameras use cellular LTE modems for connectivity:
-
-| OUI Prefix | Manufacturer | Notes |
-|------------|--------------|-------|
-| `50:29:4D` | Quectel | Common in Flock cameras |
-| `86:25:19` | Quectel | Cellular module |
-| `00:14:2D` | Telit | IoT/surveillance modems |
-| `D8:C7:71` | Telit Wireless | |
-| `00:14:3E` | Sierra Wireless | M2M applications |
-| `00:A0:D5` | Sierra Wireless | |
-| `D4:CA:6E` | u-blox | GPS/cellular modules |
-| `00:10:8B` | Cradlepoint | Mobile surveillance routers |
-
-### Raven BLE Service UUIDs
-Based on [GainSec research](https://github.com/GainSec):
-
-| UUID | Service | Data Exposed |
-|------|---------|--------------|
-| `0000180a-...` | Device Information | Serial, model, firmware |
-| `00003100-...` | GPS Location | Lat/lon/altitude |
-| `00003200-...` | Power Management | Battery, solar status |
-| `00003300-...` | Network Status | LTE signal, carrier |
-| `00003400-...` | Upload Statistics | Bytes sent, detection count |
-| `00003500-...` | Error/Diagnostics | System health, errors |
-| `00001809-...` | Health (Legacy 1.1.x) | Temperature data |
-| `00001819-...` | Location (Legacy 1.1.x) | Basic location |
-
-**Firmware Detection:**
-- **1.3.x**: Has Upload Statistics + Error services
-- **1.2.x**: Has GPS + Power + Network services
-- **1.1.x**: Uses legacy Health/Location services
-
-## ⚙️ Settings
-
-### Notification Settings
 | Setting | Description |
 |---------|-------------|
-| **Master Toggle** | Enable/disable all notifications |
-| **Threat Level Alerts** | Toggle alerts by severity |
-| **Sound** | Play alert sound on detection |
-| **Vibration Pattern** | Default, Urgent, Gentle, Long, or SOS |
-| **Quiet Hours** | Silence non-critical alerts (10 PM - 7 AM default) |
-| **Lock Screen** | Show alerts when phone is locked |
+| **1 Day** | Minimal history (recommended for high-risk users) |
+| **3 Days** | Default setting |
+| **7 Days** | Extended analysis period |
+| **30 Days** | Full historical tracking |
+| **Ephemeral** | RAM only, cleared on restart |
 
-### Detection Rules
-| Setting | Description |
-|---------|-------------|
-| **Flock Safety** | Toggle all Flock/Raven patterns |
-| **Police Tech** | Toggle body cams, radios, forensics |
-| **Acoustic Sensors** | Toggle gunshot detectors |
-| **Generic Surveillance** | Toggle other patterns |
-| **Custom Rules** | Add your own regex patterns |
+---
 
-### Scan Settings
-| Setting | Description |
-|---------|-------------|
-| **WiFi Interval** | Time between WiFi scans (30-120s) |
-| **BLE Duration** | Bluetooth scan duration (5-30s) |
-| **Cellular Monitoring** | Enable/disable IMSI catcher detection |
-| **Satellite Monitoring** | Enable/disable NTN connection monitoring |
-| **Rogue WiFi Detection** | Enable/disable evil twin and deauth detection |
-| **RF Signal Analysis** | Enable/disable drone and jammer detection |
-| **Ultrasonic Detection** | Enable/disable audio beacon scanning |
-| **Track Seen Devices** | Remember previously detected devices |
-| **Battery Optimization** | Disable for reliable background scanning |
-| **Auto-start on Boot** | Automatically start scanning when device boots |
+## Flipper Zero Integration
 
-### Advanced Mode (Dev Settings)
+Flock-You includes **Flock Bridge**, a Flipper Zero FAP (Flipper Application Package) that extends detection capabilities with dedicated hardware.
 
-Enable **Advanced Mode** in Settings to access additional technical controls and improve detection capabilities:
+### Flock Bridge Features
 
-#### Detection Tuning
-Access via **Settings > Detection Tuning** to configure individual detection patterns and thresholds:
+**Passive Scanners:**
+- Sub-GHz (315/433/868/915 MHz) - RF signal detection
+- BLE - Tracker and device scanning
+- WiFi (via ESP32) - Network discovery and WIPS
+- IR - Infrared signal capture
+- NFC - Card and tag detection
 
-| Category | Configurable Options |
-|----------|---------------------|
-| **Cellular Patterns** | Toggle individual anomaly types (encryption downgrade, suspicious network ID, rapid switching, signal spikes, LAC/TAC anomaly, unknown towers) |
-| **Satellite Patterns** | Toggle NTN anomaly detection (unexpected satellite, forced handoff, suspicious parameters, timing anomaly) |
-| **BLE Patterns** | Toggle device categories (Flock Safety, Raven, ShotSpotter, Axon, Motorola, L3Harris, Cellebrite, GrayKey) |
-| **WiFi Patterns** | Toggle detection types (police hotspots, surveillance vans, StingRay WiFi, body cam WiFi, drone WiFi) |
+**Active Probes (Authorized Testing Only):**
+- Sub-GHz replay
+- WiFi probe requests
+- TPMS wake-up
+- Traffic light preemption testing
+- Wireless keyboard injection
 
-#### Threshold Tuning
-Fine-tune detection sensitivity to reduce false positives or increase detection rate:
+**WIPS Engine:**
+- Evil twin detection
+- Deauthentication flood monitoring
+- Karma attack identification
+- Weak encryption alerts
 
-| Threshold | Default | Description |
-|-----------|---------|-------------|
-| **Signal Spike (dBm)** | 25 | Cellular signal change to trigger spike alert |
-| **Rapid Switch (stationary)** | 3/min | Max cell tower switches while stationary |
-| **Rapid Switch (moving)** | 8/min | Max cell tower switches while moving |
-| **Trusted Cell Threshold** | 5 | Times seen before cell tower is trusted |
-| **BLE Min RSSI** | -80 dBm | Minimum signal strength for BLE alerts |
-| **BLE Proximity RSSI** | -50 dBm | Signal strength for proximity warnings |
-| **WiFi Min Signal** | -70 dBm | Minimum signal strength for WiFi alerts |
+### Hardware Requirements
 
-#### Additional Advanced Features
-- **Error Log**: View detailed scanning errors and subsystem status
-- **Scan Statistics**: Monitor BLE/WiFi scan counts, throttling, and success rates
-- **Learning Mode**: Capture signatures from unknown devices for future detection
-- **Advertising Rate Detection**: Monitor BLE packet rates for Axon Signal trigger activation (20+ pps = likely active)
+| Component | Purpose | Required |
+|-----------|---------|----------|
+| Flipper Zero | Base platform | Yes |
+| ESP32 Module | WiFi scanning | Optional |
+| CC1101 | Extended Sub-GHz | Optional |
+| nRF24L01+ | 2.4 GHz sniffer | Optional |
+| GINTBN Multi-Board | All-in-one expansion | Optional |
 
-## 📱 Installation
+### Connection
 
-### From Release APK
-1. Download the latest APK from [Releases](https://github.com/MaxwellDPS/Flock-You-Android/releases)
-2. Enable "Install from unknown sources" in Android settings
+```
+Flipper GPIO Header → ESP32 UART
+Pin 13 (TX) ──────── RX (GPIO 16)
+Pin 14 (RX) ──────── TX (GPIO 17)
+GND ────────────────── GND
+3.3V ───────────────── 3.3V
+```
+
+See [Flock Bridge README](flipper_app/flock_bridge/README.md) for complete documentation.
+
+---
+
+## Installation
+
+### Requirements
+
+- Android 8.0 (API 26) or higher
+- Location permission (required for BLE/WiFi scanning)
+- Microphone permission (optional, for ultrasonic detection)
+
+### From Release
+
+1. Download the latest APK from [Releases](https://github.com/FlockYou/Flock-You-Android/releases)
+2. Enable "Install from unknown sources" if needed
 3. Install the APK
+4. Grant requested permissions
 
-### Build from Source
+### From Source
+
 ```bash
-git clone https://github.com/MaxwellDPS/Flock-You-Android.git
+# Clone the repository
+git clone https://github.com/FlockYou/Flock-You-Android.git
 cd Flock-You-Android
-./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
+
+# Build debug APK
+./gradlew assembleSideloadDebug
+
+# Install to connected device
+./gradlew installSideloadDebug
 ```
 
-### OEM / System App Installation
+---
 
-For GrapheneOS, CalyxOS, LineageOS, or other AOSP-based ROM integration, see the [OEM Integration Guide](OEM_INTEGRATION.md).
+## Build Variants
 
-**Quick integration for GrapheneOS:**
+Flock-You supports three build flavors for different deployment scenarios:
+
+| Variant | Use Case | Permissions |
+|---------|----------|-------------|
+| **Sideload** | Standard user installation | Runtime permission requests |
+| **System** | Privileged system app | Pre-granted via whitelist |
+| **OEM** | Platform-signed embedded app | Maximum privileges |
+
+### Building Variants
+
 ```bash
-# Automated integration with platform signing (OEM mode)
+# Sideload (standard)
+./gradlew assembleSideloadRelease
+
+# System (priv-app)
+./gradlew assembleSystemRelease
+
+# OEM (platform-signed)
+./gradlew assembleOemRelease
+```
+
+### Permission Differences
+
+| Capability | Sideload | System | OEM |
+|------------|----------|--------|-----|
+| WiFi scan throttling | Subject to OS limits | Can disable | Can disable |
+| Continuous BLE scan | Duty-cycled | Continuous | Continuous |
+| Real MAC addresses | Randomized | Available | Available |
+| IMEI/IMSI access | No | No | Yes |
+| Background persistence | Limited | Enhanced | Maximum |
+
+---
+
+## OEM Integration
+
+Flock-You is designed for OEM white-labeling and custom ROM integration.
+
+### Quick Integration (GrapheneOS/CalyxOS/LineageOS)
+
+```bash
+# Automated integration
 ./system/integrate-grapheneos.sh ~/grapheneos
 
-# Or with pre-signed APK (System mode)
+# Or with pre-signed APK
 ./system/integrate-grapheneos.sh ~/grapheneos presigned
 ```
 
-**Build variants:**
-| Variant | Command | Privileges |
-|---------|---------|------------|
-| Sideload | `./gradlew assembleSideloadRelease` | Standard user app |
-| System | `./gradlew assembleSystemRelease` | Privileged system app |
-| OEM | `./gradlew assembleOemRelease` | Platform-signed, maximum privileges |
+### Manual Integration
 
-**Integration files in `system/`:**
-| File | Purpose |
-|------|---------|
-| `Android.bp` | Soong build module (Android 11+) |
-| `Android.mk` | Legacy Make build module |
-| `flockyou.mk` | Device makefile include |
-| `integrate-grapheneos.sh` | Automated integration script |
-| `privapp-permissions-flockyou.xml` | Privileged permissions whitelist |
-| `default-permissions-flockyou.xml` | Runtime permissions pre-grant |
-
-### Verify APK Attestation
-All release APKs include [SLSA Build Provenance](https://slsa.dev/spec/v1.0/provenance) attestation. Verify authenticity with:
+1. Copy integration files:
 ```bash
-# Verify the APK was built by this repository's CI
-gh attestation verify FlockYou-v*.apk --owner MaxwellDPS
-
-# View detailed attestation info
-gh attestation verify FlockYou-v*.apk --owner MaxwellDPS --format json | jq
+mkdir -p ~/grapheneos/vendor/flockyou
+cp system/Android.bp ~/grapheneos/vendor/flockyou/
+cp system/privapp-permissions-flockyou.xml ~/grapheneos/vendor/flockyou/
 ```
 
-### Map Features
-The app uses OpenStreetMap via osmdroid for map features - no API key required. Maps work offline with cached tiles.
+2. Add to `device.mk`:
+```makefile
+$(call inherit-product, vendor/flockyou/flockyou.mk)
+```
 
-## 📋 Permissions
+3. Build your ROM:
+```bash
+source build/envsetup.sh
+lunch <target>
+m
+```
 
-| Permission | Purpose |
-|------------|---------|
-| `ACCESS_FINE_LOCATION` | WiFi/BLE scanning requires location |
-| `BLUETOOTH_SCAN` | Scan for BLE surveillance devices |
-| `BLUETOOTH_CONNECT` | Read BLE device details |
-| `ACCESS_WIFI_STATE` | Scan WiFi networks |
-| `CHANGE_WIFI_STATE` | Trigger WiFi scans |
-| `READ_PHONE_STATE` | Cellular network monitoring for IMSI catcher detection |
-| `RECORD_AUDIO` | Ultrasonic beacon detection (frequency analysis only) |
-| `POST_NOTIFICATIONS` | Detection alerts |
-| `VIBRATE` | Haptic feedback |
-| `FOREGROUND_SERVICE` | Background scanning (Location, Connected Device, Special Use) |
-| `RECEIVE_BOOT_COMPLETED` | Auto-start scanning on device boot |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Reliable background operation |
-| `WAKE_LOCK` | Prevent CPU sleep during scans |
+### Customization Points
 
-## 🔐 CI/CD & Supply Chain Security
+| Resource | Purpose |
+|----------|---------|
+| `app_name` | Application display name |
+| `ic_launcher` | App icon |
+| Theme colors | Brand colors |
+| Default settings | Privacy/retention defaults |
 
-This project uses GitHub Actions for automated builds with full supply chain security.
+See [OEM_INTEGRATION.md](OEM_INTEGRATION.md) for complete documentation including security considerations.
 
-### Build Attestation
+---
 
-All APKs (debug and release) are attested using [GitHub Artifact Attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) with SLSA Build Provenance. This cryptographically proves:
+## Contributing
 
-- **What** was built (APK hash)
-- **Where** it was built (this repository)
-- **How** it was built (workflow file, commit SHA)
-- **Who** triggered the build
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### APK Signing Options
+### Development Setup
 
-Release builds support three signing methods (in priority order):
+1. Android Studio Hedgehog (2023.1.1) or newer
+2. JDK 17
+3. Android SDK 34
 
-| Priority | Method | Use Case | Configuration |
-|----------|--------|----------|---------------|
-| 1️⃣ | **Production Keystore** | Play Store / production releases | Repository secrets |
-| 2️⃣ | **Step CA (JWK Auth)** | Enterprise PKI / organizational signing | Step CA server + JWK provisioner |
-| 3️⃣ | **Ephemeral Self-Signed** | Testing / development builds | Automatic (no config needed) |
-
-#### Option 1: Production Keystore (Recommended for Releases)
-
-Configure these repository secrets:
-
-| Secret | Description |
-|--------|-------------|
-| `KEYSTORE_BASE64` | Base64-encoded `.jks` or `.p12` keystore |
-| `KEYSTORE_PASSWORD` | Keystore password |
-| `KEY_ALIAS` | Key alias within the keystore |
-| `KEY_PASSWORD` | Key password |
+### Running Tests
 
 ```bash
-# Encode your keystore
-base64 -i release-keystore.jks | pbcopy  # macOS
-base64 -w 0 release-keystore.jks         # Linux
+# Unit tests
+./gradlew testDebugUnitTest
+
+# Instrumentation tests
+./gradlew connectedAndroidTest
+
+# Lint
+./gradlew lint
 ```
 
-#### Option 2: Step CA with JWK Provisioner (Enterprise)
-
-For organizations with their own [Step CA](https://smallstep.com/docs/step-ca/) server:
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `STEP_CA_URL` | Yes | Your Step CA URL (e.g., `https://ca.example.com`) |
-| `STEP_CA_ROOT_CRT` | One of these | PEM-encoded root certificate |
-| `STEP_CA_FINGERPRINT` | | Root certificate fingerprint |
-| `STEP_CA_JWK_PROVISIONER` | Yes | JWK provisioner name |
-| `STEP_CA_JWK_KEY` | Yes | JWK private key (JSON format) |
-| `STEP_CA_JWK_PASSWORD` | No | Password for encrypted JWK key |
-
-The workflow will:
-1. Bootstrap the step CLI with your CA
-2. Request a certificate using the JWK provisioner
-3. Include the full certificate chain in the signing keystore
-4. Sign the APK with the CA-issued certificate
-
-#### Option 3: Ephemeral Self-Signed (Default Fallback)
-
-When no keystore or CA is configured, the workflow automatically:
-1. Generates a self-signed certificate using [Smallstep CLI](https://smallstep.com/docs/step-cli/)
-2. Creates an ephemeral RSA 2048-bit key pair
-3. Signs the APK for testing purposes
-
-> ⚠️ **Note:** Ephemeral certificates are regenerated each build. The APK will have a different signature each time, which may cause issues with Android's signature verification for updates.
-
-### Workflow Features
-
-| Feature | Description |
-|---------|-------------|
-| **SLSA Attestation** | Cryptographic build provenance for all APKs |
-| **Multi-method Signing** | Keystore → Step CA → Ephemeral fallback |
-| **Build Summaries** | Rich job summaries with signing info and links |
-| **Automated Releases** | Manual trigger with version input |
-| **Parallel Jobs** | Lint and tests run alongside build |
-| **Artifact Retention** | Debug (14 days), Release (90 days) |
-
-### Triggering a Release
-
-1. Go to **Actions** → **Android CI/CD**
-2. Click **Run workflow**
-3. Enable **Create a GitHub Release**
-4. Enter version (e.g., `1.2.0`)
-5. Optionally mark as pre-release
-6. Click **Run workflow**
-
-The workflow will build, sign, attest, and create a GitHub Release with the APK.
-
-## 🏗️ Architecture
+### Commit Format
 
 ```
-com.flockyou/
-├── data/
-│   ├── model/
-│   │   ├── Detection.kt              # Detection data class
-│   │   ├── DetectionPatterns.kt      # Device signatures database (75+ patterns)
-│   │   └── OuiEntry.kt               # MAC OUI manufacturer lookup
-│   ├── repository/
-│   │   ├── Database.kt               # Room database
-│   │   ├── DetectionRepository.kt
-│   │   └── OuiRepository.kt          # OUI database management
-│   ├── oui/                          # OUI database files
-│   ├── DetectionSettings.kt          # Detection rule toggles
-│   └── OuiSettings.kt                # OUI lookup preferences
-├── monitoring/
-│   └── SatelliteMonitor.kt           # NTN/satellite connection monitoring
-├── service/
-│   ├── ScanningService.kt            # Foreground scanning service
-│   ├── CellularMonitor.kt            # IMSI catcher / cell anomaly detection
-│   ├── RogueWifiMonitor.kt           # Evil twin and deauth detection
-│   ├── RfSignalAnalyzer.kt           # RF analysis and drone detection
-│   ├── UltrasonicDetector.kt         # Audio beacon detection
-│   ├── ServiceRestartReceiver.kt     # Boot and restart handling
-│   └── ServiceRestartJobService.kt   # Background service persistence
-├── worker/                           # WorkManager background tasks
-├── ui/
-│   ├── components/
-│   │   └── Components.kt             # Reusable UI components
-│   ├── screens/
-│   │   ├── MainScreen.kt             # Detection list + radar
-│   │   ├── MainViewModel.kt          # Main screen state management
-│   │   ├── MapScreen.kt              # Detection map (OpenStreetMap)
-│   │   ├── SatelliteScreen.kt        # Satellite monitoring display
-│   │   ├── SettingsScreen.kt         # Main settings
-│   │   ├── NotificationSettingsScreen.kt # Alert customization
-│   │   ├── RuleSettingsScreen.kt     # Rule management
-│   │   ├── OuiSettingsSection.kt     # OUI database settings
-│   │   ├── NearbyDevicesScreen.kt    # All nearby devices
-│   │   └── DetectionPatternsScreen.kt # View all patterns
-│   └── theme/Theme.kt                # Dark tactical theme
-└── di/
-    ├── AppModule.kt                  # Hilt dependency injection
-    └── WorkerModule.kt               # WorkManager DI
+type(scope): description
+
+feat(scan): add support for new device type
+fix(ble): correct AirTag detection false positives
+docs: update detection documentation
 ```
 
-## ⚠️ Limitations
+---
 
-- **WiFi Throttling**: Android limits scans to 4 per 2-minute period
-- **Background**: Battery optimization may affect scan frequency (disable for best results)
-- **Range**: BLE detection ~50-100m depending on environment
-- **False Positives**: MAC OUI detection may flag non-surveillance LTE devices
-- **Police Tech**: Body cameras only detectable when WiFi/BLE is enabled (usually during sync)
-- **Cellular Monitoring**: Anomaly detection may produce false positives in areas with poor coverage or during normal handoffs while moving. Modern IMSI catchers are increasingly difficult to detect.
-- **Satellite Detection**: Requires Android 14+ and compatible hardware. NTN features depend on carrier support.
-- **Ultrasonic Detection**: Requires microphone permission. Background noise may affect accuracy. Does not record audio content.
-- **RF Analysis**: Drone detection relies on WiFi scanning; cannot detect RF-silent drones.
-- **Rogue WiFi**: Evil twin detection requires seeing both the legitimate and rogue AP.
+## Security Considerations
 
-## 🙏 Credits
+### The Surveillance Paradox
 
-- Original [Flock You](https://github.com/colonelpanichacks/flock-you) by [Colonel Panic](https://colonelpanic.tech)
-- [DeFlock](https://deflock.me) - Crowdsourced ALPR location database
-- [GainSec](https://github.com/GainSec) - Raven BLE service UUID research
+> To detect if you're being surveilled, this app must collect data about your environment.
 
-## 🔋 Battery Usage Notice
+**What's Stored Locally:**
+- Detection history with timestamps and locations
+- Trusted cell tower database
+- WiFi network profiles
+- BLE device signatures
 
-This application performs continuous background scanning across multiple radio interfaces (WiFi, Bluetooth LE, cellular) and sensors (microphone for ultrasonic detection). **This will significantly impact battery life.**
+**Forensic Risk:**
+If your device is seized, this data reveals your location history and movement patterns. Consider:
+- Using minimum retention period (1 day)
+- Enabling ephemeral mode for sensitive situations
+- Clearing data before high-risk scenarios
+- Using duress PIN if compelled to unlock
 
-For optimal detection coverage:
-- Disable Android's battery optimization for this app
-- Expect 15-30% additional daily battery drain depending on scan settings
-- Use aggressive BLE scanning only when needed
-- Consider reducing scan intervals in low-risk areas
+### Trust Model
 
-The app uses a foreground service with wake locks to maintain reliable scanning. This is necessary for consistent detection but comes at a battery cost.
+| If you trust... | Use this mode |
+|-----------------|---------------|
+| Only yourself (build from source) | OEM with platform signing |
+| Project maintainers | System with pre-signed APK |
+| Maximum caution | Sideload only |
 
-## 🔐 Data Collection & Privacy
+### Verifying Builds
 
-> **To detect if you're being surveilled, this app must surveil you first.**
+```bash
+# Check APK signature
+apksigner verify --print-certs app-release.apk
 
-This app collects and stores locally:
-- **Location data** attached to every detection event
-- **Cell tower history** with timestamps and coordinates
-- **WiFi network profiles** with location mapping
-- **Bluetooth device records** with signal data
-- **Ultrasonic events** and RF environment data
+# Verify GitHub attestation
+gh attestation verify app-release.apk --owner FlockYou
+```
 
-**Database encryption**: SQLCipher with AES-256-GCM, key in Android Keystore.
+---
 
-**What encryption protects against**:
-- Casual device theft
-- Locked device extraction (mostly)
+## Resources
 
-**What encryption does NOT protect against**:
-- Unlocked device forensics (Cellebrite, GrayKey)
-- Compelled device unlock
-- Malware with app-level access
+### Support Organizations
 
-**Recommendations**:
-- Use shortest retention period acceptable (Settings > Data Retention)
-- Clear data before high-risk situations (border crossings, protests)
-- Consider disabling features you don't need
-- For OEM deployments, see [detailed security analysis](OEM_INTEGRATION.md#data-collection--the-surveillance-paradox)
+| Organization | Contact | Services |
+|--------------|---------|----------|
+| **National DV Hotline** | 1-800-799-7233 | Confidential support |
+| **NNEDV Tech Safety** | techsafety.org | Technology safety resources |
+| **EFF** | eff.org | Digital privacy rights |
+| **ACLU** | aclu.org | Civil liberties support |
 
-**TPM/StrongBox binding** would provide marginal improvement for locked-device attacks but doesn't help when the device is unlocked (which is when the app needs to function). See [OEM Integration Guide](OEM_INTEGRATION.md#would-tpm-bound-secrets-help) for detailed analysis.
+### External Databases
 
-## ⚖️ Legal Notice
+| Tool | URL | Description |
+|------|-----|-------------|
+| DeFlock | deflock.me | ALPR camera locations |
+| CellMapper | cellmapper.net | Cell tower mapping |
+| OpenCellID | opencellid.org | Cell tower database |
+| WiGLE | wigle.net | Wireless network mapping |
 
-**For educational and research purposes only.**
+### Documentation
 
-This software is designed to detect the presence of surveillance equipment using publicly broadcast wireless signals. It does not interfere with, disable, or modify any surveillance equipment.
+| Document | Description |
+|----------|-------------|
+| [Detection System](docs/detections/README.md) | Complete detection documentation |
+| [BLE Trackers](docs/detections/BLE_TRACKER_DETECTION.md) | AirTag, Tile, SmartTag detection |
+| [IMSI Catchers](docs/detections/CELLULAR_IMSI_DETECTION.md) | StingRay/Hailstorm detection |
+| [GNSS Security](docs/detections/GNSS_SPOOFING_DETECTION.md) | GPS spoofing/jamming detection |
+| [Threat Scoring](docs/detections/THREAT_SCORING_FRAMEWORK.md) | Scoring methodology |
+| [Satellite Monitoring](docs/SATELLITE_MONITORING.md) | NTN/satellite detection |
+| [Flock Bridge](flipper_app/flock_bridge/README.md) | Flipper Zero integration |
+| [OEM Integration](OEM_INTEGRATION.md) | ROM builder guide |
 
-Users are responsible for ensuring compliance with all applicable laws in their jurisdiction.
+---
 
-## 🤖 Development Notice
+## Threat Scoring
 
-This application was developed with significant assistance from AI coding tools (Claude). The codebase has been reviewed for security and functionality, but users should be aware of the AI-assisted development methodology.
+Flock-You uses an enterprise-grade threat scoring formula:
+
+```
+threat_score = base_likelihood × impact_factor × confidence
+```
+
+| Severity | Score | User Action |
+|----------|-------|-------------|
+| **CRITICAL** | 90-100 | Immediate action required |
+| **HIGH** | 70-89 | Investigate immediately |
+| **MEDIUM** | 50-69 | Monitor closely |
+| **LOW** | 30-49 | Log and watch |
+| **INFO** | 0-29 | Informational only |
+
+**Confidence Adjustments:**
+- +0.3 Cross-protocol correlation
+- +0.2 Multiple indicators
+- +0.2 Persistence over time
+- -0.3 Single weak indicator
+- -0.5 Known false positive pattern
+
+---
+
+## Legal Disclaimer
+
+This software is intended for **authorized security research, personal privacy protection, and educational purposes**.
+
+- Only use detection features passively
+- Active probing features (Flipper Zero) require authorization
+- Radio transmission may be regulated in your jurisdiction
+- The authors are not responsible for misuse
+
+---
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+## Acknowledgments
+
+- [Flipper Zero](https://flipperzero.one) - Hardware platform
+- [SQLCipher](https://www.zetetic.net/sqlcipher/) - Database encryption
+- [EFF](https://eff.org) - Privacy advocacy and resources
+- The open-source security research community
 
 ---
 
 <p align="center">
-  <b>Flock You Android: Watch the Watchers</b>
+  <b>Flock-You: Watch the Watchers</b>
   <br/>
-  <i>CHAOS.CORP</i>
+  <i>Privacy-first surveillance detection for Android</i>
+  <br/><br/>
+  <a href="https://github.com/FlockYou/Flock-You-Android/issues">Report Bug</a>
+  ·
+  <a href="https://github.com/FlockYou/Flock-You-Android/issues">Request Feature</a>
+  ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>

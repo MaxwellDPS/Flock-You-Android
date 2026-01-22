@@ -1994,40 +1994,45 @@ fun SwipeableDetectionCard(
                                 onPrioritizeEnrichment = onPrioritizeEnrichment
                             )
 
-                            // Action buttons when expanded
+                            // Action buttons when expanded (only if not already reviewed)
+                            val isAlreadyReviewed = detection.fpCategory == "USER_REVIEWED" ||
+                                detection.fpCategory == "USER_MARKED_FP"
+
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                OutlinedButton(
-                                    onClick = { onMarkReviewed(detection) },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Reviewed", style = MaterialTheme.typography.labelMedium)
-                                }
-                                OutlinedButton(
-                                    onClick = { onMarkFalsePositive(detection) },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.tertiary
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.VerifiedUser,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("False Positive", style = MaterialTheme.typography.labelMedium)
+                                if (!isAlreadyReviewed) {
+                                    OutlinedButton(
+                                        onClick = { onMarkReviewed(detection) },
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Reviewed", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onMarkFalsePositive(detection) },
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.tertiary
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.VerifiedUser,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("False Positive", style = MaterialTheme.typography.labelMedium)
+                                    }
                                 }
                                 IconButton(onClick = onClick) {
                                     Icon(
@@ -2367,6 +2372,7 @@ fun AdvancedModeToggle(
 /**
  * Advanced mode toggle chip for inline use
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdvancedModeChip(
     advancedMode: Boolean,

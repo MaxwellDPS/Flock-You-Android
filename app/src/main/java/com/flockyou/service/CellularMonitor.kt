@@ -256,6 +256,10 @@ class CellularMonitor(
     @Suppress("DEPRECATION")
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: Any? = null // TelephonyCallback for API 31+
+
+    // 5G NSA detection: In NSA mode, CellInfo only shows LTE anchor but TelephonyDisplayInfo shows 5G
+    // This tracks the override network type from TelephonyDisplayInfo
+    private var displayInfoOverrideType: Int = TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE
     
     data class CellSnapshot(
         val timestamp: Long,
@@ -715,11 +719,23 @@ class CellularMonitor(
     
     private fun registerCellListener() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // API 31+ uses TelephonyCallback
+            // API 31+ uses TelephonyCallback with DisplayInfoListener for 5G NSA detection
             try {
-                val callback = object : TelephonyCallback(), TelephonyCallback.CellInfoListener {
+                val callback = object : TelephonyCallback(),
+                    TelephonyCallback.CellInfoListener,
+                    TelephonyCallback.DisplayInfoListener {
                     override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>) {
                         processCellInfoChange(cellInfo)
+                    }
+
+                    override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
+                        // Track the override type for 5G NSA detection
+                        // In 5G NSA mode, CellInfo shows LTE but DisplayInfo shows NR_NSA
+                        displayInfoOverrideType = telephonyDisplayInfo.overrideNetworkType
+                        Log.d(TAG, "DisplayInfo changed: override=${getOverrideTypeName(displayInfoOverrideType)}")
+
+                        // Re-update cell status if we have a current snapshot to reflect 5G NSA
+                        lastKnownCell?.let { updateCellStatus(it) }
                     }
                 }
                 telephonyManager.registerTelephonyCallback(
@@ -1360,7 +1376,27 @@ class CellularMonitor(
             else -> "Unknown"
         }
     }
-    
+
+    /**
+     * Get human-readable name for TelephonyDisplayInfo override network type.
+     * Used for 5G NSA detection logging.
+     */
+    private fun getOverrideTypeName(overrideType: Int): String {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            when (overrideType) {
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE -> "NONE"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA -> "LTE_CA"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO -> "LTE_ADVANCED_PRO"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA -> "NR_NSA (5G)"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE -> "NR_NSA_MMWAVE (5G)"
+                TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED -> "NR_ADVANCED (5G)"
+                else -> "UNKNOWN($overrideType)"
+            }
+        } else {
+            "N/A (API < 30)"
+        }
+    }
+
     private fun countRecentCellChanges(withinMs: Long): Int {
         val cutoff = System.currentTimeMillis() - withinMs
         val recentSnapshots = cellHistory.filter { it.timestamp > cutoff }
@@ -1400,7 +1436,17 @@ class CellularMonitor(
     }
     
     private fun extractCellSnapshot(cellInfoList: List<CellInfo>): CellSnapshot? {
-        val registeredCell = cellInfoList.firstOrNull { it.isRegistered } ?: return null
+        // In 5G NSA (Non-Standalone) mode, phones connect to both LTE (anchor) and NR (5G)
+        // simultaneously. Prioritize NR cells to correctly show 5G when active.
+        val registeredCells = cellInfoList.filter { it.isRegistered }
+        if (registeredCells.isEmpty()) return null
+
+        // Check for 5G NR first (prioritize over LTE in NSA mode)
+        val registeredCell = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            registeredCells.firstOrNull { it is CellInfoNr } ?: registeredCells.first()
+        } else {
+            registeredCells.first()
+        }
 
         var cellId: Long? = null  // Changed to Long for 5G NCI support
         var lac: Int? = null
@@ -1477,7 +1523,22 @@ class CellularMonitor(
     
     private fun updateCellStatus(snapshot: CellSnapshot) {
         val cellIdStr = snapshot.cellId?.toString() ?: "Unknown"
-        val networkGen = getNetworkGeneration(snapshot.networkType)
+        var networkGen = getNetworkGeneration(snapshot.networkType)
+
+        // Check for 5G NSA: In NSA mode, CellInfo shows LTE but TelephonyDisplayInfo shows 5G
+        // Override the network generation if we're actually on 5G NSA
+        var effectiveNetworkType = snapshot.networkType
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val is5gNsa = displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA ||
+                displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE ||
+                displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED
+            if (is5gNsa && networkGen < 5) {
+                networkGen = 5
+                effectiveNetworkType = TelephonyManager.NETWORK_TYPE_NR
+                Log.d(TAG, "5G NSA detected via DisplayInfo override, upgrading display from ${getNetworkTypeName(snapshot.networkType)} to 5G")
+            }
+        }
+
         val genName = when (networkGen) {
             5 -> "5G"
             4 -> "4G"
@@ -1511,7 +1572,7 @@ class CellularMonitor(
             mcc = snapshot.mcc,
             mnc = snapshot.mnc,
             operator = telephonyManager.networkOperatorName,
-            networkType = getNetworkTypeName(snapshot.networkType),
+            networkType = getNetworkTypeName(effectiveNetworkType),
             networkGeneration = genName,
             signalStrength = snapshot.signalStrength,
             signalBars = signalBars,
@@ -1525,7 +1586,20 @@ class CellularMonitor(
     
     private fun updateSeenCellTower(snapshot: CellSnapshot) {
         val cellId = snapshot.cellId?.toString() ?: return
-        val networkGen = getNetworkGeneration(snapshot.networkType)
+
+        // Check for 5G NSA: apply same override logic as updateCellStatus()
+        var effectiveNetworkType = snapshot.networkType
+        var networkGen = getNetworkGeneration(snapshot.networkType)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val is5gNsa = displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA ||
+                displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE ||
+                displayInfoOverrideType == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED
+            if (is5gNsa && networkGen < 5) {
+                networkGen = 5
+                effectiveNetworkType = TelephonyManager.NETWORK_TYPE_NR
+            }
+        }
+
         val genName = when (networkGen) {
             5 -> "5G"
             4 -> "4G"
@@ -1553,12 +1627,12 @@ class CellularMonitor(
             addTimelineEvent(
                 type = CellularEventType.NEW_CELL_DISCOVERED,
                 title = "New Cell Tower",
-                description = "Cell $cellId (${getNetworkTypeName(snapshot.networkType)}) - ${telephonyManager.networkOperatorName ?: "Unknown operator"}",
+                description = "Cell $cellId (${getNetworkTypeName(effectiveNetworkType)}) - ${telephonyManager.networkOperatorName ?: "Unknown operator"}",
                 cellId = cellId,
-                networkType = getNetworkTypeName(snapshot.networkType),
+                networkType = getNetworkTypeName(effectiveNetworkType),
                 signalStrength = snapshot.signalStrength
             )
-            
+
             seenCellTowerMap[cellId] = SeenCellTower(
                 cellId = cellId,
                 lac = snapshot.lac,
@@ -1566,7 +1640,7 @@ class CellularMonitor(
                 mcc = snapshot.mcc,
                 mnc = snapshot.mnc,
                 operator = telephonyManager.networkOperatorName,
-                networkType = getNetworkTypeName(snapshot.networkType),
+                networkType = getNetworkTypeName(effectiveNetworkType),
                 networkGeneration = genName,
                 firstSeen = System.currentTimeMillis(),
                 lastSeen = System.currentTimeMillis(),

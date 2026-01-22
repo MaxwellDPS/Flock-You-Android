@@ -29,6 +29,7 @@ typedef enum {
     ExternalRadioNRF24,         // nRF24L01+ for 2.4GHz
     ExternalRadioCC2500,        // CC2500 for 2.4GHz
     ExternalRadioSX1276,        // SX1276/78 for LoRa
+    ExternalRadioMultiBoard = 10, // Multi-radio board (ESP32+CC1101+nRF24)
 } ExternalRadioType;
 
 typedef enum {
@@ -59,7 +60,7 @@ typedef enum {
     ExtRadioCmdGetInfo = 0x02,
     ExtRadioCmdReset = 0x03,
 
-    // WiFi commands
+    // WiFi commands (0x10-0x1F)
     ExtRadioCmdWifiScanStart = 0x10,
     ExtRadioCmdWifiScanStop = 0x11,
     ExtRadioCmdWifiSetChannel = 0x12,
@@ -67,18 +68,29 @@ typedef enum {
     ExtRadioCmdWifiDeauth = 0x14,  // For testing only
     ExtRadioCmdWifiProbe = 0x15,
 
-    // Sub-GHz commands (for external CC1101)
+    // Sub-GHz commands for external CC1101 (0x20-0x2F)
     ExtRadioCmdSubGhzSetFreq = 0x20,
     ExtRadioCmdSubGhzSetMod = 0x21,
     ExtRadioCmdSubGhzRxStart = 0x22,
     ExtRadioCmdSubGhzRxStop = 0x23,
     ExtRadioCmdSubGhzTxStart = 0x24,
     ExtRadioCmdSubGhzTxStop = 0x25,
+    ExtRadioCmdSubGhzGetRssi = 0x26,
+    ExtRadioCmdSubGhzSetPreset = 0x27,
 
-    // BLE commands (for external nRF24/CC2500)
+    // BLE commands for external nRF24/CC2500 (0x30-0x3F)
     ExtRadioCmdBleScanStart = 0x30,
     ExtRadioCmdBleScanStop = 0x31,
     ExtRadioCmdBleSetChannel = 0x32,
+
+    // nRF24 specific commands (0x40-0x4F)
+    ExtRadioCmdNrf24SniffStart = 0x40,
+    ExtRadioCmdNrf24SniffStop = 0x41,
+    ExtRadioCmdNrf24SetChannel = 0x42,
+    ExtRadioCmdNrf24SetAddress = 0x43,
+    ExtRadioCmdNrf24Tx = 0x44,
+    ExtRadioCmdNrf24Config = 0x45,
+    ExtRadioCmdNrf24Mousejack = 0x46,
 } ExtRadioCommand;
 
 // Response types (External -> Flipper)
@@ -87,20 +99,26 @@ typedef enum {
     ExtRadioRespNack = 0x02,
     ExtRadioRespInfo = 0x03,
 
-    // WiFi responses
+    // WiFi responses (0x10-0x1F)
     ExtRadioRespWifiNetwork = 0x10,
     ExtRadioRespWifiScanDone = 0x11,
     ExtRadioRespWifiProbe = 0x12,
     ExtRadioRespWifiDeauth = 0x13,
     ExtRadioRespWifiRaw = 0x14,
 
-    // Sub-GHz responses
+    // Sub-GHz responses (0x20-0x2F)
     ExtRadioRespSubGhzSignal = 0x20,
     ExtRadioRespSubGhzRssi = 0x21,
+    ExtRadioRespSubGhzRaw = 0x22,
 
-    // BLE responses
+    // BLE responses (0x30-0x3F)
     ExtRadioRespBleDevice = 0x30,
     ExtRadioRespBleScanDone = 0x31,
+
+    // nRF24 responses (0x40-0x4F)
+    ExtRadioRespNrf24Packet = 0x40,
+    ExtRadioRespNrf24SniffDone = 0x41,
+    ExtRadioRespNrf24TxDone = 0x42,
 } ExtRadioResponse;
 
 // ============================================================================
@@ -126,6 +144,9 @@ typedef struct __attribute__((packed)) {
 #define EXT_RADIO_CAP_SUBGHZ_TX      (1 << 5)
 #define EXT_RADIO_CAP_BLE_SCAN       (1 << 6)
 #define EXT_RADIO_CAP_BLE_ADV        (1 << 7)
+#define EXT_RADIO_CAP_NRF24_SNIFF    (1 << 8)
+#define EXT_RADIO_CAP_NRF24_INJECT   (1 << 9)
+#define EXT_RADIO_CAP_NRF24_MOUSEJACK (1 << 10)
 
 // WiFi network from external radio
 typedef struct __attribute__((packed)) {
@@ -155,6 +176,25 @@ typedef struct __attribute__((packed)) {
     int8_t rssi;
     uint32_t count;
 } ExtWifiDeauth;
+
+// Sub-GHz signal from external CC1101
+typedef struct __attribute__((packed)) {
+    uint32_t frequency;
+    int8_t rssi;
+    uint8_t modulation;
+    uint16_t duration_ms;
+    uint16_t data_len;
+    // Raw data follows
+} ExtSubGhzSignal;
+
+// nRF24 packet from external module
+typedef struct __attribute__((packed)) {
+    uint8_t address[5];
+    uint8_t channel;
+    int8_t rssi;
+    uint8_t payload_len;
+    // Payload follows
+} ExtNrf24Packet;
 
 // ============================================================================
 // External Radio Manager

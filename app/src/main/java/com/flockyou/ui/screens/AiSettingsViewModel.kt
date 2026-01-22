@@ -18,6 +18,7 @@ import com.flockyou.data.model.DetectionProtocol
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.SignalStrength
 import com.flockyou.data.model.ThreatLevel
+import com.flockyou.worker.BackgroundAnalysisWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -101,6 +102,15 @@ class AiSettingsViewModel @Inject constructor(
             aiSettingsRepository.setEnabled(enabled)
             if (enabled) {
                 detectionAnalyzer.initializeModel()
+                // Schedule background analysis if FP filtering is also enabled
+                if (aiSettings.value.enableFalsePositiveFiltering) {
+                    BackgroundAnalysisWorker.schedule(application)
+                    Log.d(TAG, "Scheduled background analysis worker (AI enabled)")
+                }
+            } else {
+                // Cancel background analysis when AI is disabled
+                BackgroundAnalysisWorker.cancel(application)
+                Log.d(TAG, "Cancelled background analysis worker (AI disabled)")
             }
         }
     }
@@ -176,6 +186,14 @@ class AiSettingsViewModel @Inject constructor(
     fun setFalsePositiveFiltering(enabled: Boolean) {
         viewModelScope.launch {
             aiSettingsRepository.setFalsePositiveFiltering(enabled)
+            // Schedule or cancel background analysis based on current AI state
+            if (enabled && aiSettings.value.enabled) {
+                BackgroundAnalysisWorker.schedule(application)
+                Log.d(TAG, "Scheduled background analysis worker (FP filtering enabled)")
+            } else if (!enabled) {
+                BackgroundAnalysisWorker.cancel(application)
+                Log.d(TAG, "Cancelled background analysis worker (FP filtering disabled)")
+            }
         }
     }
 

@@ -78,6 +78,8 @@ enum class DetectionProtocol(val displayName: String, val icon: String) {
 enum class DetectionMethod(val displayName: String, val description: String) {
     SSID_PATTERN("SSID Match", "Device identified by WiFi network name pattern"),
     MAC_PREFIX("MAC Address", "Device identified by manufacturer OUI prefix"),
+    MANUFACTURER_OUI("Manufacturer OUI", "Device identified by manufacturer OUI fingerprint"),
+    BEHAVIOR_ANALYSIS("Behavior Analysis", "Device identified through behavioral pattern analysis"),
     BLE_DEVICE_NAME("BLE Name", "Device identified by Bluetooth advertised name"),
     BLE_SERVICE_UUID("BLE Service", "Device identified by Bluetooth service UUIDs"),
     RAVEN_SERVICE_UUID("Raven Services", "Raven gunshot detector identified by specific BLE services"),
