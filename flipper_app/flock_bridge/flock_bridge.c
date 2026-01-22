@@ -76,7 +76,6 @@ static bool flock_bridge_custom_event_callback(void* context, uint32_t event);
 // Bluetooth Connection State Callback
 // ============================================================================
 
-__attribute__((unused))
 static void flock_bridge_bt_state_changed(void* context, bool connected) {
     FlockBridgeApp* app = context;
     if (!app) return;
@@ -194,22 +193,37 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
         flock_usb_cdc_set_callback(app->usb_cdc, flock_bridge_data_received, app);
     }
 
-    // Bluetooth Serial - DISABLED to allow BLE scanning
-    app->bt_serial = NULL;
-    FURI_LOG_I(TAG, "Bluetooth Serial DISABLED (using USB + BLE scanning)");
+    // Bluetooth Serial - for communication with Android app
+    app->bt_serial = flock_bt_serial_alloc();
+    if (app->bt_serial) {
+        flock_bt_serial_set_state_callback(app->bt_serial, flock_bridge_bt_state_changed, app);
+        flock_bt_serial_set_callback(app->bt_serial, flock_bridge_data_received, app);
+        FURI_LOG_I(TAG, "Bluetooth Serial allocated");
+    }
 
     // Initialize default radio settings
+    // BLE source is External-only to allow BT Serial for communication
     app->radio_settings.subghz_source = FlockRadioSourceInternal;
-    app->radio_settings.ble_source = FlockRadioSourceInternal;
+    app->radio_settings.ble_source = FlockRadioSourceExternal;  // External only - internal BLE used for BT Serial
     app->radio_settings.wifi_source = FlockRadioSourceExternal;
-    app->radio_settings.enable_subghz = true;  // Enabled for testing with reduced memory
+    app->radio_settings.enable_subghz = true;  // Enabled
     app->radio_settings.enable_ble = false;
     app->radio_settings.enable_wifi = false;
     app->radio_settings.enable_ir = false;
     app->radio_settings.enable_nfc = false;
 
-    // Load settings from storage
+    // Load settings from storage (version mismatch will use defaults above)
     flock_bridge_load_settings(app);
+
+    FURI_LOG_I(TAG, "Radio settings: SubGHz=%s (%d), BLE=%s, enabled: subghz=%d ble=%d wifi=%d ir=%d nfc=%d",
+        flock_bridge_get_source_name(app->radio_settings.subghz_source),
+        app->radio_settings.subghz_source,
+        flock_bridge_get_source_name(app->radio_settings.ble_source),
+        app->radio_settings.enable_subghz,
+        app->radio_settings.enable_ble,
+        app->radio_settings.enable_wifi,
+        app->radio_settings.enable_ir,
+        app->radio_settings.enable_nfc);
 
     // Check if any scanners are enabled
     bool any_scanner_enabled = app->radio_settings.enable_subghz ||
@@ -397,7 +411,14 @@ int32_t flock_bridge_app(void* p) {
         }
     }
 
-    FURI_LOG_I(TAG, "Bluetooth Serial DISABLED (using USB + BLE scanning)");
+    // Start Bluetooth Serial
+    if (app->bt_serial) {
+        if (flock_bt_serial_start(app->bt_serial)) {
+            FURI_LOG_I(TAG, "Bluetooth Serial started - advertising");
+        } else {
+            FURI_LOG_W(TAG, "Failed to start Bluetooth Serial");
+        }
+    }
 
     // Start external radio manager
     if (app->external_radio) {

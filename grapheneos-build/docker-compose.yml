@@ -1,0 +1,176 @@
+version: "3.9"
+
+services:
+  grapheneos-builder:
+    image: ubuntu:24.04
+    container_name: grapheneos-build
+    hostname: grapheneos-builder
+
+    # DGX Spark optimizations - leverage high core count and memory
+    deploy:
+      resources:
+        limits:
+          cpus: "64"
+          memory: 256G
+        reservations:
+          cpus: "32"
+          memory: 128G
+
+    # GPU access for signing/crypto acceleration (optional)
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Build parallelism - adjust based on DGX Spark specs
+      - MAKEFLAGS=-j64
+      - NINJA_STATUS="[%f/%t %e] "
+      # Repo sync parallelism
+      - REPO_JOBS=16
+      # Java heap for build
+      - _JAVA_OPTIONS=-Xmx64g
+      # ccache
+      - USE_CCACHE=1
+      - CCACHE_DIR=/ccache
+      - CCACHE_MAXSIZE=100G
+      # Build config
+      - BUILD_NUMBER=${BUILD_NUMBER:-eng}
+      - DEVICE=${DEVICE:-husky}
+      # GrapheneOS version
+      - GRAPHENEOS_VERSION=${GRAPHENEOS_VERSION:-2025012200}
+      - GRAPHENEOS_BRANCH=${GRAPHENEOS_BRANCH:-15}
+      # YubiKey signing (optional)
+      - USE_YUBIKEY=${USE_YUBIKEY:-false}
+      - YUBIKEY_PIN=${YUBIKEY_PIN:-}
+      - YUBIKEY_MGMT_KEY=${YUBIKEY_MGMT_KEY:-}
+      # step-ca (optional)
+      - STEP_CA_URL=${STEP_CA_URL:-}
+      - STEP_CA_FINGERPRINT=${STEP_CA_FINGERPRINT:-}
+      # Flock-You source
+      - FLOCKYOU_SRC=/flockyou-src
+
+    volumes:
+      # GrapheneOS source tree
+      - grapheneos-src:/src
+      # Build output
+      - grapheneos-out:/src/out
+      # ccache for faster rebuilds
+      - grapheneos-ccache:/ccache
+      # Signing keys (read-write for key generation)
+      - ./keys:/keys
+      # Persist repo cache
+      - grapheneos-repo:/root/.repoconfig
+      # Build scripts
+      - ./scripts:/scripts:ro
+      # Flock-You OEM app source
+      - ${FLOCKYOU_SRC_PATH:-..}:/flockyou-src:ro
+      # OEM apps output directory
+      - ./oem-apps:/oem-apps
+
+    working_dir: /src
+
+    # Keep container running for interactive builds
+    tty: true
+    stdin_open: true
+
+    # Use host network for faster repo sync
+    network_mode: host
+
+    # Tmpfs for faster intermediate builds
+    tmpfs:
+      - /tmp:size=32G,exec
+
+    # Security - needed for some build operations
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_ADMIN
+
+    # YubiKey passthrough for hardware signing
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    group_add:
+      - plugdev
+
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "=== GrapheneOS Build Environment on DGX Spark ==="
+
+        # Install build dependencies
+        apt-get update && apt-get install -y \
+          git curl wget unzip zip \
+          python3 python3-pip python3-venv \
+          openjdk-21-jdk \
+          build-essential \
+          libncurses5 libncurses5-dev \
+          libssl-dev libffi-dev \
+          zlib1g-dev libbz2-dev \
+          libreadline-dev libsqlite3-dev \
+          liblzma-dev libxml2-dev libxslt1-dev \
+          ccache rsync \
+          fontconfig \
+          bc bison flex \
+          libelf-dev \
+          repo \
+          gnupg2 \
+          opensc pcscd pcsc-tools \
+          yubikey-manager libykcs11-1 \
+          usbutils \
+          && rm -rf /var/lib/apt/lists/*
+
+        # Install step-cli
+        if ! command -v step &>/dev/null; then
+          wget -q https://dl.smallstep.com/gh-release/cli/docs-cli-install/v0.27.5/step-cli_0.27.5_amd64.deb
+          dpkg -i step-cli_0.27.5_amd64.deb
+          rm step-cli_0.27.5_amd64.deb
+          step plugin install kms || true
+        fi
+
+        # Start pcscd for YubiKey
+        service pcscd start || true
+
+        # Configure git
+        git config --global user.email "builder@local"
+        git config --global user.name "GrapheneOS Builder"
+        git config --global color.ui false
+
+        # Setup ccache
+        ccache -M 100G
+
+        echo "=== Build environment ready ==="
+        echo "Device: $${DEVICE}"
+        echo "CPUs available: $$(nproc)"
+        echo "Memory available: $$(free -h | grep Mem | awk '{print $$2}')"
+        echo ""
+        echo "Run these commands to build:"
+        echo "  1. /scripts/sync.sh      # Sync GrapheneOS sources"
+        echo "  2. /scripts/build.sh     # Build the OS"
+        echo "  3. /scripts/sign.sh      # Sign the build"
+        echo ""
+        exec /bin/bash
+
+volumes:
+  grapheneos-src:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GRAPHENEOS_SRC_PATH:-/data/grapheneos/src}
+
+  grapheneos-out:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GRAPHENEOS_OUT_PATH:-/data/grapheneos/out}
+
+  grapheneos-ccache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GRAPHENEOS_CCACHE_PATH:-/data/grapheneos/ccache}
+
+  grapheneos-repo:
+    # Docker-managed volume for repo metadata (doesn't need persistence on host)

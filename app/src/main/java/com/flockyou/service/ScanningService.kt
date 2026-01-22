@@ -154,6 +154,8 @@ class ScanningService : Service() {
         private const val HEALTH_CHECK_INTERVAL_MS = 30_000L // 30 seconds
         private const val DETECTOR_STALE_THRESHOLD_MS = 120_000L // 2 minutes without scan = stale
         private const val BLE_HEALTH_UPDATE_THROTTLE_MS = 5_000L // Throttle BLE health updates to every 5 seconds
+        private const val BLE_WATCHDOG_THRESHOLD_MS = 60_000L // 1 minute without ANY BLE results = trigger restart
+        private const val BLE_WATCHDOG_MAX_FAILURES = 3 // Max watchdog failures before giving up
 
         // Scan statistics
         val scanStats = MutableStateFlow(ScanStatistics())
@@ -580,6 +582,8 @@ class ScanningService : Service() {
     private var bleScanner: BluetoothLeScanner? = null
     private var isBleScanningActive = false
     private var lastBleHealthUpdateTime: Long = 0L
+    private var lastBleScanResultTime: Long = 0L  // Track when we last received any BLE scan result
+    private var bleWatchdogFailures: Int = 0  // Count consecutive watchdog failures for BLE
     
     // WiFi
     private lateinit var wifiManager: WifiManager
@@ -2789,6 +2793,9 @@ class ScanningService : Service() {
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
             isBleScanningActive = true
             bleStatus.value = SubsystemStatus.Active
+            // Initialize watchdog timer - give the scanner time to start receiving results
+            lastBleScanResultTime = System.currentTimeMillis()
+            bleWatchdogFailures = 0
             // Update total BLE scan count
             scanStats.value = scanStats.value.copy(totalBleScans = scanStats.value.totalBleScans + 1)
             broadcastScanStats()
@@ -2821,12 +2828,18 @@ class ScanningService : Service() {
     private val bleScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            // Update watchdog timestamp - we're receiving results
+            lastBleScanResultTime = System.currentTimeMillis()
+            bleWatchdogFailures = 0  // Reset failure count on successful result
             serviceScope.launch {
                 processBleScanResult(result)
             }
         }
-        
+
         override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            // Update watchdog timestamp for batch results too
+            lastBleScanResultTime = System.currentTimeMillis()
+            bleWatchdogFailures = 0
             serviceScope.launch {
                 results.forEach { processBleScanResult(it) }
             }
@@ -2855,6 +2868,10 @@ class ScanningService : Service() {
             bleStatus.value = SubsystemStatus.Error(errorCode, errorMessage)
             logError("BLE", errorCode, errorMessage, recoverable = errorCode != SCAN_FAILED_FEATURE_UNSUPPORTED)
             isBleScanningActive = false
+
+            // Report error to health check system - this triggers automatic restart logic
+            val recoverable = errorCode != SCAN_FAILED_FEATURE_UNSUPPORTED
+            detectorCallbackImpl.onError(DetectorHealthStatus.DETECTOR_BLE, errorMessage, recoverable)
         }
     }
     
@@ -4237,8 +4254,185 @@ class ScanningService : Service() {
             }
         }
 
+        // Additional BLE-specific checks for stall detection and automatic restart
+        val bleHealthStatus = currentHealth[DetectorHealthStatus.DETECTOR_BLE]
+        if (bleHealthStatus != null && bleHealthStatus.isRunning) {
+            var needsRestart = false
+            var reason = ""
+
+            // Check 1: isBleScanningActive flag should be true
+            if (!isBleScanningActive) {
+                needsRestart = true
+                reason = "isBleScanningActive=false but scanner should be running"
+            }
+
+            // Check 2: BLE watchdog - no scan results received for too long
+            if (!needsRestart && isBleScanningActive && lastBleScanResultTime > 0) {
+                val timeSinceLastResult = now - lastBleScanResultTime
+                if (timeSinceLastResult > BLE_WATCHDOG_THRESHOLD_MS) {
+                    bleWatchdogFailures++
+                    if (bleWatchdogFailures <= BLE_WATCHDOG_MAX_FAILURES) {
+                        needsRestart = true
+                        reason = "No BLE results for ${timeSinceLastResult / 1000}s (watchdog failure ${bleWatchdogFailures}/${BLE_WATCHDOG_MAX_FAILURES})"
+                    } else {
+                        Log.e(TAG, "BLE watchdog exceeded max failures ($BLE_WATCHDOG_MAX_FAILURES), not restarting")
+                    }
+                }
+            }
+
+            if (needsRestart) {
+                Log.w(TAG, "BLE scanner needs restart: $reason")
+                if (bleHealthStatus.restartCount < MAX_RESTART_ATTEMPTS) {
+                    currentHealth[DetectorHealthStatus.DETECTOR_BLE] = bleHealthStatus.copy(
+                        isHealthy = false,
+                        consecutiveFailures = bleHealthStatus.consecutiveFailures + 1
+                    )
+                    attemptDetectorRestart(DetectorHealthStatus.DETECTOR_BLE)
+                }
+            }
+        }
+
         detectorHealth.value = currentHealth
         broadcastDetectorHealth()
+
+        // === CRITICAL JOB WATCHDOG ===
+        // Monitor and restart critical background jobs if they've stopped unexpectedly
+        checkAndRestartCriticalJobs()
+    }
+
+    /**
+     * Check and restart critical background jobs that may have stopped unexpectedly.
+     * This ensures the scanning service remains functional even if coroutines fail silently.
+     */
+    private fun checkAndRestartCriticalJobs() {
+        // Check main scan job
+        if (isScanning.value && (scanJob == null || scanJob?.isActive != true)) {
+            Log.w(TAG, "WATCHDOG: Main scan job stopped unexpectedly, restarting...")
+            restartScanningLoopIfNeeded()
+        }
+
+        // Check cellular monitoring jobs if cellular monitor is active
+        if (cellularMonitor != null) {
+            if (cellularAnomalyJob == null || cellularAnomalyJob?.isActive != true) {
+                Log.w(TAG, "WATCHDOG: Cellular anomaly job stopped, restarting...")
+                restartCellularMonitoringJobs()
+            }
+        }
+
+        // Check settings collection jobs - these are critical for responding to settings changes
+        if (broadcastSettingsJob == null || broadcastSettingsJob?.isActive != true) {
+            Log.w(TAG, "WATCHDOG: Broadcast settings job stopped, restarting...")
+            restartSettingsCollectionJobs()
+        }
+
+        // Check IPC refresh job - ensures UI stays updated
+        if (ipcRefreshJob == null || ipcRefreshJob?.isActive != true) {
+            Log.w(TAG, "WATCHDOG: IPC refresh job stopped, restarting...")
+            startIpcRefreshJob()
+        }
+
+        // Check throttle cleanup job
+        if (throttleCleanupJob == null || throttleCleanupJob?.isActive != true) {
+            Log.w(TAG, "WATCHDOG: Throttle cleanup job stopped, restarting...")
+            startThrottleCleanup()
+        }
+    }
+
+    /**
+     * Restart cellular monitoring collection jobs.
+     */
+    private fun restartCellularMonitoringJobs() {
+        cellularAnomalyJob?.cancel()
+        cellularStatusJob?.cancel()
+        cellularHistoryJob?.cancel()
+        cellularEventsJob?.cancel()
+
+        // Restart the cellular monitoring setup
+        try {
+            startCellularMonitoring()
+            Log.i(TAG, "Cellular monitoring jobs restarted")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restart cellular monitoring jobs", e)
+        }
+    }
+
+    /**
+     * Restart settings collection jobs.
+     */
+    private fun restartSettingsCollectionJobs() {
+        broadcastSettingsJob?.cancel()
+        privacySettingsJob?.cancel()
+        scanSettingsJob?.cancel()
+        notificationSettingsJob?.cancel()
+        detectionSettingsJob?.cancel()
+
+        // Restart settings collection - inline the setup
+        try {
+            broadcastSettingsJob = serviceScope.launch {
+                broadcastSettingsRepository.settings.collect { settings ->
+                    currentBroadcastSettings = settings
+                }
+            }
+
+            privacySettingsJob = serviceScope.launch {
+                privacySettingsRepository.settings.collect { settings ->
+                    currentPrivacySettings = settings
+                }
+            }
+
+            scanSettingsJob = serviceScope.launch {
+                scanSettingsRepository.settings.collect { settings ->
+                    currentScanSettings = settings
+                }
+            }
+
+            notificationSettingsJob = serviceScope.launch {
+                notificationSettingsRepository.settings.collect { settings ->
+                    currentNotificationSettings = settings
+                }
+            }
+
+            detectionSettingsJob = serviceScope.launch {
+                detectionSettingsRepository.settings.collect { settings ->
+                    currentDetectionSettings = settings
+                }
+            }
+
+            Log.i(TAG, "Settings collection jobs restarted")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restart settings collection jobs", e)
+        }
+    }
+
+    /**
+     * Restart the main scanning loop if it has stopped.
+     * This is a lightweight restart that only reinitializes the scan job.
+     */
+    private fun restartScanningLoopIfNeeded() {
+        if (!isScanning.value) {
+            Log.d(TAG, "Scanning is stopped, not restarting loop")
+            return
+        }
+
+        // Stop and restart scanning components
+        Log.i(TAG, "Restarting scanning loop via full restart...")
+
+        // Cancel existing scan job
+        scanJob?.cancel()
+        scanJob = null
+
+        // Stop BLE scan if active
+        if (isBleScanningActive) {
+            stopBleScan()
+        }
+
+        // Re-trigger startScanning which will reinitialize everything
+        // Use a flag to avoid recursion
+        isScanning.value = false
+        serviceScope.launch {
+            delay(1000) // Brief delay before restart
+            startScanning()
+        }
     }
 
     /**

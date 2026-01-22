@@ -112,7 +112,8 @@ SubGhzScanner* subghz_scanner_alloc(void) {
         return NULL;
     }
     FURI_LOG_I(TAG, "CC1101 device handle acquired: %p", (void*)scanner->device);
-    scanner->device_begun = false;  // Will be set true when begin() succeeds in start()
+    scanner->device_begun = false;           // Will be set true when we attempt device access
+    scanner->device_begin_succeeded = false;  // Will be set true only if begin() succeeds
 
     // Defer heavy allocations (environment, receiver) to start() to reduce peak memory
     scanner->environment = NULL;
@@ -186,45 +187,20 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
     scanner->decode_in_progress = false;
     scanner->decode_start_time = 0;
 
-    // Begin device access (if not already begun at alloc time)
-    // NOTE: On mntm firmware, begin() consistently fails.
-    // This appears to be a firmware issue where the CC1101 is always marked as "in use".
-    if (!scanner->device_begun) {
-        if (subghz_devices_begin(scanner->device)) {
-            scanner->device_begun = true;
-            FURI_LOG_I(TAG, "CC1101 device begun successfully");
-        } else {
-            FURI_LOG_E(TAG, "Failed to begin CC1101 - device locked (mntm firmware issue?)");
-            furi_mutex_release(scanner->mutex);
-            return false;
-        }
-    }
-
-    // Check frequency validity
-    if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
-        FURI_LOG_E(TAG, "Invalid frequency: %lu Hz - check regional settings", frequency);
-        subghz_devices_end(scanner->device);
-        scanner->device_begun = false;
-        furi_mutex_release(scanner->mutex);
-        return false;
-    }
-
-    // Deferred allocation: allocate environment and receiver now that we're committed
-    // This reduces peak memory usage by not allocating until actually needed
+    // Deferred allocation: allocate environment and receiver BEFORE device access
+    // This ensures we have all resources ready before touching hardware
     if (!scanner->environment) {
         FURI_LOG_I(TAG, "Allocating SubGHz environment (deferred)");
         scanner->environment = subghz_environment_alloc();
         if (!scanner->environment) {
             FURI_LOG_E(TAG, "Failed to allocate SubGHz environment - OOM");
-            subghz_devices_end(scanner->device);
-            scanner->device_begun = false;
             furi_mutex_release(scanner->mutex);
             return false;
         }
 
         // Set protocol registry using built-in protocols
         subghz_environment_set_protocol_registry(
-            scanner->environment, (void*)&subghz_protocol_registry);
+            scanner->environment, &subghz_protocol_registry);
         scanner->protocol_registry_loaded = true;
         FURI_LOG_I(TAG, "Protocol registry set (built-in)");
     }
@@ -237,8 +213,6 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
             subghz_environment_free(scanner->environment);
             scanner->environment = NULL;
             scanner->protocol_registry_loaded = false;
-            subghz_devices_end(scanner->device);
-            scanner->device_begun = false;
             furi_mutex_release(scanner->mutex);
             return false;
         }
@@ -247,6 +221,30 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
         subghz_receiver_set_rx_callback(
             scanner->receiver, subghz_decoder_receiver_callback, scanner);
         FURI_LOG_I(TAG, "SubGHz receiver initialized with callback");
+    }
+
+    // Begin device access (if not already begun)
+    // NOTE: On mntm firmware, begin() may fail due to different device locking.
+    // We try to continue anyway since the device handle is valid.
+    if (!scanner->device_begun) {
+        if (subghz_devices_begin(scanner->device)) {
+            scanner->device_begun = true;
+            scanner->device_begin_succeeded = true;
+            FURI_LOG_I(TAG, "CC1101 device begun successfully");
+        } else {
+            // On mntm firmware, begin() often fails but we can still use the device
+            // Try proceeding without it - mntm may handle device access differently
+            FURI_LOG_W(TAG, "begin() failed - continuing anyway (mntm firmware mode)");
+            scanner->device_begun = true;  // Mark as begun to avoid retry loops
+            scanner->device_begin_succeeded = false;  // Remember begin() failed for cleanup
+        }
+    }
+
+    // Check frequency validity
+    if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
+        FURI_LOG_E(TAG, "Invalid frequency: %lu Hz - check regional settings", frequency);
+        furi_mutex_release(scanner->mutex);
+        return false;
     }
 
     // Reset and configure device
@@ -308,11 +306,14 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
         subghz_devices_stop_async_rx(scanner->device);
         subghz_devices_idle(scanner->device);
         subghz_devices_sleep(scanner->device);
-        if (scanner->device_begun) {
+        // Only call end() if begin() actually succeeded - on mntm firmware begin()
+        // may fail but device still works, calling end() without successful begin() crashes
+        if (scanner->device_begun && scanner->device_begin_succeeded) {
             subghz_devices_end(scanner->device);
-            scanner->device_begun = false;
             FURI_LOG_I(TAG, "CC1101 device released");
         }
+        scanner->device_begun = false;
+        scanner->device_begin_succeeded = false;
     }
 
     scanner->running = false;

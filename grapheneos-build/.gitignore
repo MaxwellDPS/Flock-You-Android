@@ -1,0 +1,11 @@
+# Environment configuration
+.env
+
+# Signing keys - NEVER commit these
+keys/
+
+# Built APKs
+oem-apps/
+
+# Docker volumes data
+data/

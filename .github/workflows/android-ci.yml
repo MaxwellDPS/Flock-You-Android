@@ -13,6 +13,7 @@ on:
       - 'gradlew'
       - 'gradlew.bat'
       - '.github/workflows/android-ci.yml'
+      - 'proguard-rules.pro'
 
   # Build on pull requests
   pull_request:
@@ -26,6 +27,7 @@ on:
       - 'gradlew'
       - 'gradlew.bat'
       - '.github/workflows/android-ci.yml'
+      - 'proguard-rules.pro'
 
   # Manual trigger with release option
   workflow_dispatch:

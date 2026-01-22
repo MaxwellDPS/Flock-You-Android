@@ -182,6 +182,17 @@ class FalsePositiveAnalyzer @Inject constructor(
         detection: Detection,
         contextInfo: FpContextInfo? = null
     ): QuickFpResult {
+        // IMPORTANT: Exclude known surveillance devices from FP analysis
+        // These should always be shown to users regardless of other factors
+        if (shouldExcludeFromFpAnalysis(detection)) {
+            return QuickFpResult(
+                confidence = 0f,
+                isFalsePositive = false,
+                primaryReason = "Known surveillance device",
+                category = null
+            )
+        }
+
         val reasons = mutableListOf<FpReason>()
         var fpScore = 0f
 
@@ -242,10 +253,82 @@ class FalsePositiveAnalyzer @Inject constructor(
 
     // ==================== RULE-BASED CHECKS ====================
 
+    /**
+     * Device types that should NEVER be marked as false positives.
+     * These are the core surveillance devices this app is designed to detect.
+     * Even if other FP indicators are present (home location, weak signal, etc.),
+     * these device types represent real surveillance threats that users need to know about.
+     */
+    private val surveillanceDeviceTypes = setOf(
+        DeviceType.FLOCK_SAFETY_CAMERA,
+        DeviceType.PENGUIN_SURVEILLANCE,
+        DeviceType.PIGVISION_SYSTEM,
+        DeviceType.RAVEN_GUNSHOT_DETECTOR,
+        DeviceType.MOTOROLA_POLICE_TECH,
+        DeviceType.AXON_POLICE_TECH,
+        DeviceType.L3HARRIS_SURVEILLANCE,
+        DeviceType.CELLEBRITE_FORENSICS,
+        DeviceType.BODY_CAMERA,
+        DeviceType.POLICE_RADIO,
+        DeviceType.POLICE_VEHICLE,
+        DeviceType.STINGRAY_IMSI,
+        DeviceType.SHOTSPOTTER,
+        DeviceType.CLEARVIEW_AI,
+        DeviceType.PALANTIR_DEVICE,
+        DeviceType.GRAYKEY_DEVICE,
+        DeviceType.SURVEILLANCE_VAN,
+        DeviceType.HIDDEN_CAMERA,
+        DeviceType.HIDDEN_TRANSMITTER,
+        DeviceType.GNSS_SPOOFER,
+        DeviceType.GNSS_JAMMER,
+        DeviceType.RF_JAMMER,
+        DeviceType.WIFI_PINEAPPLE,
+        DeviceType.PACKET_SNIFFER,
+        DeviceType.MAN_IN_MIDDLE,
+        DeviceType.DRONE,
+        DeviceType.SURVEILLANCE_INFRASTRUCTURE,
+        DeviceType.FACIAL_RECOGNITION,
+        DeviceType.CROWD_ANALYTICS
+    )
+
+    /**
+     * Check if a detection should be excluded from false positive analysis.
+     * Returns true if the detection is a known surveillance device that should
+     * always be shown to users regardless of other FP indicators.
+     */
+    private fun shouldExcludeFromFpAnalysis(detection: Detection): Boolean {
+        // Never mark known surveillance device types as FP
+        if (detection.deviceType in surveillanceDeviceTypes) {
+            return true
+        }
+
+        // Never mark HIGH or CRITICAL threat detections as FP
+        if (detection.threatLevel == ThreatLevel.HIGH || detection.threatLevel == ThreatLevel.CRITICAL) {
+            return true
+        }
+
+        return false
+    }
+
     private fun applyRuleBasedChecks(
         detection: Detection,
         contextInfo: FpContextInfo?
     ): FalsePositiveResult {
+        // IMPORTANT: Exclude known surveillance devices from FP analysis
+        // These should always be shown to users regardless of other factors
+        if (shouldExcludeFromFpAnalysis(detection)) {
+            return FalsePositiveResult(
+                detectionId = detection.id,
+                isFalsePositive = false,
+                confidence = 0f,
+                confidenceLevel = FpConfidenceLevel.NONE,
+                primaryReason = "Known surveillance device - always shown",
+                allReasons = emptyList(),
+                bannerMessage = null,
+                analysisMethod = FpAnalysisMethod.RULE_BASED
+            )
+        }
+
         val reasons = mutableListOf<FpReason>()
         var fpScore = 0f
 

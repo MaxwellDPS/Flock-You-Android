@@ -42,7 +42,7 @@ void flock_bridge_data_received(void* context, uint8_t* data, size_t length);
 // Settings file path and constants
 #define FLOCK_SETTINGS_PATH APP_DATA_PATH("settings.bin")
 #define FLOCK_SETTINGS_MAGIC 0x464C4F43  // "FLOC"
-#define FLOCK_SETTINGS_VERSION 1
+#define FLOCK_SETTINGS_VERSION 2  // Bumped to reset saved settings
 
 // Settings file structure
 typedef struct __attribute__((packed)) {

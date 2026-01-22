@@ -621,33 +621,32 @@ fun MainScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
 
-                                    // FP filter toggle
+                                    // FP filter toggle - always visible so users can toggle it
                                     val fpCount = viewModel.getFalsePositiveCount()
-                                    if (fpCount > 0 || !uiState.hideFalsePositives) {
-                                        FilterChip(
-                                            selected = !uiState.hideFalsePositives,
-                                            onClick = { viewModel.toggleHideFalsePositives() },
-                                            label = {
-                                                Text(
-                                                    text = if (uiState.hideFalsePositives)
-                                                        "Show FPs ($fpCount hidden)"
-                                                    else
-                                                        "Showing all",
-                                                    style = MaterialTheme.typography.labelSmall
-                                                )
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = if (uiState.hideFalsePositives)
-                                                        Icons.Default.VisibilityOff
-                                                    else
-                                                        Icons.Default.Visibility,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        )
-                                    }
+                                    FilterChip(
+                                        selected = !uiState.hideFalsePositives,
+                                        onClick = { viewModel.toggleHideFalsePositives() },
+                                        label = {
+                                            Text(
+                                                text = if (uiState.hideFalsePositives) {
+                                                    if (fpCount > 0) "Show FPs ($fpCount hidden)" else "FP filter on"
+                                                } else {
+                                                    "Showing all"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (uiState.hideFalsePositives)
+                                                    Icons.Default.VisibilityOff
+                                                else
+                                                    Icons.Default.Visibility,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
                                 }
                             }
                         }

@@ -1,10 +1,16 @@
 package com.flockyou.worker
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.flockyou.BuildConfig
+import com.flockyou.R
 import com.flockyou.ai.DetectionAnalyzer
 import com.flockyou.ai.FalsePositiveAnalyzer
 import com.flockyou.ai.FalsePositiveResult
@@ -71,6 +77,9 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
         const val PRIORITY_NORMAL = "normal"  // Normal batch processing
         const val PRIORITY_LOW = "low"        // Low-threat only - run during idle
         const val PRIORITY_PENDING = "pending" // Unanalyzed detections only - runs frequently
+
+        // Foreground notification ID (unique to avoid conflicts with other notifications)
+        private const val FOREGROUND_NOTIFICATION_ID = 9001
 
         // Analysis age threshold - re-analyze detections older than this
         private const val ANALYSIS_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000L // 24 hours
@@ -383,6 +392,24 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
         val priorityMode = inputData.getString(KEY_PRIORITY_MODE) ?: PRIORITY_NORMAL
         val specificDetectionIds = inputData.getStringArray(KEY_DETECTION_IDS)?.toList()
 
+        // For high-priority analysis or specific detections, run as foreground service
+        // to ensure execution even when screen is off (Doze mode)
+        val needsForeground = priorityMode == PRIORITY_HIGH ||
+                              priorityMode == PRIORITY_PENDING ||
+                              !specificDetectionIds.isNullOrEmpty()
+
+        if (needsForeground) {
+            try {
+                setForeground(createForegroundInfo())
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Running as foreground service for reliable screen-off execution")
+                }
+            } catch (e: Exception) {
+                // Foreground may fail on some devices, continue anyway
+                Log.w(TAG, "Failed to set foreground: ${e.message}")
+            }
+        }
+
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "Starting background analysis (batch: $batchSize, priority: $priorityMode, " +
                     "force: $forceReanalyze, specific: ${specificDetectionIds?.size ?: 0})")
@@ -477,6 +504,48 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
             } else {
                 Result.failure()
             }
+        }
+    }
+
+    /**
+     * Create foreground info for running as a foreground service.
+     * This ensures the worker can run even when the screen is off (Doze mode).
+     */
+    private fun createForegroundInfo(): ForegroundInfo {
+        val channelId = "background_analysis_channel"
+        val channelName = "Background Analysis"
+
+        // Create notification channel for Android O and above
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                channelName,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Analyzing detections in background"
+                setShowBadge(false)
+            }
+            val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(applicationContext, channelId)
+            .setSmallIcon(R.drawable.ic_radar)
+            .setContentTitle("Analyzing detections")
+            .setContentText("Processing surveillance detection data")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                FOREGROUND_NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(FOREGROUND_NOTIFICATION_ID, notification)
         }
     }
 

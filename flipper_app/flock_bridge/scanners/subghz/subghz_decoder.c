@@ -264,27 +264,33 @@ bool subghz_decoder_is_active(SubGhzScanner* scanner) {
 
     uint32_t now = furi_get_tick();
 
+    // Hard timeout: force clear after 3 seconds regardless of pulse activity
+    // This prevents getting stuck on noisy frequencies like 433.92 MHz
+    if (scanner->decode_in_progress) {
+        uint32_t decode_duration = now - scanner->decode_start_time;
+        if (decode_duration > 3000) {
+            FURI_LOG_W(TAG, "Decode timeout after %lu ms - forcing clear", decode_duration);
+            scanner->decode_in_progress = false;
+            scanner->decode_start_time = 0;
+            scanner->last_pulse_time = 0;
+            return false;
+        }
+    }
+
     // Check if we've received pulses recently (within cooldown period)
-    if (scanner->last_pulse_time > 0) {
+    // Only apply if decode was in progress (prevents noise from starting decode)
+    if (scanner->decode_in_progress && scanner->last_pulse_time > 0) {
         uint32_t time_since_pulse = now - scanner->last_pulse_time;
         if (time_since_pulse < SUBGHZ_DECODE_COOLDOWN_MS) {
             return true;
         }
+        // No recent pulses - decode likely complete
+        scanner->decode_in_progress = false;
+        scanner->decode_start_time = 0;
+        return false;
     }
 
-    // Check if explicit decode is in progress
-    if (scanner->decode_in_progress) {
-        // Auto-timeout decode after 5 seconds to prevent stuck state
-        uint32_t decode_duration = now - scanner->decode_start_time;
-        if (decode_duration > 5000) {
-            FURI_LOG_W(TAG, "Decode timeout - clearing stuck decode state");
-            // Note: We don't modify scanner state here as it's a query function
-            // The timeout will be handled on next pulse or frequency change
-        }
-        return decode_duration < 5000;
-    }
-
-    return false;
+    return scanner->decode_in_progress;
 }
 
 void subghz_decoder_mark_complete(SubGhzScanner* scanner) {
@@ -317,8 +323,9 @@ void subghz_decoder_capture_callback(bool level, uint32_t duration, void* contex
     }
 
     // Track pulse activity for decode protection
-    // Only track meaningful pulses (not noise - typically >50us)
-    if (duration > 50) {
+    // Only track meaningful pulses (not noise - typically 100-10000us for real signals)
+    // Shorter pulses are often noise, very long pulses are often dead air
+    if (duration > 100 && duration < 10000) {
         scanner->last_pulse_time = now;
 
         // Mark decode as starting if not already in progress
