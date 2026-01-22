@@ -378,7 +378,7 @@ class DetectionSettingsRepository @Inject constructor(
         }
     }
     
-    // Update cellular thresholds
+    // Update cellular thresholds (all at once - use individual methods when possible)
     suspend fun updateCellularThresholds(thresholds: CellularThresholds) {
         context.detectionDataStore.edit { prefs ->
             prefs[Keys.CELL_SIGNAL_SPIKE_THRESHOLD] = thresholds.signalSpikeThreshold
@@ -388,8 +388,39 @@ class DetectionSettingsRepository @Inject constructor(
             prefs[Keys.CELL_ANOMALY_INTERVAL] = thresholds.minAnomalyIntervalMs
         }
     }
-    
-    // Update satellite thresholds
+
+    // Individual cellular threshold updates (prevents race conditions)
+    suspend fun updateCellularSignalSpikeThreshold(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CELL_SIGNAL_SPIKE_THRESHOLD] = value
+        }
+    }
+
+    suspend fun updateCellularRapidSwitchStationary(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CELL_RAPID_SWITCH_STATIONARY] = value
+        }
+    }
+
+    suspend fun updateCellularRapidSwitchMoving(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CELL_RAPID_SWITCH_MOVING] = value
+        }
+    }
+
+    suspend fun updateCellularTrustedThreshold(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CELL_TRUSTED_THRESHOLD] = value
+        }
+    }
+
+    suspend fun updateCellularAnomalyInterval(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CELL_ANOMALY_INTERVAL] = value
+        }
+    }
+
+    // Update satellite thresholds (all at once - use individual methods when possible)
     suspend fun updateSatelliteThresholds(thresholds: SatelliteThresholds) {
         context.detectionDataStore.edit { prefs ->
             prefs[Keys.SAT_UNEXPECTED_THRESHOLD] = thresholds.unexpectedSatelliteThresholdMs
@@ -399,8 +430,39 @@ class DetectionSettingsRepository @Inject constructor(
             prefs[Keys.SAT_RAPID_SWITCH_COUNT] = thresholds.rapidSwitchingCount
         }
     }
-    
-    // Update BLE thresholds
+
+    // Individual satellite threshold updates (prevents race conditions)
+    suspend fun updateSatelliteUnexpectedThreshold(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SAT_UNEXPECTED_THRESHOLD] = value
+        }
+    }
+
+    suspend fun updateSatelliteRapidHandoffThreshold(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SAT_RAPID_HANDOFF_THRESHOLD] = value
+        }
+    }
+
+    suspend fun updateSatelliteMinTerrestrialSignal(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SAT_MIN_TERRESTRIAL_SIGNAL] = value
+        }
+    }
+
+    suspend fun updateSatelliteRapidSwitchWindow(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SAT_RAPID_SWITCH_WINDOW] = value
+        }
+    }
+
+    suspend fun updateSatelliteRapidSwitchCount(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SAT_RAPID_SWITCH_COUNT] = value
+        }
+    }
+
+    // Update BLE thresholds (all at once - use individual methods when possible)
     suspend fun updateBleThresholds(thresholds: BleThresholds) {
         context.detectionDataStore.edit { prefs ->
             prefs[Keys.BLE_MIN_RSSI] = thresholds.minRssiForAlert
@@ -409,8 +471,33 @@ class DetectionSettingsRepository @Inject constructor(
             prefs[Keys.BLE_TRACKING_COUNT] = thresholds.minSeenCountForTracking
         }
     }
-    
-    // Update WiFi thresholds
+
+    // Individual BLE threshold updates (prevents race conditions)
+    suspend fun updateBleMinRssi(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.BLE_MIN_RSSI] = value
+        }
+    }
+
+    suspend fun updateBleProximityRssi(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.BLE_PROXIMITY_RSSI] = value
+        }
+    }
+
+    suspend fun updateBleTrackingDuration(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.BLE_TRACKING_DURATION] = value
+        }
+    }
+
+    suspend fun updateBleTrackingCount(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.BLE_TRACKING_COUNT] = value
+        }
+    }
+
+    // Update WiFi thresholds (all at once - use individual methods when possible)
     suspend fun updateWifiThresholds(thresholds: WifiThresholds) {
         context.detectionDataStore.edit { prefs ->
             prefs[Keys.WIFI_MIN_SIGNAL] = thresholds.minSignalForAlert
@@ -418,6 +505,37 @@ class DetectionSettingsRepository @Inject constructor(
             prefs[Keys.WIFI_TRACKING_DURATION] = thresholds.trackingDurationMs
             prefs[Keys.WIFI_TRACKING_COUNT] = thresholds.minSeenCountForTracking
             prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] = thresholds.minTrackingDistanceMeters
+        }
+    }
+
+    // Individual WiFi threshold updates (prevents race conditions)
+    suspend fun updateWifiMinSignal(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.WIFI_MIN_SIGNAL] = value
+        }
+    }
+
+    suspend fun updateWifiStrongSignal(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.WIFI_STRONG_SIGNAL] = value
+        }
+    }
+
+    suspend fun updateWifiTrackingDuration(value: Long) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.WIFI_TRACKING_DURATION] = value
+        }
+    }
+
+    suspend fun updateWifiTrackingCount(value: Int) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.WIFI_TRACKING_COUNT] = value
+        }
+    }
+
+    suspend fun updateWifiMinTrackingDistance(value: Double) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] = value
         }
     }
 

@@ -58,19 +58,99 @@ class DetectionSettingsViewModel @Inject constructor(
     fun updateCellularThresholds(thresholds: CellularThresholds) {
         viewModelScope.launch { repository.updateCellularThresholds(thresholds) }
     }
-    
+
     fun updateSatelliteThresholds(thresholds: SatelliteThresholds) {
         viewModelScope.launch { repository.updateSatelliteThresholds(thresholds) }
     }
-    
+
     fun updateBleThresholds(thresholds: BleThresholds) {
         viewModelScope.launch { repository.updateBleThresholds(thresholds) }
     }
-    
+
     fun updateWifiThresholds(thresholds: WifiThresholds) {
         viewModelScope.launch { repository.updateWifiThresholds(thresholds) }
     }
-    
+
+    // Individual cellular threshold updates (prevents race conditions)
+    fun updateCellularSignalSpikeThreshold(value: Int) {
+        viewModelScope.launch { repository.updateCellularSignalSpikeThreshold(value) }
+    }
+
+    fun updateCellularRapidSwitchStationary(value: Int) {
+        viewModelScope.launch { repository.updateCellularRapidSwitchStationary(value) }
+    }
+
+    fun updateCellularRapidSwitchMoving(value: Int) {
+        viewModelScope.launch { repository.updateCellularRapidSwitchMoving(value) }
+    }
+
+    fun updateCellularTrustedThreshold(value: Int) {
+        viewModelScope.launch { repository.updateCellularTrustedThreshold(value) }
+    }
+
+    fun updateCellularAnomalyInterval(value: Long) {
+        viewModelScope.launch { repository.updateCellularAnomalyInterval(value) }
+    }
+
+    // Individual satellite threshold updates
+    fun updateSatelliteUnexpectedThreshold(value: Long) {
+        viewModelScope.launch { repository.updateSatelliteUnexpectedThreshold(value) }
+    }
+
+    fun updateSatelliteRapidHandoffThreshold(value: Long) {
+        viewModelScope.launch { repository.updateSatelliteRapidHandoffThreshold(value) }
+    }
+
+    fun updateSatelliteMinTerrestrialSignal(value: Int) {
+        viewModelScope.launch { repository.updateSatelliteMinTerrestrialSignal(value) }
+    }
+
+    fun updateSatelliteRapidSwitchWindow(value: Long) {
+        viewModelScope.launch { repository.updateSatelliteRapidSwitchWindow(value) }
+    }
+
+    fun updateSatelliteRapidSwitchCount(value: Int) {
+        viewModelScope.launch { repository.updateSatelliteRapidSwitchCount(value) }
+    }
+
+    // Individual BLE threshold updates
+    fun updateBleMinRssi(value: Int) {
+        viewModelScope.launch { repository.updateBleMinRssi(value) }
+    }
+
+    fun updateBleProximityRssi(value: Int) {
+        viewModelScope.launch { repository.updateBleProximityRssi(value) }
+    }
+
+    fun updateBleTrackingDuration(value: Long) {
+        viewModelScope.launch { repository.updateBleTrackingDuration(value) }
+    }
+
+    fun updateBleTrackingCount(value: Int) {
+        viewModelScope.launch { repository.updateBleTrackingCount(value) }
+    }
+
+    // Individual WiFi threshold updates
+    fun updateWifiMinSignal(value: Int) {
+        viewModelScope.launch { repository.updateWifiMinSignal(value) }
+    }
+
+    fun updateWifiStrongSignal(value: Int) {
+        viewModelScope.launch { repository.updateWifiStrongSignal(value) }
+    }
+
+    fun updateWifiTrackingDuration(value: Long) {
+        viewModelScope.launch { repository.updateWifiTrackingDuration(value) }
+    }
+
+    fun updateWifiTrackingCount(value: Int) {
+        viewModelScope.launch { repository.updateWifiTrackingCount(value) }
+    }
+
+    fun updateWifiMinTrackingDistance(value: Double) {
+        viewModelScope.launch { repository.updateWifiMinTrackingDistance(value) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
     }
@@ -163,9 +243,11 @@ fun DetectionSettingsScreen(
                     onToggleGlobal = { enabled ->
                         viewModel.setGlobalEnabled(cellular = enabled)
                     },
-                    onUpdateThresholds = { thresholds ->
-                        viewModel.updateCellularThresholds(thresholds)
-                    }
+                    onUpdateSignalSpike = { viewModel.updateCellularSignalSpikeThreshold(it) },
+                    onUpdateRapidSwitchStationary = { viewModel.updateCellularRapidSwitchStationary(it) },
+                    onUpdateRapidSwitchMoving = { viewModel.updateCellularRapidSwitchMoving(it) },
+                    onUpdateTrustedThreshold = { viewModel.updateCellularTrustedThreshold(it) },
+                    onUpdateAnomalyInterval = { viewModel.updateCellularAnomalyInterval(it) }
                 )
                 1 -> SatelliteSettingsContent(
                     settings = settings,
@@ -175,9 +257,11 @@ fun DetectionSettingsScreen(
                     onToggleGlobal = { enabled ->
                         viewModel.setGlobalEnabled(satellite = enabled)
                     },
-                    onUpdateThresholds = { thresholds ->
-                        viewModel.updateSatelliteThresholds(thresholds)
-                    }
+                    onUpdateUnexpectedThreshold = { viewModel.updateSatelliteUnexpectedThreshold(it) },
+                    onUpdateRapidHandoffThreshold = { viewModel.updateSatelliteRapidHandoffThreshold(it) },
+                    onUpdateMinTerrestrialSignal = { viewModel.updateSatelliteMinTerrestrialSignal(it) },
+                    onUpdateRapidSwitchWindow = { viewModel.updateSatelliteRapidSwitchWindow(it) },
+                    onUpdateRapidSwitchCount = { viewModel.updateSatelliteRapidSwitchCount(it) }
                 )
                 2 -> BleSettingsContent(
                     settings = settings,
@@ -187,9 +271,10 @@ fun DetectionSettingsScreen(
                     onToggleGlobal = { enabled ->
                         viewModel.setGlobalEnabled(ble = enabled)
                     },
-                    onUpdateThresholds = { thresholds ->
-                        viewModel.updateBleThresholds(thresholds)
-                    }
+                    onUpdateMinRssi = { viewModel.updateBleMinRssi(it) },
+                    onUpdateProximityRssi = { viewModel.updateBleProximityRssi(it) },
+                    onUpdateTrackingDuration = { viewModel.updateBleTrackingDuration(it) },
+                    onUpdateTrackingCount = { viewModel.updateBleTrackingCount(it) }
                 )
                 3 -> WifiSettingsContent(
                     settings = settings,
@@ -199,9 +284,11 @@ fun DetectionSettingsScreen(
                     onToggleGlobal = { enabled ->
                         viewModel.setGlobalEnabled(wifi = enabled)
                     },
-                    onUpdateThresholds = { thresholds ->
-                        viewModel.updateWifiThresholds(thresholds)
-                    }
+                    onUpdateMinSignal = { viewModel.updateWifiMinSignal(it) },
+                    onUpdateStrongSignal = { viewModel.updateWifiStrongSignal(it) },
+                    onUpdateTrackingDuration = { viewModel.updateWifiTrackingDuration(it) },
+                    onUpdateTrackingCount = { viewModel.updateWifiTrackingCount(it) },
+                    onUpdateMinTrackingDistance = { viewModel.updateWifiMinTrackingDistance(it) }
                 )
             }
         }
@@ -311,10 +398,14 @@ private fun CellularSettingsContent(
     settings: DetectionSettings,
     onTogglePattern: (CellularPattern, Boolean) -> Unit,
     onToggleGlobal: (Boolean) -> Unit,
-    onUpdateThresholds: (CellularThresholds) -> Unit
+    onUpdateSignalSpike: (Int) -> Unit,
+    onUpdateRapidSwitchStationary: (Int) -> Unit,
+    onUpdateRapidSwitchMoving: (Int) -> Unit,
+    onUpdateTrustedThreshold: (Int) -> Unit,
+    onUpdateAnomalyInterval: (Long) -> Unit
 ) {
     var showThresholds by remember { mutableStateOf(false) }
-    
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -331,7 +422,7 @@ private fun CellularSettingsContent(
                 totalCount = CellularPattern.values().size
             )
         }
-        
+
         // Thresholds section
         item {
             ThresholdsSectionCard(
@@ -341,11 +432,15 @@ private fun CellularSettingsContent(
             ) {
                 CellularThresholdsContent(
                     thresholds = settings.cellularThresholds,
-                    onUpdate = onUpdateThresholds
+                    onUpdateSignalSpike = onUpdateSignalSpike,
+                    onUpdateRapidSwitchStationary = onUpdateRapidSwitchStationary,
+                    onUpdateRapidSwitchMoving = onUpdateRapidSwitchMoving,
+                    onUpdateTrustedThreshold = onUpdateTrustedThreshold,
+                    onUpdateAnomalyInterval = onUpdateAnomalyInterval
                 )
             }
         }
-        
+
         // Pattern toggles
         item {
             Text(
@@ -355,7 +450,7 @@ private fun CellularSettingsContent(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
         }
-        
+
         items(CellularPattern.values().toList()) { pattern ->
             PatternToggleCard(
                 name = pattern.displayName,
@@ -365,7 +460,7 @@ private fun CellularSettingsContent(
                 onToggle = { onTogglePattern(pattern, it) }
             )
         }
-        
+
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
@@ -373,14 +468,18 @@ private fun CellularSettingsContent(
 @Composable
 private fun CellularThresholdsContent(
     thresholds: CellularThresholds,
-    onUpdate: (CellularThresholds) -> Unit
+    onUpdateSignalSpike: (Int) -> Unit,
+    onUpdateRapidSwitchStationary: (Int) -> Unit,
+    onUpdateRapidSwitchMoving: (Int) -> Unit,
+    onUpdateTrustedThreshold: (Int) -> Unit,
+    onUpdateAnomalyInterval: (Long) -> Unit
 ) {
-    var signalSpike by remember(thresholds) { mutableStateOf(thresholds.signalSpikeThreshold.toFloat()) }
-    var rapidSwitchStationary by remember(thresholds) { mutableStateOf(thresholds.rapidSwitchCountStationary.toFloat()) }
-    var rapidSwitchMoving by remember(thresholds) { mutableStateOf(thresholds.rapidSwitchCountMoving.toFloat()) }
-    var trustedThreshold by remember(thresholds) { mutableStateOf(thresholds.trustedCellThreshold.toFloat()) }
-    var anomalyInterval by remember(thresholds) { mutableStateOf(thresholds.minAnomalyIntervalMs.toFloat() / 1000f) }
-    
+    var signalSpike by remember(thresholds.signalSpikeThreshold) { mutableStateOf(thresholds.signalSpikeThreshold.toFloat()) }
+    var rapidSwitchStationary by remember(thresholds.rapidSwitchCountStationary) { mutableStateOf(thresholds.rapidSwitchCountStationary.toFloat()) }
+    var rapidSwitchMoving by remember(thresholds.rapidSwitchCountMoving) { mutableStateOf(thresholds.rapidSwitchCountMoving.toFloat()) }
+    var trustedThreshold by remember(thresholds.trustedCellThreshold) { mutableStateOf(thresholds.trustedCellThreshold.toFloat()) }
+    var anomalyInterval by remember(thresholds.minAnomalyIntervalMs) { mutableStateOf(thresholds.minAnomalyIntervalMs.toFloat() / 1000f) }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ThresholdSlider(
             label = "Signal Spike Threshold",
@@ -390,10 +489,10 @@ private fun CellularThresholdsContent(
             description = "Minimum signal change to trigger spike alert",
             onValueChange = { signalSpike = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(signalSpikeThreshold = signalSpike.toInt()))
+                onUpdateSignalSpike(signalSpike.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Rapid Switch (Stationary)",
             value = rapidSwitchStationary,
@@ -403,10 +502,10 @@ private fun CellularThresholdsContent(
             description = "Max cell switches per minute while stationary",
             onValueChange = { rapidSwitchStationary = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(rapidSwitchCountStationary = rapidSwitchStationary.toInt()))
+                onUpdateRapidSwitchStationary(rapidSwitchStationary.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Rapid Switch (Moving)",
             value = rapidSwitchMoving,
@@ -415,10 +514,10 @@ private fun CellularThresholdsContent(
             description = "Max cell switches per minute while moving",
             onValueChange = { rapidSwitchMoving = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(rapidSwitchCountMoving = rapidSwitchMoving.toInt()))
+                onUpdateRapidSwitchMoving(rapidSwitchMoving.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Trusted Cell Threshold",
             value = trustedThreshold,
@@ -428,10 +527,10 @@ private fun CellularThresholdsContent(
             description = "Times seen before cell tower is trusted",
             onValueChange = { trustedThreshold = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(trustedCellThreshold = trustedThreshold.toInt()))
+                onUpdateTrustedThreshold(trustedThreshold.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Anomaly Cooldown",
             value = anomalyInterval,
@@ -440,7 +539,7 @@ private fun CellularThresholdsContent(
             description = "Minimum time between same anomaly alerts",
             onValueChange = { anomalyInterval = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minAnomalyIntervalMs = (anomalyInterval * 1000).toLong()))
+                onUpdateAnomalyInterval((anomalyInterval * 1000).toLong())
             }
         )
     }
@@ -453,10 +552,14 @@ private fun SatelliteSettingsContent(
     settings: DetectionSettings,
     onTogglePattern: (SatellitePattern, Boolean) -> Unit,
     onToggleGlobal: (Boolean) -> Unit,
-    onUpdateThresholds: (SatelliteThresholds) -> Unit
+    onUpdateUnexpectedThreshold: (Long) -> Unit,
+    onUpdateRapidHandoffThreshold: (Long) -> Unit,
+    onUpdateMinTerrestrialSignal: (Int) -> Unit,
+    onUpdateRapidSwitchWindow: (Long) -> Unit,
+    onUpdateRapidSwitchCount: (Int) -> Unit
 ) {
     var showThresholds by remember { mutableStateOf(false) }
-    
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -473,7 +576,7 @@ private fun SatelliteSettingsContent(
                 totalCount = SatellitePattern.values().size
             )
         }
-        
+
         // Thresholds section
         item {
             ThresholdsSectionCard(
@@ -483,11 +586,15 @@ private fun SatelliteSettingsContent(
             ) {
                 SatelliteThresholdsContent(
                     thresholds = settings.satelliteThresholds,
-                    onUpdate = onUpdateThresholds
+                    onUpdateUnexpectedThreshold = onUpdateUnexpectedThreshold,
+                    onUpdateRapidHandoffThreshold = onUpdateRapidHandoffThreshold,
+                    onUpdateMinTerrestrialSignal = onUpdateMinTerrestrialSignal,
+                    onUpdateRapidSwitchWindow = onUpdateRapidSwitchWindow,
+                    onUpdateRapidSwitchCount = onUpdateRapidSwitchCount
                 )
             }
         }
-        
+
         // Pattern toggles
         item {
             Text(
@@ -497,7 +604,7 @@ private fun SatelliteSettingsContent(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
         }
-        
+
         items(SatellitePattern.values().toList()) { pattern ->
             PatternToggleCard(
                 name = pattern.displayName,
@@ -507,7 +614,7 @@ private fun SatelliteSettingsContent(
                 onToggle = { onTogglePattern(pattern, it) }
             )
         }
-        
+
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
@@ -515,14 +622,18 @@ private fun SatelliteSettingsContent(
 @Composable
 private fun SatelliteThresholdsContent(
     thresholds: SatelliteThresholds,
-    onUpdate: (SatelliteThresholds) -> Unit
+    onUpdateUnexpectedThreshold: (Long) -> Unit,
+    onUpdateRapidHandoffThreshold: (Long) -> Unit,
+    onUpdateMinTerrestrialSignal: (Int) -> Unit,
+    onUpdateRapidSwitchWindow: (Long) -> Unit,
+    onUpdateRapidSwitchCount: (Int) -> Unit
 ) {
-    var unexpectedThreshold by remember(thresholds) { mutableStateOf(thresholds.unexpectedSatelliteThresholdMs.toFloat() / 1000f) }
-    var rapidHandoff by remember(thresholds) { mutableStateOf(thresholds.rapidHandoffThresholdMs.toFloat() / 1000f) }
-    var minTerrestrialSignal by remember(thresholds) { mutableStateOf(thresholds.minSignalForTerrestrial.toFloat()) }
-    var rapidSwitchWindow by remember(thresholds) { mutableStateOf(thresholds.rapidSwitchingWindowMs.toFloat() / 1000f) }
-    var rapidSwitchCount by remember(thresholds) { mutableStateOf(thresholds.rapidSwitchingCount.toFloat()) }
-    
+    var unexpectedThreshold by remember(thresholds.unexpectedSatelliteThresholdMs) { mutableStateOf(thresholds.unexpectedSatelliteThresholdMs.toFloat() / 1000f) }
+    var rapidHandoff by remember(thresholds.rapidHandoffThresholdMs) { mutableStateOf(thresholds.rapidHandoffThresholdMs.toFloat() / 1000f) }
+    var minTerrestrialSignal by remember(thresholds.minSignalForTerrestrial) { mutableStateOf(thresholds.minSignalForTerrestrial.toFloat()) }
+    var rapidSwitchWindow by remember(thresholds.rapidSwitchingWindowMs) { mutableStateOf(thresholds.rapidSwitchingWindowMs.toFloat() / 1000f) }
+    var rapidSwitchCount by remember(thresholds.rapidSwitchingCount) { mutableStateOf(thresholds.rapidSwitchingCount.toFloat()) }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ThresholdSlider(
             label = "Unexpected Satellite Threshold",
@@ -532,10 +643,10 @@ private fun SatelliteThresholdsContent(
             description = "Time window to detect unexpected satellite",
             onValueChange = { unexpectedThreshold = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(unexpectedSatelliteThresholdMs = (unexpectedThreshold * 1000).toLong()))
+                onUpdateUnexpectedThreshold((unexpectedThreshold * 1000).toLong())
             }
         )
-        
+
         ThresholdSlider(
             label = "Rapid Handoff Threshold",
             value = rapidHandoff,
@@ -544,10 +655,10 @@ private fun SatelliteThresholdsContent(
             description = "Time for rapid handoff detection",
             onValueChange = { rapidHandoff = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(rapidHandoffThresholdMs = (rapidHandoff * 1000).toLong()))
+                onUpdateRapidHandoffThreshold((rapidHandoff * 1000).toLong())
             }
         )
-        
+
         ThresholdSlider(
             label = "Min Terrestrial Signal",
             value = minTerrestrialSignal,
@@ -556,10 +667,10 @@ private fun SatelliteThresholdsContent(
             description = "Minimum signal for good terrestrial coverage",
             onValueChange = { minTerrestrialSignal = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minSignalForTerrestrial = minTerrestrialSignal.toInt()))
+                onUpdateMinTerrestrialSignal(minTerrestrialSignal.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Rapid Switching Window",
             value = rapidSwitchWindow,
@@ -568,10 +679,10 @@ private fun SatelliteThresholdsContent(
             description = "Time window for rapid switching detection",
             onValueChange = { rapidSwitchWindow = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(rapidSwitchingWindowMs = (rapidSwitchWindow * 1000).toLong()))
+                onUpdateRapidSwitchWindow((rapidSwitchWindow * 1000).toLong())
             }
         )
-        
+
         ThresholdSlider(
             label = "Rapid Switching Count",
             value = rapidSwitchCount,
@@ -581,7 +692,7 @@ private fun SatelliteThresholdsContent(
             description = "Switches in window to trigger alert",
             onValueChange = { rapidSwitchCount = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(rapidSwitchingCount = rapidSwitchCount.toInt()))
+                onUpdateRapidSwitchCount(rapidSwitchCount.toInt())
             }
         )
     }
@@ -594,10 +705,13 @@ private fun BleSettingsContent(
     settings: DetectionSettings,
     onTogglePattern: (BlePattern, Boolean) -> Unit,
     onToggleGlobal: (Boolean) -> Unit,
-    onUpdateThresholds: (BleThresholds) -> Unit
+    onUpdateMinRssi: (Int) -> Unit,
+    onUpdateProximityRssi: (Int) -> Unit,
+    onUpdateTrackingDuration: (Long) -> Unit,
+    onUpdateTrackingCount: (Int) -> Unit
 ) {
     var showThresholds by remember { mutableStateOf(false) }
-    
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -614,7 +728,7 @@ private fun BleSettingsContent(
                 totalCount = BlePattern.values().size
             )
         }
-        
+
         // Thresholds section
         item {
             ThresholdsSectionCard(
@@ -624,11 +738,14 @@ private fun BleSettingsContent(
             ) {
                 BleThresholdsContent(
                     thresholds = settings.bleThresholds,
-                    onUpdate = onUpdateThresholds
+                    onUpdateMinRssi = onUpdateMinRssi,
+                    onUpdateProximityRssi = onUpdateProximityRssi,
+                    onUpdateTrackingDuration = onUpdateTrackingDuration,
+                    onUpdateTrackingCount = onUpdateTrackingCount
                 )
             }
         }
-        
+
         // Pattern toggles
         item {
             Text(
@@ -638,7 +755,7 @@ private fun BleSettingsContent(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
         }
-        
+
         items(BlePattern.values().toList()) { pattern ->
             PatternToggleCard(
                 name = pattern.displayName,
@@ -648,7 +765,7 @@ private fun BleSettingsContent(
                 onToggle = { onTogglePattern(pattern, it) }
             )
         }
-        
+
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
@@ -656,12 +773,15 @@ private fun BleSettingsContent(
 @Composable
 private fun BleThresholdsContent(
     thresholds: BleThresholds,
-    onUpdate: (BleThresholds) -> Unit
+    onUpdateMinRssi: (Int) -> Unit,
+    onUpdateProximityRssi: (Int) -> Unit,
+    onUpdateTrackingDuration: (Long) -> Unit,
+    onUpdateTrackingCount: (Int) -> Unit
 ) {
-    var minRssi by remember(thresholds) { mutableStateOf(thresholds.minRssiForAlert.toFloat()) }
-    var proximityRssi by remember(thresholds) { mutableStateOf(thresholds.proximityAlertRssi.toFloat()) }
-    var trackingDuration by remember(thresholds) { mutableStateOf(thresholds.trackingDurationMs.toFloat() / 60000f) }
-    var trackingCount by remember(thresholds) { mutableStateOf(thresholds.minSeenCountForTracking.toFloat()) }
+    var minRssi by remember(thresholds.minRssiForAlert) { mutableStateOf(thresholds.minRssiForAlert.toFloat()) }
+    var proximityRssi by remember(thresholds.proximityAlertRssi) { mutableStateOf(thresholds.proximityAlertRssi.toFloat()) }
+    var trackingDuration by remember(thresholds.trackingDurationMs) { mutableStateOf(thresholds.trackingDurationMs.toFloat() / 60000f) }
+    var trackingCount by remember(thresholds.minSeenCountForTracking) { mutableStateOf(thresholds.minSeenCountForTracking.toFloat()) }
     var showRssiHelp by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -680,26 +800,20 @@ private fun BleThresholdsContent(
                     RssiPreset.SENSITIVE -> {
                         minRssi = -90f
                         proximityRssi = -60f
-                        onUpdate(thresholds.copy(
-                            minRssiForAlert = -90,
-                            proximityAlertRssi = -60
-                        ))
+                        onUpdateMinRssi(-90)
+                        onUpdateProximityRssi(-60)
                     }
                     RssiPreset.BALANCED -> {
                         minRssi = -75f
                         proximityRssi = -50f
-                        onUpdate(thresholds.copy(
-                            minRssiForAlert = -75,
-                            proximityAlertRssi = -50
-                        ))
+                        onUpdateMinRssi(-75)
+                        onUpdateProximityRssi(-50)
                     }
                     RssiPreset.CONSERVATIVE -> {
                         minRssi = -60f
                         proximityRssi = -40f
-                        onUpdate(thresholds.copy(
-                            minRssiForAlert = -60,
-                            proximityAlertRssi = -40
-                        ))
+                        onUpdateMinRssi(-60)
+                        onUpdateProximityRssi(-40)
                     }
                 }
             }
@@ -715,7 +829,7 @@ private fun BleThresholdsContent(
             description = "Minimum signal strength to trigger alert",
             onValueChange = { minRssi = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minRssiForAlert = minRssi.toInt()))
+                onUpdateMinRssi(minRssi.toInt())
             }
         )
 
@@ -727,7 +841,7 @@ private fun BleThresholdsContent(
             description = "Signal strength for close proximity warning",
             onValueChange = { proximityRssi = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(proximityAlertRssi = proximityRssi.toInt()))
+                onUpdateProximityRssi(proximityRssi.toInt())
             }
         )
 
@@ -739,7 +853,7 @@ private fun BleThresholdsContent(
             description = "Time before tracking alert is triggered",
             onValueChange = { trackingDuration = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(trackingDurationMs = (trackingDuration * 60000).toLong()))
+                onUpdateTrackingDuration((trackingDuration * 60000).toLong())
             }
         )
 
@@ -752,7 +866,7 @@ private fun BleThresholdsContent(
             description = "Minimum sightings for tracking alert",
             onValueChange = { trackingCount = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minSeenCountForTracking = trackingCount.toInt()))
+                onUpdateTrackingCount(trackingCount.toInt())
             }
         )
     }
@@ -1031,10 +1145,14 @@ private fun WifiSettingsContent(
     settings: DetectionSettings,
     onTogglePattern: (WifiPattern, Boolean) -> Unit,
     onToggleGlobal: (Boolean) -> Unit,
-    onUpdateThresholds: (WifiThresholds) -> Unit
+    onUpdateMinSignal: (Int) -> Unit,
+    onUpdateStrongSignal: (Int) -> Unit,
+    onUpdateTrackingDuration: (Long) -> Unit,
+    onUpdateTrackingCount: (Int) -> Unit,
+    onUpdateMinTrackingDistance: (Double) -> Unit
 ) {
     var showThresholds by remember { mutableStateOf(false) }
-    
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1051,7 +1169,7 @@ private fun WifiSettingsContent(
                 totalCount = WifiPattern.values().size
             )
         }
-        
+
         // Thresholds section
         item {
             ThresholdsSectionCard(
@@ -1061,11 +1179,15 @@ private fun WifiSettingsContent(
             ) {
                 WifiThresholdsContent(
                     thresholds = settings.wifiThresholds,
-                    onUpdate = onUpdateThresholds
+                    onUpdateMinSignal = onUpdateMinSignal,
+                    onUpdateStrongSignal = onUpdateStrongSignal,
+                    onUpdateTrackingDuration = onUpdateTrackingDuration,
+                    onUpdateTrackingCount = onUpdateTrackingCount,
+                    onUpdateMinTrackingDistance = onUpdateMinTrackingDistance
                 )
             }
         }
-        
+
         // Pattern toggles
         item {
             Text(
@@ -1075,7 +1197,7 @@ private fun WifiSettingsContent(
                 modifier = Modifier.padding(vertical = 8.dp)
             )
         }
-        
+
         items(WifiPattern.values().toList()) { pattern ->
             PatternToggleCard(
                 name = pattern.displayName,
@@ -1085,7 +1207,7 @@ private fun WifiSettingsContent(
                 onToggle = { onTogglePattern(pattern, it) }
             )
         }
-        
+
         item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
@@ -1093,13 +1215,18 @@ private fun WifiSettingsContent(
 @Composable
 private fun WifiThresholdsContent(
     thresholds: WifiThresholds,
-    onUpdate: (WifiThresholds) -> Unit
+    onUpdateMinSignal: (Int) -> Unit,
+    onUpdateStrongSignal: (Int) -> Unit,
+    onUpdateTrackingDuration: (Long) -> Unit,
+    onUpdateTrackingCount: (Int) -> Unit,
+    onUpdateMinTrackingDistance: (Double) -> Unit
 ) {
-    var minSignal by remember(thresholds) { mutableStateOf(thresholds.minSignalForAlert.toFloat()) }
-    var strongSignal by remember(thresholds) { mutableStateOf(thresholds.strongSignalThreshold.toFloat()) }
-    var trackingDuration by remember(thresholds) { mutableStateOf(thresholds.trackingDurationMs.toFloat() / 60000f) }
-    var trackingCount by remember(thresholds) { mutableStateOf(thresholds.minSeenCountForTracking.toFloat()) }
-    
+    var minSignal by remember(thresholds.minSignalForAlert) { mutableStateOf(thresholds.minSignalForAlert.toFloat()) }
+    var strongSignal by remember(thresholds.strongSignalThreshold) { mutableStateOf(thresholds.strongSignalThreshold.toFloat()) }
+    var trackingDuration by remember(thresholds.trackingDurationMs) { mutableStateOf(thresholds.trackingDurationMs.toFloat() / 60000f) }
+    var trackingCount by remember(thresholds.minSeenCountForTracking) { mutableStateOf(thresholds.minSeenCountForTracking.toFloat()) }
+    var minTrackingDistance by remember(thresholds.minTrackingDistanceMeters) { mutableStateOf((thresholds.minTrackingDistanceMeters / 1609.0).toFloat()) }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ThresholdSlider(
             label = "Minimum Signal for Alert",
@@ -1109,10 +1236,10 @@ private fun WifiThresholdsContent(
             description = "Minimum signal level to trigger alert",
             onValueChange = { minSignal = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minSignalForAlert = minSignal.toInt()))
+                onUpdateMinSignal(minSignal.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Strong Signal Threshold",
             value = strongSignal,
@@ -1121,10 +1248,10 @@ private fun WifiThresholdsContent(
             description = "Signal level for strong signal alert",
             onValueChange = { strongSignal = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(strongSignalThreshold = strongSignal.toInt()))
+                onUpdateStrongSignal(strongSignal.toInt())
             }
         )
-        
+
         ThresholdSlider(
             label = "Tracking Duration",
             value = trackingDuration,
@@ -1133,10 +1260,10 @@ private fun WifiThresholdsContent(
             description = "Time before tracking alert is triggered",
             onValueChange = { trackingDuration = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(trackingDurationMs = (trackingDuration * 60000).toLong()))
+                onUpdateTrackingDuration((trackingDuration * 60000).toLong())
             }
         )
-        
+
         ThresholdSlider(
             label = "Tracking Sighting Count",
             value = trackingCount,
@@ -1146,7 +1273,19 @@ private fun WifiThresholdsContent(
             description = "Minimum sightings for tracking alert",
             onValueChange = { trackingCount = it },
             onValueChangeFinished = {
-                onUpdate(thresholds.copy(minSeenCountForTracking = trackingCount.toInt()))
+                onUpdateTrackingCount(trackingCount.toInt())
+            }
+        )
+
+        ThresholdSlider(
+            label = "Min Tracking Distance",
+            value = minTrackingDistance,
+            valueRange = 0.1f..5f,
+            unit = "mi",
+            description = "Minimum distance traveled for tracking alert",
+            onValueChange = { minTrackingDistance = it },
+            onValueChangeFinished = {
+                onUpdateMinTrackingDistance(minTrackingDistance.toDouble() * 1609.0)
             }
         )
     }

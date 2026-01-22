@@ -96,6 +96,10 @@ int32_t scheduler_thread_func(void* context) {
         use_internal_subghz, use_external_subghz,
         use_internal_ble, use_external_ble, use_wifi);
 
+    // Debug: log the conditions for starting Sub-GHz scanner
+    FURI_LOG_I(TAG, "SubGHz start check: enable=%d, use_internal=%d, scanner=%p",
+        scheduler->config.enable_subghz, use_internal_subghz, (void*)scheduler->subghz_internal);
+
     // Start passive scanners
     if (scheduler->config.enable_nfc && scheduler->nfc) {
         flock_nfc_scanner_start(scheduler->nfc);
@@ -127,9 +131,16 @@ int32_t scheduler_thread_func(void* context) {
     // Start internal Sub-GHz at first frequency
     if (scheduler->config.enable_subghz && use_internal_subghz && scheduler->subghz_internal) {
         uint32_t freq = SUBGHZ_FREQUENCIES[scheduler->subghz_frequency_index];
-        subghz_scanner_start(scheduler->subghz_internal, freq);
-        scheduler->subghz_active = scheduler->subghz_internal;
-        FURI_LOG_I(TAG, "Internal Sub-GHz scanner started at %lu Hz", freq);
+        bool started = subghz_scanner_start(scheduler->subghz_internal, freq);
+        if (started) {
+            scheduler->subghz_active = scheduler->subghz_internal;
+            FURI_LOG_I(TAG, "Internal Sub-GHz scanner started at %lu Hz", freq);
+        } else {
+            FURI_LOG_E(TAG, "FAILED to start Sub-GHz scanner at %lu Hz!", freq);
+        }
+    } else {
+        FURI_LOG_W(TAG, "SubGHz start SKIPPED: enable=%d, use_internal=%d, scanner=%p",
+            scheduler->config.enable_subghz, use_internal_subghz, (void*)scheduler->subghz_internal);
     }
 
     // Start WiFi scanner if available
