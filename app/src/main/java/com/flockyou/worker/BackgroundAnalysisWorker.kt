@@ -49,6 +49,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
         const val TAG = "BackgroundAnalysisWorker"
         const val WORK_NAME = "background_analysis"
         const val HIGH_PRIORITY_WORK_NAME = "high_priority_analysis"
+        const val PENDING_ANALYSIS_WORK_NAME = "pending_analysis"
 
         // Batch processing limits
         const val DEFAULT_BATCH_SIZE = 15
@@ -69,6 +70,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
         const val PRIORITY_HIGH = "high"      // High-threat detections - run immediately
         const val PRIORITY_NORMAL = "normal"  // Normal batch processing
         const val PRIORITY_LOW = "low"        // Low-threat only - run during idle
+        const val PRIORITY_PENDING = "pending" // Unanalyzed detections only - runs frequently
 
         // Analysis age threshold - re-analyze detections older than this
         private const val ANALYSIS_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000L // 24 hours
@@ -199,6 +201,7 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
             WorkManager.getInstance(context).cancelUniqueWork("${WORK_NAME}_immediate")
             WorkManager.getInstance(context).cancelUniqueWork(HIGH_PRIORITY_WORK_NAME)
+            WorkManager.getInstance(context).cancelUniqueWork(PENDING_ANALYSIS_WORK_NAME)
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "Cancelled background analysis work")
             }
@@ -310,6 +313,68 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
                 Log.d(TAG, "Scheduled low-priority background analysis (idle-only, batch: $LOW_PRIORITY_BATCH_SIZE)")
             }
         }
+
+        /**
+         * Schedule periodic analysis specifically for unanalyzed detections.
+         * This runs more frequently (every 15 minutes) with minimal constraints
+         * to ensure detections get analyzed even when the screen is locked.
+         *
+         * This is important because:
+         * - Scanning continues in background when screen is locked
+         * - New detections need analysis to show accurate threat assessments
+         * - Users may unlock phone to check and expect results to be ready
+         */
+        fun schedulePendingAnalysis(context: Context, batchSize: Int = DEFAULT_BATCH_SIZE) {
+            val actualBatchSize = batchSize.coerceIn(MIN_BATCH_SIZE, MAX_BATCH_SIZE)
+
+            val inputData = Data.Builder()
+                .putInt(KEY_BATCH_SIZE, actualBatchSize)
+                .putString(KEY_PRIORITY_MODE, PRIORITY_PENDING)
+                .build()
+
+            // Minimal constraints - we want this to run even when screen is locked
+            // Only require battery not critically low
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .setRequiresDeviceIdle(false)  // Run even when device is active
+                .setRequiresCharging(false)    // Don't require charging
+                .build()
+
+            val workRequest = PeriodicWorkRequestBuilder<BackgroundAnalysisWorker>(
+                15, TimeUnit.MINUTES,  // Run every 15 minutes
+                5, TimeUnit.MINUTES    // 5-minute flex window
+            )
+                .setConstraints(constraints)
+                .setInputData(inputData)
+                .setBackoffCriteria(
+                    BackoffPolicy.LINEAR,  // Linear backoff for faster retry
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS
+                )
+                .addTag(TAG)
+                .addTag("pending_analysis")
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                PENDING_ANALYSIS_WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                workRequest
+            )
+
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Scheduled pending analysis worker (batch: $actualBatchSize, interval: 15min)")
+            }
+        }
+
+        /**
+         * Cancel the pending analysis worker.
+         */
+        fun cancelPendingAnalysis(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(PENDING_ANALYSIS_WORK_NAME)
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Cancelled pending analysis work")
+            }
+        }
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -361,6 +426,14 @@ class BackgroundAnalysisWorker @AssistedInject constructor(
                 !specificDetectionIds.isNullOrEmpty() -> {
                     val idSet = specificDetectionIds.toSet()
                     allDetections.filter { it.id in idSet }
+                }
+                // For PRIORITY_PENDING, query specifically for unanalyzed detections
+                priorityMode == PRIORITY_PENDING -> {
+                    val pendingDetections = detectionRepository.getDetectionsPendingFpAnalysis(batchSize)
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Found ${pendingDetections.size} detections pending analysis")
+                    }
+                    pendingDetections
                 }
                 // Otherwise use priority-based selection
                 else -> selectDetectionsForAnalysis(

@@ -199,6 +199,51 @@ interface DetectionDao {
 
     @Query("UPDATE detections SET isActive = 1, seenCount = seenCount + 1, lastSeenTimestamp = :timestamp, rssi = :rssi, latitude = :latitude, longitude = :longitude WHERE serviceUuids LIKE '%' || :serviceUuid || '%'")
     suspend fun updateSeenByServiceUuid(serviceUuid: String, timestamp: Long, rssi: Int, latitude: Double?, longitude: Double?)
+
+    // Related detections queries
+
+    /**
+     * Find detections with the same MAC address (excluding the given detection ID).
+     * Useful for tracking the same device seen at different times/locations.
+     */
+    @Query("SELECT * FROM detections WHERE macAddress = :macAddress AND id != :excludeId ORDER BY lastSeenTimestamp DESC LIMIT :limit")
+    suspend fun getDetectionsByMacAddressExcluding(macAddress: String, excludeId: String, limit: Int): List<Detection>
+
+    /**
+     * Find detections near a given location within a radius (in degrees).
+     * Uses simple bounding box for performance; roughly 111km per degree at equator.
+     * Excludes the given detection ID.
+     */
+    @Query("""
+        SELECT * FROM detections
+        WHERE id != :excludeId
+        AND latitude IS NOT NULL
+        AND longitude IS NOT NULL
+        AND latitude BETWEEN :minLat AND :maxLat
+        AND longitude BETWEEN :minLon AND :maxLon
+        ORDER BY lastSeenTimestamp DESC
+        LIMIT :limit
+    """)
+    suspend fun getDetectionsNearLocation(
+        excludeId: String,
+        minLat: Double,
+        maxLat: Double,
+        minLon: Double,
+        maxLon: Double,
+        limit: Int
+    ): List<Detection>
+
+    /**
+     * Find detections of the same device type (excluding the given detection ID).
+     */
+    @Query("SELECT * FROM detections WHERE deviceType = :deviceType AND id != :excludeId ORDER BY lastSeenTimestamp DESC LIMIT :limit")
+    suspend fun getDetectionsByDeviceTypeExcluding(deviceType: DeviceType, excludeId: String, limit: Int): List<Detection>
+
+    /**
+     * Find detections with the same manufacturer (excluding the given detection ID).
+     */
+    @Query("SELECT * FROM detections WHERE manufacturer = :manufacturer AND id != :excludeId ORDER BY lastSeenTimestamp DESC LIMIT :limit")
+    suspend fun getDetectionsByManufacturerExcluding(manufacturer: String, excludeId: String, limit: Int): List<Detection>
 }
 
 /**
@@ -560,7 +605,7 @@ object DatabaseKeyManager {
  * Room database for storing detections.
  * Uses SQLCipher for encryption to protect sensitive detection data.
  */
-@Database(entities = [Detection::class, OuiEntry::class], version = 8, exportSchema = false)
+@Database(entities = [Detection::class, OuiEntry::class], version = 9, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
@@ -628,6 +673,14 @@ abstract class FlockYouDatabase : RoomDatabase() {
             }
         }
 
+        // Migration from version 8 to 9 - adds userNote and confirmedThreat fields for user actions
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE detections ADD COLUMN userNote TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE detections ADD COLUMN confirmedThreat INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Load SQLCipher native library
@@ -649,7 +702,7 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     "flockyou_database_encrypted"  // New name to avoid conflicts with old unencrypted DB
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance

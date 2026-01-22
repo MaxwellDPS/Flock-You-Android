@@ -173,6 +173,10 @@ class FlockYouApplication : Application(), Configuration.Provider {
             // Schedule background analysis if FP filtering is enabled
             if (settings.enableFalsePositiveFiltering) {
                 BackgroundAnalysisWorker.schedule(this)
+                // Also schedule the pending analysis worker to catch unanalyzed detections
+                // This runs more frequently (every 15 min) to ensure detections get analyzed
+                // even when screen is locked during background scanning
+                BackgroundAnalysisWorker.schedulePendingAnalysis(this)
             }
         } else {
             // Cancel background analysis if AI is disabled

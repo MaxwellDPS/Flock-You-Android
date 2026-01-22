@@ -223,6 +223,16 @@ class MainViewModel @Inject constructor(
     private val _isTorTesting = MutableStateFlow(false)
     val isTorTesting: StateFlow<Boolean> = _isTorTesting.asStateFlow()
 
+    // Related detections for the currently selected detection
+    private val _relatedDetections = MutableStateFlow<List<Detection>>(emptyList())
+    val relatedDetections: StateFlow<List<Detection>> = _relatedDetections.asStateFlow()
+
+    // Currently selected detection (for tracking which detection's related items are shown)
+    private val _selectedDetectionId = MutableStateFlow<String?>(null)
+
+    // Job for loading related detections (to cancel previous loads)
+    private var loadRelatedJob: Job? = null
+
     init {
         // The serviceConnection is now a singleton injected via Hilt
         // It is automatically bound when created by the provider
@@ -785,7 +795,38 @@ class MainViewModel @Inject constructor(
             }
         }
     }
-    
+
+    /**
+     * Mark a detection as a confirmed threat.
+     * This clears any false positive marking and sets the confirmedThreat flag.
+     */
+    fun markAsConfirmedThreat(detection: Detection) {
+        viewModelScope.launch {
+            val updatedDetection = detection.copy(
+                confirmedThreat = true,
+                fpScore = 0.0f, // Low FP score - user confirmed it's a real threat
+                fpCategory = "USER_CONFIRMED_THREAT",
+                fpReason = "Manually confirmed as threat by user",
+                analyzedAt = System.currentTimeMillis()
+            )
+            repository.updateDetection(updatedDetection)
+        }
+    }
+
+    /**
+     * Update or add a user note to a detection.
+     * @param detection The detection to update
+     * @param note The note text (null to clear the note)
+     */
+    fun updateUserNote(detection: Detection, note: String?) {
+        viewModelScope.launch {
+            val updatedDetection = detection.copy(
+                userNote = note?.takeIf { it.isNotBlank() }
+            )
+            repository.updateDetection(updatedDetection)
+        }
+    }
+
     fun clearAllDetections() {
         viewModelScope.launch {
             repository.deleteAllDetections()
@@ -826,6 +867,55 @@ class MainViewModel @Inject constructor(
             // Log error but don't crash - Room Flow should still work as backup
             android.util.Log.e("MainViewModel", "Error refreshing detections: ${e.message}", e)
         }
+    }
+
+    /**
+     * Load related detections for a given detection.
+     * Cancels any previous load operation and queries for related items.
+     * Results are stored in the relatedDetections StateFlow.
+     *
+     * @param detection The detection to find related items for
+     */
+    fun loadRelatedDetections(detection: Detection) {
+        // Skip if we're already showing related for this detection
+        if (_selectedDetectionId.value == detection.id) {
+            return
+        }
+
+        // Cancel previous load job
+        loadRelatedJob?.cancel()
+        _selectedDetectionId.value = detection.id
+
+        loadRelatedJob = viewModelScope.launch {
+            try {
+                val related = repository.getRelatedDetections(detection, limit = 10)
+                _relatedDetections.value = related
+                Log.d("MainViewModel", "Loaded ${related.size} related detections for ${detection.id}")
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Error loading related detections: ${e.message}", e)
+                _relatedDetections.value = emptyList()
+            }
+        }
+    }
+
+    /**
+     * Clear related detections when the detail sheet is dismissed.
+     */
+    fun clearRelatedDetections() {
+        loadRelatedJob?.cancel()
+        _selectedDetectionId.value = null
+        _relatedDetections.value = emptyList()
+    }
+
+    /**
+     * Called when a related detection is clicked.
+     * Loads the related detections for the newly selected detection.
+     *
+     * @param detection The newly selected detection
+     */
+    fun onRelatedDetectionSelected(detection: Detection) {
+        // Load related detections for the newly selected item
+        loadRelatedDetections(detection)
     }
 
     fun setAdvancedMode(enabled: Boolean) {

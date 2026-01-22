@@ -62,7 +62,13 @@ data class Detection(
     @ColumnInfo(name = "analyzedAt", defaultValue = "NULL")
     val analyzedAt: Long? = null,            // Timestamp when FP analysis was performed
     @ColumnInfo(name = "llmAnalyzed", defaultValue = "0")
-    val llmAnalyzed: Boolean = false         // Whether LLM was used (vs rule-based only)
+    val llmAnalyzed: Boolean = false,        // Whether LLM was used (vs rule-based only)
+
+    // User actions and notes
+    @ColumnInfo(name = "userNote", defaultValue = "NULL")
+    val userNote: String? = null,            // User-added note about this detection
+    @ColumnInfo(name = "confirmedThreat", defaultValue = "0")
+    val confirmedThreat: Boolean = false     // User confirmed this as a real threat
 )
 
 enum class DetectionProtocol(val displayName: String, val icon: String) {

@@ -263,7 +263,9 @@ bool subghz_scanner_start(SubGhzScanner* scanner, uint32_t frequency) {
     subghz_receiver_reset(scanner->receiver);
 
     // Start async RX with capture callback
+    FURI_LOG_I(TAG, "Starting async RX at %lu Hz with callback %p", frequency, subghz_decoder_capture_callback);
     subghz_devices_start_async_rx(scanner->device, subghz_decoder_capture_callback, scanner);
+    FURI_LOG_I(TAG, "Async RX started - radio should now be receiving");
 
     scanner->running = true;
     scanner->should_stop = false;
@@ -321,6 +323,9 @@ void subghz_scanner_stop(SubGhzScanner* scanner) {
 bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
     if (!scanner || !scanner->device) return false;
 
+    // Log whether scanner is running to diagnose issues
+    FURI_LOG_I(TAG, "set_frequency(%lu Hz) - running=%d", frequency, scanner->running);
+
     if (!subghz_devices_is_frequency_valid(scanner->device, frequency)) {
         FURI_LOG_E(TAG, "Invalid frequency: %lu Hz", frequency);
         return false;
@@ -353,7 +358,7 @@ bool subghz_scanner_set_frequency(SubGhzScanner* scanner, uint32_t frequency) {
         subghz_receiver_reset(scanner->receiver);
         subghz_devices_start_async_rx(scanner->device, subghz_decoder_capture_callback, scanner);
 
-        FURI_LOG_D(TAG, "Frequency switched to %lu Hz", frequency);
+        FURI_LOG_I(TAG, "Async RX restarted at %lu Hz (callback: %p)", frequency, (void*)subghz_decoder_capture_callback);
     } else {
         scanner->current_frequency = frequency;
     }

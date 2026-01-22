@@ -247,4 +247,86 @@ class DetectionRepository @Inject constructor(
         markAsReviewed(detectionId)
         Log.d(TAG, "Detection marked as false positive: $detectionId")
     }
+
+    /**
+     * Find detections related to the given detection.
+     * Related detections include:
+     * - Same MAC address (device seen at different times/locations)
+     * - Nearby location (within ~500m radius)
+     * - Same device type from same manufacturer
+     *
+     * Results are deduplicated and sorted by relevance (same MAC > nearby > same type).
+     *
+     * @param detection The detection to find related items for
+     * @param limit Maximum number of related detections to return
+     * @return List of related detections, excluding the input detection itself
+     */
+    suspend fun getRelatedDetections(detection: Detection, limit: Int = 10): List<Detection> {
+        val relatedDetections = mutableListOf<Detection>()
+        val seenIds = mutableSetOf(detection.id)
+
+        // 1. Same MAC address (highest relevance - definitely same device)
+        detection.macAddress?.let { mac ->
+            val sameMac = detectionDao.getDetectionsByMacAddressExcluding(mac, detection.id, limit)
+            sameMac.forEach { d ->
+                if (d.id !in seenIds) {
+                    relatedDetections.add(d)
+                    seenIds.add(d.id)
+                }
+            }
+        }
+
+        // 2. Nearby location (within ~500m radius, roughly 0.0045 degrees)
+        if (detection.latitude != null && detection.longitude != null) {
+            val radiusDegrees = 0.0045 // ~500m at mid-latitudes
+            val nearbyDetections = detectionDao.getDetectionsNearLocation(
+                excludeId = detection.id,
+                minLat = detection.latitude - radiusDegrees,
+                maxLat = detection.latitude + radiusDegrees,
+                minLon = detection.longitude - radiusDegrees,
+                maxLon = detection.longitude + radiusDegrees,
+                limit = limit
+            )
+            nearbyDetections.forEach { d ->
+                if (d.id !in seenIds) {
+                    relatedDetections.add(d)
+                    seenIds.add(d.id)
+                }
+            }
+        }
+
+        // 3. Same device type from same manufacturer
+        detection.manufacturer?.let { manufacturer ->
+            val sameManufacturer = detectionDao.getDetectionsByManufacturerExcluding(
+                manufacturer = manufacturer,
+                excludeId = detection.id,
+                limit = limit
+            )
+            sameManufacturer.filter { it.deviceType == detection.deviceType }.forEach { d ->
+                if (d.id !in seenIds) {
+                    relatedDetections.add(d)
+                    seenIds.add(d.id)
+                }
+            }
+        }
+
+        // 4. Same device type (fallback if no manufacturer match)
+        if (relatedDetections.size < limit) {
+            val remaining = limit - relatedDetections.size
+            val sameType = detectionDao.getDetectionsByDeviceTypeExcluding(
+                deviceType = detection.deviceType,
+                excludeId = detection.id,
+                limit = remaining + seenIds.size // Get extra to account for deduplication
+            )
+            sameType.forEach { d ->
+                if (d.id !in seenIds && relatedDetections.size < limit) {
+                    relatedDetections.add(d)
+                    seenIds.add(d.id)
+                }
+            }
+        }
+
+        Log.d(TAG, "Found ${relatedDetections.size} related detections for ${detection.id}")
+        return relatedDetections.take(limit)
+    }
 }

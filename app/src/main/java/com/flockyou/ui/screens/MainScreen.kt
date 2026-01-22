@@ -96,6 +96,7 @@ fun MainScreen(
     val uiState by viewModel.uiState.collectAsState()
     val prioritizedEnrichmentIds by viewModel.prioritizedEnrichmentIds.collectAsState()
     val flipperUiSettings by viewModel.flipperUiSettings.collectAsState()
+    val relatedDetections by viewModel.relatedDetections.collectAsState()
 
     // Filtered anomalies (excludes FP-marked detections)
     val filteredCellularAnomalies = remember(uiState.cellularAnomalies, uiState.detections, uiState.hideFalsePositives, uiState.fpFilterThreshold) {
@@ -852,14 +853,73 @@ fun MainScreen(
     
     // Detection detail sheet
     selectedDetection?.let { detection ->
+        // Load related detections when the sheet is shown
+        LaunchedEffect(detection.id) {
+            viewModel.loadRelatedDetections(detection)
+        }
+
         DetectionDetailSheet(
             detection = detection,
-            onDismiss = { selectedDetection = null },
-            onDelete = {
-                viewModel.deleteDetection(detection)
+            onDismiss = {
+                viewModel.clearRelatedDetections()
                 selectedDetection = null
             },
-            advancedMode = uiState.advancedMode
+            onDelete = {
+                viewModel.deleteDetection(detection)
+                viewModel.clearRelatedDetections()
+                selectedDetection = null
+            },
+            onMarkSafe = {
+                viewModel.markAsFalsePositive(detection)
+                viewModel.clearRelatedDetections()
+                selectedDetection = null
+            },
+            onMarkThreat = {
+                viewModel.markAsConfirmedThreat(detection)
+                viewModel.clearRelatedDetections()
+                selectedDetection = null
+            },
+            onShare = {
+                val shareText = buildDetectionShareText(detection)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "Flock You Detection: ${detection.deviceType.displayName}")
+                    putExtra(Intent.EXTRA_TEXT, shareText)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Share Detection"))
+            },
+            onNavigate = if (detection.latitude != null && detection.longitude != null) {
+                {
+                    val geoUri = Uri.parse("geo:${detection.latitude},${detection.longitude}?q=${detection.latitude},${detection.longitude}(${detection.deviceType.displayName})")
+                    val mapIntent = Intent(Intent.ACTION_VIEW, geoUri)
+                    if (mapIntent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(mapIntent)
+                    }
+                }
+            } else null,
+            onAddNote = { note ->
+                viewModel.updateUserNote(detection, note)
+            },
+            onExport = {
+                val exportText = buildDetectionExportJson(detection)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_SUBJECT, "Flock You Detection Export")
+                    putExtra(Intent.EXTRA_TEXT, exportText)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Export Detection"))
+            },
+            advancedMode = uiState.advancedMode,
+            relatedDetections = relatedDetections,
+            onRelatedDetectionClick = { relatedDetection ->
+                // Select the clicked related detection
+                selectedDetection = relatedDetection
+                viewModel.onRelatedDetectionSelected(relatedDetection)
+            },
+            onSeeAllRelatedClick = {
+                // For now, just scroll within the list - could navigate to a full screen later
+                // The RelatedDetectionsSection already shows a "See All" card
+            }
         )
     }
 
@@ -1228,12 +1288,61 @@ fun DetectionDetailSheet(
     detection: Detection,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
-    advancedMode: Boolean = false
+    onMarkSafe: () -> Unit = {},
+    onMarkThreat: () -> Unit = {},
+    onShare: () -> Unit = {},
+    onNavigate: (() -> Unit)? = null,
+    onAddNote: (String?) -> Unit = {},
+    onExport: () -> Unit = {},
+    advancedMode: Boolean = false,
+    relatedDetections: List<Detection> = emptyList(),
+    onRelatedDetectionClick: (Detection) -> Unit = {},
+    onSeeAllRelatedClick: () -> Unit = {}
 ) {
     val threatColor = detection.threatLevel.toColor()
     val deviceInfo = DetectionPatterns.getDeviceTypeInfo(detection.deviceType)
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault()) }
-    
+
+    // State for the Add Note dialog
+    var showNoteDialog by remember { mutableStateOf(false) }
+    var noteText by remember { mutableStateOf(detection.userNote ?: "") }
+
+    // Note Dialog
+    if (showNoteDialog) {
+        AlertDialog(
+            onDismissRequest = { showNoteDialog = false },
+            icon = { Icon(Icons.Default.NoteAdd, contentDescription = null) },
+            title = { Text(if (detection.userNote != null) "Edit Note" else "Add Note") },
+            text = {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    label = { Text("Note") },
+                    placeholder = { Text("Add your notes about this detection...") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp),
+                    maxLines = 6
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onAddNote(noteText.takeIf { it.isNotBlank() })
+                        showNoteDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNoteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss
     ) {
@@ -1245,403 +1354,323 @@ fun DetectionDetailSheet(
                 bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp
             )
         ) {
-            // Header
+            // New ThreatHeader component at the top
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(threatColor.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = detection.deviceType.emoji,
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = deviceInfo.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = deviceInfo.shortDescription,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(12.dp))
-                
-                // Threat level banner
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = threatColor.copy(alpha = 0.15f)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = when (detection.threatLevel) {
-                                ThreatLevel.CRITICAL -> Icons.Default.Warning
-                                ThreatLevel.HIGH -> Icons.Default.Error
-                                else -> Icons.Default.Info
-                            },
-                            contentDescription = null,
-                            tint = threatColor
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "${detection.threatLevel.displayName} Threat (${detection.threatScore}/100)",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = threatColor
-                            )
-                            Text(
-                                text = detection.threatLevel.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
+                ThreatHeader(
+                    threatLevel = detection.threatLevel,
+                    threatScore = detection.threatScore,
+                    deviceType = detection.deviceType,
+                    isActive = detection.isActive,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
             }
-            
-            // Device Description
+
+            // Detection Timeline
             item {
-                Text(
-                    text = "About This Device",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                DetectionTimeline(
+                    firstSeen = detection.timestamp,
+                    lastSeen = if (detection.lastSeenTimestamp != detection.timestamp) detection.lastSeenTimestamp else null,
+                    events = if (detection.seenCount > 1) {
+                        listOf(
+                            TimelineEvent(timestamp = detection.timestamp, signalStrength = detection.rssi, isActive = false),
+                            TimelineEvent(timestamp = detection.lastSeenTimestamp, signalStrength = detection.rssi, isActive = detection.isActive)
+                        )
+                    } else {
+                        listOf(TimelineEvent(timestamp = detection.timestamp, signalStrength = detection.rssi, isActive = detection.isActive))
+                    },
+                    modifier = Modifier.padding(vertical = 8.dp)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = deviceInfo.fullDescription,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Device Description - using CollapsibleSection
+            item {
+                CollapsibleSection(
+                    title = "About This Device",
+                    icon = Icons.Default.Info,
+                    defaultExpanded = true,
+                    persistKey = "detection_about_device"
+                ) {
+                    Text(
+                        text = deviceInfo.fullDescription,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
             }
 
             // AI Analysis Section (show if any FP analysis was performed - LLM or rule-based)
             if (detection.fpScore != null) {
                 item {
-                    Text(
-                        text = if (detection.llmAnalyzed) "AI Analysis" else "Analysis",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    CollapsibleSection(
+                        title = if (detection.llmAnalyzed) "AI Analysis" else "Analysis",
+                        icon = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Psychology,
+                        defaultExpanded = true,
+                        persistKey = "detection_ai_analysis"
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            // Analysis type badge
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Rule,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                ) {
-                                    Text(
-                                        text = if (detection.llmAnalyzed) "On-device LLM" else "Rule-based",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                                // Show "Pending LLM" indicator if not yet LLM analyzed
-                                if (!detection.llmAnalyzed) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = MaterialTheme.colorScheme.secondaryContainer
-                                    ) {
-                                        Text(
-                                            text = "LLM pending",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            // FP verdict (fpScore is guaranteed non-null in this block)
-                            Spacer(modifier = Modifier.height(10.dp))
-                            val fpPercent = (detection.fpScore!! * 100).toInt()
-                            val verdictText = when {
-                                fpPercent >= 70 -> "Likely false positive"
-                                fpPercent >= 40 -> "Possibly false positive"
-                                else -> "Likely genuine threat"
-                            }
-                            val verdictColor = when {
-                                fpPercent >= 70 -> MaterialTheme.colorScheme.tertiary
-                                fpPercent >= 40 -> MaterialTheme.colorScheme.secondary
-                                else -> MaterialTheme.colorScheme.error
-                            }
-                            val verdictIcon = when {
-                                fpPercent >= 70 -> Icons.Default.CheckCircle
-                                fpPercent >= 40 -> Icons.Default.Help
-                                else -> Icons.Default.Warning
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = verdictIcon,
-                                    contentDescription = null,
-                                    tint = verdictColor,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = verdictText,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = verdictColor
-                                    )
-                                    Text(
-                                        text = "$fpPercent% confidence",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = verdictColor.copy(alpha = 0.8f)
-                                    )
-                                }
-                            }
-
-                            // Confidence bar
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LinearProgressIndicator(
-                                progress = detection.fpScore!!,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = verdictColor,
-                                trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
-                            )
-
-                            // AI-generated reason
-                            detection.fpReason?.let { reason ->
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "Analysis:",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = reason,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-
-                            // Category
-                            detection.fpCategory?.let { category ->
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Label,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Category: ${category.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-
-                            // Analysis method and timestamp
-                            detection.analyzedAt?.let { timestamp ->
-                                Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                // Analysis type badge
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Rule,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(12.dp)
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (detection.llmAnalyzed) "AI analysis" else "Rule-based",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = if (detection.llmAnalyzed) "On-device LLM" else "Rule-based",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    // Show "Pending LLM" indicator if not yet LLM analyzed
+                                    if (!detection.llmAnalyzed) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = "LLM pending",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // FP verdict (fpScore is guaranteed non-null in this block)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                val fpPercent = (detection.fpScore!! * 100).toInt()
+                                val verdictText = when {
+                                    fpPercent >= 70 -> "Likely false positive"
+                                    fpPercent >= 40 -> "Possibly false positive"
+                                    else -> "Likely genuine threat"
+                                }
+                                val verdictColor = when {
+                                    fpPercent >= 70 -> MaterialTheme.colorScheme.tertiary
+                                    fpPercent >= 40 -> MaterialTheme.colorScheme.secondary
+                                    else -> MaterialTheme.colorScheme.error
+                                }
+                                val verdictIcon = when {
+                                    fpPercent >= 70 -> Icons.Default.CheckCircle
+                                    fpPercent >= 40 -> Icons.Default.Help
+                                    else -> Icons.Default.Warning
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = verdictIcon,
+                                        contentDescription = null,
+                                        tint = verdictColor,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = verdictText,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = verdictColor
+                                        )
+                                        Text(
+                                            text = "$fpPercent% confidence",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = verdictColor.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
+
+                                // Confidence bar
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = detection.fpScore!!,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
+                                    color = verdictColor,
+                                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
+                                )
+
+                                // AI-generated reason
+                                detection.fpReason?.let { reason ->
+                                    Spacer(modifier = Modifier.height(12.dp))
                                     Text(
-                                        text = "• ${dateFormat.format(Date(timestamp))}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                        text = "Analysis:",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = reason,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+
+                                // Category
+                                detection.fpCategory?.let { category ->
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Label,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Category: ${category.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+
+                                // Analysis method and timestamp
+                                detection.analyzedAt?.let { timestamp ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = if (detection.llmAnalyzed) Icons.Default.AutoAwesome else Icons.Default.Rule,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f),
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (detection.llmAnalyzed) "AI analysis" else "Rule-based",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "• ${dateFormat.format(Date(timestamp))}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
             // Technical Details
             item {
-                Text(
-                    text = "Detection Details",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            
-            item {
-                DetailRow(
-                    label = "First Detected",
-                    value = dateFormat.format(Date(detection.timestamp))
-                )
-            }
-            
-            if (detection.lastSeenTimestamp != detection.timestamp) {
-                item {
-                    DetailRow(
-                        label = "Last Seen",
-                        value = dateFormat.format(Date(detection.lastSeenTimestamp))
-                    )
-                }
-            }
-            
-            if (detection.seenCount > 1) {
-                item {
-                    DetailRow(
-                        label = "Times Seen",
-                        value = "${detection.seenCount}x"
-                    )
-                }
-            }
-            
-            item {
-                DetailRow(
-                    label = "Status",
-                    value = if (detection.isActive) "🟢 Active" else "⚪ Inactive"
-                )
-            }
-            
-            item {
-                DetailRow(
-                    label = "Protocol",
-                    value = "${detection.protocol.icon} ${detection.protocol.displayName}"
-                )
-            }
-            
-            item {
-                DetailRow(
-                    label = "Method",
-                    value = detection.detectionMethod.displayName
-                )
-            }
-            
-            // Show different fields based on protocol
-            if (detection.protocol == DetectionProtocol.CELLULAR) {
-                // Cellular-specific fields
-                detection.firmwareVersion?.let { cellId ->
-                    item {
-                        DetailRow(label = "Cell Info", value = cellId)
+                CollapsibleSection(
+                    title = "Detection Details",
+                    icon = Icons.Default.List,
+                    defaultExpanded = true,
+                    persistKey = "detection_details"
+                ) {
+                    Column {
+                        DetailRow(
+                            label = "First Detected",
+                            value = dateFormat.format(Date(detection.timestamp))
+                        )
+
+                        if (detection.lastSeenTimestamp != detection.timestamp) {
+                            DetailRow(
+                                label = "Last Seen",
+                                value = dateFormat.format(Date(detection.lastSeenTimestamp))
+                            )
+                        }
+
+                        if (detection.seenCount > 1) {
+                            DetailRow(
+                                label = "Times Seen",
+                                value = "${detection.seenCount}x"
+                            )
+                        }
+
+                        DetailRow(
+                            label = "Status",
+                            value = if (detection.isActive) "Active" else "Inactive"
+                        )
+
+                        DetailRow(
+                            label = "Protocol",
+                            value = "${detection.protocol.icon} ${detection.protocol.displayName}"
+                        )
+
+                        DetailRow(
+                            label = "Method",
+                            value = detection.detectionMethod.displayName
+                        )
+
+                        // Show different fields based on protocol
+                        if (detection.protocol == DetectionProtocol.CELLULAR) {
+                            // Cellular-specific fields
+                            detection.firmwareVersion?.let { cellId ->
+                                DetailRow(label = "Cell Info", value = cellId)
+                            }
+
+                            detection.macAddress?.let { mccMnc ->
+                                DetailRow(label = "MCC-MNC", value = mccMnc)
+                            }
+
+                            detection.manufacturer?.let { networkType ->
+                                DetailRow(label = "Network Type", value = networkType)
+                            }
+                        } else {
+                            // WiFi/BLE fields
+                            detection.macAddress?.let { mac ->
+                                DetailRow(label = "MAC Address", value = mac)
+                            }
+
+                            detection.ssid?.let { ssid ->
+                                DetailRow(label = "SSID", value = ssid)
+                            }
+
+                            detection.manufacturer?.let { mfr ->
+                                DetailRow(label = "Manufacturer", value = mfr)
+                            }
+
+                            detection.firmwareVersion?.let { fw ->
+                                DetailRow(label = "Firmware", value = fw)
+                            }
+                        }
+
+                        detection.deviceName?.let { name ->
+                            DetailRow(label = "Device Name", value = name)
+                        }
+
+                        DetailRow(
+                            label = "Signal",
+                            value = "${detection.rssi} dBm (${detection.signalStrength.displayName})"
+                        )
+
+                        DetailRow(
+                            label = "Est. Distance",
+                            value = rssiToDistance(detection.rssi)
+                        )
                     }
                 }
-                
-                detection.macAddress?.let { mccMnc ->
-                    item {
-                        DetailRow(label = "MCC-MNC", value = mccMnc)
-                    }
-                }
-                
-                detection.manufacturer?.let { networkType ->
-                    item {
-                        DetailRow(label = "Network Type", value = networkType)
-                    }
-                }
-            } else {
-                // WiFi/BLE fields
-                detection.macAddress?.let { mac ->
-                    item {
-                        DetailRow(label = "MAC Address", value = mac)
-                    }
-                }
-                
-                detection.ssid?.let { ssid ->
-                    item {
-                        DetailRow(label = "SSID", value = ssid)
-                    }
-                }
-                
-                detection.manufacturer?.let { mfr ->
-                    item {
-                        DetailRow(label = "Manufacturer", value = mfr)
-                    }
-                }
-                
-                detection.firmwareVersion?.let { fw ->
-                    item {
-                        DetailRow(label = "Firmware", value = fw)
-                    }
-                }
-            }
-            
-            detection.deviceName?.let { name ->
-                item {
-                    DetailRow(label = "Device Name", value = name)
-                }
-            }
-            
-            item {
-                DetailRow(
-                    label = "Signal",
-                    value = "${detection.rssi} dBm (${detection.signalStrength.displayName})"
-                )
-            }
-            
-            item {
-                DetailRow(
-                    label = "Est. Distance",
-                    value = rssiToDistance(detection.rssi)
-                )
+                Spacer(modifier = Modifier.height(12.dp))
             }
             
             // Location Section with Embedded Map
             if (detection.latitude != null && detection.longitude != null) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    var isMapExpanded by remember { mutableStateOf(false) }
                     val context = LocalContext.current
 
                     // Initialize osmdroid config
@@ -1651,237 +1680,197 @@ fun DetectionDetailSheet(
                         }
                     }
 
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                        )
+                    CollapsibleSection(
+                        title = "Location",
+                        icon = Icons.Default.LocationOn,
+                        defaultExpanded = false,
+                        persistKey = "detection_location"
                     ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            // Header row - clickable to expand/collapse
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { isMapExpanded = !isMapExpanded },
-                                color = Color.Transparent
+                        Column {
+                            // Coordinates display
+                            Text(
+                                text = "%.6f, %.6f".format(detection.latitude, detection.longitude),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Embedded OSM Map
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.LocationOn,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "Location",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            text = "%.6f, %.6f".format(detection.latitude, detection.longitude),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = if (isMapExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                        contentDescription = if (isMapExpanded) "Collapse map" else "Expand map",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                                val lat = detection.latitude!!
+                                val lon = detection.longitude!!
 
-                            // Embedded map - shown when expanded
-                            AnimatedVisibility(
-                                visible = isMapExpanded,
-                                enter = expandVertically() + fadeIn(),
-                                exit = shrinkVertically() + fadeOut()
-                            ) {
-                                Column {
-                                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                AndroidView(
+                                    modifier = Modifier.fillMaxSize(),
+                                    factory = { ctx ->
+                                        MapView(ctx).apply {
+                                            setTileSource(DETAIL_SHEET_TILE_SOURCE)
+                                            setMultiTouchControls(true)
+                                            controller.setZoom(16.0)
+                                            controller.setCenter(GeoPoint(lat, lon))
 
-                                    // Embedded OSM Map
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(200.dp)
-                                            .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
-                                    ) {
-                                        val lat = detection.latitude!!
-                                        val lon = detection.longitude!!
-
-                                        AndroidView(
-                                            modifier = Modifier.fillMaxSize(),
-                                            factory = { ctx ->
-                                                MapView(ctx).apply {
-                                                    setTileSource(DETAIL_SHEET_TILE_SOURCE)
-                                                    setMultiTouchControls(true)
-                                                    controller.setZoom(16.0)
-                                                    controller.setCenter(GeoPoint(lat, lon))
-
-                                                    // Add marker for detection location
-                                                    val marker = Marker(this).apply {
-                                                        position = GeoPoint(lat, lon)
-                                                        title = detection.deviceType.displayName
-                                                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                                                        icon = createDetailMapMarkerDrawable(detection.threatLevel)
-                                                    }
-                                                    overlays.add(marker)
-                                                }
-                                            },
-                                            update = { map ->
-                                                map.controller.setCenter(GeoPoint(lat, lon))
-                                                map.invalidate()
+                                            // Add marker for detection location
+                                            val marker = Marker(this).apply {
+                                                position = GeoPoint(lat, lon)
+                                                title = detection.deviceType.displayName
+                                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                                icon = createDetailMapMarkerDrawable(detection.threatLevel)
                                             }
-                                        )
-
-                                        // OSM Attribution overlay
-                                        Surface(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(4.dp),
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
-                                        ) {
-                                            Text(
-                                                text = "© OpenStreetMap",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                            overlays.add(marker)
                                         }
+                                    },
+                                    update = { map ->
+                                        map.controller.setCenter(GeoPoint(lat, lon))
+                                        map.invalidate()
                                     }
+                                )
+
+                                // OSM Attribution overlay
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(4.dp),
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                                ) {
+                                    Text(
+                                        text = "© OpenStreetMap",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
-            
+
             // Capabilities Section
             if (deviceInfo.capabilities.isNotEmpty()) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Known Capabilities",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                
-                items(deviceInfo.capabilities.size) { index ->
-                    Row(
-                        modifier = Modifier.padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.Top
+                    CollapsibleSection(
+                        title = "Known Capabilities",
+                        icon = Icons.Default.Build,
+                        defaultExpanded = false,
+                        persistKey = "detection_capabilities",
+                        badge = "${deviceInfo.capabilities.size}"
                     ) {
-                        Text(
-                            text = "•",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = deviceInfo.capabilities[index],
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column {
+                            deviceInfo.capabilities.forEach { capability ->
+                                Row(
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Text(
+                                        text = "•",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = capability,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
-            
+
             // Privacy Concerns Section
             if (deviceInfo.privacyConcerns.isNotEmpty()) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "⚠️ Privacy Concerns",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                
-                items(deviceInfo.privacyConcerns.size) { index ->
-                    Row(
-                        modifier = Modifier.padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.Top
+                    CollapsibleSection(
+                        title = "Privacy Concerns",
+                        icon = Icons.Default.PrivacyTip,
+                        defaultExpanded = false,
+                        persistKey = "detection_privacy_concerns",
+                        badge = "${deviceInfo.privacyConcerns.size}"
                     ) {
-                        Text(
-                            text = "•",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = deviceInfo.privacyConcerns[index],
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column {
+                            deviceInfo.privacyConcerns.forEach { concern ->
+                                Row(
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Text(
+                                        text = "•",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = concern,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
-            
+
             // Recommendations Section
             if (deviceInfo.recommendations.isNotEmpty()) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "🛡️ What You Can Do",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                items(deviceInfo.recommendations.size) { index ->
-                    Row(
-                        modifier = Modifier.padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.Top
+                    CollapsibleSection(
+                        title = "What You Can Do",
+                        icon = Icons.Default.Lightbulb,
+                        defaultExpanded = false,
+                        persistKey = "detection_recommendations",
+                        badge = "${deviceInfo.recommendations.size}"
                     ) {
-                        Text(
-                            text = deviceInfo.recommendations[index],
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column {
+                            deviceInfo.recommendations.forEach { recommendation ->
+                                Row(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Text(
+                                        text = recommendation,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
             // Advanced Mode: Heuristics & Scoring Analysis Section
             if (advancedMode) {
                 item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "📊 Heuristics Analysis",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    CollapsibleSection(
+                        title = "Heuristics Analysis",
+                        icon = Icons.Default.Analytics,
+                        defaultExpanded = false,
+                        persistKey = "detection_heuristics"
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
                         ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                             // Impact Factor Analysis
                             val impactFactor = remember(detection.deviceType) {
                                 ThreatScoring.getImpactFactor(detection.deviceType)
@@ -2105,44 +2094,39 @@ fun DetectionDetailSheet(
                                         color = threatColor
                                     )
                                 }
+                                }
                             }
                         }
                     }
-                }
-            }
-
-            // Advanced Mode: Raw Technical Data Section
-            if (advancedMode) {
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "🔧 Raw Technical Data",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
+                // Advanced Mode: Raw Technical Data Section
                 item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    CollapsibleSection(
+                        title = "Raw Technical Data",
+                        icon = Icons.Default.Code,
+                        defaultExpanded = false,
+                        persistKey = "detection_raw_data"
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                         ) {
-                            // Detection ID
-                            Text(
-                                text = "Detection ID:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = detection.id,
-                                style = MaterialTheme.typography.bodySmall,
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Detection ID
+                                Text(
+                                    text = "Detection ID:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = detection.id,
+                                    style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -2341,52 +2325,49 @@ fun DetectionDetailSheet(
                                 }
                             }
 
-                            // Location coordinates if present
-                            if (detection.latitude != null && detection.longitude != null) {
-                                Text(
-                                    text = "Raw Coordinates:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "lat=${detection.latitude}, lng=${detection.longitude}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                // Location coordinates if present
+                                if (detection.latitude != null && detection.longitude != null) {
+                                    Text(
+                                        text = "Raw Coordinates:",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "lat=${detection.latitude}, lng=${detection.longitude}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
-            // Actions
+            // Related Detections Section
             item {
-                Spacer(modifier = Modifier.height(24.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onDelete,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Delete")
-                    }
-                    Button(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Close")
-                    }
-                }
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                RelatedDetectionsSection(
+                    relatedDetections = relatedDetections,
+                    onDetectionClick = onRelatedDetectionClick,
+                    onSeeAllClick = onSeeAllRelatedClick
+                )
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
+
+        // Sticky Action Bar at the bottom
+        DetectionActionBar(
+            onMarkSafe = onMarkSafe,
+            onMarkThreat = onMarkThreat,
+            onShare = onShare,
+            onNavigate = onNavigate,
+            onAddNote = { showNoteDialog = true },
+            onExport = onExport,
+            isSafeEnabled = detection.fpCategory != "USER_MARKED_FP",
+            isThreatEnabled = !detection.confirmedThreat
+        )
     }
 }
 
@@ -5365,5 +5346,80 @@ private fun createDetailMapMarkerDrawable(threatLevel: ThreatLevel): android.gra
         setColor(color)
         setStroke(3, android.graphics.Color.WHITE)
         setSize(32, 32)
+    }
+}
+
+/**
+ * Build a shareable text summary of a detection
+ */
+private fun buildDetectionShareText(detection: Detection): String {
+    val dateFormat = java.text.SimpleDateFormat("MMM dd, yyyy HH:mm:ss", java.util.Locale.getDefault())
+    return buildString {
+        appendLine("Flock You Detection Alert")
+        appendLine("=" .repeat(30))
+        appendLine()
+        appendLine("Device: ${detection.deviceType.displayName}")
+        appendLine("Threat Level: ${detection.threatLevel.displayName}")
+        appendLine("Protocol: ${detection.protocol.displayName}")
+        appendLine("Detection Method: ${detection.detectionMethod.displayName}")
+        appendLine()
+        appendLine("Signal: ${detection.rssi} dBm (${detection.signalStrength.displayName})")
+        appendLine("First Seen: ${dateFormat.format(java.util.Date(detection.timestamp))}")
+        if (detection.seenCount > 1) {
+            appendLine("Times Seen: ${detection.seenCount}")
+            appendLine("Last Seen: ${dateFormat.format(java.util.Date(detection.lastSeenTimestamp))}")
+        }
+        appendLine()
+        detection.macAddress?.let { appendLine("MAC Address: $it") }
+        detection.ssid?.let { appendLine("SSID: $it") }
+        detection.deviceName?.let { appendLine("Device Name: $it") }
+        detection.manufacturer?.let { appendLine("Manufacturer: $it") }
+        if (detection.latitude != null && detection.longitude != null) {
+            appendLine()
+            appendLine("Location: ${detection.latitude}, ${detection.longitude}")
+        }
+        detection.userNote?.let {
+            appendLine()
+            appendLine("Note: $it")
+        }
+        appendLine()
+        appendLine("-- Shared from Flock You app")
+    }
+}
+
+/**
+ * Build a JSON export of a detection
+ */
+private fun buildDetectionExportJson(detection: Detection): String {
+    val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.getDefault())
+    return buildString {
+        appendLine("{")
+        appendLine("  \"id\": \"${detection.id}\",")
+        appendLine("  \"timestamp\": \"${dateFormat.format(java.util.Date(detection.timestamp))}\",")
+        appendLine("  \"lastSeenTimestamp\": \"${dateFormat.format(java.util.Date(detection.lastSeenTimestamp))}\",")
+        appendLine("  \"deviceType\": \"${detection.deviceType.name}\",")
+        appendLine("  \"deviceTypeDisplayName\": \"${detection.deviceType.displayName}\",")
+        appendLine("  \"threatLevel\": \"${detection.threatLevel.name}\",")
+        appendLine("  \"threatScore\": ${detection.threatScore},")
+        appendLine("  \"protocol\": \"${detection.protocol.name}\",")
+        appendLine("  \"detectionMethod\": \"${detection.detectionMethod.name}\",")
+        appendLine("  \"rssi\": ${detection.rssi},")
+        appendLine("  \"signalStrength\": \"${detection.signalStrength.name}\",")
+        detection.macAddress?.let { appendLine("  \"macAddress\": \"$it\",") }
+        detection.ssid?.let { appendLine("  \"ssid\": \"${it.replace("\"", "\\\"")}\",") }
+        detection.deviceName?.let { appendLine("  \"deviceName\": \"${it.replace("\"", "\\\"")}\",") }
+        detection.manufacturer?.let { appendLine("  \"manufacturer\": \"${it.replace("\"", "\\\"")}\",") }
+        detection.latitude?.let { appendLine("  \"latitude\": $it,") }
+        detection.longitude?.let { appendLine("  \"longitude\": $it,") }
+        appendLine("  \"seenCount\": ${detection.seenCount},")
+        appendLine("  \"isActive\": ${detection.isActive},")
+        appendLine("  \"detectionSource\": \"${detection.detectionSource.name}\",")
+        detection.fpScore?.let { appendLine("  \"fpScore\": $it,") }
+        detection.fpReason?.let { appendLine("  \"fpReason\": \"${it.replace("\"", "\\\"")}\",") }
+        detection.fpCategory?.let { appendLine("  \"fpCategory\": \"$it\",") }
+        detection.userNote?.let { appendLine("  \"userNote\": \"${it.replace("\"", "\\\"").replace("\n", "\\n")}\",") }
+        appendLine("  \"confirmedThreat\": ${detection.confirmedThreat},")
+        appendLine("  \"exportedAt\": \"${dateFormat.format(java.util.Date())}\"")
+        appendLine("}")
     }
 }

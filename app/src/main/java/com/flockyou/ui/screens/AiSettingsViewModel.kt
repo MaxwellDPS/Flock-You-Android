@@ -105,7 +105,8 @@ class AiSettingsViewModel @Inject constructor(
                 // Schedule background analysis if FP filtering is also enabled
                 if (aiSettings.value.enableFalsePositiveFiltering) {
                     BackgroundAnalysisWorker.schedule(application)
-                    Log.d(TAG, "Scheduled background analysis worker (AI enabled)")
+                    BackgroundAnalysisWorker.schedulePendingAnalysis(application)
+                    Log.d(TAG, "Scheduled background analysis workers (AI enabled)")
                 }
             } else {
                 // Cancel background analysis when AI is disabled
@@ -189,10 +190,11 @@ class AiSettingsViewModel @Inject constructor(
             // Schedule or cancel background analysis based on current AI state
             if (enabled && aiSettings.value.enabled) {
                 BackgroundAnalysisWorker.schedule(application)
-                Log.d(TAG, "Scheduled background analysis worker (FP filtering enabled)")
+                BackgroundAnalysisWorker.schedulePendingAnalysis(application)
+                Log.d(TAG, "Scheduled background analysis workers (FP filtering enabled)")
             } else if (!enabled) {
                 BackgroundAnalysisWorker.cancel(application)
-                Log.d(TAG, "Cancelled background analysis worker (FP filtering disabled)")
+                Log.d(TAG, "Cancelled background analysis workers (FP filtering disabled)")
             }
         }
     }

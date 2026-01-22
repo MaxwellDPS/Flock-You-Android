@@ -300,11 +300,21 @@ void subghz_decoder_mark_complete(SubGhzScanner* scanner) {
 // Capture Callback - receives raw pulse data from radio
 // ============================================================================
 
+// Static counter to rate-limit pulse logging
+static uint32_t pulse_log_count = 0;
+
 void subghz_decoder_capture_callback(bool level, uint32_t duration, void* context) {
     SubGhzScanner* scanner = context;
     if (!scanner || !scanner->running || !scanner->receiver) return;
 
     uint32_t now = furi_get_tick();
+
+    // Log every 1000th pulse to show that we ARE receiving something
+    pulse_log_count++;
+    if (pulse_log_count % 1000 == 1) {
+        FURI_LOG_I(TAG, "Pulse #%lu: %lu us @ %lu Hz",
+            pulse_log_count, duration, scanner->current_frequency);
+    }
 
     // Track pulse activity for decode protection
     // Only track meaningful pulses (not noise - typically >50us)
@@ -316,7 +326,7 @@ void subghz_decoder_capture_callback(bool level, uint32_t duration, void* contex
             scanner->decode_in_progress = true;
             scanner->decode_start_time = now;
             // Use INFO level so this shows in normal logs
-            FURI_LOG_I(TAG, "Signal detected @ %lu Hz (pulse: %lu us, level: %d)",
+            FURI_LOG_I(TAG, "Signal activity @ %lu Hz (pulse: %lu us, level: %d)",
                 scanner->current_frequency, duration, level);
         }
     }
