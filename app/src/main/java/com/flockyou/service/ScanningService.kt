@@ -3517,6 +3517,22 @@ class ScanningService : Service() {
 
                 Log.d(TAG, "New detection: ${detectionWithFp.deviceType} - ${detectionWithFp.macAddress ?: detectionWithFp.ssid} (FP score: ${detectionWithFp.fpScore ?: "N/A"})")
 
+                // Queue for enhanced LLM analysis if not in ephemeral mode
+                // This runs in background and will enhance the quick rule-based analysis
+                if (!currentPrivacySettings.ephemeralModeEnabled) {
+                    try {
+                        com.flockyou.worker.BackgroundAnalysisWorker.triggerForDetections(
+                            this@ScanningService,
+                            listOf(detectionWithFp.id)
+                        )
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "Queued detection for LLM analysis: ${detectionWithFp.id}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to queue detection for LLM analysis: ${e.message}")
+                    }
+                }
+
                 // Only alert user if FP score is below HIGH_CONFIDENCE_FP_THRESHOLD (0.8f)
                 // High FP confidence means it's likely a false positive - suppress the alert
                 val fpScore = detectionWithFp.fpScore
