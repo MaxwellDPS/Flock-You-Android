@@ -72,3 +72,79 @@
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
+
+# ============================================================
+# Protobuf - Used by MediaPipe and ML Kit GenAI
+# ============================================================
+# These are annotation classes that don't exist at runtime
+-dontwarn com.google.protobuf.Internal$ProtoMethodMayReturnNull
+-dontwarn com.google.protobuf.Internal$ProtoNonnullApi
+-dontwarn com.google.protobuf.ProtoField
+-dontwarn com.google.protobuf.ProtoPresenceBits
+-dontwarn com.google.protobuf.ProtoPresenceCheckedField
+
+# Keep protobuf classes used by MediaPipe
+-keep class com.google.protobuf.** { *; }
+-keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite {
+    <fields>;
+}
+
+# ============================================================
+# javax.lang.model - Annotation processing classes (compile-time only)
+# ============================================================
+# These classes are only used during compilation, not at runtime
+-dontwarn javax.lang.model.SourceVersion
+-dontwarn javax.lang.model.element.Element
+-dontwarn javax.lang.model.element.ElementKind
+-dontwarn javax.lang.model.element.Modifier
+-dontwarn javax.lang.model.type.TypeMirror
+-dontwarn javax.lang.model.type.TypeVisitor
+-dontwarn javax.lang.model.util.SimpleTypeVisitor8
+
+# ============================================================
+# TensorFlow Lite GPU Delegate
+# ============================================================
+-dontwarn org.tensorflow.lite.gpu.GpuDelegateFactory$Options
+-dontwarn org.tensorflow.lite.gpu.GpuDelegateFactory$Options$GpuBackend
+
+# Keep TensorFlow Lite classes
+-keep class org.tensorflow.lite.** { *; }
+-keep class com.google.ai.edge.litert.** { *; }
+
+# ============================================================
+# MediaPipe GenAI / LLM Inference
+# ============================================================
+-keep class com.google.mediapipe.** { *; }
+-keepclassmembers class com.google.mediapipe.** { *; }
+
+# Keep proto classes for MediaPipe
+-keep class com.google.mediapipe.tasks.genai.llminference.jni.proto.** { *; }
+
+# ============================================================
+# ML Kit GenAI Prompt (Gemini Nano)
+# ============================================================
+-keep class com.google.mlkit.genai.** { *; }
+-keep class com.google.android.libraries.mlkit.** { *; }
+
+# ============================================================
+# AutoValue (shaded in some dependencies)
+# ============================================================
+-dontwarn autovalue.shaded.**
+-dontwarn com.google.auto.value.**
+
+# ============================================================
+# Guava
+# ============================================================
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn com.google.j2objc.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn org.checkerframework.**
+
+# ============================================================
+# Coroutines
+# ============================================================
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
