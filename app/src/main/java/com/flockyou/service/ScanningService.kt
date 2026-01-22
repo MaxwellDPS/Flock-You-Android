@@ -1626,6 +1626,7 @@ class ScanningService : Service() {
 
         // Notify IPC clients that scanning has started
         broadcastScanningStarted()
+        broadcastSubsystemStatus()
 
         // Get initial location
         updateLocation()
@@ -1910,6 +1911,25 @@ class ScanningService : Service() {
         }
     }
 
+    /**
+     * Broadcast subsystem status updates to all registered IPC clients.
+     * This should be called whenever any subsystem status changes.
+     */
+    private fun broadcastSubsystemStatus() {
+        if (ipcClients.isEmpty()) return
+        broadcastToClients {
+            Message.obtain(null, ScanningServiceIpc.MSG_SUBSYSTEM_STATUS).apply {
+                data = Bundle().apply {
+                    putString(ScanningServiceIpc.KEY_BLE_STATUS, bleStatus.value.toIpcString())
+                    putString(ScanningServiceIpc.KEY_WIFI_STATUS, wifiStatus.value.toIpcString())
+                    putString(ScanningServiceIpc.KEY_LOCATION_STATUS, locationStatus.value.toIpcString())
+                    putString(ScanningServiceIpc.KEY_CELLULAR_STATUS, cellularStatus.value.toIpcString())
+                    putString(ScanningServiceIpc.KEY_SATELLITE_STATUS, satelliteStatus.value.toIpcString())
+                }
+            }
+        }
+    }
+
     private fun stopScanning() {
         scanStatus.value = ScanStatus.Stopping
         isScanning.value = false
@@ -1971,6 +1991,9 @@ class ScanningService : Service() {
         satelliteStatus.value = SubsystemStatus.Idle
         scanStatus.value = ScanStatus.Idle
 
+        // Broadcast updated statuses to UI
+        broadcastSubsystemStatus()
+
         Log.d(TAG, "Stopped scanning")
     }
     
@@ -1990,6 +2013,7 @@ class ScanningService : Service() {
         
         cellularMonitor?.startMonitoring()
         cellularStatus.value = SubsystemStatus.Active
+        broadcastSubsystemStatus()
         Log.d(TAG, "Cellular monitoring started")
         
         // Collect cellular status updates
@@ -2118,6 +2142,7 @@ class ScanningService : Service() {
 
         Log.d(TAG, "Starting satellite monitoring")
         satelliteStatus.value = SubsystemStatus.Active
+        broadcastSubsystemStatus()
 
         satelliteMonitor?.startMonitoring()
         
@@ -4169,6 +4194,7 @@ class ScanningService : Service() {
         broadcastStateToClients()
         broadcastDetectorHealth()
         broadcastScanStats()
+        broadcastSubsystemStatus()
         broadcastSeenBleDevices()
         broadcastSeenWifiNetworks()
         broadcastCellularData()

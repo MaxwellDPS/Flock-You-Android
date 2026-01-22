@@ -48,7 +48,8 @@ typedef enum {
 } FlockRadioSourceMode;
 
 // User settings for radio selection
-typedef struct {
+// Packed to ensure consistent binary layout across platforms
+typedef struct __attribute__((packed)) {
     FlockRadioSourceMode subghz_source;
     FlockRadioSourceMode ble_source;
     FlockRadioSourceMode wifi_source;  // External only (no internal WiFi)

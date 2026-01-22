@@ -24,12 +24,13 @@ DetectionScheduler* detection_scheduler_alloc(void) {
 
     scheduler->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
-    // Default configuration
-    scheduler->config.enable_subghz = true;
-    scheduler->config.enable_ble = true;
-    scheduler->config.enable_wifi = true;
-    scheduler->config.enable_ir = true;
-    scheduler->config.enable_nfc = true;
+    // Default configuration - all scanners disabled by default
+    // The app must explicitly enable scanners via detection_scheduler_configure()
+    scheduler->config.enable_subghz = false;
+    scheduler->config.enable_ble = false;
+    scheduler->config.enable_wifi = false;
+    scheduler->config.enable_ir = false;
+    scheduler->config.enable_nfc = false;
     scheduler->config.subghz_hop_interval_ms = SUBGHZ_HOP_INTERVAL_MS;
     scheduler->config.subghz_continuous = true;
     scheduler->config.ble_scan_duration_ms = BLE_SCAN_DURATION_MS;

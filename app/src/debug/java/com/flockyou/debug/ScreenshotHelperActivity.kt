@@ -1,14 +1,13 @@
 package com.flockyou.debug
 
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import com.flockyou.testmode.TestModeOrchestrator
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 /**
@@ -59,12 +58,30 @@ class ScreenshotHelperActivity : ComponentActivity() {
         const val ACTION_TEST_MODE = "com.flockyou.debug.TEST_MODE"
         const val ACTION_NAVIGATE = "com.flockyou.debug.NAVIGATE"
 
-        // Navigation command state - observed by MainActivity
-        private val _navigationCommand = MutableStateFlow<NavigationCommand?>(null)
-        val navigationCommand: StateFlow<NavigationCommand?> = _navigationCommand.asStateFlow()
+        // SharedPreferences for navigation commands (cross-process safe)
+        private const val PREFS_NAME = "screenshot_helper"
+        private const val KEY_PENDING_ROUTE = "pending_route"
+        private const val KEY_ROUTE_TIMESTAMP = "route_timestamp"
 
-        fun clearNavigationCommand() {
-            _navigationCommand.value = null
+        /**
+         * Get and clear pending navigation route.
+         * Called by MainActivity on resume.
+         */
+        fun consumePendingRoute(context: Context): String? {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val route = prefs.getString(KEY_PENDING_ROUTE, null)
+            if (route != null) {
+                prefs.edit().remove(KEY_PENDING_ROUTE).remove(KEY_ROUTE_TIMESTAMP).apply()
+            }
+            return route
+        }
+
+        private fun setPendingRoute(context: Context, route: String) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_PENDING_ROUTE, route)
+                .putLong(KEY_ROUTE_TIMESTAMP, System.currentTimeMillis())
+                .apply()
         }
     }
 
@@ -120,7 +137,7 @@ class ScreenshotHelperActivity : ComponentActivity() {
         val route = intent.getStringExtra("route") ?: "main"
         Log.i(TAG, "Navigate to: $route")
 
-        _navigationCommand.value = NavigationCommand(route)
+        setPendingRoute(this, route)
         launchMainActivity()
     }
 
@@ -145,7 +162,7 @@ class ScreenshotHelperActivity : ComponentActivity() {
                 val route = uri.getQueryParameter("route") ?: "main"
                 Log.i(TAG, "Deep link navigate: route=$route")
 
-                _navigationCommand.value = NavigationCommand(route)
+                setPendingRoute(this, route)
                 launchMainActivity()
             }
             else -> Log.w(TAG, "Unknown deep link host: $host")
@@ -159,11 +176,3 @@ class ScreenshotHelperActivity : ComponentActivity() {
         startActivity(mainIntent)
     }
 }
-
-/**
- * Navigation command to be observed by MainActivity
- */
-data class NavigationCommand(
-    val route: String,
-    val timestamp: Long = System.currentTimeMillis()
-)

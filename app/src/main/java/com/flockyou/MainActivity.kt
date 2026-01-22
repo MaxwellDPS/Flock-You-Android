@@ -74,6 +74,7 @@ import com.flockyou.ui.screens.ActiveProbesScreen
 import com.flockyou.ui.screens.TestModeSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -304,6 +305,29 @@ fun AppNavigation(
     duressAuthenticator: DuressAuthenticator
 ) {
     val navController = rememberNavController()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // DEBUG: Check for pending navigation from screenshot automation
+    LaunchedEffect(Unit) {
+        if (BuildConfig.DEBUG) {
+            val prefs = context.getSharedPreferences("screenshot_helper", Context.MODE_PRIVATE)
+            val pendingRoute = prefs.getString("pending_route", null)
+            if (pendingRoute != null) {
+                Log.d("AppNavigation", "Debug navigation to: $pendingRoute")
+                prefs.edit().remove("pending_route").remove("route_timestamp").apply()
+                // Small delay to ensure navigation is ready
+                kotlinx.coroutines.delay(100)
+                try {
+                    navController.navigate(pendingRoute) {
+                        // Clear back stack to route for clean screenshots
+                        popUpTo("main") { inclusive = pendingRoute == "main" }
+                    }
+                } catch (e: Exception) {
+                    Log.e("AppNavigation", "Failed to navigate to $pendingRoute", e)
+                }
+            }
+        }
+    }
 
     NavHost(
         navController = navController,

@@ -265,10 +265,11 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
                 detection_scheduler_set_bt_serial(app->detection_scheduler, app->bt_serial);
             }
 
-            app->subghz_ready = true;
-            app->ble_ready = true;
-            app->ir_ready = true;
-            app->nfc_ready = true;
+            // Only mark scanners as ready if they are actually enabled
+            app->subghz_ready = app->radio_settings.enable_subghz;
+            app->ble_ready = app->radio_settings.enable_ble;
+            app->ir_ready = app->radio_settings.enable_ir;
+            app->nfc_ready = app->radio_settings.enable_nfc;
         }
         FURI_LOG_I(TAG, "Detection scanners initialized");
     } else {
