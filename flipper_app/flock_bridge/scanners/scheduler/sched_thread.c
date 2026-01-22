@@ -209,8 +209,8 @@ int32_t scheduler_thread_func(void* context) {
 
                     last_frequency_hop = now;
 
-                    FURI_LOG_D(TAG, "Sub-GHz hop to %lu Hz (interval: %lu ms)",
-                        new_freq, scheduler->config.subghz_hop_interval_ms);
+                    // Use INFO level so frequency hops are visible in normal logs
+                    FURI_LOG_I(TAG, "Sub-GHz hop to %lu Hz", new_freq);
                 }
             }
         }

@@ -315,8 +315,9 @@ void subghz_decoder_capture_callback(bool level, uint32_t duration, void* contex
         if (!scanner->decode_in_progress) {
             scanner->decode_in_progress = true;
             scanner->decode_start_time = now;
-            FURI_LOG_D(TAG, "Decode started - signal activity detected at %lu Hz",
-                scanner->current_frequency);
+            // Use INFO level so this shows in normal logs
+            FURI_LOG_I(TAG, "Signal detected @ %lu Hz (pulse: %lu us, level: %d)",
+                scanner->current_frequency, duration, level);
         }
     }
 
