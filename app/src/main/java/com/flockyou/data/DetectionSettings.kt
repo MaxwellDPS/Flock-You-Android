@@ -143,8 +143,46 @@ data class DetectionSettings(
     val enableHiddenNetworkRfAnomaly: Boolean = false,  // Disabled by default - high false positive rate
 
     // UI settings
-    val advancedMode: Boolean = false
-)
+    val advancedMode: Boolean = false,
+
+    // Protection preset
+    val currentPreset: ProtectionPreset = ProtectionPreset.BALANCED
+) {
+    /**
+     * Returns a new DetectionSettings instance with the specified preset applied.
+     * This updates all patterns and thresholds according to the preset configuration.
+     */
+    fun withPreset(preset: ProtectionPreset): DetectionSettings {
+        return copy(
+            enabledCellularPatterns = preset.getEnabledCellularPatterns(),
+            enabledSatellitePatterns = preset.getEnabledSatellitePatterns(),
+            enabledBlePatterns = preset.getEnabledBlePatterns(),
+            enabledWifiPatterns = preset.getEnabledWifiPatterns(),
+            cellularThresholds = preset.getCellularThresholds(),
+            satelliteThresholds = preset.getSatelliteThresholds(),
+            bleThresholds = preset.getBleThresholds(),
+            wifiThresholds = preset.getWifiThresholds(),
+            enableHiddenNetworkRfAnomaly = preset.getEnableHiddenNetworkRfAnomaly(),
+            currentPreset = preset
+        )
+    }
+
+    /**
+     * Detects the current preset based on the settings configuration.
+     * Returns CUSTOM if the settings don't match any predefined preset.
+     */
+    fun detectCurrentPreset(): ProtectionPreset {
+        return ProtectionPreset.detectPreset(this)
+    }
+
+    /**
+     * Returns true if the current settings match the stored preset.
+     * If false, the preset should be updated to CUSTOM.
+     */
+    fun matchesCurrentPreset(): Boolean {
+        return detectCurrentPreset() == currentPreset
+    }
+}
 
 @Singleton
 class DetectionSettingsRepository @Inject constructor(
@@ -160,6 +198,9 @@ class DetectionSettingsRepository @Inject constructor(
 
         // UI settings
         val ADVANCED_MODE = booleanPreferencesKey("ui_advanced_mode")
+
+        // Protection preset
+        val CURRENT_PRESET = stringPreferencesKey("current_protection_preset")
         
         // Pattern toggles (stored as comma-separated disabled patterns)
         val DISABLED_CELLULAR_PATTERNS = stringPreferencesKey("disabled_cellular_patterns")
@@ -197,22 +238,27 @@ class DetectionSettingsRepository @Inject constructor(
     
     val settings: Flow<DetectionSettings> = context.detectionDataStore.data.map { prefs ->
         // Parse disabled patterns
-        val disabledCellular = prefs[Keys.DISABLED_CELLULAR_PATTERNS]?.split(",")?.mapNotNull { 
+        val disabledCellular = prefs[Keys.DISABLED_CELLULAR_PATTERNS]?.split(",")?.mapNotNull {
             try { CellularPattern.valueOf(it) } catch (e: Exception) { null }
         }?.toSet() ?: emptySet()
-        
+
         val disabledSatellite = prefs[Keys.DISABLED_SATELLITE_PATTERNS]?.split(",")?.mapNotNull {
             try { SatellitePattern.valueOf(it) } catch (e: Exception) { null }
         }?.toSet() ?: emptySet()
-        
+
         val disabledBle = prefs[Keys.DISABLED_BLE_PATTERNS]?.split(",")?.mapNotNull {
             try { BlePattern.valueOf(it) } catch (e: Exception) { null }
         }?.toSet() ?: emptySet()
-        
+
         val disabledWifi = prefs[Keys.DISABLED_WIFI_PATTERNS]?.split(",")?.mapNotNull {
             try { WifiPattern.valueOf(it) } catch (e: Exception) { null }
         }?.toSet() ?: emptySet()
-        
+
+        // Parse current preset
+        val currentPreset = prefs[Keys.CURRENT_PRESET]?.let {
+            try { ProtectionPreset.valueOf(it) } catch (e: Exception) { null }
+        } ?: ProtectionPreset.BALANCED
+
         DetectionSettings(
             enableCellularDetection = prefs[Keys.ENABLE_CELLULAR] ?: true,
             enableSatelliteDetection = prefs[Keys.ENABLE_SATELLITE] ?: true,
@@ -220,12 +266,12 @@ class DetectionSettingsRepository @Inject constructor(
             enableWifiDetection = prefs[Keys.ENABLE_WIFI] ?: true,
             enableHiddenNetworkRfAnomaly = prefs[Keys.ENABLE_HIDDEN_NETWORK_RF_ANOMALY] ?: false,
             advancedMode = prefs[Keys.ADVANCED_MODE] ?: false,
-            
+
             enabledCellularPatterns = CellularPattern.values().filter { it !in disabledCellular }.toSet(),
             enabledSatellitePatterns = SatellitePattern.values().filter { it !in disabledSatellite }.toSet(),
             enabledBlePatterns = BlePattern.values().filter { it !in disabledBle }.toSet(),
             enabledWifiPatterns = WifiPattern.values().filter { it !in disabledWifi }.toSet(),
-            
+
             cellularThresholds = CellularThresholds(
                 signalSpikeThreshold = prefs[Keys.CELL_SIGNAL_SPIKE_THRESHOLD] ?: 25,
                 rapidSwitchCountStationary = prefs[Keys.CELL_RAPID_SWITCH_STATIONARY] ?: 3,
@@ -233,7 +279,7 @@ class DetectionSettingsRepository @Inject constructor(
                 trustedCellThreshold = prefs[Keys.CELL_TRUSTED_THRESHOLD] ?: 5,
                 minAnomalyIntervalMs = prefs[Keys.CELL_ANOMALY_INTERVAL] ?: 60000L
             ),
-            
+
             satelliteThresholds = SatelliteThresholds(
                 unexpectedSatelliteThresholdMs = prefs[Keys.SAT_UNEXPECTED_THRESHOLD] ?: 5000L,
                 rapidHandoffThresholdMs = prefs[Keys.SAT_RAPID_HANDOFF_THRESHOLD] ?: 2000L,
@@ -241,21 +287,23 @@ class DetectionSettingsRepository @Inject constructor(
                 rapidSwitchingWindowMs = prefs[Keys.SAT_RAPID_SWITCH_WINDOW] ?: 60000L,
                 rapidSwitchingCount = prefs[Keys.SAT_RAPID_SWITCH_COUNT] ?: 3
             ),
-            
+
             bleThresholds = BleThresholds(
                 minRssiForAlert = prefs[Keys.BLE_MIN_RSSI] ?: -80,
                 proximityAlertRssi = prefs[Keys.BLE_PROXIMITY_RSSI] ?: -50,
                 trackingDurationMs = prefs[Keys.BLE_TRACKING_DURATION] ?: 300000L,
                 minSeenCountForTracking = prefs[Keys.BLE_TRACKING_COUNT] ?: 3
             ),
-            
+
             wifiThresholds = WifiThresholds(
                 minSignalForAlert = prefs[Keys.WIFI_MIN_SIGNAL] ?: -70,
                 strongSignalThreshold = prefs[Keys.WIFI_STRONG_SIGNAL] ?: -50,
                 trackingDurationMs = prefs[Keys.WIFI_TRACKING_DURATION] ?: 300000L,
                 minSeenCountForTracking = prefs[Keys.WIFI_TRACKING_COUNT] ?: 3,
                 minTrackingDistanceMeters = prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] ?: 1609.0
-            )
+            ),
+
+            currentPreset = currentPreset
         )
     }
     
@@ -384,6 +432,85 @@ class DetectionSettingsRepository @Inject constructor(
     suspend fun resetToDefaults() {
         context.detectionDataStore.edit { prefs ->
             prefs.clear()
+        }
+    }
+
+    /**
+     * Apply a protection preset, updating all patterns and thresholds accordingly.
+     * This is the primary method for switching between preset configurations.
+     */
+    suspend fun applyPreset(preset: ProtectionPreset) {
+        context.detectionDataStore.edit { prefs ->
+            // Store the current preset
+            prefs[Keys.CURRENT_PRESET] = preset.name
+
+            // Calculate which patterns should be disabled for this preset
+            val enabledCellular = preset.getEnabledCellularPatterns()
+            val disabledCellular = CellularPattern.values().filter { it !in enabledCellular }
+            prefs[Keys.DISABLED_CELLULAR_PATTERNS] = disabledCellular.joinToString(",") { it.name }
+
+            val enabledSatellite = preset.getEnabledSatellitePatterns()
+            val disabledSatellite = SatellitePattern.values().filter { it !in enabledSatellite }
+            prefs[Keys.DISABLED_SATELLITE_PATTERNS] = disabledSatellite.joinToString(",") { it.name }
+
+            val enabledBle = preset.getEnabledBlePatterns()
+            val disabledBle = BlePattern.values().filter { it !in enabledBle }
+            prefs[Keys.DISABLED_BLE_PATTERNS] = disabledBle.joinToString(",") { it.name }
+
+            val enabledWifi = preset.getEnabledWifiPatterns()
+            val disabledWifi = WifiPattern.values().filter { it !in enabledWifi }
+            prefs[Keys.DISABLED_WIFI_PATTERNS] = disabledWifi.joinToString(",") { it.name }
+
+            // Apply thresholds
+            val cellularThresholds = preset.getCellularThresholds()
+            prefs[Keys.CELL_SIGNAL_SPIKE_THRESHOLD] = cellularThresholds.signalSpikeThreshold
+            prefs[Keys.CELL_RAPID_SWITCH_STATIONARY] = cellularThresholds.rapidSwitchCountStationary
+            prefs[Keys.CELL_RAPID_SWITCH_MOVING] = cellularThresholds.rapidSwitchCountMoving
+            prefs[Keys.CELL_TRUSTED_THRESHOLD] = cellularThresholds.trustedCellThreshold
+            prefs[Keys.CELL_ANOMALY_INTERVAL] = cellularThresholds.minAnomalyIntervalMs
+
+            val satelliteThresholds = preset.getSatelliteThresholds()
+            prefs[Keys.SAT_UNEXPECTED_THRESHOLD] = satelliteThresholds.unexpectedSatelliteThresholdMs
+            prefs[Keys.SAT_RAPID_HANDOFF_THRESHOLD] = satelliteThresholds.rapidHandoffThresholdMs
+            prefs[Keys.SAT_MIN_TERRESTRIAL_SIGNAL] = satelliteThresholds.minSignalForTerrestrial
+            prefs[Keys.SAT_RAPID_SWITCH_WINDOW] = satelliteThresholds.rapidSwitchingWindowMs
+            prefs[Keys.SAT_RAPID_SWITCH_COUNT] = satelliteThresholds.rapidSwitchingCount
+
+            val bleThresholds = preset.getBleThresholds()
+            prefs[Keys.BLE_MIN_RSSI] = bleThresholds.minRssiForAlert
+            prefs[Keys.BLE_PROXIMITY_RSSI] = bleThresholds.proximityAlertRssi
+            prefs[Keys.BLE_TRACKING_DURATION] = bleThresholds.trackingDurationMs
+            prefs[Keys.BLE_TRACKING_COUNT] = bleThresholds.minSeenCountForTracking
+
+            val wifiThresholds = preset.getWifiThresholds()
+            prefs[Keys.WIFI_MIN_SIGNAL] = wifiThresholds.minSignalForAlert
+            prefs[Keys.WIFI_STRONG_SIGNAL] = wifiThresholds.strongSignalThreshold
+            prefs[Keys.WIFI_TRACKING_DURATION] = wifiThresholds.trackingDurationMs
+            prefs[Keys.WIFI_TRACKING_COUNT] = wifiThresholds.minSeenCountForTracking
+            prefs[Keys.WIFI_MIN_TRACKING_DISTANCE] = wifiThresholds.minTrackingDistanceMeters
+
+            // Apply hidden network RF anomaly setting
+            prefs[Keys.ENABLE_HIDDEN_NETWORK_RF_ANOMALY] = preset.getEnableHiddenNetworkRfAnomaly()
+        }
+    }
+
+    /**
+     * Update only the current preset indicator without changing other settings.
+     * Use this when user modifications should switch the preset to CUSTOM.
+     */
+    suspend fun setCurrentPreset(preset: ProtectionPreset) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.CURRENT_PRESET] = preset.name
+        }
+    }
+
+    /**
+     * Marks the current settings as custom if they don't match the stored preset.
+     * Call this after any manual setting change to ensure the preset indicator is accurate.
+     */
+    suspend fun markAsCustomIfModified(currentSettings: DetectionSettings) {
+        if (!currentSettings.matchesCurrentPreset() && currentSettings.currentPreset != ProtectionPreset.CUSTOM) {
+            setCurrentPreset(ProtectionPreset.CUSTOM)
         }
     }
 }

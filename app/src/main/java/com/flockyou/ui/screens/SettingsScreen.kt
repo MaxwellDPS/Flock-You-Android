@@ -34,6 +34,12 @@ import com.flockyou.network.TorConnectionStatus
 import com.flockyou.service.BootReceiver
 import com.flockyou.service.ScanningService
 import com.flockyou.ui.components.SectionHeader
+import com.flockyou.ui.components.settings.QuickSettingsHero
+import com.flockyou.ui.components.settings.ProtectionPresetSelector
+import com.flockyou.ui.components.settings.DetectionCategoryCard
+import com.flockyou.ui.components.settings.DetectionCategory
+import com.flockyou.ui.components.settings.PatternItem
+import com.flockyou.data.ProtectionPreset
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -50,7 +56,8 @@ fun SettingsScreen(
     onNavigateToAllDetections: () -> Unit = {},
     onNavigateToAiSettings: () -> Unit = {},
     onNavigateToServiceHealth: () -> Unit = {},
-    onNavigateToFlipperSettings: () -> Unit = {}
+    onNavigateToFlipperSettings: () -> Unit = {},
+    onNavigateToTestMode: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -89,7 +96,25 @@ fun SettingsScreen(
     var enableBle by remember { mutableStateOf(true) }
     var enableWifi by remember { mutableStateOf(true) }
     var enableCellular by remember { mutableStateOf(true) }
+    var enableSatellite by remember { mutableStateOf(true) }
     var trackSeenDevices by remember { mutableStateOf(true) }
+
+    // Section expansion states
+    var detectionExpanded by remember { mutableStateOf(true) }
+    var notificationsExpanded by remember { mutableStateOf(false) }
+    var privacyExpanded by remember { mutableStateOf(false) }
+    var securityExpanded by remember { mutableStateOf(false) }
+    var advancedVisible by remember { mutableStateOf(false) }
+
+    // Category expansion states within detection section
+    var cellularExpanded by remember { mutableStateOf(false) }
+    var satelliteExpanded by remember { mutableStateOf(false) }
+    var bleExpanded by remember { mutableStateOf(false) }
+    var wifiExpanded by remember { mutableStateOf(false) }
+
+    // Protection preset state
+    var currentPreset by remember { mutableStateOf(ProtectionPreset.BALANCED) }
+    var showPresetBottomSheet by remember { mutableStateOf(false) }
     
     Scaffold(
         topBar = {
@@ -108,477 +133,486 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(paddingValues),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Battery Optimization Section
+            // 1. QuickSettingsHero (always visible)
             item {
-                SectionHeader(title = "Battery & Background")
-            }
-            
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (batteryOptimizationIgnored)
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                        else
-                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (batteryOptimizationIgnored) 
-                                    Icons.Default.BatteryChargingFull 
-                                else 
-                                    Icons.Default.BatterySaver,
-                                contentDescription = null,
-                                tint = if (batteryOptimizationIgnored)
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Battery Optimization",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = if (batteryOptimizationIgnored)
-                                        "✓ Unrestricted - scanning will run continuously"
-                                    else
-                                        "⚠ Restricted - Android may stop scanning",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (batteryOptimizationIgnored)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                        
-                        if (!batteryOptimizationIgnored) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "Battery optimization is enabled. Android may stop the scanning service to save battery. Tap below to disable it for this app.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = {
-                                    openBatteryOptimizationSettings(context)
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.BatteryAlert, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Disable Battery Optimization")
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Auto-start on boot toggle
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = if (autoStartOnBoot)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                QuickSettingsHero(
+                    currentPreset = currentPreset,
+                    onPresetClick = { showPresetBottomSheet = true },
+                    bleEnabled = enableBle,
+                    wifiEnabled = enableWifi,
+                    cellularEnabled = enableCellular,
+                    satelliteEnabled = enableSatellite,
+                    onToggleBle = { enabled ->
+                        enableBle = enabled
+                        updateScanSettings(
+                            wifiInterval, bleDuration,
+                            enableBle, enableWifi, enableCellular, trackSeenDevices
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Auto-start on Boot",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = if (autoStartOnBoot)
-                                    "Scanning starts automatically when device boots"
-                                else
-                                    "Manual start required after reboot",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = autoStartOnBoot,
-                            onCheckedChange = { enabled ->
-                                autoStartOnBoot = enabled
-                                BootReceiver.setAutoStartOnBoot(context, enabled)
-                            }
+                    },
+                    onToggleWifi = { enabled ->
+                        enableWifi = enabled
+                        updateScanSettings(
+                            wifiInterval, bleDuration,
+                            enableBle, enableWifi, enableCellular, trackSeenDevices
                         )
-                    }
-                }
-            }
-
-            // Service Kill Switch
-            item {
-                var showKillConfirmation by remember { mutableStateOf(false) }
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.PowerSettingsNew,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Stop All Scanning",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Completely stop the scanning service and prevent auto-restart",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { showKillConfirmation = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Icon(Icons.Default.Stop, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Force Stop Service")
-                        }
-                    }
-                }
-
-                if (showKillConfirmation) {
-                    AlertDialog(
-                        onDismissRequest = { showKillConfirmation = false },
-                        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
-                        title = { Text("Stop Scanning Service?") },
-                        text = {
-                            Text(
-                                "This will completely stop the scanning service and disable auto-restart. " +
-                                "You will need to manually restart the app to resume scanning.\n\n" +
-                                "Surveillance devices will NOT be detected while the service is stopped."
-                            )
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    showKillConfirmation = false
-                                    // Disable auto-start first
-                                    BootReceiver.setAutoStartOnBoot(context, false)
-                                    autoStartOnBoot = false
-                                    // Stop the service
-                                    ScanningService.forceStop(context)
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error
-                                )
-                            ) {
-                                Text("Stop Service")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showKillConfirmation = false }) {
-                                Text("Cancel")
-                            }
-                        }
-                    )
-                }
-            }
-            
-            // Scan Configuration Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "Scan Configuration")
-            }
-            
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = "Scan Timing",
-                    subtitle = "WiFi: ${wifiInterval}s interval, BLE: ${bleDuration}s duration",
-                    onClick = { showScanSettings = !showScanSettings },
-                    trailing = {
-                        Icon(
-                            if (showScanSettings) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null
+                    },
+                    onToggleCellular = { enabled ->
+                        enableCellular = enabled
+                        updateScanSettings(
+                            wifiInterval, bleDuration,
+                            enableBle, enableWifi, enableCellular, trackSeenDevices
                         )
-                    }
+                    },
+                    onToggleSatellite = { enabled ->
+                        enableSatellite = enabled
+                        // TODO: Add satellite to scan settings when supported
+                    },
+                    activePatternCount = 42, // TODO: Wire to actual pattern count from ViewModel
+                    isScanning = uiState.isScanning
                 )
             }
-            
-            if (showScanSettings) {
+
+            // 2. ProtectionPresetSelector chip row
+            item {
+                ProtectionPresetSelector(
+                    currentPreset = currentPreset,
+                    onPresetSelected = { preset ->
+                        currentPreset = preset
+                        // Apply preset settings
+                        when (preset) {
+                            ProtectionPreset.ESSENTIAL -> {
+                                enableBle = true
+                                enableWifi = false
+                                enableCellular = true
+                                enableSatellite = false
+                            }
+                            ProtectionPreset.BALANCED -> {
+                                enableBle = true
+                                enableWifi = true
+                                enableCellular = true
+                                enableSatellite = false
+                            }
+                            ProtectionPreset.PARANOID -> {
+                                enableBle = true
+                                enableWifi = true
+                                enableCellular = true
+                                enableSatellite = true
+                            }
+                            ProtectionPreset.CUSTOM -> {
+                                // Keep current settings
+                            }
+                        }
+                        updateScanSettings(
+                            wifiInterval, bleDuration,
+                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                        )
+                    },
+                    showBottomSheet = showPresetBottomSheet,
+                    onDismissBottomSheet = { showPresetBottomSheet = false }
+                )
+            }
+
+            // 3. Detection Configuration Section Header
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { detectionExpanded = !detectionExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SectionHeader(title = "Detection Configuration")
+                    Icon(
+                        imageVector = if (detectionExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (detectionExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Detection Category Cards (when detection section expanded)
+            if (detectionExpanded) {
+                // Cellular Category Card
+                item {
+                    DetectionCategoryCard(
+                        category = DetectionCategory.CELLULAR,
+                        categoryEnabled = enableCellular,
+                        enabledPatternCount = 5,
+                        totalPatternCount = 8,
+                        expanded = cellularExpanded,
+                        onCategoryToggle = { enabled ->
+                            enableCellular = enabled
+                            updateScanSettings(
+                                wifiInterval, bleDuration,
+                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                            )
+                        },
+                        onExpandClick = { cellularExpanded = !cellularExpanded },
+                        patterns = listOf(
+                            PatternItem("imsi_catcher", "IMSI Catcher Detection", "Detect rogue base stations", true),
+                            PatternItem("cell_anomaly", "Cell Anomaly Detection", "Detect unusual cell behavior", true),
+                            PatternItem("downgrade", "Downgrade Attack", "Detect forced 2G downgrades", true)
+                        ),
+                        onPatternToggle = { _, _ -> /* TODO: Wire to ViewModel */ },
+                        thresholdsContent = {
+                            Text(
+                                text = "Signal threshold and timing settings for cellular detection",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onResetDefaults = { /* TODO: Reset cellular patterns */ }
+                    )
+                }
+
+                // Satellite Category Card
+                item {
+                    DetectionCategoryCard(
+                        category = DetectionCategory.SATELLITE,
+                        categoryEnabled = enableSatellite,
+                        enabledPatternCount = 3,
+                        totalPatternCount = 5,
+                        expanded = satelliteExpanded,
+                        onCategoryToggle = { enabled ->
+                            enableSatellite = enabled
+                        },
+                        onExpandClick = { satelliteExpanded = !satelliteExpanded },
+                        patterns = listOf(
+                            PatternItem("ntn_threat", "NTN Threat Detection", "Detect satellite network threats", true),
+                            PatternItem("sat_anomaly", "Satellite Anomaly", "Detect unusual satellite activity", true)
+                        ),
+                        onPatternToggle = { _, _ -> /* TODO: Wire to ViewModel */ },
+                        thresholdsContent = {
+                            Text(
+                                text = "Satellite detection sensitivity settings",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onResetDefaults = { /* TODO: Reset satellite patterns */ }
+                    )
+                }
+
+                // BLE Category Card
+                item {
+                    DetectionCategoryCard(
+                        category = DetectionCategory.BLE,
+                        categoryEnabled = enableBle,
+                        enabledPatternCount = 12,
+                        totalPatternCount = 15,
+                        expanded = bleExpanded,
+                        onCategoryToggle = { enabled ->
+                            enableBle = enabled
+                            updateScanSettings(
+                                wifiInterval, bleDuration,
+                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                            )
+                        },
+                        onExpandClick = { bleExpanded = !bleExpanded },
+                        patterns = listOf(
+                            PatternItem("airtag", "AirTag Detection", "Apple AirTag trackers", true),
+                            PatternItem("tile", "Tile Detection", "Tile tracking devices", true),
+                            PatternItem("samsung", "SmartTag Detection", "Samsung SmartTag trackers", true),
+                            PatternItem("generic_ble", "Generic BLE Trackers", "Unknown BLE trackers", true)
+                        ),
+                        onPatternToggle = { _, _ -> /* TODO: Wire to ViewModel */ },
+                        thresholdsContent = {
+                            Column {
+                                Text(
+                                    text = "BLE Scan Duration: ${bleDuration}s",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Slider(
+                                    value = bleDuration.toFloat(),
+                                    onValueChange = { bleDuration = it.toInt() },
+                                    valueRange = 5f..30f,
+                                    steps = 4,
+                                    onValueChangeFinished = {
+                                        updateScanSettings(
+                                            wifiInterval, bleDuration,
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                        },
+                        onResetDefaults = { bleDuration = 10 }
+                    )
+                }
+
+                // WiFi Category Card
+                item {
+                    DetectionCategoryCard(
+                        category = DetectionCategory.WIFI,
+                        categoryEnabled = enableWifi,
+                        enabledPatternCount = 8,
+                        totalPatternCount = 10,
+                        expanded = wifiExpanded,
+                        onCategoryToggle = { enabled ->
+                            enableWifi = enabled
+                            updateScanSettings(
+                                wifiInterval, bleDuration,
+                                enableBle, enableWifi, enableCellular, trackSeenDevices
+                            )
+                        },
+                        onExpandClick = { wifiExpanded = !wifiExpanded },
+                        patterns = listOf(
+                            PatternItem("evil_twin", "Evil Twin Detection", "Detect AP impersonation", true),
+                            PatternItem("rogue_ap", "Rogue AP Detection", "Detect unauthorized APs", true),
+                            PatternItem("deauth", "Deauth Attack", "Detect deauthentication attacks", true),
+                            PatternItem("stingray_wifi", "WiFi Stingray", "Detect WiFi surveillance", true)
+                        ),
+                        onPatternToggle = { _, _ -> /* TODO: Wire to ViewModel */ },
+                        thresholdsContent = {
+                            Column {
+                                Text(
+                                    text = "WiFi Scan Interval: ${wifiInterval}s",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "Android limits to 4 scans per 2 minutes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Slider(
+                                    value = wifiInterval.toFloat(),
+                                    onValueChange = { wifiInterval = it.toInt() },
+                                    valueRange = 30f..120f,
+                                    steps = 8,
+                                    onValueChangeFinished = {
+                                        updateScanSettings(
+                                            wifiInterval, bleDuration,
+                                            enableBle, enableWifi, enableCellular, trackSeenDevices
+                                        )
+                                    }
+                                )
+                            }
+                        },
+                        onResetDefaults = { wifiInterval = 35 }
+                    )
+                }
+
+                // All Detections link
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Visibility,
+                        title = "All Detection Patterns",
+                        subtitle = "View all patterns, manage custom rules",
+                        onClick = onNavigateToAllDetections
+                    )
+                }
+            }
+
+            // 4. Alerts & Notifications Section (collapsible)
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { notificationsExpanded = !notificationsExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SectionHeader(title = "Alerts & Notifications")
+                    Icon(
+                        imageVector = if (notificationsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (notificationsExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (notificationsExpanded) {
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Notifications,
+                        title = "Notifications",
+                        subtitle = "Alert sounds, vibration, quiet hours",
+                        onClick = onNavigateToNotifications
+                    )
+                }
+
+                item {
+                    AutomationBroadcastSection(viewModel = viewModel)
+                }
+            }
+
+            // 5. Privacy & Data Section (collapsible)
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { privacyExpanded = !privacyExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SectionHeader(title = "Privacy & Data")
+                    Icon(
+                        imageVector = if (privacyExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (privacyExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (privacyExpanded) {
+                item {
+                    NetworkPrivacySection(viewModel = viewModel)
+                }
+
+                item {
+                    DangerZoneSection(
+                        privacySettings = viewModel.privacySettings.collectAsState().value,
+                        onNavigateToPrivacy = onNavigateToPrivacy,
+                        onNavigateToNuke = onNavigateToNuke
+                    )
+                }
+            }
+
+            // 6. Security Section (collapsible)
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { securityExpanded = !securityExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    SectionHeader(title = "Security")
+                    Icon(
+                        imageVector = if (securityExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (securityExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (securityExpanded) {
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Lock,
+                        title = "App Lock",
+                        subtitle = "PIN and biometric authentication",
+                        onClick = onNavigateToSecurity
+                    )
+                }
+
+                // Battery Optimization Card
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            containerColor = if (batteryOptimizationIgnored)
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            else
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
                         )
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            // WiFi Scan Interval
-                            Text(
-                                text = "WiFi Scan Interval: ${wifiInterval.toInt()} seconds",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "Android limits to 4 scans per 2 minutes. Minimum 30s recommended.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Slider(
-                                value = wifiInterval.toFloat(),
-                                onValueChange = { wifiInterval = it.toInt() },
-                                valueRange = 30f..120f,
-                                steps = 8,
-                                onValueChangeFinished = {
-                                    updateScanSettings(
-                                        wifiInterval.toInt(), bleDuration.toInt(),
-                                        enableBle, enableWifi, enableCellular, trackSeenDevices
-                                    )
-                                }
-                            )
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            // BLE Scan Duration
-                            Text(
-                                text = "BLE Scan Duration: ${bleDuration.toInt()} seconds",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "How long to scan for BLE devices each cycle",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Slider(
-                                value = bleDuration.toFloat(),
-                                onValueChange = { bleDuration = it.toInt() },
-                                valueRange = 5f..30f,
-                                steps = 4,
-                                onValueChangeFinished = {
-                                    updateScanSettings(
-                                        wifiInterval.toInt(), bleDuration.toInt(),
-                                        enableBle, enableWifi, enableCellular, trackSeenDevices
-                                    )
-                                }
-                            )
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Divider()
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            // Toggle switches
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Enable BLE Scanning")
-                                Switch(
-                                    checked = enableBle,
-                                    onCheckedChange = { 
-                                        enableBle = it
-                                        updateScanSettings(
-                                            wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, enableCellular, trackSeenDevices
-                                        )
-                                    }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (batteryOptimizationIgnored)
+                                        Icons.Default.BatteryChargingFull
+                                    else
+                                        Icons.Default.BatterySaver,
+                                    contentDescription = null,
+                                    tint = if (batteryOptimizationIgnored)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.error
                                 )
-                            }
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Enable WiFi Scanning")
-                                Switch(
-                                    checked = enableWifi,
-                                    onCheckedChange = { 
-                                        enableWifi = it
-                                        updateScanSettings(
-                                            wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, enableCellular, trackSeenDevices
-                                        )
-                                    }
-                                )
-                            }
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("Cellular Monitoring")
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Detect IMSI catchers & anomalies",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = "Battery Optimization",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
                                     )
-                                }
-                                Switch(
-                                    checked = enableCellular,
-                                    onCheckedChange = { 
-                                        enableCellular = it
-                                        updateScanSettings(
-                                            wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, enableCellular, trackSeenDevices
-                                        )
-                                    }
-                                )
-                            }
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("Track Seen Devices")
                                     Text(
-                                        text = "Log non-matching devices",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = if (batteryOptimizationIgnored)
+                                            "Unrestricted - scanning will run continuously"
+                                        else
+                                            "Restricted - Android may stop scanning",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (batteryOptimizationIgnored)
+                                            MaterialTheme.colorScheme.primary
+                                        else
+                                            MaterialTheme.colorScheme.error
                                     )
                                 }
-                                Switch(
-                                    checked = trackSeenDevices,
-                                    onCheckedChange = { 
-                                        trackSeenDevices = it
-                                        updateScanSettings(
-                                            wifiInterval.toInt(), bleDuration.toInt(),
-                                            enableBle, enableWifi, enableCellular, trackSeenDevices
-                                        )
-                                    }
-                                )
+                            }
+
+                            if (!batteryOptimizationIgnored) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = { openBatteryOptimizationSettings(context) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.BatteryAlert, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Disable Battery Optimization")
+                                }
                             }
                         }
                     }
                 }
-            }
-            
-            // All Detections - New unified view
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Visibility,
-                    title = "All Detection Patterns",
-                    subtitle = "View all patterns, manage custom rules, toggle categories",
-                    onClick = onNavigateToAllDetections
-                )
-            }
 
-            // Detection Tuning - Thresholds and sensitivity
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = "Detection Sensitivity",
-                    subtitle = "Adjust thresholds for Cell, Satellite, BLE, WiFi",
-                    onClick = onNavigateToDetectionSettings
-                )
-            }
-            
-            // Notification Settings
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Notifications,
-                    title = "Notifications",
-                    subtitle = "Alert sounds, vibration, quiet hours",
-                    onClick = onNavigateToNotifications
-                )
-            }
-
-            // AI Analysis Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "AI Analysis")
-            }
-
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Psychology,
-                    title = "AI-Powered Analysis",
-                    subtitle = "On-device LLM for threat insights",
-                    onClick = onNavigateToAiSettings
-                )
-            }
-
-            // Scan Statistics Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "Scan Statistics")
-            }
-            
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        StatRow("BLE Devices Seen", scanStats.bleDevicesSeen.toString())
-                        StatRow("WiFi Networks Seen", scanStats.wifiNetworksSeen.toString())
-                        Divider(modifier = Modifier.padding(vertical = 8.dp))
-                        StatRow("Total BLE Scans", scanStats.totalBleScans.toString())
-                        StatRow("Total WiFi Scans", scanStats.totalWifiScans.toString())
-                        StatRow("Successful WiFi Scans", scanStats.successfulWifiScans.toString())
-                        StatRow(
-                            "Throttled WiFi Scans", 
-                            scanStats.throttledWifiScans.toString(),
-                            valueColor = if (scanStats.throttledWifiScans > 0) 
-                                MaterialTheme.colorScheme.error 
-                            else 
-                                MaterialTheme.colorScheme.onSurface
-                        )
-                        Divider(modifier = Modifier.padding(vertical = 8.dp))
-                        scanStats.lastBleSuccessTime?.let { time ->
-                            StatRow(
-                                "Last BLE Success",
-                                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(time))
+                // Auto-start on boot toggle
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = if (autoStartOnBoot)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                        scanStats.lastWifiSuccessTime?.let { time ->
-                            StatRow(
-                                "Last WiFi Success",
-                                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(time))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Auto-start on Boot",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = if (autoStartOnBoot)
+                                        "Scanning starts automatically when device boots"
+                                    else
+                                        "Manual start required after reboot",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = autoStartOnBoot,
+                                onCheckedChange = { enabled ->
+                                    autoStartOnBoot = enabled
+                                    BootReceiver.setAutoStartOnBoot(context, enabled)
+                                }
                             )
                         }
                     }
                 }
             }
-            
-            // Advanced Logs Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "Advanced")
-            }
 
-            // Advanced Mode toggle
+            // 7. Advanced Toggle + Advanced Section
             item {
+                Spacer(modifier = Modifier.height(8.dp))
                 Card(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { advancedVisible = !advancedVisible }
                 ) {
                     Row(
                         modifier = Modifier
@@ -589,7 +623,7 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.Default.Code,
                             contentDescription = null,
-                            tint = if (uiState.advancedMode)
+                            tint = if (advancedVisible)
                                 MaterialTheme.colorScheme.primary
                             else
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -597,101 +631,250 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Advanced Mode",
+                                text = "Show Advanced",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = if (uiState.advancedMode)
-                                    "Showing all technical details and raw data"
+                                text = if (advancedVisible)
+                                    "Showing technical settings"
                                 else
-                                    "Show additional technical information",
+                                    "Tap to show technical settings",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
-                            checked = uiState.advancedMode,
-                            onCheckedChange = { enabled ->
-                                viewModel.setAdvancedMode(enabled)
+                            checked = advancedVisible,
+                            onCheckedChange = { advancedVisible = it }
+                        )
+                    }
+                }
+            }
+
+            // Advanced Section (hidden by default)
+            if (advancedVisible) {
+                // Advanced Mode toggle
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeveloperMode,
+                                contentDescription = null,
+                                tint = if (uiState.advancedMode)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Advanced Mode",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = if (uiState.advancedMode)
+                                        "Showing all technical details and raw data"
+                                    else
+                                        "Show additional technical information",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.advancedMode,
+                                onCheckedChange = { enabled ->
+                                    viewModel.setAdvancedMode(enabled)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Scan Statistics Section
+                item {
+                    SectionHeader(title = "Scan Statistics")
+                }
+
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            StatRow("BLE Devices Seen", scanStats.bleDevicesSeen.toString())
+                            StatRow("WiFi Networks Seen", scanStats.wifiNetworksSeen.toString())
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            StatRow("Total BLE Scans", scanStats.totalBleScans.toString())
+                            StatRow("Total WiFi Scans", scanStats.totalWifiScans.toString())
+                            StatRow("Successful WiFi Scans", scanStats.successfulWifiScans.toString())
+                            StatRow(
+                                "Throttled WiFi Scans",
+                                scanStats.throttledWifiScans.toString(),
+                                valueColor = if (scanStats.throttledWifiScans > 0)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurface
+                            )
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            scanStats.lastBleSuccessTime?.let { time ->
+                                StatRow(
+                                    "Last BLE Success",
+                                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(time))
+                                )
+                            }
+                            scanStats.lastWifiSuccessTime?.let { time ->
+                                StatRow(
+                                    "Last WiFi Success",
+                                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(time))
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Service Health Status
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.MonitorHeart,
+                        title = "Service Health",
+                        subtitle = "View detector status, errors, and restart counts",
+                        onClick = onNavigateToServiceHealth
+                    )
+                }
+
+                // Flipper Zero Integration
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.DevicesOther,
+                        title = "Flipper Zero",
+                        subtitle = "Connect and install Flock Bridge app",
+                        onClick = onNavigateToFlipperSettings
+                    )
+                }
+
+                // Test Mode
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Science,
+                        title = "Test Mode",
+                        subtitle = "Simulate surveillance detections for testing",
+                        onClick = onNavigateToTestMode
+                    )
+                }
+
+                // AI Analysis
+                item {
+                    SettingsItem(
+                        icon = Icons.Default.Psychology,
+                        title = "AI-Powered Analysis",
+                        subtitle = "On-device LLM for threat insights",
+                        onClick = onNavigateToAiSettings
+                    )
+                }
+
+                // OUI Database Section
+                item {
+                    OuiDatabaseSection(
+                        ouiSettings = ouiSettings,
+                        isUpdating = isOuiUpdating,
+                        onAutoUpdateToggle = { viewModel.setOuiAutoUpdate(it) },
+                        onIntervalChange = { viewModel.setOuiUpdateInterval(it) },
+                        onWifiOnlyToggle = { viewModel.setOuiWifiOnly(it) },
+                        onManualUpdate = { viewModel.triggerOuiUpdate() }
+                    )
+                }
+
+                // Service Kill Switch
+                item {
+                    var showKillConfirmation by remember { mutableStateOf(false) }
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.PowerSettingsNew,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Stop All Scanning",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Completely stop the scanning service",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { showKillConfirmation = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Force Stop Service")
+                            }
+                        }
+                    }
+
+                    if (showKillConfirmation) {
+                        AlertDialog(
+                            onDismissRequest = { showKillConfirmation = false },
+                            icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+                            title = { Text("Stop Scanning Service?") },
+                            text = {
+                                Text(
+                                    "This will completely stop the scanning service and disable auto-restart. " +
+                                    "You will need to manually restart the app to resume scanning.\n\n" +
+                                    "Surveillance devices will NOT be detected while the service is stopped."
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showKillConfirmation = false
+                                        BootReceiver.setAutoStartOnBoot(context, false)
+                                        autoStartOnBoot = false
+                                        ScanningService.forceStop(context)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                    )
+                                ) {
+                                    Text("Stop Service")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showKillConfirmation = false }) {
+                                    Text("Cancel")
+                                }
                             }
                         )
                     }
                 }
             }
 
-            // Service Health Status
+            // 8. About Section
             item {
-                SettingsItem(
-                    icon = Icons.Default.MonitorHeart,
-                    title = "Service Health",
-                    subtitle = "View detector status, errors, and restart counts",
-                    onClick = onNavigateToServiceHealth
-                )
-            }
-
-            // Flipper Zero Integration
-            item {
-                SettingsItem(
-                    icon = Icons.Default.DevicesOther,
-                    title = "Flipper Zero",
-                    subtitle = "Connect and install Flock Bridge app",
-                    onClick = onNavigateToFlipperSettings
-                )
-            }
-
-            // Automation Broadcasts Section
-            item {
-                AutomationBroadcastSection(viewModel = viewModel)
-            }
-
-            // OUI Database Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                OuiDatabaseSection(
-                    ouiSettings = ouiSettings,
-                    isUpdating = isOuiUpdating,
-                    onAutoUpdateToggle = { viewModel.setOuiAutoUpdate(it) },
-                    onIntervalChange = { viewModel.setOuiUpdateInterval(it) },
-                    onWifiOnlyToggle = { viewModel.setOuiWifiOnly(it) },
-                    onManualUpdate = { viewModel.triggerOuiUpdate() }
-                )
-            }
-
-            // Security & Privacy Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "Security & Privacy")
-            }
-
-            item {
-                SettingsItem(
-                    icon = Icons.Default.Lock,
-                    title = "App Lock",
-                    subtitle = "PIN and biometric authentication",
-                    onClick = onNavigateToSecurity
-                )
-            }
-
-            // Danger Zone Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                DangerZoneSection(
-                    privacySettings = viewModel.privacySettings.collectAsState().value,
-                    onNavigateToPrivacy = onNavigateToPrivacy,
-                    onNavigateToNuke = onNavigateToNuke
-                )
-            }
-
-            item {
-                NetworkPrivacySection(viewModel = viewModel)
-            }
-
-            // About Section
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 SectionHeader(title = "About")
             }
-            
+
             item {
                 SettingsItem(
                     icon = Icons.Default.Info,
@@ -700,7 +883,7 @@ fun SettingsScreen(
                     onClick = { }
                 )
             }
-            
+
             item {
                 SettingsItem(
                     icon = Icons.Default.Code,
@@ -712,7 +895,7 @@ fun SettingsScreen(
                     }
                 )
             }
-            
+
             item {
                 Spacer(modifier = Modifier.height(32.dp))
             }

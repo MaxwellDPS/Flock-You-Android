@@ -720,6 +720,7 @@ fun MainScreen(
                             cellularStatus = uiState.cellularStatus,
                             cellularAnomalies = filteredCellularAnomalies,
                             seenCellTowers = uiState.seenCellTowers,
+                            cellularEvents = uiState.cellularEvents,
                             satelliteState = uiState.satelliteState,
                             satelliteAnomalies = filteredSatelliteAnomalies,
                             isScanning = uiState.isScanning,
@@ -2415,6 +2416,7 @@ fun DetailRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CellularTabContent(
     modifier: Modifier = Modifier,
@@ -2422,6 +2424,7 @@ private fun CellularTabContent(
     cellularStatus: ScanningService.SubsystemStatus,
     cellularAnomalies: List<CellularMonitor.CellularAnomaly>,
     seenCellTowers: List<CellularMonitor.SeenCellTower>,
+    cellularEvents: List<CellularMonitor.CellularEvent>,
     satelliteState: com.flockyou.monitoring.SatelliteMonitor.SatelliteConnectionState?,
     satelliteAnomalies: List<com.flockyou.monitoring.SatelliteMonitor.SatelliteAnomaly>,
     isScanning: Boolean,
@@ -2430,7 +2433,25 @@ private fun CellularTabContent(
     onClearSatelliteHistory: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-    
+    var showTimelineSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Timeline Bottom Sheet
+    if (showTimelineSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showTimelineSheet = false },
+            sheetState = sheetState,
+            modifier = Modifier.fillMaxHeight(0.9f)
+        ) {
+            CellularTimelineScreen(
+                events = cellularEvents,
+                seenTowers = seenCellTowers,
+                cellStatus = cellStatus,
+                onClearHistory = onClearCellularHistory
+            )
+        }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -2642,20 +2663,43 @@ private fun CellularTabContent(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    TextButton(onClick = onClearCellularHistory) {
-                        Text("Clear")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { showTimelineSheet = true }) {
+                            Icon(
+                                Icons.Default.Timeline,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Timeline")
+                        }
+                        TextButton(onClick = onClearCellularHistory) {
+                            Text("Clear")
+                        }
                     }
                 }
             }
-            
+
             items(
-                items = seenCellTowers,
+                items = seenCellTowers.take(5),
                 key = { "${it.mcc}-${it.mnc}-${it.lac}-${it.cellId}" }
             ) { tower ->
                 CellTowerHistoryCard(tower = tower, dateFormat = dateFormat)
             }
+
+            // Show "View All" if there are more towers
+            if (seenCellTowers.size > 5) {
+                item {
+                    TextButton(
+                        onClick = { showTimelineSheet = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("View all ${seenCellTowers.size} towers →")
+                    }
+                }
+            }
         }
-        
+
         // Satellite status card
         item {
             Card(

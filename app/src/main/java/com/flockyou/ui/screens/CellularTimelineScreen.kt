@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,20 +30,51 @@ import java.util.*
  * Timeline view of cellular network events for better visibility into
  * what's happening with cell tower connections
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CellularTimelineScreen(
     events: List<CellularMonitor.CellularEvent>,
+    seenTowers: List<CellularMonitor.SeenCellTower>,
     cellStatus: CellularMonitor.CellStatus?,
     onClearHistory: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val fullDateFormat = remember { SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault()) }
-    
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("Timeline", "Seen Towers")
+
     Column(modifier = modifier.fillMaxSize()) {
         // Header with current status
         CellularStatusHeader(cellStatus)
-        
+
+        // Tab Row
+        TabRow(
+            selectedTabIndex = selectedTab,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    text = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(title)
+                            if (index == 0 && events.isNotEmpty()) {
+                                Badge { Text("${events.size}") }
+                            } else if (index == 1 && seenTowers.isNotEmpty()) {
+                                Badge { Text("${seenTowers.size}") }
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
         // Toolbar
         Row(
             modifier = Modifier
@@ -52,14 +84,12 @@ fun CellularTimelineScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Cellular Timeline",
+                text = if (selectedTab == 0) "Cellular Timeline" else "All Seen Cell Towers",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Filter chips could go here
-                
                 TextButton(onClick = onClearHistory) {
                     Icon(
                         Icons.Default.DeleteSweep,
@@ -71,53 +101,350 @@ fun CellularTimelineScreen(
                 }
             }
         }
-        
-        if (events.isEmpty()) {
-            // Empty state
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
+
+        // Content based on selected tab
+        when (selectedTab) {
+            0 -> TimelineContent(events, dateFormat, fullDateFormat)
+            1 -> SeenTowersContent(seenTowers, dateFormat, fullDateFormat)
+        }
+    }
+}
+
+@Composable
+private fun TimelineContent(
+    events: List<CellularMonitor.CellularEvent>,
+    dateFormat: SimpleDateFormat,
+    fullDateFormat: SimpleDateFormat
+) {
+    if (events.isEmpty()) {
+        // Empty state
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                Icon(
+                    Icons.Default.Timeline,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "No cellular events yet",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "Events will appear here as cell tower changes occur",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            items(
+                items = events,
+                key = { it.id }
+            ) { event ->
+                TimelineEventItem(
+                    event = event,
+                    dateFormat = dateFormat,
+                    fullDateFormat = fullDateFormat
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeenTowersContent(
+    seenTowers: List<CellularMonitor.SeenCellTower>,
+    dateFormat: SimpleDateFormat,
+    fullDateFormat: SimpleDateFormat
+) {
+    if (seenTowers.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    Icons.Default.CellTower,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "No cell towers seen yet",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "Cell towers will appear here as your device connects to them",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                items = seenTowers,
+                key = { it.cellId }
+            ) { tower ->
+                SeenTowerItem(
+                    tower = tower,
+                    dateFormat = dateFormat,
+                    fullDateFormat = fullDateFormat
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeenTowerItem(
+    tower: CellularMonitor.SeenCellTower,
+    dateFormat: SimpleDateFormat,
+    fullDateFormat: SimpleDateFormat
+) {
+    val isToday = remember(tower.lastSeen) {
+        val today = Calendar.getInstance()
+        val towerCal = Calendar.getInstance().apply { timeInMillis = tower.lastSeen }
+        today.get(Calendar.DAY_OF_YEAR) == towerCal.get(Calendar.DAY_OF_YEAR) &&
+            today.get(Calendar.YEAR) == towerCal.get(Calendar.YEAR)
+    }
+
+    val lastSeenString = if (isToday) {
+        dateFormat.format(Date(tower.lastSeen))
+    } else {
+        fullDateFormat.format(Date(tower.lastSeen))
+    }
+
+    val firstSeenString = if (isToday) {
+        dateFormat.format(Date(tower.firstSeen))
+    } else {
+        fullDateFormat.format(Date(tower.firstSeen))
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (tower.isTrusted) {
+                Color(0xFF4CAF50).copy(alpha = 0.1f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            }
+        ),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Header row with cell ID and trust status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        Icons.Default.Timeline,
+                        Icons.Default.CellTower,
                         contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.outline
+                        modifier = Modifier.size(24.dp),
+                        tint = if (tower.isTrusted) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary
                     )
+                    Column {
+                        Text(
+                            text = "Cell ${tower.cellId}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = tower.operator ?: "Unknown Operator",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Trust badge
+                if (tower.isTrusted) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.VerifiedUser,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = Color(0xFF4CAF50)
+                            )
+                            Text(
+                                text = "Trusted",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF4CAF50),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Network info row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Network type
+                Column {
                     Text(
-                        text = "No cellular events yet",
-                        style = MaterialTheme.typography.bodyLarge,
+                        text = "Network",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
                     Text(
-                        text = "Events will appear here as cell tower changes occur",
+                        text = tower.networkType,
                         style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Generation
+                Column {
+                    Text(
+                        text = "Generation",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = when (tower.networkGeneration) {
+                            "5G" -> Color(0xFF2196F3).copy(alpha = 0.2f)
+                            "4G" -> Color(0xFF4CAF50).copy(alpha = 0.2f)
+                            "3G" -> Color(0xFFFFC107).copy(alpha = 0.2f)
+                            else -> Color(0xFFF44336).copy(alpha = 0.2f)
+                        }
+                    ) {
+                        Text(
+                            text = tower.networkGeneration,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = when (tower.networkGeneration) {
+                                "5G" -> Color(0xFF2196F3)
+                                "4G" -> Color(0xFF4CAF50)
+                                "3G" -> Color(0xFFFFC107)
+                                else -> Color(0xFFF44336)
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                // MCC/MNC
+                tower.mcc?.let { mcc ->
+                    tower.mnc?.let { mnc ->
+                        Column {
+                            Text(
+                                text = "MCC/MNC",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            Text(
+                                text = "$mcc-$mnc",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Signal and timing info
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Signal range
+                Column {
+                    Text(
+                        text = "Signal Range",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = "${tower.minSignal} to ${tower.maxSignal} dBm",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                // Seen count
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Seen",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = "${tower.seenCount}x",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Timestamps
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                items(
-                    items = events,
-                    key = { it.id }
-                ) { event ->
-                    TimelineEventItem(
-                        event = event,
-                        dateFormat = dateFormat,
-                        fullDateFormat = fullDateFormat
-                    )
-                }
+                Text(
+                    text = "First: $firstSeenString",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "Last: $lastSeenString",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }

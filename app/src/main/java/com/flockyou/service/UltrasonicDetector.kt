@@ -227,6 +227,13 @@ class UltrasonicDetector(
             listOf(17500..18500, 19800..20200),
             "General electronics including TVs and monitors may emit spurious ultrasonic frequencies."
         ),
+        EV_PEDESTRIAN_WARNING(
+            "EV/Vehicle Pedestrian Warning (AVAS)",
+            listOf(17000..20000),
+            "Electric vehicles emit ultrasonic tones when reversing or at low speeds to warn pedestrians. " +
+            "Characterized by brief duration (seconds), rising-then-falling amplitude as vehicle passes, " +
+            "and outdoor detection. Common in modern EVs, hybrids, and delivery vehicles."
+        ),
         NATURAL(
             "Natural Sources (keys, whistles)",
             listOf(17500..22000),
@@ -1234,6 +1241,54 @@ class UltrasonicDetector(
     }
 
     /**
+     * Group location entries by geographic proximity.
+     *
+     * Used to analyze dwell time at each distinct location. A real tracker following you
+     * will show persistent detection at each location (you stop somewhere, it stays with you).
+     * Different TVs will show brief detections as you walk past each house.
+     *
+     * @param locationHistory List of location entries with timestamps
+     * @param proximityMeters Distance threshold for grouping (default 100m)
+     * @return List of location groups, each containing entries within proximityMeters of each other
+     */
+    private fun groupLocationsByProximity(
+        locationHistory: List<LocationEntry>,
+        proximityMeters: Double
+    ): List<List<LocationEntry>> {
+        if (locationHistory.isEmpty()) return emptyList()
+
+        val groups = mutableListOf<MutableList<LocationEntry>>()
+        val assigned = mutableSetOf<Int>()
+
+        for ((idx, entry) in locationHistory.withIndex()) {
+            if (idx in assigned) continue
+
+            // Start a new group with this entry
+            val group = mutableListOf(entry)
+            assigned.add(idx)
+
+            // Find all other entries within proximity
+            for ((otherIdx, other) in locationHistory.withIndex()) {
+                if (otherIdx in assigned) continue
+                if (otherIdx == idx) continue
+
+                val distance = haversineDistanceMeters(
+                    entry.latitude, entry.longitude,
+                    other.latitude, other.longitude
+                )
+                if (distance <= proximityMeters) {
+                    group.add(other)
+                    assigned.add(otherIdx)
+                }
+            }
+
+            groups.add(group)
+        }
+
+        return groups
+    }
+
+    /**
      * Build comprehensive beacon analysis with enterprise-grade heuristics
      */
     private fun buildBeaconAnalysis(beacon: BeaconDetection): BeaconAnalysis {
@@ -1266,8 +1321,97 @@ class UltrasonicDetector(
 
         // Cross-location analysis
         val distinctLocations = countDistinctLocations(locations)
-        val followingUser = distinctLocations >= 2
         val detectionDuration = beacon.lastDetected - beacon.firstDetected
+
+        // ===== CROSS-LOCATION FOLLOWING DETECTION =====
+        // CRITICAL FIX: Distinguish between:
+        // 1. SAME beacon following user (e.g., tracker in bag) - TRUE THREAT
+        // 2. SIMILAR frequency from DIFFERENT sources (e.g., different TVs in neighborhood) - FALSE POSITIVE
+        //
+        // Walking through a suburb, different homes' TVs may emit 18kHz SilverPush/Alphonso beacons.
+        // These are DIFFERENT beacons (different TVs), not one tracker following you.
+        //
+        // Indicators that it's truly the SAME beacon following you:
+        // - Consistent amplitude fingerprint across locations (same device = similar signal characteristics)
+        // - Stable frequency (same oscillator = same frequency drift pattern)
+        // - Temporal correlation (appears shortly after you arrive at each location)
+        // - NOT a known TV/ad tracking frequency (those are expected from multiple TVs)
+        //
+        // Indicators that it's DIFFERENT sources (neighborhood TVs):
+        // - Known TV ad beacon frequency (17.5-18.5kHz = SilverPush/Alphonso/Zapr TV ad range)
+        // - High amplitude variance across locations (different TVs = different signal strengths)
+        // - Detected only while passing by (not persistent at each location)
+        // - Outdoor/walking context with residential surroundings
+
+        val isKnownTvAdFrequency = beacon.frequency in 17400..18600  // TV ad beacon band
+        val isKnownRetailFrequency = beacon.frequency in 19900..20300  // Shopkick/retail band
+        val isKnownSmartTvFrequency = beacon.frequency in 20100..21600  // Samba TV/Inscape smart TV ACR
+
+        // Calculate amplitude consistency across locations
+        // A REAL tracker following you would have consistent amplitude (same device)
+        // Different TVs in different houses would have HIGH variance (different distances, walls, etc.)
+        val amplitudeConsistency = if (amplitudes.size >= 3) {
+            val avgAmp = amplitudes.average()
+            val variance = amplitudes.map { (it - avgAmp) * (it - avgAmp) }.average()
+            val stdDev = sqrt(variance)
+            // Coefficient of variation: stdDev / |mean| - lower = more consistent
+            // Trackers typically have CV < 0.15 (15% variation)
+            // Different TVs typically have CV > 0.3 (30%+ variation)
+            if (avgAmp != 0.0) (stdDev / abs(avgAmp)).toFloat() else 1.0f
+        } else 1.0f  // Insufficient data = assume inconsistent
+
+        // Check for temporal clustering at each location
+        // Real tracker: persistent signal at each location (stays with you)
+        // Different TVs: brief detections as you walk past
+        val avgDwellTimePerLocation = if (distinctLocations > 0 && locations.isNotEmpty()) {
+            // Group locations by proximity and calculate average time spent detecting at each
+            val locationGroups = groupLocationsByProximity(locations, 100.0) // 100m clusters
+            val dwellTimes = locationGroups.map { group ->
+                if (group.size >= 2) {
+                    group.maxOf { it.timestamp } - group.minOf { it.timestamp }
+                } else 0L
+            }
+            if (dwellTimes.isNotEmpty()) dwellTimes.average().toLong() else 0L
+        } else 0L
+
+        // FOLLOWING USER DETERMINATION
+        // Require STRONG evidence for cross-location tracking alert:
+        // 1. Must have 3+ distinct locations (2 could be coincidence - neighbor's TV from two spots)
+        // 2. For TV ad frequencies (17.4-18.6kHz), require amplitude consistency (same device)
+        // 3. For unknown frequencies, require persistence at multiple locations
+        val followingUser = when {
+            // Not enough distinct locations - don't flag as following
+            distinctLocations < 3 -> false
+
+            // Known TV ad frequency (SilverPush, Alphonso, Zapr)
+            // These are EXPECTED from different TVs in a neighborhood
+            // Only flag if amplitude is HIGHLY consistent (suggests same device)
+            isKnownTvAdFrequency -> {
+                amplitudeConsistency < 0.15f && // Very consistent amplitude = same device
+                isFrequencyStable &&            // Stable frequency = same oscillator
+                avgDwellTimePerLocation > 30_000L  // 30+ seconds per location = persistent
+            }
+
+            // Known retail beacon frequency (Shopkick)
+            // Expected in retail areas but not in suburbs
+            isKnownRetailFrequency -> {
+                // In a residential suburb, retail beacons at 3+ locations is suspicious
+                amplitudeConsistency < 0.25f
+            }
+
+            // Known smart TV ACR frequency (Samba TV, Inscape)
+            // Very common from smart TVs - only flag with strong evidence
+            isKnownSmartTvFrequency -> {
+                amplitudeConsistency < 0.12f && // Extremely consistent
+                avgDwellTimePerLocation > 60_000L  // 1+ minute per location
+            }
+
+            // Unknown frequency - more suspicious, lower threshold
+            else -> {
+                amplitudeConsistency < 0.3f || // Either consistent amplitude
+                avgDwellTimePerLocation > 20_000L  // Or persistent presence
+            }
+        }
 
         // Environmental context
         val envContext = beacon.environmentalContext
@@ -1419,6 +1563,33 @@ class UltrasonicDetector(
         if (fpSourceMatch != null && matchedSource == KnownBeaconType.UNKNOWN) {
             fpScore += 15f
             fpIndicators.add("Frequency matches ${fpSourceMatch.displayName} range")
+        }
+
+        // FP Indicator 11: TV ad beacon frequency at multiple locations with inconsistent amplitude
+        // Walking through a neighborhood with TVs on in different houses will trigger 18kHz detections
+        // at multiple locations - but these are DIFFERENT sources, not a tracker following you.
+        // Key distinction: same tracker = consistent amplitude, different TVs = varying amplitude
+        if (isKnownTvAdFrequency && distinctLocations >= 2 && !followingUser) {
+            fpScore += 30f
+            fpIndicators.add("TV ad beacon frequency (${beacon.frequency}Hz) detected at $distinctLocations locations with inconsistent signal - likely different TVs, not a tracker")
+        }
+
+        // FP Indicator 12: Smart TV ACR frequency without strong tracking indicators
+        // Samba TV / Inscape beacons are extremely common from smart TVs
+        if (isKnownSmartTvFrequency && !followingUser && amplitudeConsistency > 0.2f) {
+            fpScore += 25f
+            fpIndicators.add("Smart TV ACR frequency (${beacon.frequency}Hz) - common from household TVs")
+        }
+
+        // FP Indicator 13: EV/Vehicle pedestrian warning system (AVAS)
+        // Electric vehicles emit 17-20kHz tones when reversing or at low speeds
+        // Characteristics: brief (<15s), outdoor, rising-then-falling amplitude as vehicle passes
+        val isEvWarningFrequency = beacon.frequency in 17000..20000
+        val isBriefDetection = detectionDuration < 15_000 && beacon.detectionCount <= 5
+        val isOutdoorLikely = envContext == EnvironmentalContext.OUTDOOR_RANDOM || envContext == EnvironmentalContext.UNKNOWN
+        if (isEvWarningFrequency && isBriefDetection && isOutdoorLikely && !followingUser) {
+            fpScore += 35f
+            fpIndicators.add("Matches EV pedestrian warning pattern (${beacon.frequency}Hz, brief ${detectionDuration/1000}s detection) - common from reversing electric vehicles")
         }
 
         // Reduce FP score if we have strong tracking indicators

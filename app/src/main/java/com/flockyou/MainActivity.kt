@@ -71,6 +71,7 @@ import com.flockyou.ui.screens.AiSettingsScreen
 import com.flockyou.ui.screens.ServiceHealthStatusScreen
 import com.flockyou.ui.screens.FlipperSettingsScreen
 import com.flockyou.ui.screens.ActiveProbesScreen
+import com.flockyou.ui.screens.TestModeSettingsScreen
 import com.flockyou.ui.theme.FlockYouTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -336,7 +337,8 @@ fun AppNavigation(
                 onNavigateToAllDetections = { navController.navigate("all_detections") },
                 onNavigateToAiSettings = { navController.navigate("ai_settings") },
                 onNavigateToServiceHealth = { navController.navigate("service_health") },
-                onNavigateToFlipperSettings = { navController.navigate("flipper_settings") }
+                onNavigateToFlipperSettings = { navController.navigate("flipper_settings") },
+                onNavigateToTestMode = { navController.navigate("test_mode") }
             )
         }
         composable("nearby") {
@@ -429,6 +431,11 @@ fun AppNavigation(
         }
         composable("active_probes") {
             ActiveProbesScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("test_mode") {
+            TestModeSettingsScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

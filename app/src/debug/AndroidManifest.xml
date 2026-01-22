@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+    DEBUG-ONLY manifest additions for screenshot automation.
+    These are only included in debug builds.
+    -->
+
+    <application>
+        <!-- Debug-only activity for screenshot automation -->
+        <activity
+            android:name="com.flockyou.debug.ScreenshotHelperActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=""
+            android:excludeFromRecents="true">
+
+            <!-- Test Mode Control -->
+            <intent-filter>
+                <action android:name="com.flockyou.debug.TEST_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Navigation Control -->
+            <intent-filter>
+                <action android:name="com.flockyou.debug.NAVIGATE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Deep Link Support -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="flockyou"
+                    android:host="testmode" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="flockyou"
+                    android:host="navigate" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

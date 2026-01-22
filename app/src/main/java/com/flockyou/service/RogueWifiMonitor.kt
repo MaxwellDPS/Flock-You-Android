@@ -159,46 +159,94 @@ class RogueWifiMonitor(
             Regex("(?i)^mirror[-_]?(cam|[0-9]+).*")                 // Mirror cameras
         )
 
+        // ==================== JOKE SSID EXCLUSION LIST ====================
+        // These SSIDs are 100% JOKES - real surveillance would NEVER use obvious names.
+        // Alerting on these creates annoying false positives and makes users distrust the app.
+        // Pattern: If it sounds like a movie/TV joke, it IS a joke.
+        private val JOKE_SURVEILLANCE_SSID_PATTERNS = listOf(
+            // === Classic "FBI Van" jokes ===
+            Regex("(?i).*fbi[-_\\s]*(surveillance[-_\\s]*)?(van|truck|mobile).*"),
+            Regex("(?i).*cia[-_\\s]*(surveillance[-_\\s]*)?(van|truck|mobile).*"),
+            Regex("(?i).*nsa[-_\\s]*(surveillance[-_\\s]*)?(van|truck|mobile).*"),
+            Regex("(?i)^fbi[-_]?van.*"),
+            Regex("(?i)^cia[-_]?van.*"),
+            Regex("(?i)^nsa[-_]?van.*"),
+
+            // === Standalone agency names (people naming WiFi "FBI" as a joke) ===
+            Regex("(?i)^fbi$"),
+            Regex("(?i)^cia$"),
+            Regex("(?i)^nsa$"),
+            Regex("(?i)^dhs$"),
+            Regex("(?i)^atf$"),
+            Regex("(?i)^dea$"),
+
+            // === "Definitely not" pattern (sarcastic joke format) ===
+            Regex("(?i).*(definitely|totally|certainly|absolutely)[-_\\s]*(not|no)[-_\\s]*(fbi|cia|nsa|surveillance|spying|watching).*"),
+            Regex("(?i)^not[-_\\s]*(the[-_\\s]*)?(fbi|cia|nsa|police|cops).*"),
+
+            // === Explicit surveillance humor ===
+            Regex("(?i).*surveillance[-_\\s]*(van|truck|vehicle).*"),
+            Regex("(?i).*undercover[-_\\s]*(van|cop|police).*"),
+            Regex("(?i).*unmarked[-_\\s]*(van|vehicle|police).*"),
+            Regex("(?i).*stakeout.*"),
+            Regex("(?i).*wiretap.*"),
+            Regex("(?i).*spying[-_\\s]*on[-_\\s]*you.*"),
+            Regex("(?i).*watching[-_\\s]*you.*"),
+            Regex("(?i).*we[-_\\s]*(are|r)[-_\\s]*watching.*"),
+            Regex("(?i).*big[-_\\s]*brother.*"),
+
+            // === Movie/TV references ===
+            Regex("(?i).*flowers[-_\\s]*by[-_\\s]*irene.*"),  // Classic FBI surveillance reference
+            Regex("(?i).*jack[-_\\s]*bauer.*"),
+            Regex("(?i).*homeland[-_\\s]*security.*"),
+
+            // === Other obvious jokes ===
+            Regex("(?i).*pretty[-_\\s]*fly[-_\\s]*for[-_\\s]*(a[-_\\s]*)?(wifi|wi-fi).*"),
+            Regex("(?i).*bill[-_\\s]*wi[-_\\s]*the[-_\\s]*science[-_\\s]*fi.*"),
+            Regex("(?i).*wu[-_\\s]*tang[-_\\s]*lan.*"),
+            Regex("(?i).*the[-_\\s]*promised[-_\\s]*lan.*"),
+            Regex("(?i).*it[-_\\s]*hurts[-_\\s]*when[-_\\s]*ip.*"),
+            Regex("(?i).*drop[-_\\s]*it[-_\\s]*like[-_\\s]*its[-_\\s]*hotspot.*")
+        )
+
         // Surveillance van / mobile surveillance patterns
         // NOTE: Real surveillance operations use BLAND, generic names - not "FBI_Van"!
-        // These patterns catch both obvious names AND suspiciously generic mobile hotspots
+        // Joke SSIDs are filtered out by JOKE_SURVEILLANCE_SSID_PATTERNS above.
+        // These patterns catch legitimate indicators:
+        // - Fleet vehicle router defaults (Sierra Wireless, Cradlepoint)
+        // - Mobile hotspot naming conventions used by field operations
         private val SURVEILLANCE_VAN_PATTERNS = listOf(
-            // === Obvious surveillance naming (less common in real ops) ===
-            Regex("(?i)^(unmarked|surveillance|recon|intel|tactical)[-_]?.*"),
-            Regex("(?i)^mobile[-_]?(command|ops|unit|station).*"),
-            Regex("(?i)^field[-_]?(ops|unit|team|office).*"),
-            Regex("(?i)^(swat|ert|hrt|srt|tac)[-_]?.*"),
-            Regex("(?i)^cctv[-_]?(van|mobile).*"),
-            Regex("(?i)^monitoring[-_]?(unit|van|station).*"),
-
             // === Fleet vehicle patterns (Sierra Wireless, Cradlepoint defaults) ===
-            Regex("(?i)^(van|unit|car|truck)[-_]?[0-9]{1,4}$"),
-            Regex("(?i)^(vehicle|veh|fleet)[-_]?[0-9]{1,4}$"),
-            Regex("(?i)^mp70[-_]?[0-9a-f]+$"),              // Sierra Wireless MP70
+            // These are the ACTUAL indicators - equipment used in real surveillance
+            Regex("(?i)^mp70[-_]?[0-9a-f]+$"),              // Sierra Wireless MP70 fleet router
             Regex("(?i)^ibr[-_]?[0-9]+.*"),                  // Cradlepoint IBR series
-            Regex("(?i)^airlink[-_]?.*"),                    // Sierra Wireless AirLink
-            Regex("(?i)^cradlepoint[-_]?.*"),                // Cradlepoint routers
+            Regex("(?i)^airlink[-_]?[0-9a-f]+$"),           // Sierra Wireless AirLink
+            Regex("(?i)^cradlepoint[-_]?[0-9a-f]+$"),       // Cradlepoint default SSID
+            Regex("(?i)^rv50[-_]?[0-9a-f]+$"),              // Sierra Wireless RV50 LTE gateway
+            Regex("(?i)^es450[-_]?[0-9a-f]+$"),             // Cradlepoint ES450
 
-            // === Government/Agency patterns ===
-            Regex("(?i)^(dhs|fbi|atf|dea|ice|usms|usss)[-_]?.*"),
-            Regex("(?i)^(fed|federal|govt|gov)[-_]?(van|unit|mobile).*"),
-            Regex("(?i)^le[-_]?(van|unit|[0-9]+)$"),         // Law Enforcement
-            Regex("(?i)^(county|city|state|muni)[-_]?(pd|police|unit).*"),
+            // === Generic numbered vehicle patterns (bland names = suspicious) ===
+            // Format: "unit123", "vehicle-42", "van001" - boring names used in real ops
+            Regex("(?i)^(van|unit|car|truck)[-_]?[0-9]{2,4}$"),
+            Regex("(?i)^(vehicle|veh)[-_]?[0-9]{2,4}$"),
+            Regex("(?i)^fleet[-_]?[0-9]{1,4}$"),
 
-            // === Private investigation patterns ===
-            Regex("(?i)^(pi|investigat|surveil)[-_]?[0-9]*$"),
-            Regex("(?i)^(stakeout|obs|observation)[-_]?.*"),
+            // === Mobile command center patterns ===
+            // These would be at events, not randomly in suburbs
+            Regex("(?i)^mobile[-_]?(command|unit)[-_]?[0-9]+$"),
+            Regex("(?i)^field[-_]?unit[-_]?[0-9]+$"),
 
-            // === Suspiciously generic hotspot names (real surveillance) ===
-            // These are harder to detect but common in actual operations
-            Regex("(?i)^(work|service|utility|maint)[-_]?(van|truck|vehicle)[0-9]*$"),
-            Regex("(?i)^(plumber|electric|cable|repair)[-_]?[0-9]+$")
+            // === Contractor/utility cover patterns (real surveillance disguises) ===
+            // Vans disguised as utilities - bland numbering schemes
+            Regex("(?i)^(service|utility|maint)[-_]?[0-9]{3,5}$"),
+            Regex("(?i)^tech[-_]?[0-9]{3,5}$")
         )
 
         // Common legitimate networks to reduce false positives
         // These are known public WiFi networks that should NOT trigger alerts
         private val COMMON_LEGITIMATE_SSIDS = setOf(
             // === ISP/Carrier hotspots ===
+            // These appear from EVERY subscriber's router - expect many in any neighborhood
             "xfinitywifi", "xfinity", "attwifi", "att wifi",
             "t-mobile", "tmobile", "t-mobile hotspot",
             "verizon", "verizon wifi", "vzwifi",
@@ -206,6 +254,7 @@ class RogueWifiMonitor(
             "cox wifi", "cox hotspot",
             "optimum wifi", "optimumwifi",
             "centurylink", "frontier",
+            "cablewifi", "twcwifi", "brighthouse",  // Time Warner/Spectrum legacy
 
             // === Coffee shops / restaurants ===
             "starbucks", "starbucks wifi", "google starbucks",
@@ -243,6 +292,79 @@ class RogueWifiMonitor(
             // === Generic guest/public patterns ===
             "free wifi", "free public wifi", "public wifi",
             "guest network", "visitor wifi", "visitors"
+        )
+
+        // ==================== COMMON SSID PATTERNS FOR NEIGHBORHOOD WALKING ====================
+        // These SSIDs are commonly used by multiple unrelated households.
+        // Walking through a suburb, you'll see the same SSID from different homes = NOT evil twin.
+        // Evil twin requires SAME network being spoofed, not unrelated networks sharing a name.
+        //
+        // Examples where multiple BSSIDs with same SSID is NORMAL:
+        // - "xfinitywifi" from every Comcast customer's router
+        // - "NETGEAR" / "linksys" from people who never changed default
+        // - "HOME-XXXX" pattern from ISP-provided routers
+        // - Popular names people choose: "FBI Van", "Pretty Fly for a WiFi", etc.
+        // - Mesh network names from different households: "Eero", "Google Wifi"
+        private val NEIGHBORHOOD_COMMON_SSID_PATTERNS = listOf(
+            // === ISP default patterns ===
+            // ISP routers often use default SSIDs - every customer has the same one
+            Regex("(?i)^xfinitywifi$"),                      // Comcast/Xfinity community hotspot
+            Regex("(?i)^attwifi$"),                          // AT&T community hotspot
+            Regex("(?i)^(home|myhome|mynetwork)[-_]?[0-9a-f]{4,8}$"),  // ISP default format
+            Regex("(?i)^(att|xfinity|spectrum|cox|verizon)[-_]?[0-9a-z]+$"),  // ISP branded
+
+            // === Router manufacturer defaults ===
+            // Many people never change from factory default
+            Regex("(?i)^netgear[-_]?[0-9]*$"),
+            Regex("(?i)^linksys[-_]?[0-9]*$"),
+            Regex("(?i)^dlink[-_]?[0-9]*$"),
+            Regex("(?i)^tp[-_]?link[-_]?[0-9]*$"),
+            Regex("(?i)^asus[-_]?[0-9]*$"),
+            Regex("(?i)^belkin[-_]?[0-9]*$"),
+            Regex("(?i)^arris[-_]?[0-9]*$"),
+            Regex("(?i)^motorola[-_]?[0-9]*$"),
+            Regex("(?i)^ubnt[-_]?.*"),                       // Ubiquiti
+            Regex("(?i)^unifi[-_]?.*"),                      // Ubiquiti UniFi
+
+            // === Mesh network defaults ===
+            // Mesh systems from different homes with default names
+            Regex("(?i)^eero[-_]?.*"),
+            Regex("(?i)^google[-_]?wifi.*"),
+            Regex("(?i)^nest[-_]?wifi.*"),
+            Regex("(?i)^orbi[-_]?.*"),
+            Regex("(?i)^velop[-_]?.*"),
+            Regex("(?i)^amplifi[-_]?.*"),
+            Regex("(?i)^deco[-_]?.*"),                       // TP-Link Deco
+
+            // === Common home network names ===
+            // Popular names people choose - multiple unrelated homes may use same name
+            Regex("(?i)^(my[-_]?)?wifi$"),
+            Regex("(?i)^(my[-_]?)?network$"),
+            Regex("(?i)^(my[-_]?)?home[-_]?(wifi|network)?$"),
+            Regex("(?i)^(the[-_]?)?smith(s)?[-_]?(wifi|network)?$"),  // Common surname
+            Regex("(?i)^(the[-_]?)?johnson(s)?[-_]?(wifi|network)?$"),
+            Regex("(?i)^(the[-_]?)?williams(s)?[-_]?(wifi|network)?$"),
+            Regex("(?i)^(the[-_]?)?jones(s)?[-_]?(wifi|network)?$"),
+
+            // === Joke/Meme SSIDs ===
+            // These are deliberately chosen - seeing multiple is coincidence, not attack
+            Regex("(?i).*pretty[-_]?fly.*"),
+            Regex("(?i).*fbi[-_]?van.*"),
+            Regex("(?i).*cia[-_]?.*"),
+            Regex("(?i).*lan[-_]?(solo|of[-_]?milk).*"),
+            Regex("(?i).*loading[-_]?\\.\\.\\..*"),
+            Regex("(?i).*virus[-_]?free.*"),
+            Regex("(?i).*get[-_]?your[-_]?own.*"),
+
+            // === Smart home / IoT defaults ===
+            // Same device type in multiple homes
+            Regex("(?i)^ring[-_]?.*"),
+            Regex("(?i)^nest[-_]?.*"),
+            Regex("(?i)^wyze[-_]?.*"),
+            Regex("(?i)^blink[-_]?.*"),
+            Regex("(?i)^arlo[-_]?.*"),
+            Regex("(?i)^eufy[-_]?.*"),
+            Regex("(?i)^simplisafe[-_]?.*")
         )
     }
 
@@ -694,26 +816,37 @@ class RogueWifiMonitor(
             }
 
             // Check for surveillance van patterns
-            for (pattern in SURVEILLANCE_VAN_PATTERNS) {
-                if (pattern.matches(ssid)) {
-                    suspicionReason = "Possible surveillance van: $ssid"
-                    threatLevel = ThreatLevel.HIGH
+            // FIRST: Check if this is an obvious JOKE SSID (e.g., "FBI Van", "CIA Surveillance")
+            // Real surveillance uses BLAND names, not movie references. Skip jokes entirely.
+            val isJokeSsid = JOKE_SURVEILLANCE_SSID_PATTERNS.any { it.matches(ssid) }
 
-                    reportAnomaly(
-                        type = WifiAnomalyType.SURVEILLANCE_VAN,
-                        description = "Network matches surveillance vehicle pattern",
-                        technicalDetails = "SSID '$ssid' matches known surveillance van naming patterns",
-                        ssid = ssid,
-                        bssid = bssid,
-                        rssi = result.level,
-                        confidence = AnomalyConfidence.MEDIUM,
-                        contributingFactors = listOf(
-                            "SSID matches surveillance pattern",
-                            "Manufacturer: ${getManufacturerFromOui(oui)}"
+            if (!isJokeSsid) {
+                for (pattern in SURVEILLANCE_VAN_PATTERNS) {
+                    if (pattern.matches(ssid)) {
+                        suspicionReason = "Possible surveillance van: $ssid"
+                        threatLevel = ThreatLevel.HIGH
+
+                        reportAnomaly(
+                            type = WifiAnomalyType.SURVEILLANCE_VAN,
+                            description = "Network matches surveillance vehicle pattern",
+                            technicalDetails = "SSID '$ssid' matches known fleet/surveillance router naming patterns. " +
+                                "Real surveillance uses bland names like this - not obvious 'FBI Van' jokes.",
+                            ssid = ssid,
+                            bssid = bssid,
+                            rssi = result.level,
+                            confidence = AnomalyConfidence.MEDIUM,
+                            contributingFactors = listOf(
+                                "SSID matches fleet router pattern",
+                                "Manufacturer: ${getManufacturerFromOui(oui)}",
+                                "Note: Joke SSIDs like 'FBI Van' are filtered out"
+                            )
                         )
-                    )
-                    break
+                        break
+                    }
                 }
+            } else {
+                // Log that we skipped a joke SSID (useful for debugging)
+                Log.d(TAG, "Skipping joke SSID '$ssid' - not real surveillance")
             }
         }
 
@@ -767,7 +900,30 @@ class RogueWifiMonitor(
     private fun checkForEvilTwins(results: List<ScanResult>) {
         for ((ssid, bssids) in ssidToBssids) {
             if (bssids.size < 2) continue
+
+            // Skip SSIDs that are in the common legitimate list
             if (COMMON_LEGITIMATE_SSIDS.any { ssid.lowercase().contains(it) }) continue
+
+            // ==================== NEIGHBORHOOD WALKING FALSE POSITIVE CHECK ====================
+            // Walking through a suburb, you'll see the SAME SSID from DIFFERENT homes.
+            // This is NOT an evil twin attack - it's just common names (ISP defaults, router
+            // manufacturer defaults, popular names multiple people choose).
+            //
+            // An evil twin attack requires:
+            // 1. Attacker spoofing YOUR specific network's SSID
+            // 2. Attacker's AP being in close proximity to trick YOUR device
+            //
+            // Walking past "xfinitywifi" from 10 different Comcast routers is NOT this.
+            // Walking past "NETGEAR" from 5 homes with default SSIDs is NOT this.
+            //
+            // Skip SSIDs that match neighborhood-common patterns.
+            val isNeighborhoodCommonSsid = NEIGHBORHOOD_COMMON_SSID_PATTERNS.any { pattern ->
+                pattern.matches(ssid)
+            }
+            if (isNeighborhoodCommonSsid) {
+                Log.d(TAG, "SSID '$ssid' matches neighborhood-common pattern - skipping evil twin check")
+                continue
+            }
 
             // Get all APs with this SSID including their frequencies
             val apDetails = results
@@ -775,6 +931,22 @@ class RogueWifiMonitor(
                 .map { ApDetails(it.BSSID!!.uppercase(), it.level, it.frequency) }
 
             if (apDetails.size >= 2) {
+                // ==================== OUI DIVERSITY CHECK ====================
+                // Evil twin: Attacker spoofs SSID with their own hardware = SAME OUI ecosystem
+                // Neighborhood walking: Different homes' routers = DIVERSE OUIs from different vendors
+                //
+                // If we see completely different OUI prefixes (different manufacturers),
+                // this is almost certainly different homes, not an attack.
+                val uniqueOuis = apDetails.map { it.bssid.take(8) }.toSet()
+                val ouiDiversity = uniqueOuis.size.toFloat() / apDetails.size
+
+                // High OUI diversity (many different manufacturers) = neighborhood, not attack
+                // A real evil twin would use the same or similar OUI to avoid detection
+                if (ouiDiversity > 0.7f && uniqueOuis.size >= 3) {
+                    Log.d(TAG, "SSID '$ssid' has high OUI diversity (${uniqueOuis.size} different vendors) - likely different homes, not evil twin")
+                    continue
+                }
+
                 // Group BSSIDs that likely belong to the same physical device
                 // (dual-band/tri-band routers broadcasting on 2.4GHz, 5GHz, and/or 6GHz)
                 val deviceGroups = groupBssidsByDevice(apDetails)
@@ -793,6 +965,18 @@ class RogueWifiMonitor(
                 val isMeshNetwork = isLikelyMeshNetwork(ssid, apDetails)
                 if (isMeshNetwork) {
                     Log.d(TAG, "SSID '$ssid' appears to be a mesh network with ${apDetails.size} nodes - not flagging as evil twin")
+                    continue
+                }
+
+                // ==================== BRIEF SIGHTING CHECK ====================
+                // If ALL the APs were only seen 1-2 times, we're likely walking past them
+                // Evil twin attacks require sustained presence to capture credentials
+                val allBriefSightings = apDetails.all { ap ->
+                    val history = networkHistory[ap.bssid]
+                    (history?.seenCount ?: 0) <= 2
+                }
+                if (allBriefSightings && apDetails.size >= 3) {
+                    Log.d(TAG, "SSID '$ssid' - all ${apDetails.size} APs seen briefly (<=2 times) - likely walking past different homes")
                     continue
                 }
 

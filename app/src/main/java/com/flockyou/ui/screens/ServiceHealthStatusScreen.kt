@@ -1,10 +1,11 @@
 package com.flockyou.ui.screens
 
 import android.util.Log
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +14,10 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,12 +26,14 @@ import androidx.compose.ui.Alignment
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.service.CellularMonitor
 import com.flockyou.service.ScanningService
@@ -37,8 +44,10 @@ import java.util.*
 /**
  * Service Health Status Screen - Displays the health status of all background detectors
  * and subsystems. Shows real-time monitoring of detector health, errors, and restart counts.
+ *
+ * Consolidated tabs: Dashboard | Detectors | Diagnostics
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalMaterialApi::class)
 @Composable
 fun ServiceHealthStatusScreen(
     viewModel: MainViewModel = hiltViewModel(),
@@ -50,12 +59,40 @@ fun ServiceHealthStatusScreen(
     val scanStatus = uiState.scanStatus
     val isBound by viewModel.serviceConnectionBound.collectAsState()
 
+    // Track refreshing state
+    var isRefreshing by remember { mutableStateOf(false) }
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isRefreshing,
+        onRefresh = {
+            isRefreshing = true
+            viewModel.requestRefresh()
+        }
+    )
+
+    // Reset refreshing state after data updates
+    LaunchedEffect(detectorHealth, uiState.scanStats) {
+        if (isRefreshing) {
+            isRefreshing = false
+        }
+    }
+
+    // Calculate error counts for badges
+    val detectorErrorCount = detectorHealth.values.count { !it.isHealthy && it.isRunning }
+    val totalErrorCount = detectorErrorCount + uiState.recentErrors.size
+
+    // Last updated timestamp
+    var lastUpdated by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(detectorHealth, uiState.scanStats) {
+        lastUpdated = System.currentTimeMillis()
+    }
+
     // Log state changes for debugging
     LaunchedEffect(detectorHealth, isScanning, scanStatus, isBound) {
         Log.d("ServiceHealthScreen", "State update: isBound=$isBound, isScanning=$isScanning, scanStatus=$scanStatus, detectors=${detectorHealth.size}")
     }
 
-    val tabs = listOf("Overview", "Live Activity", "Detectors", "Threading", "Errors")
+    // Consolidated tabs: Dashboard | Detectors | Diagnostics
+    val tabs = listOf("Dashboard", "Detectors", "Diagnostics")
     val pagerState = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
 
@@ -65,11 +102,7 @@ fun ServiceHealthStatusScreen(
                 title = {
                     Column {
                         Text("Service Health")
-                        Text(
-                            text = "Detector & subsystem monitoring",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        LastUpdatedText(timestamp = lastUpdated)
                     }
                 },
                 navigationIcon = {
@@ -79,25 +112,16 @@ fun ServiceHealthStatusScreen(
                 },
                 actions = {
                     // Manual refresh button
-                    IconButton(onClick = { viewModel.requestRefresh() }) {
+                    IconButton(onClick = {
+                        isRefreshing = true
+                        viewModel.requestRefresh()
+                    }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                     }
                     // Refresh indicator when scanning
                     if (isScanning) {
-                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                        val alpha by infiniteTransition.animateFloat(
-                            initialValue = 0.3f,
-                            targetValue = 1f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(1000),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "pulse_alpha"
-                        )
-                        Icon(
-                            Icons.Default.FiberManualRecord,
-                            contentDescription = "Scanning Active",
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+                        PulsingStatusIndicator(
+                            color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(end = 16.dp)
                         )
                     }
@@ -105,187 +129,496 @@ fun ServiceHealthStatusScreen(
             )
         }
     ) { paddingValues ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .pullRefresh(pullRefreshState)
         ) {
-            // Status banner
-            ServiceStatusBanner(
-                isScanning = isScanning,
-                scanStatus = scanStatus,
-                detectorHealth = detectorHealth
-            )
-
-            // Tab row
-            ScrollableTabRow(
-                selectedTabIndex = pagerState.currentPage,
-                edgePadding = 0.dp
-            ) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = pagerState.currentPage == index,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(index)
-                            }
-                        },
-                        text = { Text(title) },
-                        icon = {
-                            when (index) {
-                                0 -> Icon(Icons.Default.Dashboard, contentDescription = null)
-                                1 -> Icon(Icons.Default.Radar, contentDescription = null)
-                                2 -> Icon(Icons.Default.Sensors, contentDescription = null)
-                                3 -> Icon(Icons.Default.Memory, contentDescription = null)
-                                4 -> Icon(Icons.Default.Warning, contentDescription = null)
-                            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Alert Banner - shows when there are errors or unhealthy detectors
+                AlertBanner(
+                    detectorHealth = detectorHealth,
+                    recentErrors = uiState.recentErrors,
+                    onNavigateToDetectors = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(1)
                         }
-                    )
+                    },
+                    onNavigateToDiagnostics = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(2)
+                        }
+                    }
+                )
+
+                // Tab row with badges
+                TabRow(
+                    selectedTabIndex = pagerState.currentPage
+                ) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = pagerState.currentPage == index,
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            },
+                            text = { Text(title) },
+                            icon = {
+                                val badgeCount = when (index) {
+                                    1 -> detectorErrorCount  // Detectors tab
+                                    2 -> totalErrorCount     // Diagnostics tab
+                                    else -> 0
+                                }
+                                TabIconWithBadge(
+                                    icon = when (index) {
+                                        0 -> Icons.Default.Dashboard
+                                        1 -> Icons.Default.Sensors
+                                        2 -> Icons.Default.BugReport
+                                        else -> Icons.Default.Info
+                                    },
+                                    badgeCount = badgeCount
+                                )
+                            }
+                        )
+                    }
+                }
+
+                // Swipeable tab content
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    when (page) {
+                        0 -> DashboardContent(
+                            detectorHealth = detectorHealth,
+                            scanStatus = scanStatus,
+                            isScanning = isScanning,
+                            isBound = isBound,
+                            uiState = uiState,
+                            onNavigateToErrors = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(2)
+                                }
+                            },
+                            onNavigateToUnhealthy = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(1)
+                                }
+                            }
+                        )
+                        1 -> DetectorHealthContent(
+                            detectorHealth = detectorHealth,
+                            onNavigateToError = { detectorId ->
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(2)
+                                }
+                            }
+                        )
+                        2 -> DiagnosticsContent(
+                            detectorHealth = detectorHealth,
+                            recentErrors = uiState.recentErrors,
+                            uiState = uiState,
+                            onNavigateToDetector = { detectorId ->
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(1)
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
-            // Swipeable tab content
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                when (page) {
-                    0 -> HealthOverviewContent(
-                        detectorHealth = detectorHealth,
-                        scanStatus = scanStatus,
-                        isScanning = isScanning,
-                        isBound = isBound,
-                        uiState = uiState
-                    )
-                    1 -> LiveActivityContent(
-                        uiState = uiState,
-                        isScanning = isScanning,
-                        isBound = isBound
-                    )
-                    2 -> DetectorHealthContent(detectorHealth = detectorHealth)
-                    3 -> ThreadingMonitorContent(uiState = uiState)
-                    4 -> ErrorsContent(
-                        detectorHealth = detectorHealth,
-                        recentErrors = uiState.recentErrors
-                    )
-                }
-            }
+            // Pull refresh indicator
+            PullRefreshIndicator(
+                refreshing = isRefreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
 
+// ============================================================================
+// NEW COMPOSABLES
+// ============================================================================
+
+/**
+ * Last Updated Text - Shows timestamp with auto-refresh indicator
+ */
 @Composable
-private fun ServiceStatusBanner(
-    isScanning: Boolean,
-    scanStatus: ScanningService.ScanStatus,
-    detectorHealth: Map<String, DetectorHealthStatus>
+private fun LastUpdatedText(timestamp: Long) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    Text(
+        text = "Updated ${dateFormat.format(Date(timestamp))}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/**
+ * Pulsing Status Indicator - Animated dot for active states
+ */
+@Composable
+fun PulsingStatusIndicator(
+    color: Color,
+    modifier: Modifier = Modifier,
+    size: Int = 12
 ) {
-    val healthyCount = detectorHealth.values.count { it.isHealthy && it.isRunning }
-    val unhealthyCount = detectorHealth.values.count { !it.isHealthy && it.isRunning }
-    val totalRunning = detectorHealth.values.count { it.isRunning }
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 0.8f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
 
-    val bannerColor = when {
-        !isScanning -> MaterialTheme.colorScheme.surfaceVariant
-        unhealthyCount > 0 -> MaterialTheme.colorScheme.errorContainer
-        healthyCount == totalRunning && totalRunning > 0 -> Color(0xFF1B5E20).copy(alpha = 0.3f)
-        else -> MaterialTheme.colorScheme.primaryContainer
+    Box(
+        modifier = modifier
+            .size(size.dp)
+            .scale(scale)
+            .clip(CircleShape)
+            .background(color.copy(alpha = alpha))
+    )
+}
+
+/**
+ * Animated Stat Value - Slide-in transitions when values change
+ */
+@Composable
+fun AnimatedStatValue(
+    value: Int,
+    label: String,
+    icon: ImageVector,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        AnimatedContent(
+            targetState = value,
+            transitionSpec = {
+                if (targetState > initialState) {
+                    slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
+                } else {
+                    slideInVertically { it } + fadeIn() togetherWith slideOutVertically { -it } + fadeOut()
+                }
+            },
+            label = "stat_value"
+        ) { targetValue ->
+            Text(
+                text = targetValue.toString(),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
+}
 
-    val animatedColor by animateColorAsState(
-        targetValue = bannerColor,
-        animationSpec = tween(300),
-        label = "banner_color"
+/**
+ * Tab Icon With Badge - Shows error count badge on tab icons
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TabIconWithBadge(
+    icon: ImageVector,
+    badgeCount: Int
+) {
+    if (badgeCount > 0) {
+        BadgedBox(
+            badge = {
+                Badge(
+                    containerColor = MaterialTheme.colorScheme.error
+                ) {
+                    Text(
+                        text = if (badgeCount > 9) "9+" else badgeCount.toString(),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        ) {
+            Icon(icon, contentDescription = null)
+        }
+    } else {
+        Icon(icon, contentDescription = null)
+    }
+}
+
+/**
+ * Alert Banner - Tappable banner showing critical issues
+ */
+@Composable
+private fun AlertBanner(
+    detectorHealth: Map<String, DetectorHealthStatus>,
+    recentErrors: List<ScanningService.ScanError>,
+    onNavigateToDetectors: () -> Unit,
+    onNavigateToDiagnostics: () -> Unit
+) {
+    val unhealthyCount = detectorHealth.values.count { !it.isHealthy && it.isRunning }
+    val errorCount = recentErrors.size
+
+    if (unhealthyCount == 0 && errorCount == 0) return
+
+    val infiniteTransition = rememberInfiniteTransition(label = "alert_pulse")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.8f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alert_alpha"
     )
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = animatedColor
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                if (unhealthyCount > 0) onNavigateToDetectors()
+                else onNavigateToDiagnostics()
+            },
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = alpha)
     ) {
         Row(
             modifier = Modifier
-                .padding(16.dp)
+                .padding(12.dp)
                 .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = when {
-                        !isScanning -> Icons.Default.PauseCircle
-                        unhealthyCount > 0 -> Icons.Default.Error
-                        else -> Icons.Default.CheckCircle
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = buildString {
+                        if (unhealthyCount > 0) append("$unhealthyCount unhealthy detector${if (unhealthyCount > 1) "s" else ""}")
+                        if (unhealthyCount > 0 && errorCount > 0) append(" • ")
+                        if (errorCount > 0) append("$errorCount error${if (errorCount > 1) "s" else ""}")
                     },
-                    contentDescription = null,
-                    tint = when {
-                        !isScanning -> MaterialTheme.colorScheme.onSurfaceVariant
-                        unhealthyCount > 0 -> MaterialTheme.colorScheme.error
-                        else -> Color(0xFF4CAF50)
-                    }
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
+                Text(
+                    text = "Tap to view details",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+/**
+ * Collapsible Section - Expandable area for less critical info
+ */
+@Composable
+fun CollapsibleSection(
+    title: String,
+    icon: ImageVector,
+    initiallyExpanded: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column {
+            // Header (always visible, clickable)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = when {
-                            !isScanning -> "Service Idle"
-                            unhealthyCount > 0 -> "$unhealthyCount Detector${if (unhealthyCount > 1) "s" else ""} Unhealthy"
-                            else -> "All Systems Operational"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = "$healthyCount of $totalRunning detectors healthy",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
             }
 
-            // Scan status badge
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+            // Expandable content
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
             ) {
-                Text(
-                    text = when (scanStatus) {
-                        is ScanningService.ScanStatus.Idle -> "Idle"
-                        is ScanningService.ScanStatus.Starting -> "Starting"
-                        is ScanningService.ScanStatus.Active -> "Active"
-                        is ScanningService.ScanStatus.Stopping -> "Stopping"
-                        is ScanningService.ScanStatus.Error -> "Error"
-                    },
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelSmall
-                )
+                Box(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                    content()
+                }
             }
         }
     }
 }
 
+/**
+ * Skeleton Loading Card - Shimmer placeholder during initial load
+ */
 @Composable
-private fun HealthOverviewContent(
+fun SkeletonLoadingCard(
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "shimmer_alpha"
+    )
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = shimmerAlpha)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(20.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = shimmerAlpha))
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = shimmerAlpha * 0.7f))
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(16.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = shimmerAlpha * 0.7f))
+            )
+        }
+    }
+}
+
+// ============================================================================
+// DASHBOARD TAB (merged Overview + Live Activity)
+// ============================================================================
+
+@Composable
+private fun DashboardContent(
     detectorHealth: Map<String, DetectorHealthStatus>,
     scanStatus: ScanningService.ScanStatus,
     isScanning: Boolean,
     isBound: Boolean,
-    uiState: MainUiState
+    uiState: MainUiState,
+    onNavigateToErrors: () -> Unit,
+    onNavigateToUnhealthy: () -> Unit
 ) {
+    val totalDetectors = if (detectorHealth.isEmpty()) 8 else detectorHealth.size
+    val healthyCount = detectorHealth.values.count { it.isHealthy && it.isRunning }
+    val unhealthyCount = detectorHealth.values.count { !it.isHealthy && it.isRunning }
+    val errorCount = uiState.recentErrors.size
+
+    // Show skeleton loading if no data yet
+    if (detectorHealth.isEmpty() && !isBound) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(4) {
+                SkeletonLoadingCard()
+            }
+        }
+        return
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // IPC Connection Status Card (for debugging)
+        // 1. System Health Score - Large circular indicator
         item {
-            IpcConnectionStatusCard(isBound = isBound, isScanning = isScanning, scanStatus = scanStatus)
+            SystemHealthScoreCard(
+                healthyCount = healthyCount,
+                totalDetectors = totalDetectors,
+                isScanning = isScanning
+            )
         }
 
-        // Quick stats card
+        // 2. Quick Actions Row
         item {
-            QuickStatsCard(detectorHealth = detectorHealth, isScanning = isScanning, scanStats = uiState.scanStats)
+            QuickActionsRow(
+                errorCount = errorCount,
+                unhealthyCount = unhealthyCount,
+                onViewErrors = onNavigateToErrors,
+                onViewUnhealthy = onNavigateToUnhealthy
+            )
         }
 
-        // Subsystem status section
+        // 3. Subsystem Status Card
         item {
             Text(
                 text = "Subsystem Status",
@@ -299,10 +632,10 @@ private fun HealthOverviewContent(
             SubsystemStatusCard(uiState = uiState)
         }
 
-        // Detector overview grid
+        // 4. Live Scan Activity
         item {
             Text(
-                text = "Detector Status",
+                text = "Live Scan Activity",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
@@ -310,22 +643,438 @@ private fun HealthOverviewContent(
         }
 
         item {
-            DetectorOverviewGrid(detectorHealth = detectorHealth)
+            LiveScanActivityCard(scanStats = uiState.scanStats, isScanning = isScanning)
+        }
+
+        // 5. Collapsible Seen Devices
+        item {
+            CollapsibleSection(
+                title = "Seen Devices",
+                icon = Icons.Default.DevicesOther,
+                initiallyExpanded = false
+            ) {
+                SeenDevicesSummaryContent(
+                    bleDevices = uiState.seenBleDevices,
+                    wifiNetworks = uiState.seenWifiNetworks,
+                    cellTowers = uiState.seenCellTowers
+                )
+            }
+        }
+
+        // 6. Collapsible IPC Debug Info (demoted)
+        item {
+            CollapsibleSection(
+                title = "Debug Info",
+                icon = Icons.Default.BugReport,
+                initiallyExpanded = false
+            ) {
+                IpcDebugContent(isBound = isBound, isScanning = isScanning, scanStatus = scanStatus)
+            }
+        }
+    }
+}
+
+/**
+ * System Health Score Card - Large circular health indicator
+ */
+@Composable
+private fun SystemHealthScoreCard(
+    healthyCount: Int,
+    totalDetectors: Int,
+    isScanning: Boolean
+) {
+    val healthPercentage = if (totalDetectors > 0) healthyCount.toFloat() / totalDetectors else 0f
+    val scoreColor = when {
+        !isScanning -> MaterialTheme.colorScheme.outline
+        healthPercentage >= 0.8f -> Color(0xFF4CAF50)
+        healthPercentage >= 0.5f -> Color(0xFFFFC107)
+        else -> MaterialTheme.colorScheme.error
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = scoreColor.copy(alpha = 0.1f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            // Circular health indicator
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(100.dp)
+                    .clip(CircleShape)
+                    .border(8.dp, scoreColor, CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$healthyCount",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = scoreColor
+                    )
+                    Text(
+                        text = "of $totalDetectors",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Status text
+            Column {
+                Text(
+                    text = when {
+                        !isScanning -> "Service Idle"
+                        healthPercentage >= 1f -> "All Healthy"
+                        healthPercentage >= 0.8f -> "Mostly Healthy"
+                        healthPercentage >= 0.5f -> "Some Issues"
+                        else -> "Needs Attention"
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = scoreColor
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isScanning) "Detectors running" else "Start scan to monitor",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Quick Actions Row - Chips for quick navigation
+ */
+@Composable
+private fun QuickActionsRow(
+    errorCount: Int,
+    unhealthyCount: Int,
+    onViewErrors: () -> Unit,
+    onViewUnhealthy: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (errorCount > 0) {
+            AssistChip(
+                onClick = onViewErrors,
+                label = { Text("$errorCount Error${if (errorCount > 1) "s" else ""}") },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Error,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                )
+            )
+        }
+
+        if (unhealthyCount > 0) {
+            AssistChip(
+                onClick = onViewUnhealthy,
+                label = { Text("$unhealthyCount Unhealthy") },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = Color(0xFFFFC107).copy(alpha = 0.2f)
+                )
+            )
+        }
+
+        if (errorCount == 0 && unhealthyCount == 0) {
+            AssistChip(
+                onClick = { },
+                label = { Text("All Systems OK") },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF4CAF50),
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = Color(0xFF4CAF50).copy(alpha = 0.2f)
+                )
+            )
+        }
+    }
+}
+
+/**
+ * Live Scan Activity Card - Scan stats with animated values
+ */
+@Composable
+private fun LiveScanActivityCard(
+    scanStats: ScanningService.ScanStatistics,
+    isScanning: Boolean
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                AnimatedStatValue(
+                    value = scanStats.totalBleScans,
+                    label = "BLE Scans",
+                    icon = Icons.Default.Bluetooth,
+                    color = if (isScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+                AnimatedStatValue(
+                    value = scanStats.successfulWifiScans,
+                    label = "WiFi Scans",
+                    icon = Icons.Default.Wifi,
+                    color = if (isScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+                AnimatedStatValue(
+                    value = scanStats.bleDevicesSeen,
+                    label = "BLE Seen",
+                    icon = Icons.Default.DevicesOther,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                AnimatedStatValue(
+                    value = scanStats.wifiNetworksSeen,
+                    label = "WiFi Seen",
+                    icon = Icons.Default.NetworkCheck,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Seen Devices Summary Content - For collapsible section
+ */
+@Composable
+private fun SeenDevicesSummaryContent(
+    bleDevices: List<ScanningService.SeenDevice>,
+    wifiNetworks: List<ScanningService.SeenDevice>,
+    cellTowers: List<CellularMonitor.SeenCellTower>
+) {
+    val currentTime = System.currentTimeMillis()
+    val activeThreshold = 60000L
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DeviceCountRow(
+            icon = Icons.Default.Bluetooth,
+            label = "BLE Devices",
+            count = bleDevices.size,
+            activeCount = bleDevices.count { currentTime - it.lastSeen < activeThreshold }
+        )
+        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+        DeviceCountRow(
+            icon = Icons.Default.Wifi,
+            label = "WiFi Networks",
+            count = wifiNetworks.size,
+            activeCount = wifiNetworks.count { currentTime - it.lastSeen < activeThreshold }
+        )
+        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+        DeviceCountRow(
+            icon = Icons.Default.CellTower,
+            label = "Cell Towers",
+            count = cellTowers.size,
+            activeCount = cellTowers.count { currentTime - it.lastSeen < activeThreshold }
+        )
+    }
+}
+
+/**
+ * IPC Debug Content - For collapsible section
+ */
+@Composable
+private fun IpcDebugContent(
+    isBound: Boolean,
+    isScanning: Boolean,
+    scanStatus: ScanningService.ScanStatus
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("IPC Connection", style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isBound) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isBound) "Connected" else "Disconnected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isBound) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Scan Status", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = scanStatus.javaClass.simpleName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Scanning Active", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = if (isScanning) "Yes" else "No",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isScanning) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+// ============================================================================
+// DETECTORS TAB (enhanced)
+// ============================================================================
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetectorHealthContent(
+    detectorHealth: Map<String, DetectorHealthStatus>,
+    onNavigateToError: (String) -> Unit
+) {
+    // Filter state
+    var selectedFilter by remember { mutableStateOf("All") }
+    val filters = listOf("All", "Running", "Unhealthy", "Errors")
+
+    val detectors = listOf(
+        DetectorHealthStatus.DETECTOR_BLE to ("BLE Scanner" to Icons.Default.Bluetooth),
+        DetectorHealthStatus.DETECTOR_WIFI to ("WiFi Scanner" to Icons.Default.Wifi),
+        DetectorHealthStatus.DETECTOR_ULTRASONIC to ("Ultrasonic" to Icons.Default.Hearing),
+        DetectorHealthStatus.DETECTOR_ROGUE_WIFI to ("Rogue WiFi" to Icons.Default.WifiFind),
+        DetectorHealthStatus.DETECTOR_RF_SIGNAL to ("RF Signal" to Icons.Default.SignalCellularAlt),
+        DetectorHealthStatus.DETECTOR_CELLULAR to ("Cellular" to Icons.Default.CellTower),
+        DetectorHealthStatus.DETECTOR_GNSS to ("GNSS" to Icons.Default.GpsFixed),
+        DetectorHealthStatus.DETECTOR_SATELLITE to ("Satellite" to Icons.Default.SatelliteAlt)
+    )
+
+    // Filter detectors based on selection
+    val filteredDetectors = detectors.filter { (detectorId, _) ->
+        val health = detectorHealth[detectorId]
+        when (selectedFilter) {
+            "Running" -> health?.isRunning == true
+            "Unhealthy" -> health?.isRunning == true && health.isHealthy == false
+            "Errors" -> health?.lastError != null
+            else -> true
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Filter chips
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                filters.forEach { filter ->
+                    FilterChip(
+                        selected = selectedFilter == filter,
+                        onClick = { selectedFilter = filter },
+                        label = { Text(filter) },
+                        leadingIcon = if (selectedFilter == filter) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else null
+                    )
+                }
+            }
+        }
+
+        // Detector cards
+        items(filteredDetectors) { (detectorId, info) ->
+            val (displayName, icon) = info
+            val health = detectorHealth[detectorId]
+            DetectorHealthCard(
+                name = displayName,
+                icon = icon,
+                health = health,
+                onNavigateToError = { onNavigateToError(detectorId) }
+            )
+        }
+
+        // Empty state for filters
+        if (filteredDetectors.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.FilterList,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "No detectors match filter",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun QuickStatsCard(
-    detectorHealth: Map<String, DetectorHealthStatus>,
-    isScanning: Boolean,
-    scanStats: ScanningService.ScanStatistics
+private fun DetectorHealthCard(
+    name: String,
+    icon: ImageVector,
+    health: DetectorHealthStatus?,
+    onNavigateToError: () -> Unit
 ) {
-    val totalDetectors = if (detectorHealth.isEmpty()) 8 else detectorHealth.size // Default to 8 if not loaded
-    val runningDetectors = detectorHealth.values.count { it.isRunning }
-    val healthyDetectors = detectorHealth.values.count { it.isHealthy && it.isRunning }
-    val totalRestarts = detectorHealth.values.sumOf { it.restartCount }
-    val totalFailures = detectorHealth.values.sumOf { it.consecutiveFailures }
+    val isRunning = health?.isRunning == true
+    val isHealthy = health?.isHealthy == true
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -336,106 +1085,408 @@ private fun QuickStatsCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            // First row: Detector stats
+            // Header row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StatItem(
-                    icon = Icons.Default.Sensors,
-                    value = "$runningDetectors/$totalDetectors",
-                    label = "Running",
-                    color = if (runningDetectors > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                )
-                StatItem(
-                    icon = Icons.Default.CheckCircle,
-                    value = healthyDetectors.toString(),
-                    label = "Healthy",
-                    color = Color(0xFF4CAF50)
-                )
-                StatItem(
-                    icon = Icons.Default.Refresh,
-                    value = totalRestarts.toString(),
-                    label = "Restarts",
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-                StatItem(
-                    icon = Icons.Default.ErrorOutline,
-                    value = totalFailures.toString(),
-                    label = "Failures",
-                    color = if (totalFailures > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = when {
+                            !isRunning -> MaterialTheme.colorScheme.outline
+                            !isHealthy -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Status badge with pulsing indicator for active
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isRunning && isHealthy) {
+                        PulsingStatusIndicator(
+                            color = Color(0xFF4CAF50),
+                            size = 8
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = when {
+                            !isRunning -> MaterialTheme.colorScheme.surfaceVariant
+                            !isHealthy -> MaterialTheme.colorScheme.errorContainer
+                            else -> Color(0xFF4CAF50).copy(alpha = 0.2f)
+                        }
+                    ) {
+                        Text(
+                            text = when {
+                                !isRunning -> "Stopped"
+                                !isHealthy -> "Unhealthy"
+                                else -> "Healthy"
+                            },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when {
+                                !isRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                                !isHealthy -> MaterialTheme.colorScheme.error
+                                else -> Color(0xFF4CAF50)
+                            }
+                        )
+                    }
+                }
             }
 
-            // Divider
-            Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(modifier = Modifier.height(12.dp))
+            if (health != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(12.dp))
 
-            // Second row: Scan stats
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItem(
-                    icon = Icons.Default.Bluetooth,
-                    value = scanStats.totalBleScans.toString(),
-                    label = "BLE Scans",
-                    color = MaterialTheme.colorScheme.primary
-                )
-                StatItem(
-                    icon = Icons.Default.Wifi,
-                    value = scanStats.successfulWifiScans.toString(),
-                    label = "WiFi Scans",
-                    color = MaterialTheme.colorScheme.primary
-                )
-                StatItem(
-                    icon = Icons.Default.DevicesOther,
-                    value = scanStats.bleDevicesSeen.toString(),
-                    label = "BLE Seen",
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                StatItem(
-                    icon = Icons.Default.NetworkCheck,
-                    value = scanStats.wifiNetworksSeen.toString(),
-                    label = "WiFi Seen",
-                    color = MaterialTheme.colorScheme.secondary
+                // Stats grid
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    DetailColumn(
+                        label = "Last Success",
+                        value = health.lastSuccessfulScan?.let { dateFormat.format(Date(it)) } ?: "--"
+                    )
+                    DetailColumn(
+                        label = "Failures",
+                        value = health.consecutiveFailures.toString(),
+                        valueColor = if (health.consecutiveFailures > 0) MaterialTheme.colorScheme.error else null
+                    )
+                    DetailColumn(
+                        label = "Restarts",
+                        value = health.restartCount.toString(),
+                        valueColor = if (health.restartCount > 0) MaterialTheme.colorScheme.tertiary else null
+                    )
+                }
+
+                // Error message if present - with jump action
+                health.lastError?.let { error ->
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToError() },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                Icons.Default.Error,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Last Error",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                health.lastErrorTime?.let { time ->
+                                    Text(
+                                        text = dateFormat.format(Date(time)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Icon(
+                                Icons.Default.ChevronRight,
+                                contentDescription = "View in diagnostics",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "No health data available",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
 }
 
+// ============================================================================
+// DIAGNOSTICS TAB (merged Threading + Errors)
+// ============================================================================
+
 @Composable
-private fun StatItem(
-    icon: ImageVector,
-    value: String,
-    label: String,
-    color: Color
+private fun DiagnosticsContent(
+    detectorHealth: Map<String, DetectorHealthStatus>,
+    recentErrors: List<ScanningService.ScanError>,
+    uiState: MainUiState,
+    onNavigateToDetector: (String) -> Unit
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
+    val detectorErrors = detectorHealth.values
+        .filter { it.lastError != null }
+        .sortedByDescending { it.lastErrorTime }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = color,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // ERRORS SECTION (prioritized first)
+        item {
+            Text(
+                text = "Errors",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // Detector errors
+        if (detectorErrors.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Detector Errors",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            items(detectorErrors) { health ->
+                ErrorCard(
+                    source = health.name,
+                    message = health.lastError ?: "",
+                    timestamp = health.lastErrorTime,
+                    isRecoverable = health.consecutiveFailures < 5,
+                    onNavigateToSource = {
+                        // Find detector ID from name
+                        val detectorId = detectorHealth.entries.find { it.value.name == health.name }?.key
+                        detectorId?.let { onNavigateToDetector(it) }
+                    }
+                )
+            }
+        }
+
+        // Recent service errors
+        if (recentErrors.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Service Errors",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            items(recentErrors) { error ->
+                ErrorCard(
+                    source = error.subsystem,
+                    message = error.message,
+                    timestamp = error.timestamp,
+                    isRecoverable = error.recoverable,
+                    onNavigateToSource = null
+                )
+            }
+        }
+
+        // Empty state for errors
+        if (detectorErrors.isEmpty() && recentErrors.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF4CAF50).copy(alpha = 0.1f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF4CAF50)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "No Errors",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "All systems operating normally",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // THREADING SECTION (collapsible)
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        item {
+            CollapsibleSection(
+                title = "Threading Monitor",
+                icon = Icons.Default.Memory,
+                initiallyExpanded = false
+            ) {
+                ThreadingContent(uiState = uiState)
+            }
+        }
     }
 }
+
+/**
+ * Threading Content - For collapsible section in diagnostics
+ */
+@Composable
+private fun ThreadingContent(uiState: MainUiState) {
+    val systemState = uiState.threadingSystemState
+    val scannerStates = uiState.threadingScannerStates
+    val alerts = uiState.threadingAlerts
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // System overview
+        if (systemState != null) {
+            ThreadingSystemCard(systemState = systemState)
+            HealthScoreCard(healthScore = systemState.healthScore)
+        }
+
+        // Threading alerts
+        if (alerts.isNotEmpty()) {
+            Text(
+                text = "Alerts",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            alerts.forEach { alert ->
+                ThreadingAlertCard(alert = alert)
+            }
+        }
+
+        // Scanner states summary
+        if (scannerStates.isNotEmpty()) {
+            Text(
+                text = "Scanner Performance",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            scannerStates.entries.sortedBy { it.key }.forEach { (scannerId, state) ->
+                ScannerThreadCard(scannerId = scannerId, state = state)
+            }
+        }
+
+        // Empty state
+        if (systemState == null) {
+            Text(
+                text = "Start scanning to see threading metrics",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorCard(
+    source: String,
+    message: String,
+    timestamp: Long?,
+    isRecoverable: Boolean,
+    onNavigateToSource: (() -> Unit)?
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onNavigateToSource != null) Modifier.clickable { onNavigateToSource() } else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = if (isRecoverable) Icons.Default.Warning else Icons.Default.Error,
+                contentDescription = null,
+                tint = if (isRecoverable) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = source,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    timestamp?.let {
+                        Text(
+                            text = dateFormat.format(Date(it)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isRecoverable) "Auto-recovery enabled" else "Manual restart may be required",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isRecoverable) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+                )
+            }
+            if (onNavigateToSource != null) {
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = "View detector",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+// ============================================================================
+// SHARED/HELPER COMPOSABLES
+// ============================================================================
 
 @Composable
 private fun SubsystemStatusCard(uiState: MainUiState) {
@@ -482,12 +1533,17 @@ private fun SubsystemRow(
                 is ScanningService.SubsystemStatus.PermissionDenied -> "No Permission" to MaterialTheme.colorScheme.error
             }
 
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(statusColor)
-            )
+            // Use pulsing indicator for active status
+            if (status == ScanningService.SubsystemStatus.Active) {
+                PulsingStatusIndicator(color = statusColor, size = 8)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor)
+                )
+            }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = statusText,
@@ -499,278 +1555,33 @@ private fun SubsystemRow(
 }
 
 @Composable
-private fun DetectorOverviewGrid(detectorHealth: Map<String, DetectorHealthStatus>) {
-    val detectors = listOf(
-        DetectorHealthStatus.DETECTOR_BLE to "BLE",
-        DetectorHealthStatus.DETECTOR_WIFI to "WiFi",
-        DetectorHealthStatus.DETECTOR_ULTRASONIC to "Ultrasonic",
-        DetectorHealthStatus.DETECTOR_ROGUE_WIFI to "Rogue WiFi",
-        DetectorHealthStatus.DETECTOR_RF_SIGNAL to "RF Signal",
-        DetectorHealthStatus.DETECTOR_CELLULAR to "Cellular",
-        DetectorHealthStatus.DETECTOR_GNSS to "GNSS",
-        DetectorHealthStatus.DETECTOR_SATELLITE to "Satellite"
-    )
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        detectors.chunked(2).forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                row.forEach { (detectorId, displayName) ->
-                    val health = detectorHealth[detectorId]
-                    DetectorMiniCard(
-                        name = displayName,
-                        health = health,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                // Fill empty space if odd number
-                if (row.size == 1) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DetectorMiniCard(
-    name: String,
-    health: DetectorHealthStatus?,
-    modifier: Modifier = Modifier
-) {
-    val isRunning = health?.isRunning == true
-    val isHealthy = health?.isHealthy == true
-
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                !isRunning -> MaterialTheme.colorScheme.surfaceVariant
-                !isHealthy -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            }
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when {
-                                !isRunning -> MaterialTheme.colorScheme.outline
-                                !isHealthy -> MaterialTheme.colorScheme.error
-                                else -> Color(0xFF4CAF50)
-                            }
-                        )
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (isRunning && health != null) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (health.restartCount > 0) "${health.restartCount} restarts" else "OK",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (health.restartCount > 0)
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        Color(0xFF4CAF50)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DetectorHealthContent(detectorHealth: Map<String, DetectorHealthStatus>) {
-    val detectors = listOf(
-        DetectorHealthStatus.DETECTOR_BLE to ("BLE Scanner" to Icons.Default.Bluetooth),
-        DetectorHealthStatus.DETECTOR_WIFI to ("WiFi Scanner" to Icons.Default.Wifi),
-        DetectorHealthStatus.DETECTOR_ULTRASONIC to ("Ultrasonic" to Icons.Default.Hearing),
-        DetectorHealthStatus.DETECTOR_ROGUE_WIFI to ("Rogue WiFi" to Icons.Default.WifiFind),
-        DetectorHealthStatus.DETECTOR_RF_SIGNAL to ("RF Signal" to Icons.Default.SignalCellularAlt),
-        DetectorHealthStatus.DETECTOR_CELLULAR to ("Cellular" to Icons.Default.CellTower),
-        DetectorHealthStatus.DETECTOR_GNSS to ("GNSS" to Icons.Default.GpsFixed),
-        DetectorHealthStatus.DETECTOR_SATELLITE to ("Satellite" to Icons.Default.SatelliteAlt)
-    )
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        items(detectors) { (detectorId, info) ->
-            val (displayName, icon) = info
-            val health = detectorHealth[detectorId]
-            DetectorHealthCard(
-                name = displayName,
-                icon = icon,
-                health = health
-            )
-        }
-    }
-}
-
-@Composable
-private fun DetectorHealthCard(
-    name: String,
+private fun StatItem(
     icon: ImageVector,
-    health: DetectorHealthStatus?
+    value: String,
+    label: String,
+    color: Color
 ) {
-    val isRunning = health?.isRunning == true
-    val isHealthy = health?.isHealthy == true
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // Header row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = when {
-                            !isRunning -> MaterialTheme.colorScheme.outline
-                            !isHealthy -> MaterialTheme.colorScheme.error
-                            else -> MaterialTheme.colorScheme.primary
-                        }
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Status badge
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = when {
-                        !isRunning -> MaterialTheme.colorScheme.surfaceVariant
-                        !isHealthy -> MaterialTheme.colorScheme.errorContainer
-                        else -> Color(0xFF4CAF50).copy(alpha = 0.2f)
-                    }
-                ) {
-                    Text(
-                        text = when {
-                            !isRunning -> "Stopped"
-                            !isHealthy -> "Unhealthy"
-                            else -> "Healthy"
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when {
-                            !isRunning -> MaterialTheme.colorScheme.onSurfaceVariant
-                            !isHealthy -> MaterialTheme.colorScheme.error
-                            else -> Color(0xFF4CAF50)
-                        }
-                    )
-                }
-            }
-
-            if (health != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Stats grid
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    DetailColumn(
-                        label = "Last Success",
-                        value = health.lastSuccessfulScan?.let { dateFormat.format(Date(it)) } ?: "--"
-                    )
-                    DetailColumn(
-                        label = "Failures",
-                        value = health.consecutiveFailures.toString(),
-                        valueColor = if (health.consecutiveFailures > 0) MaterialTheme.colorScheme.error else null
-                    )
-                    DetailColumn(
-                        label = "Restarts",
-                        value = health.restartCount.toString(),
-                        valueColor = if (health.restartCount > 0) MaterialTheme.colorScheme.tertiary else null
-                    )
-                }
-
-                // Error message if present
-                health.lastError?.let { error ->
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Icon(
-                                Icons.Default.Error,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = "Last Error",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                Text(
-                                    text = error,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                health.lastErrorTime?.let { time ->
-                                    Text(
-                                        text = dateFormat.format(Date(time)),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "No health data available",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -792,572 +1603,6 @@ private fun DetailColumn(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    }
-}
-
-@Composable
-private fun ErrorsContent(
-    detectorHealth: Map<String, DetectorHealthStatus>,
-    recentErrors: List<ScanningService.ScanError>
-) {
-    val detectorErrors = detectorHealth.values
-        .filter { it.lastError != null }
-        .sortedByDescending { it.lastErrorTime }
-
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Detector errors
-        if (detectorErrors.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Detector Errors",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            items(detectorErrors) { health ->
-                ErrorCard(
-                    source = health.name,
-                    message = health.lastError ?: "",
-                    timestamp = health.lastErrorTime,
-                    isRecoverable = health.consecutiveFailures < 5
-                )
-            }
-        }
-
-        // Recent service errors
-        if (recentErrors.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Recent Service Errors",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            items(recentErrors) { error ->
-                ErrorCard(
-                    source = error.subsystem,
-                    message = error.message,
-                    timestamp = error.timestamp,
-                    isRecoverable = error.recoverable
-                )
-            }
-        }
-
-        // Empty state
-        if (detectorErrors.isEmpty() && recentErrors.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF4CAF50),
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No Errors",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "All systems operating normally",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ErrorCard(
-    source: String,
-    message: String,
-    timestamp: Long?,
-    isRecoverable: Boolean
-) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-        )
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            Icon(
-                imageVector = if (isRecoverable) Icons.Default.Warning else Icons.Default.Error,
-                contentDescription = null,
-                tint = if (isRecoverable) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = source,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    timestamp?.let {
-                        Text(
-                            text = dateFormat.format(Date(it)),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (isRecoverable) "Auto-recovery enabled" else "Manual restart may be required",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isRecoverable) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
-                )
-            }
-        }
-    }
-}
-
-/**
- * IPC Connection Status Card - Shows the current IPC connection state and service status.
- * This is crucial for debugging why data might not be flowing.
- */
-@Composable
-private fun IpcConnectionStatusCard(
-    isBound: Boolean,
-    isScanning: Boolean,
-    scanStatus: ScanningService.ScanStatus
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                !isBound -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                isScanning -> Color(0xFF1B5E20).copy(alpha = 0.2f)
-                else -> MaterialTheme.colorScheme.surfaceVariant
-            }
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = if (isBound) Icons.Default.Link else Icons.Default.LinkOff,
-                    contentDescription = null,
-                    tint = if (isBound) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "IPC Connection",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (isBound) "Connected to scanning service" else "NOT CONNECTED - Data will not update!",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isBound) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-
-            if (isBound) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Divider(color = MaterialTheme.colorScheme.outlineVariant)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isScanning) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Scanning: ${if (isScanning) "Active" else "Inactive"}",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                    Text(
-                        text = "Status: ${scanStatus.javaClass.simpleName}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Live Activity Content - Shows real-time scan activity with detailed statistics.
- * In advanced mode, shows raw data from all subsystems.
- */
-@Composable
-private fun LiveActivityContent(
-    uiState: MainUiState,
-    isScanning: Boolean,
-    isBound: Boolean
-) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Connection warning if not bound
-        if (!isBound) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "Service Not Connected",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Text(
-                                text = "IPC connection to scanning service is not established. Try restarting the app.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Scan Statistics Card
-        item {
-            Text(
-                text = "Scan Statistics",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        item {
-            ScanStatisticsCard(scanStats = uiState.scanStats, dateFormat = dateFormat)
-        }
-
-        // Seen Devices Summary
-        item {
-            Text(
-                text = "Seen Devices (Live)",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        item {
-            SeenDevicesSummaryCard(
-                bleDevices = uiState.seenBleDevices,
-                wifiNetworks = uiState.seenWifiNetworks,
-                cellTowers = uiState.seenCellTowers
-            )
-        }
-
-        // Advanced Mode: Raw Subsystem Data
-        if (uiState.advancedMode) {
-            item {
-                Text(
-                    text = "Raw Subsystem Data (Advanced)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            // RF Signal Data
-            item {
-                RawDataCard(
-                    title = "RF Signal Analysis",
-                    icon = Icons.Default.SignalCellularAlt,
-                    data = buildString {
-                        appendLine("Total Networks: ${uiState.rfStatus?.totalNetworks ?: 0}")
-                        appendLine("Anomalies: ${uiState.rfAnomalies.size}")
-                        appendLine("Drones Detected: ${uiState.detectedDrones.size}")
-                        if (uiState.rfStatus != null) {
-                            appendLine("2.4GHz: ${uiState.rfStatus.band24GHz}, 5GHz: ${uiState.rfStatus.band5GHz}")
-                            appendLine("Jammer Suspected: ${uiState.rfStatus.jammerSuspected}")
-                        }
-                    }
-                )
-            }
-
-            // Ultrasonic Data
-            item {
-                RawDataCard(
-                    title = "Ultrasonic Detection",
-                    icon = Icons.Default.Hearing,
-                    data = buildString {
-                        appendLine("Scanning: ${uiState.ultrasonicStatus?.isScanning ?: false}")
-                        appendLine("Anomalies: ${uiState.ultrasonicAnomalies.size}")
-                        appendLine("Beacons: ${uiState.ultrasonicBeacons.size}")
-                        if (uiState.ultrasonicStatus != null) {
-                            appendLine("Noise Floor: ${String.format("%.1f", uiState.ultrasonicStatus.noiseFloorDb)} dB")
-                            appendLine("Activity Detected: ${uiState.ultrasonicStatus.ultrasonicActivityDetected}")
-                        }
-                    }
-                )
-            }
-
-            // GNSS Data
-            item {
-                RawDataCard(
-                    title = "GNSS Satellite Monitor",
-                    icon = Icons.Default.GpsFixed,
-                    data = buildString {
-                        appendLine("Total Satellites: ${uiState.gnssStatus?.totalSatellites ?: 0}")
-                        appendLine("Satellites Used: ${uiState.gnssStatus?.satellitesUsedInFix ?: 0}")
-                        appendLine("Has Fix: ${uiState.gnssStatus?.hasFix ?: false}")
-                        appendLine("Anomalies: ${uiState.gnssAnomalies.size}")
-                        appendLine("Events: ${uiState.gnssEvents.size}")
-                        if (uiState.gnssMeasurements != null) {
-                            appendLine("Has Raw Measurements: Yes")
-                        }
-                    }
-                )
-            }
-
-            // Cellular Data
-            item {
-                RawDataCard(
-                    title = "Cellular Monitor",
-                    icon = Icons.Default.CellTower,
-                    data = buildString {
-                        appendLine("Cell Towers Seen: ${uiState.seenCellTowers.size}")
-                        appendLine("Anomalies: ${uiState.cellularAnomalies.size}")
-                        appendLine("Events: ${uiState.cellularEvents.size}")
-                        if (uiState.cellStatus != null) {
-                            appendLine("Network Type: ${uiState.cellStatus.networkType}")
-                        }
-                    }
-                )
-            }
-
-            // Rogue WiFi Data
-            item {
-                RawDataCard(
-                    title = "Rogue WiFi Detection",
-                    icon = Icons.Default.WifiFind,
-                    data = buildString {
-                        appendLine("Total Networks: ${uiState.rogueWifiStatus?.totalNetworks ?: 0}")
-                        appendLine("Suspicious Networks: ${uiState.suspiciousNetworks.size}")
-                        appendLine("Anomalies: ${uiState.rogueWifiAnomalies.size}")
-                        if (uiState.rogueWifiStatus != null) {
-                            appendLine("Open Networks: ${uiState.rogueWifiStatus.openNetworks}")
-                            appendLine("Potential Evil Twins: ${uiState.rogueWifiStatus.potentialEvilTwins}")
-                        }
-                    }
-                )
-            }
-        } else {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Enable Advanced Mode in Settings to see raw subsystem data",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScanStatisticsCard(
-    scanStats: ScanningService.ScanStatistics,
-    dateFormat: SimpleDateFormat
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                StatColumn(
-                    label = "BLE Scans",
-                    value = scanStats.totalBleScans.toString(),
-                    subValue = scanStats.lastBleSuccessTime?.let { "Last: ${dateFormat.format(Date(it))}" }
-                )
-                StatColumn(
-                    label = "WiFi Scans",
-                    value = "${scanStats.successfulWifiScans}/${scanStats.totalWifiScans}",
-                    subValue = if (scanStats.throttledWifiScans > 0) "Throttled: ${scanStats.throttledWifiScans}" else null
-                )
-                StatColumn(
-                    label = "BLE Devices",
-                    value = scanStats.bleDevicesSeen.toString(),
-                    subValue = null
-                )
-                StatColumn(
-                    label = "WiFi Networks",
-                    value = scanStats.wifiNetworksSeen.toString(),
-                    subValue = scanStats.lastWifiSuccessTime?.let { "Last: ${dateFormat.format(Date(it))}" }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatColumn(
-    label: String,
-    value: String,
-    subValue: String?
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        subValue?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline
-            )
-        }
-    }
-}
-
-@Composable
-private fun SeenDevicesSummaryCard(
-    bleDevices: List<ScanningService.SeenDevice>,
-    wifiNetworks: List<ScanningService.SeenDevice>,
-    cellTowers: List<CellularMonitor.SeenCellTower>
-) {
-    // Consider devices "active" if seen in the last 60 seconds
-    val currentTime = System.currentTimeMillis()
-    val activeThreshold = 60000L
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // BLE Devices
-            DeviceCountRow(
-                icon = Icons.Default.Bluetooth,
-                label = "BLE Devices",
-                count = bleDevices.size,
-                activeCount = bleDevices.count { currentTime - it.lastSeen < activeThreshold }
-            )
-
-            Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            // WiFi Networks
-            DeviceCountRow(
-                icon = Icons.Default.Wifi,
-                label = "WiFi Networks",
-                count = wifiNetworks.size,
-                activeCount = wifiNetworks.count { currentTime - it.lastSeen < activeThreshold }
-            )
-
-            Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            // Cell Towers
-            DeviceCountRow(
-                icon = Icons.Default.CellTower,
-                label = "Cell Towers",
-                count = cellTowers.size,
-                activeCount = cellTowers.count { currentTime - it.lastSeen < activeThreshold }
-            )
-        }
     }
 }
 
@@ -1409,152 +1654,6 @@ private fun DeviceCountRow(
 }
 
 @Composable
-private fun RawDataCard(
-    title: String,
-    icon: ImageVector,
-    data: String
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(4.dp),
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Text(
-                    text = data.trim(),
-                    modifier = Modifier.padding(8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-    }
-}
-
-/**
- * Threading Monitor Content - Shows scanner threading metrics and performance data.
- */
-@Composable
-private fun ThreadingMonitorContent(uiState: MainUiState) {
-    val systemState = uiState.threadingSystemState
-    val scannerStates = uiState.threadingScannerStates
-    val alerts = uiState.threadingAlerts
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // System Overview Card
-        item {
-            Text(
-                text = "System Overview",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        item {
-            ThreadingSystemCard(systemState = systemState)
-        }
-
-        // Health Score Card
-        item {
-            HealthScoreCard(healthScore = systemState?.healthScore ?: 100f)
-        }
-
-        // Threading Alerts
-        if (alerts.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Threading Alerts",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            items(alerts) { alert ->
-                ThreadingAlertCard(alert = alert)
-            }
-        }
-
-        // Scanner States
-        item {
-            Text(
-                text = "Scanner Performance",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        val sortedScanners = scannerStates.entries.sortedBy { it.key }
-        items(sortedScanners) { (scannerId, state) ->
-            ScannerThreadCard(scannerId = scannerId, state = state)
-        }
-
-        // Empty state
-        if (systemState == null) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            Icons.Default.Memory,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No Threading Data",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Start scanning to see threading metrics",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun ThreadingSystemCard(systemState: com.flockyou.monitoring.ScannerThreadingMonitor.SystemThreadingState?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1565,7 +1664,6 @@ private fun ThreadingSystemCard(systemState: com.flockyou.monitoring.ScannerThre
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            // Thread counts row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -1595,41 +1693,6 @@ private fun ThreadingSystemCard(systemState: com.flockyou.monitoring.ScannerThre
                     color = Color(0xFF4CAF50)
                 )
             }
-
-            Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Memory and IPC row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItem(
-                    icon = Icons.Default.Storage,
-                    value = "${systemState?.heapUsedMb ?: 0}MB",
-                    label = "Heap",
-                    color = MaterialTheme.colorScheme.primary
-                )
-                StatItem(
-                    icon = Icons.Default.Link,
-                    value = systemState?.ipcConnectedClients?.toString() ?: "0",
-                    label = "IPC",
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                StatItem(
-                    icon = Icons.Default.Send,
-                    value = String.format("%.0f", systemState?.ipcMessagesSentPerMinute ?: 0.0),
-                    label = "Sent/m",
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-                StatItem(
-                    icon = Icons.Default.Timer,
-                    value = String.format("%.0fms", systemState?.ipcAverageLatencyMs ?: 0.0),
-                    label = "Latency",
-                    color = if ((systemState?.ipcAverageLatencyMs ?: 0.0) > 100) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                )
-            }
         }
     }
 }
@@ -1650,7 +1713,7 @@ private fun HealthScoreCard(healthScore: Float) {
     ) {
         Row(
             modifier = Modifier
-                .padding(16.dp)
+                .padding(12.dp)
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
@@ -1663,31 +1726,18 @@ private fun HealthScoreCard(healthScore: Float) {
                         else -> Icons.Default.Error
                     },
                     contentDescription = null,
-                    tint = scoreColor,
-                    modifier = Modifier.size(32.dp)
+                    tint = scoreColor
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Health Score",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = when {
-                            healthScore >= 80 -> "System operating normally"
-                            healthScore >= 60 -> "Some performance degradation"
-                            else -> "Performance issues detected"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Health Score",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
-
             Text(
                 text = "${healthScore.toInt()}%",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = scoreColor
             )
@@ -1781,18 +1831,22 @@ private fun ScannerThreadCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    state.isStalled -> MaterialTheme.colorScheme.error
-                                    state.activeJobCount > 0 -> Color(0xFF4CAF50)
-                                    else -> MaterialTheme.colorScheme.outline
-                                }
-                            )
-                    )
+                    // Use pulsing indicator for active scanners
+                    if (state.activeJobCount > 0 && !state.isStalled) {
+                        PulsingStatusIndicator(color = Color(0xFF4CAF50), size = 10)
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when {
+                                        state.isStalled -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.outline
+                                    }
+                                )
+                        )
+                    }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = displayName,
@@ -1870,35 +1924,6 @@ private fun ScannerThreadCard(
                         text = "${state.avgExecutionTimeMs.toLong()}ms",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
-            // Last execution time
-            if (state.lastExecutionTime > 0) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Last: ${dateFormat.format(Date(state.lastExecutionTime))}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-            }
-
-            // Last error
-            state.lastErrorMessage?.let { error ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(4.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                ) {
-                    Text(
-                        text = error,
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
