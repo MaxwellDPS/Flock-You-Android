@@ -61,6 +61,8 @@ int32_t scheduler_thread_func(void* context) {
     uint32_t last_ir_scan = 0;
     uint32_t last_memory_cleanup = 0;
     uint32_t last_status_log = 0;
+    uint32_t last_scan_status_send = 0;
+    uint32_t hop_count = 0;
 
     // Determine which radios to use based on settings
     bool ext_available = scheduler->external_radio &&
@@ -258,9 +260,35 @@ int32_t scheduler_thread_func(void* context) {
                     furi_mutex_release(scheduler->mutex);
 
                     last_frequency_hop = now;
+                    hop_count++;
 
                     // Use INFO level so frequency hops are visible in normal logs
                     FURI_LOG_I(TAG, "Sub-GHz hop to %lu Hz", new_freq);
+
+                    // Send scan status to app on every frequency hop
+                    if (scheduler->config.subghz_status_callback) {
+                        FlockSubGhzScanStatus status = {
+                            .timestamp = now / 1000,
+                            .current_frequency = new_freq,
+                            .current_preset = scheduler->subghz_internal ?
+                                subghz_scanner_get_preset(scheduler->subghz_internal) : 0,
+                            .frequency_index = scheduler->subghz_frequency_index,
+                            .total_frequencies = SUBGHZ_FREQUENCY_COUNT,
+                            .scan_active = 1,
+                            .decode_in_progress = scheduler->subghz_internal ?
+                                subghz_decoder_is_active(scheduler->subghz_internal) : 0,
+                            .jamming_detected = 0,  // TODO: track from scanner
+                            .current_rssi = scheduler->subghz_internal ?
+                                subghz_scanner_get_rssi(scheduler->subghz_internal) : -127,
+                            .reserved = 0,
+                            .hop_count = hop_count,
+                            .detection_count = scheduler->subghz_internal ?
+                                subghz_scanner_get_detection_count(scheduler->subghz_internal) : 0,
+                            .dwell_time_ms = scheduler->config.subghz_hop_interval_ms,
+                        };
+                        scheduler->config.subghz_status_callback(
+                            &status, scheduler->config.callback_context);
+                    }
                 }
             }
         }
@@ -462,6 +490,41 @@ int32_t scheduler_thread_func(void* context) {
                 (void*)scheduler->subghz_internal,
                 subghz_running,
                 scheduler->subghz_internal ? subghz_scanner_get_detection_count(scheduler->subghz_internal) : 0);
+        }
+
+        // Send scan status heartbeat every 5 seconds
+        // This keeps the app informed even when no frequency hops occur
+        if ((now - last_scan_status_send) >= 5000 &&
+            scheduler->config.enable_subghz &&
+            scheduler->config.subghz_status_callback) {
+
+            last_scan_status_send = now;
+
+            uint32_t current_freq = scheduler->subghz_internal ?
+                subghz_scanner_get_frequency(scheduler->subghz_internal) : 0;
+
+            FlockSubGhzScanStatus status = {
+                .timestamp = now / 1000,
+                .current_frequency = current_freq,
+                .current_preset = scheduler->subghz_internal ?
+                    subghz_scanner_get_preset(scheduler->subghz_internal) : 0,
+                .frequency_index = scheduler->subghz_frequency_index,
+                .total_frequencies = SUBGHZ_FREQUENCY_COUNT,
+                .scan_active = scheduler->subghz_internal ?
+                    subghz_scanner_is_running(scheduler->subghz_internal) : 0,
+                .decode_in_progress = scheduler->subghz_internal ?
+                    subghz_decoder_is_active(scheduler->subghz_internal) : 0,
+                .jamming_detected = 0,
+                .current_rssi = scheduler->subghz_internal ?
+                    subghz_scanner_get_rssi(scheduler->subghz_internal) : -127,
+                .reserved = 0,
+                .hop_count = hop_count,
+                .detection_count = scheduler->subghz_internal ?
+                    subghz_scanner_get_detection_count(scheduler->subghz_internal) : 0,
+                .dwell_time_ms = scheduler->config.subghz_hop_interval_ms,
+            };
+            scheduler->config.subghz_status_callback(
+                &status, scheduler->config.callback_context);
         }
 
         furi_delay_ms(SCHEDULER_TICK_MS);

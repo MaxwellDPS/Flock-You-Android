@@ -8,6 +8,7 @@ import com.flockyou.data.model.ThreatLevel
 import com.flockyou.detection.handler.DetectionHandler
 import com.flockyou.detection.handler.DeviceTypeProfile
 import com.flockyou.detection.handler.ThreatCalculationResult
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -46,24 +47,28 @@ class DetectionRegistry @Inject constructor(
     /**
      * Map of protocol to handler.
      * Each protocol should have at most one primary handler.
+     * Thread-safe: Uses ConcurrentHashMap for safe multi-threaded access.
      */
-    private val handlersByProtocol: MutableMap<DetectionProtocol, DetectionHandler<*>> = mutableMapOf()
+    private val handlersByProtocol: ConcurrentHashMap<DetectionProtocol, DetectionHandler<*>> = ConcurrentHashMap()
 
     /**
      * Map of device type to handler.
      * Multiple device types may map to the same handler.
+     * Thread-safe: Uses ConcurrentHashMap for safe multi-threaded access.
      */
-    private val handlersByDeviceType: MutableMap<DeviceType, DetectionHandler<*>> = mutableMapOf()
+    private val handlersByDeviceType: ConcurrentHashMap<DeviceType, DetectionHandler<*>> = ConcurrentHashMap()
 
     /**
      * Set of all registered handlers (both injected and runtime-registered).
+     * Thread-safe: Uses ConcurrentHashMap.newKeySet() for safe multi-threaded access.
      */
-    private val allHandlers: MutableSet<DetectionHandler<*>> = mutableSetOf()
+    private val allHandlers: MutableSet<DetectionHandler<*>> = ConcurrentHashMap.newKeySet()
 
     /**
      * Custom handlers registered at runtime.
+     * Thread-safe: Uses ConcurrentHashMap.newKeySet() for safe multi-threaded access.
      */
-    private val customHandlers: MutableSet<DetectionHandler<*>> = mutableSetOf()
+    private val customHandlers: MutableSet<DetectionHandler<*>> = ConcurrentHashMap.newKeySet()
 
     init {
         // Build indexes from injected handlers
@@ -138,19 +143,22 @@ class DetectionRegistry @Inject constructor(
      *
      * This removes the handler from all indexes. Primarily intended
      * for removing custom handlers.
+     * Thread-safe: Uses atomic operations on ConcurrentHashMap.
      *
      * @param protocol The protocol of the handler to unregister
      */
     fun unregisterHandler(protocol: DetectionProtocol) {
         val handler = handlersByProtocol.remove(protocol)
         if (handler != null) {
-            // Remove from device type mappings
-            val deviceTypesToRemove = handlersByDeviceType.entries
-                .filter { it.value == handler }
-                .map { it.key }
-            deviceTypesToRemove.forEach { handlersByDeviceType.remove(it) }
+            // Remove from device type mappings using thread-safe iteration
+            // ConcurrentHashMap's forEach is weakly consistent and safe for concurrent modification
+            handlersByDeviceType.forEach { (deviceType, mappedHandler) ->
+                if (mappedHandler == handler) {
+                    handlersByDeviceType.remove(deviceType, handler)
+                }
+            }
 
-            // Remove from handler sets
+            // Remove from handler sets (thread-safe sets)
             allHandlers.remove(handler)
             customHandlers.remove(handler)
 
@@ -176,7 +184,7 @@ class DetectionRegistry @Inject constructor(
      * @return true if a handler is registered for this protocol
      */
     fun hasHandler(protocol: DetectionProtocol): Boolean {
-        return protocol in handlersByProtocol
+        return handlersByProtocol.containsKey(protocol)
     }
 
     /**
@@ -186,7 +194,7 @@ class DetectionRegistry @Inject constructor(
      * @return true if a handler can detect this device type
      */
     fun canDetect(deviceType: DeviceType): Boolean {
-        return deviceType in handlersByDeviceType
+        return handlersByDeviceType.containsKey(deviceType)
     }
 
     /**
@@ -259,9 +267,13 @@ class DetectionRegistry @Inject constructor(
 
     /**
      * Destroy all handlers and clean up resources.
+     * Thread-safe: Creates a snapshot of handlers before iteration to avoid
+     * concurrent modification issues during destruction.
      */
     fun destroyAllHandlers() {
-        allHandlers.forEach { handler ->
+        // Take a snapshot to avoid concurrent modification during iteration
+        val handlersSnapshot = allHandlers.toList()
+        handlersSnapshot.forEach { handler ->
             try {
                 handler.destroy()
                 Log.d(TAG, "Destroyed handler: ${handler.displayName}")

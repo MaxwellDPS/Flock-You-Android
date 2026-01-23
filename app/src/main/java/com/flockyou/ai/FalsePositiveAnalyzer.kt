@@ -6,7 +6,10 @@ import com.flockyou.data.model.DetectionMethod
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.ThreatLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +35,11 @@ class FalsePositiveAnalyzer @Inject constructor(
         const val HIGH_CONFIDENCE_FP_THRESHOLD = 0.8f   // Definitely FP
         const val MEDIUM_CONFIDENCE_FP_THRESHOLD = 0.6f // Likely FP
         const val LOW_CONFIDENCE_FP_THRESHOLD = 0.4f    // Possibly FP
+
+        // Timeout constants for operations
+        private const val SINGLE_ANALYSIS_TIMEOUT_MS = 30_000L  // 30 seconds per detection
+        private const val BATCH_ANALYSIS_TIMEOUT_MS = 120_000L  // 2 minutes for batch operations
+        private const val LLM_ANALYSIS_TIMEOUT_MS = 45_000L     // 45 seconds for LLM calls
     }
 
     /**
@@ -126,37 +134,84 @@ class FalsePositiveAnalyzer @Inject constructor(
 
     /**
      * Batch analyze multiple detections for false positives.
+     *
+     * Includes timeout protection to prevent indefinite hangs on large batches.
+     * Individual detection analysis failures are logged and skipped.
      */
     suspend fun analyzeMultiple(
         detections: List<Detection>,
         contextInfo: FpContextInfo? = null
     ): Map<String, FalsePositiveResult> = withContext(Dispatchers.IO) {
-        detections.associate { detection ->
-            detection.id to analyzeForFalsePositive(detection, contextInfo)
+        val results = mutableMapOf<String, FalsePositiveResult>()
+
+        try {
+            withTimeout(BATCH_ANALYSIS_TIMEOUT_MS) {
+                for (detection in detections) {
+                    try {
+                        // Individual detection analysis with its own timeout
+                        val result = withTimeoutOrNull(SINGLE_ANALYSIS_TIMEOUT_MS) {
+                            analyzeForFalsePositive(detection, contextInfo, tryLazyInit = false)
+                        }
+
+                        if (result != null) {
+                            results[detection.id] = result
+                        } else {
+                            // Timeout occurred - use rule-based fallback
+                            Log.w(TAG, "Single detection analysis timed out for ${detection.id}, using rule-based fallback")
+                            results[detection.id] = applyRuleBasedChecks(detection, contextInfo).copy(
+                                processingTimeMs = SINGLE_ANALYSIS_TIMEOUT_MS
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error analyzing detection ${detection.id}: ${e.message}")
+                        // Provide rule-based fallback on error
+                        results[detection.id] = applyRuleBasedChecks(detection, contextInfo)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Batch analysis timed out after ${BATCH_ANALYSIS_TIMEOUT_MS}ms, analyzed ${results.size}/${detections.size} detections")
+            // For any remaining unanalyzed detections, add rule-based results
+            for (detection in detections) {
+                if (detection.id !in results) {
+                    results[detection.id] = applyRuleBasedChecks(detection, contextInfo)
+                }
+            }
         }
+
+        results
     }
 
     /**
      * Filter a list of detections, removing likely false positives.
      * Returns pair of (validDetections, filteredFalsePositives)
+     *
+     * Includes timeout protection - if analysis times out, detections are
+     * conservatively kept as valid (not filtered as false positives).
      */
     suspend fun filterFalsePositives(
         detections: List<Detection>,
         threshold: Float = MEDIUM_CONFIDENCE_FP_THRESHOLD,
         contextInfo: FpContextInfo? = null
     ): FilteredDetections = withContext(Dispatchers.IO) {
-        val results = analyzeMultiple(detections, contextInfo)
-
         val valid = mutableListOf<Detection>()
         val filtered = mutableListOf<Pair<Detection, FalsePositiveResult>>()
 
-        for (detection in detections) {
-            val fpResult = results[detection.id]
-            if (fpResult != null && fpResult.isFalsePositive && fpResult.confidence >= threshold) {
-                filtered.add(detection to fpResult)
-            } else {
-                valid.add(detection)
+        try {
+            val results = analyzeMultiple(detections, contextInfo)
+
+            for (detection in detections) {
+                val fpResult = results[detection.id]
+                if (fpResult != null && fpResult.isFalsePositive && fpResult.confidence >= threshold) {
+                    filtered.add(detection to fpResult)
+                } else {
+                    valid.add(detection)
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during false positive filtering: ${e.message}")
+            // On error, conservatively keep all detections as valid
+            valid.addAll(detections)
         }
 
         FilteredDetections(
@@ -603,18 +658,27 @@ class FalsePositiveAnalyzer @Inject constructor(
         val prompt = buildFpAnalysisPrompt(detection, contextInfo, ruleBasedResult)
 
         return try {
-            // Use the LlmEngineManager to generate response with automatic fallback
-            val response = llmEngineManager.generateResponse(prompt)
-            if (response != null) {
-                parseLlmFpResponse(response, detection, ruleBasedResult)
-            } else {
-                // Fallback to MediaPipe directly if engine manager fails
-                Log.d(TAG, "Engine manager generateResponse returned null, trying MediaPipe directly")
-                val mediaPipeResponse = mediaPipeLlmClient.generateResponse(prompt)
-                if (mediaPipeResponse != null) {
-                    parseLlmFpResponse(mediaPipeResponse, detection, ruleBasedResult)
-                } else null
+            // Add timeout protection for LLM calls to prevent indefinite hangs
+            withTimeoutOrNull(LLM_ANALYSIS_TIMEOUT_MS) {
+                // Use the LlmEngineManager to generate response with automatic fallback
+                val response = llmEngineManager.generateResponse(prompt)
+                if (response != null) {
+                    parseLlmFpResponse(response, detection, ruleBasedResult)
+                } else {
+                    // Fallback to MediaPipe directly if engine manager fails
+                    Log.d(TAG, "Engine manager generateResponse returned null, trying MediaPipe directly")
+                    val mediaPipeResponse = mediaPipeLlmClient.generateResponse(prompt)
+                    if (mediaPipeResponse != null) {
+                        parseLlmFpResponse(mediaPipeResponse, detection, ruleBasedResult)
+                    } else null
+                }
+            } ?: run {
+                Log.w(TAG, "LLM FP analysis timed out after ${LLM_ANALYSIS_TIMEOUT_MS}ms")
+                null
             }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "LLM FP analysis timed out: ${e.message}")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "LLM FP analysis failed: ${e.message}")
             null

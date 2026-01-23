@@ -48,6 +48,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import javax.inject.Inject
 
+/**
+ * Time range presets for filtering detections
+ */
+enum class TimeRange(val label: String, val durationMs: Long?) {
+    LAST_HOUR("Last hour", 3_600_000L),
+    LAST_24H("Last 24h", 86_400_000L),
+    LAST_7D("Last 7 days", 604_800_000L),
+    LAST_30D("Last 30 days", 2_592_000_000L),
+    ALL_TIME("All time", null),
+    CUSTOM("Custom", null)
+}
+
 data class MainUiState(
     val isScanning: Boolean = false,
     val isLoading: Boolean = true,
@@ -61,6 +73,13 @@ data class MainUiState(
     val filterMatchAll: Boolean = true, // true = AND, false = OR
     val hideFalsePositives: Boolean = true, // Hide detections flagged as FP by default
     val fpFilterThreshold: Float = 0.6f, // FP score threshold for filtering (MEDIUM_CONFIDENCE)
+    // New unified filters
+    val filterProtocols: Set<DetectionProtocol> = emptySet(), // Empty = all protocols
+    val filterTimeRange: TimeRange = TimeRange.ALL_TIME,
+    val filterCustomStartTime: Long? = null,
+    val filterCustomEndTime: Long? = null,
+    val filterSignalStrength: Set<SignalStrength> = emptySet(), // Empty = all signal strengths
+    val filterActiveOnly: Boolean = false,
     // Status information
     val scanStatus: ScanningService.ScanStatus = ScanningService.ScanStatus.Idle,
     val bleStatus: ScanningService.SubsystemStatus = ScanningService.SubsystemStatus.Idle,
@@ -718,7 +737,85 @@ class MainViewModel @Inject constructor(
     }
 
     fun clearFilters() {
-        _uiState.update { it.copy(filterThreatLevel = null, filterDeviceTypes = emptySet()) }
+        _uiState.update {
+            it.copy(
+                filterThreatLevel = null,
+                filterDeviceTypes = emptySet(),
+                filterProtocols = emptySet(),
+                filterTimeRange = TimeRange.ALL_TIME,
+                filterCustomStartTime = null,
+                filterCustomEndTime = null,
+                filterSignalStrength = emptySet(),
+                filterActiveOnly = false
+            )
+        }
+    }
+
+    // Protocol filter methods
+    fun toggleProtocolFilter(protocol: DetectionProtocol) {
+        _uiState.update { state ->
+            if (protocol in state.filterProtocols) {
+                state.copy(filterProtocols = state.filterProtocols - protocol)
+            } else {
+                state.copy(filterProtocols = state.filterProtocols + protocol)
+            }
+        }
+    }
+
+    // Time range filter methods
+    fun setTimeRange(range: TimeRange) {
+        _uiState.update {
+            if (range != TimeRange.CUSTOM) {
+                it.copy(
+                    filterTimeRange = range,
+                    filterCustomStartTime = null,
+                    filterCustomEndTime = null
+                )
+            } else {
+                it.copy(filterTimeRange = range)
+            }
+        }
+    }
+
+    fun setCustomTimeRange(start: Long, end: Long) {
+        _uiState.update {
+            it.copy(
+                filterTimeRange = TimeRange.CUSTOM,
+                filterCustomStartTime = start,
+                filterCustomEndTime = end
+            )
+        }
+    }
+
+    // Signal strength filter methods
+    fun toggleSignalStrengthFilter(strength: SignalStrength) {
+        _uiState.update { state ->
+            if (strength in state.filterSignalStrength) {
+                state.copy(filterSignalStrength = state.filterSignalStrength - strength)
+            } else {
+                state.copy(filterSignalStrength = state.filterSignalStrength + strength)
+            }
+        }
+    }
+
+    // Active only filter method
+    fun setActiveOnly(activeOnly: Boolean) {
+        _uiState.update { it.copy(filterActiveOnly = activeOnly) }
+    }
+
+    /**
+     * Returns the count of active filters for displaying on filter badges.
+     */
+    fun getActiveFilterCount(): Int {
+        val state = _uiState.value
+        var count = 0
+        if (state.filterThreatLevel != null) count++
+        if (state.filterDeviceTypes.isNotEmpty()) count += state.filterDeviceTypes.size
+        if (state.filterProtocols.isNotEmpty()) count += state.filterProtocols.size
+        if (state.filterTimeRange != TimeRange.ALL_TIME) count++
+        if (state.filterSignalStrength.isNotEmpty()) count += state.filterSignalStrength.size
+        if (state.filterActiveOnly) count++
+        return count
     }
 
     /**
@@ -959,34 +1056,71 @@ class MainViewModel @Inject constructor(
     fun getFilteredDetections(): List<Detection> {
         val state = _uiState.value
         return state.detections.filter { detection ->
-            // FP filter - hide detections flagged as false positives
-            val fpMatch = if (state.hideFalsePositives) {
+            // 1. FP filter - hide detections flagged as false positives
+            val fpPass = if (state.hideFalsePositives) {
                 val fpScore = detection.fpScore ?: 0f
                 fpScore < state.fpFilterThreshold
             } else {
-                true // Show all when FP filter is disabled
+                true
             }
 
-            val threatMatch = state.filterThreatLevel?.let { detection.threatLevel == it } ?: true
-            val typeMatch = if (state.filterDeviceTypes.isEmpty()) {
+            // 2. Threat Level filter
+            val threatPass = state.filterThreatLevel?.let { detection.threatLevel == it } ?: true
+
+            // 3. Device Type filter
+            val typePass = if (state.filterDeviceTypes.isEmpty()) {
                 true
             } else {
                 detection.deviceType in state.filterDeviceTypes
             }
 
-            // FP filter is always AND with other filters
-            fpMatch && if (state.filterMatchAll) {
+            // 4. Protocol filter
+            val protocolPass = if (state.filterProtocols.isEmpty()) {
+                true
+            } else {
+                detection.protocol in state.filterProtocols
+            }
+
+            // 5. Time Range filter
+            val timePass = when (state.filterTimeRange) {
+                TimeRange.ALL_TIME -> true
+                TimeRange.CUSTOM -> {
+                    val start = state.filterCustomStartTime ?: 0L
+                    val end = state.filterCustomEndTime ?: Long.MAX_VALUE
+                    detection.timestamp in start..end
+                }
+                else -> {
+                    val cutoff = System.currentTimeMillis() - (state.filterTimeRange.durationMs ?: 0L)
+                    detection.timestamp >= cutoff
+                }
+            }
+
+            // 6. Signal Strength filter
+            val signalPass = if (state.filterSignalStrength.isEmpty()) {
+                true
+            } else {
+                detection.signalStrength in state.filterSignalStrength
+            }
+
+            // 7. Active Only filter
+            val activePass = !state.filterActiveOnly || detection.isActive
+
+            // Combine threat+type with AND/OR logic (existing behavior)
+            val threatTypePass = if (state.filterMatchAll) {
                 // AND: both conditions must match
-                threatMatch && typeMatch
+                threatPass && typePass
             } else {
                 // OR: either condition can match (if both are set)
                 if (state.filterThreatLevel != null && state.filterDeviceTypes.isNotEmpty()) {
-                    threatMatch || typeMatch
+                    threatPass || typePass
                 } else {
                     // If only one filter type is set, just use that
-                    threatMatch && typeMatch
+                    threatPass && typePass
                 }
             }
+
+            // All other filters are always AND-ed together
+            fpPass && threatTypePass && protocolPass && timePass && signalPass && activePass
         }
     }
 

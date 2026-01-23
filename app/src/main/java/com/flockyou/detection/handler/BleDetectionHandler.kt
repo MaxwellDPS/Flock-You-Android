@@ -133,6 +133,72 @@ class BleDetectionHandler @Inject constructor(
 
         /** Samsung SmartTag service UUID */
         val UUID_SAMSUNG_SMARTTAG: UUID = UUID.fromString("0000FD5A-0000-1000-8000-00805F9B34FB")
+
+        // ==================== CACHED DEVICE TYPE SETS ====================
+        // Pre-allocated sets for device type checks to avoid allocation on every call
+
+        /** Apple accessory advertisement type codes */
+        val APPLE_ACCESSORY_TYPE_CODES = setOf(
+            "07", "0F", "10", "05", "0C", "0D", "0E", "13", "14",
+            "01", "06", "09", "0A", "0B", "11", "12"
+        )
+
+        /** Hacking tool device types */
+        val HACKING_TOOL_TYPES = setOf(
+            DeviceType.FLIPPER_ZERO,
+            DeviceType.FLIPPER_ZERO_SPAM,
+            DeviceType.HACKRF_SDR,
+            DeviceType.PROXMARK,
+            DeviceType.USB_RUBBER_DUCKY,
+            DeviceType.BASH_BUNNY,
+            DeviceType.LAN_TURTLE,
+            DeviceType.KEYCROC,
+            DeviceType.SHARK_JACK,
+            DeviceType.SCREEN_CRAB,
+            DeviceType.GENERIC_HACKING_TOOL,
+            DeviceType.WIFI_PINEAPPLE
+        )
+
+        /** Police equipment device types */
+        val POLICE_EQUIPMENT_TYPES = setOf(
+            DeviceType.AXON_POLICE_TECH,
+            DeviceType.MOTOROLA_POLICE_TECH,
+            DeviceType.BODY_CAMERA,
+            DeviceType.POLICE_RADIO,
+            DeviceType.POLICE_VEHICLE,
+            DeviceType.L3HARRIS_SURVEILLANCE,
+            DeviceType.CELLEBRITE_FORENSICS,
+            DeviceType.GRAYKEY_DEVICE
+        )
+
+        /** Beacon device types */
+        val BEACON_DEVICE_TYPES = setOf(
+            DeviceType.BLUETOOTH_BEACON,
+            DeviceType.RETAIL_TRACKER,
+            DeviceType.CROWD_ANALYTICS
+        )
+
+        /** Smart home device types */
+        val SMART_HOME_DEVICE_TYPES = setOf(
+            DeviceType.RING_DOORBELL,
+            DeviceType.NEST_CAMERA,
+            DeviceType.AMAZON_SIDEWALK,
+            DeviceType.WYZE_CAMERA,
+            DeviceType.ARLO_CAMERA,
+            DeviceType.EUFY_CAMERA,
+            DeviceType.BLINK_CAMERA,
+            DeviceType.SIMPLISAFE_DEVICE,
+            DeviceType.ADT_DEVICE,
+            DeviceType.VIVINT_DEVICE
+        )
+
+        /** Consumer tracker device types */
+        val CONSUMER_TRACKER_TYPES = setOf(
+            DeviceType.AIRTAG,
+            DeviceType.TILE_TRACKER,
+            DeviceType.SAMSUNG_SMARTTAG,
+            DeviceType.GENERIC_BLE_TRACKER
+        )
     }
 
     // ==================== DetectionHandler Implementation ====================
@@ -368,27 +434,48 @@ class BleDetectionHandler @Inject constructor(
      * This is the main entry point called by [ScanningService] or other BLE scanners.
      * It evaluates the context against all detection methods in priority order.
      *
+     * Includes comprehensive error handling to prevent crashes during detection processing.
+     *
      * @param data The BLE detection context from scan result
      * @return List of detections found (typically 0 or 1)
      */
     suspend fun processData(data: BleDetectionContext): List<Detection> {
-        val result = handleDetection(data) ?: return emptyList()
+        return try {
+            val result = handleDetection(data) ?: return emptyList()
 
-        // Emit to the detections flow
-        _detections.emit(result.detection)
+            // Emit to the detections flow
+            try {
+                _detections.emit(result.detection)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to emit BLE detection: ${e.message}")
+            }
 
-        return listOf(result.detection)
+            listOf(result.detection)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing BLE detection for ${data.macAddress}: ${e.message}", e)
+            emptyList()
+        }
     }
 
     /**
      * Process a raw [ScanResult] by converting it to [BleDetectionContext].
      *
+     * Includes error handling to gracefully handle malformed scan results.
+     *
      * @param scanResult The Android BLE scan result
      * @return List of detections found
      */
     suspend fun processScanResult(scanResult: ScanResult): List<Detection> {
-        val context = scanResultToContext(scanResult)
-        return processData(context)
+        return try {
+            val context = scanResultToContext(scanResult)
+            processData(context)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Security exception processing BLE scan result: ${e.message}")
+            emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing BLE scan result: ${e.message}", e)
+            emptyList()
+        }
     }
 
     /**
@@ -538,6 +625,55 @@ class BleDetectionHandler @Inject constructor(
         val isAppleWrapper = context.manufacturerData.containsKey(MANUFACTURER_ID_APPLE)
 
         if (!isNordic && !isAppleWrapper) {
+            return null
+        }
+
+        // CRITICAL: Validate device name before assuming this is Axon equipment
+        // High advertising rates can occur in many devices (IoT sensors, beacons, etc.)
+        val deviceName = context.deviceName?.lowercase() ?: ""
+
+        // Known Axon-related name patterns (case insensitive)
+        val isAxonNamePattern = deviceName.isEmpty() || // Unnamed could be Axon
+            deviceName.contains("axon") ||
+            deviceName.contains("signal") ||
+            deviceName.contains("fleet") ||
+            deviceName.contains("body") ||
+            deviceName.startsWith("ab2") || deviceName.startsWith("ab3") || deviceName.startsWith("ab4") ||
+            deviceName.startsWith("flex") ||
+            deviceName.matches(Regex("^[a-f0-9]{8,}$")) // Hex-only names (common for LE devices)
+
+        // Known consumer IoT patterns that should NOT be flagged as Axon
+        val isConsumerIoTPattern = deviceName.startsWith("seba") || // Sensirion environmental sensors
+            deviceName.contains("sensor") ||
+            deviceName.contains("temp") ||
+            deviceName.contains("humidity") ||
+            deviceName.contains("co2") ||
+            deviceName.contains("beacon") ||
+            deviceName.contains("tile") ||
+            deviceName.contains("fitbit") ||
+            deviceName.contains("garmin") ||
+            deviceName.contains("watch") ||
+            deviceName.contains("band") ||
+            deviceName.contains("buds") ||
+            deviceName.contains("pixel") ||
+            deviceName.contains("airpods") ||
+            deviceName.contains("rinnai") || // Water heaters
+            deviceName.contains("tuya") || // Smart home
+            deviceName.contains("smart") ||
+            deviceName.contains("bulb") ||
+            deviceName.contains("plug") ||
+            deviceName.contains("switch")
+
+        // Skip detection if this looks like a consumer IoT device
+        if (isConsumerIoTPattern) {
+            Log.d(TAG, "Skipping advertising spike detection for consumer IoT device: ${context.deviceName}")
+            return null
+        }
+
+        // For Apple wrapper devices with non-Axon names, require stronger evidence
+        // Only Nordic manufacturer data is trusted for unknown devices
+        if (isAppleWrapper && !isNordic && !isAxonNamePattern) {
+            Log.d(TAG, "Skipping advertising spike detection: Apple wrapper device '${context.deviceName}' doesn't match Axon patterns")
             return null
         }
 
@@ -1275,10 +1411,7 @@ Analyze this MAC prefix detection and provide assessment of:
         // 0x07 = AirPods, 0x10 = AirPods Pro, 0x0F = AirPods Max
         // 0x05 = AppleTV setup, 0x0C = HomePod, etc.
         val typeCode = manufacturerData.take(2).uppercase()
-        return typeCode in listOf(
-            "07", "0F", "10", "05", "0C", "0D", "0E", "13", "14",
-            "01", "06", "09", "0A", "0B", "11", "12"
-        )
+        return typeCode in APPLE_ACCESSORY_TYPE_CODES
     }
 
     /**
@@ -1609,20 +1742,7 @@ and what legal/reporting options are available.
      * and adjust context scoring for location awareness.
      */
     private fun isHackingTool(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.FLIPPER_ZERO,
-            DeviceType.FLIPPER_ZERO_SPAM,
-            DeviceType.HACKRF_SDR,
-            DeviceType.PROXMARK,
-            DeviceType.USB_RUBBER_DUCKY,
-            DeviceType.BASH_BUNNY,
-            DeviceType.LAN_TURTLE,
-            DeviceType.KEYCROC,
-            DeviceType.SHARK_JACK,
-            DeviceType.SCREEN_CRAB,
-            DeviceType.GENERIC_HACKING_TOOL,
-            DeviceType.WIFI_PINEAPPLE
-        )
+        return deviceType in HACKING_TOOL_TYPES
     }
 
     // ==================== HELPER METHODS ====================
@@ -1811,57 +1931,28 @@ and personalized recommendations based on the user's situation.
      * Check if device type is police equipment.
      */
     private fun isPoliceEquipment(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.AXON_POLICE_TECH,
-            DeviceType.MOTOROLA_POLICE_TECH,
-            DeviceType.BODY_CAMERA,
-            DeviceType.POLICE_RADIO,
-            DeviceType.POLICE_VEHICLE,
-            DeviceType.L3HARRIS_SURVEILLANCE,
-            DeviceType.CELLEBRITE_FORENSICS,
-            DeviceType.GRAYKEY_DEVICE
-        )
+        return deviceType in POLICE_EQUIPMENT_TYPES
     }
 
     /**
      * Check if device type is a beacon.
      */
     private fun isBeaconDevice(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.BLUETOOTH_BEACON,
-            DeviceType.RETAIL_TRACKER,
-            DeviceType.CROWD_ANALYTICS
-        )
+        return deviceType in BEACON_DEVICE_TYPES
     }
 
     /**
      * Check if device type is a smart home device.
      */
     private fun isSmartHomeDevice(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.RING_DOORBELL,
-            DeviceType.NEST_CAMERA,
-            DeviceType.AMAZON_SIDEWALK,
-            DeviceType.WYZE_CAMERA,
-            DeviceType.ARLO_CAMERA,
-            DeviceType.EUFY_CAMERA,
-            DeviceType.BLINK_CAMERA,
-            DeviceType.SIMPLISAFE_DEVICE,
-            DeviceType.ADT_DEVICE,
-            DeviceType.VIVINT_DEVICE
-        )
+        return deviceType in SMART_HOME_DEVICE_TYPES
     }
 
     /**
      * Check if device type is a consumer tracker (AirTag, Tile, SmartTag, etc.)
      */
     private fun isConsumerTracker(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.AIRTAG,
-            DeviceType.TILE_TRACKER,
-            DeviceType.SAMSUNG_SMARTTAG,
-            DeviceType.GENERIC_BLE_TRACKER
-        )
+        return deviceType in CONSUMER_TRACKER_TYPES
     }
 
     // ==================== TRACKER STALKING DETECTION ====================

@@ -95,10 +95,11 @@ class UltrasonicDetector(
     private val knownBeaconFrequencies: List<Int>
         get() = TrackerDatabase.getAllUltrasonicFrequencies()
 
-    // Audio recording
-    private var audioRecord: AudioRecord? = null
-    private var isMonitoring = false
-    private var detectorJob: Job? = null
+    // Audio recording - use volatile for thread visibility
+    @Volatile private var audioRecord: AudioRecord? = null
+    private val audioRecordLock = Any()
+    @Volatile private var isMonitoring = false
+    @Volatile private var detectorJob: Job? = null
     private val detectorScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Error tracking for graceful restart
@@ -113,10 +114,10 @@ class UltrasonicDetector(
     private var currentLatitude: Double? = null
     private var currentLongitude: Double? = null
 
-    // Detection state
-    private var lastAnomalyTimes = mutableMapOf<UltrasonicAnomalyType, Long>()
-    private val activeBeacons = mutableMapOf<Int, BeaconDetection>() // frequency -> detection
-    private var noiseFloorDb = -60.0 // Baseline noise level
+    // Detection state - use concurrent collections for thread safety
+    private val lastAnomalyTimes = java.util.concurrent.ConcurrentHashMap<UltrasonicAnomalyType, Long>()
+    private val activeBeacons = java.util.concurrent.ConcurrentHashMap<Int, BeaconDetection>() // frequency -> detection
+    @Volatile private var noiseFloorDb = -60.0 // Baseline noise level
 
     // State flows
     private val _anomalies = MutableStateFlow<List<UltrasonicAnomaly>>(emptyList())
@@ -131,8 +132,8 @@ class UltrasonicDetector(
     private val _activeBeacons = MutableStateFlow<List<BeaconDetection>>(emptyList())
     val beaconsDetected: StateFlow<List<BeaconDetection>> = _activeBeacons.asStateFlow()
 
-    private val detectedAnomalies = mutableListOf<UltrasonicAnomaly>()
-    private val eventHistory = mutableListOf<UltrasonicEvent>()
+    private val detectedAnomalies = java.util.concurrent.CopyOnWriteArrayList<UltrasonicAnomaly>()
+    private val eventHistory = java.util.concurrent.CopyOnWriteArrayList<UltrasonicEvent>()
     private val maxEventHistory = 100
 
     // Data classes
@@ -494,9 +495,26 @@ class UltrasonicDetector(
     }
 
     fun stopMonitoring() {
+        // Set flag first to stop any ongoing scan loops
         isMonitoring = false
-        detectorJob?.cancel()
+
+        // Cancel the detector job and wait briefly for it to complete
+        detectorJob?.let { job ->
+            job.cancel()
+            // Give a brief moment for cancellation to propagate
+            try {
+                runBlocking(Dispatchers.Default) {
+                    withTimeoutOrNull(1000L) {
+                        job.join()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Timeout waiting for detector job cancellation", e)
+            }
+        }
         detectorJob = null
+
+        // Release audio resources
         releaseAudioRecord()
 
         addTimelineEvent(
@@ -1040,9 +1058,12 @@ class UltrasonicDetector(
             longitude = currentLongitude
         )
 
-        eventHistory.add(0, event)
-        if (eventHistory.size > maxEventHistory) {
-            eventHistory.removeAt(eventHistory.size - 1)
+        // CopyOnWriteArrayList operations need to be atomic for compound operations
+        synchronized(eventHistory) {
+            eventHistory.add(0, event)
+            while (eventHistory.size > maxEventHistory) {
+                eventHistory.removeAt(eventHistory.size - 1)
+            }
         }
         _events.value = eventHistory.toList()
     }
@@ -1055,12 +1076,26 @@ class UltrasonicDetector(
     }
 
     private fun releaseAudioRecord() {
-        try {
-            audioRecord?.release()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing AudioRecord", e)
+        synchronized(audioRecordLock) {
+            try {
+                audioRecord?.let { recorder ->
+                    // Stop recording if still recording
+                    if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        try {
+                            recorder.stop()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error stopping AudioRecord", e)
+                        }
+                    }
+                    // Release the resources
+                    recorder.release()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing AudioRecord", e)
+            } finally {
+                audioRecord = null
+            }
         }
-        audioRecord = null
     }
 
     fun clearAnomalies() {
@@ -1077,7 +1112,18 @@ class UltrasonicDetector(
 
     fun destroy() {
         stopMonitoring()
-        detectorScope.cancel()
+        // Ensure all coroutines are cancelled and resources released
+        try {
+            detectorScope.cancel()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cancelling detector scope", e)
+        }
+        // Double-check audio record is released
+        releaseAudioRecord()
+        // Clear all state
+        clearAnomalies()
+        clearHistory()
+        Log.d(TAG, "UltrasonicDetector destroyed and resources cleaned up")
     }
 
     /**

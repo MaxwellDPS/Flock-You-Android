@@ -13,6 +13,7 @@ import com.flockyou.data.model.rssiToSignalStrength
 import com.flockyou.service.CellularMonitor
 import kotlinx.coroutines.flow.first
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -241,7 +242,11 @@ class CellularDetectionHandler @Inject constructor(
         private const val IMSI_LOW_THRESHOLD = 30
     }
 
-    private var lastDetectionTime = mutableMapOf<DetectionMethod, Long>()
+    /**
+     * Tracks last detection time per method for rate limiting.
+     * Thread-safe: Uses ConcurrentHashMap for safe multi-threaded access.
+     */
+    private val lastDetectionTime = ConcurrentHashMap<DetectionMethod, Long>()
 
     /**
      * Check if this handler can process the given context.

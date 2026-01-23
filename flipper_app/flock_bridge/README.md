@@ -225,7 +225,7 @@ Detects Bluetooth Low Energy devices and trackers.
 |--------------|------------------|
 | Apple AirTag | Manufacturer data pattern |
 | Apple Find My | Service UUID |
-| Tile | Manufacturer ID 0x0103 |
+| Tile | Manufacturer ID 0x00C7 |
 | Samsung SmartTag | Manufacturer ID 0x0075 |
 | Chipolo | Manufacturer ID 0x0305 |
 

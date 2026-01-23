@@ -57,6 +57,10 @@ class FlipperScannerManager @Inject constructor(
     private val _scanSchedulerStatus = MutableStateFlow(ScanSchedulerStatus())
     val scanSchedulerStatus: StateFlow<ScanSchedulerStatus> = _scanSchedulerStatus.asStateFlow()
 
+    // Live Sub-GHz scan status from Flipper (frequency hopping, RSSI, etc.)
+    private val _subGhzScanStatus = MutableStateFlow<FlipperSubGhzScanStatus?>(null)
+    val subGhzScanStatus: StateFlow<FlipperSubGhzScanStatus?> = _subGhzScanStatus.asStateFlow()
+
     // Auto-reconnect state
     private val _autoReconnectState = MutableStateFlow(AutoReconnectState())
     val autoReconnectState: StateFlow<AutoReconnectState> = _autoReconnectState.asStateFlow()
@@ -643,6 +647,11 @@ class FlipperScannerManager @Inject constructor(
                     )
                     saveDetection(detection)
                 }
+            }
+
+            is FlipperMessage.SubGhzScanStatus -> {
+                // Update live Sub-GHz scan status (frequency, RSSI, hop count, etc.)
+                _subGhzScanStatus.update { message.status }
             }
 
             is FlipperMessage.BleScanResult -> {

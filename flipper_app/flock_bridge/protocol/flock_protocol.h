@@ -68,6 +68,9 @@ typedef enum {
     FlockMsgTypeIrConfig = 0x21,         // Configure IR listener
     FlockMsgTypeNrf24Config = 0x22,      // Configure NRF24 scanner
 
+    // Scanner Status/Metadata Messages
+    FlockMsgTypeSubGhzScanStatus = 0x40, // Sub-GHz scanner status/metadata
+
     FlockMsgTypeError = 0xFF,
 } FlockMessageType;
 
@@ -199,6 +202,24 @@ typedef struct {
     uint8_t detection_count;
     FlockSubGhzDetection detections[MAX_SUBGHZ_DETECTIONS];
 } FlockSubGhzScanResult;
+
+// Sub-GHz scan status/metadata message (28 bytes packed)
+// Sent periodically to provide real-time scanner state to the app
+typedef struct __attribute__((packed)) {
+    uint32_t timestamp;           // Uptime in seconds
+    uint32_t current_frequency;   // Current frequency in Hz
+    uint8_t current_preset;       // Current modulation preset (SubGhzPresetType)
+    uint8_t frequency_index;      // Index in frequency hop list (0-255)
+    uint8_t total_frequencies;    // Total frequencies in hop list
+    uint8_t scan_active;          // 1 = scanning, 0 = stopped
+    uint8_t decode_in_progress;   // 1 = actively decoding signal
+    uint8_t jamming_detected;     // 1 = jamming detected at current freq
+    int8_t current_rssi;          // Current RSSI reading (dBm)
+    uint8_t reserved;             // Padding for alignment
+    uint32_t hop_count;           // Total frequency hops since start
+    uint32_t detection_count;     // Total detections since start
+    uint32_t dwell_time_ms;       // Current dwell time per frequency
+} FlockSubGhzScanStatus;
 
 // BLE device detection structure
 typedef struct __attribute__((packed)) {
@@ -389,6 +410,15 @@ size_t flock_protocol_serialize_wifi_result(
  */
 size_t flock_protocol_serialize_subghz_result(
     const FlockSubGhzScanResult* result,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a Sub-GHz scan status into a buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_subghz_status(
+    const FlockSubGhzScanStatus* status,
     uint8_t* buffer,
     size_t buffer_size);
 

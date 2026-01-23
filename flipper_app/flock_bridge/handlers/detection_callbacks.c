@@ -13,7 +13,7 @@
 
 void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !detection) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->subghz_detection_count++;
@@ -35,9 +35,24 @@ void on_subghz_detection(const FlockSubGhzDetection* detection, void* context) {
     furi_mutex_release(app->mutex);
 }
 
+void on_subghz_scan_status(const FlockSubGhzScanStatus* status, void* context) {
+    FlockBridgeApp* app = context;
+    if (!app || !status) return;
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+
+    // Serialize and send scan status to connected device
+    size_t len = flock_protocol_serialize_subghz_status(status, app->tx_buffer, sizeof(app->tx_buffer));
+    if (len > 0) {
+        flock_bridge_send_data(app, app->tx_buffer, len);
+    }
+
+    furi_mutex_release(app->mutex);
+}
+
 void on_ble_detection(const FlockBleDevice* device, void* context) {
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !device) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->ble_scan_count++;
@@ -60,7 +75,7 @@ void on_ble_detection(const FlockBleDevice* device, void* context) {
 
 void on_wifi_detection(const FlockWifiNetwork* network, void* context) {
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !network) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->wifi_scan_count++;
@@ -84,7 +99,7 @@ void on_wifi_detection(const FlockWifiNetwork* network, void* context) {
 void on_wifi_deauth(const uint8_t* bssid, const uint8_t* target, uint8_t reason, uint32_t count, void* context) {
     UNUSED(reason);
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !bssid || !target) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
@@ -109,7 +124,7 @@ void on_wifi_deauth(const uint8_t* bssid, const uint8_t* target, uint8_t reason,
 
 void on_ir_detection(const FlockIrDetection* detection, void* context) {
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !detection) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->ir_detection_count++;
@@ -132,7 +147,7 @@ void on_ir_detection(const FlockIrDetection* detection, void* context) {
 
 void on_nfc_detection(const FlockNfcDetection* detection, void* context) {
     FlockBridgeApp* app = context;
-    if (!app) return;
+    if (!app || !detection) return;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->nfc_detection_count++;

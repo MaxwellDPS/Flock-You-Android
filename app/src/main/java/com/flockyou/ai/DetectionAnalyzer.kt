@@ -12,10 +12,12 @@ import com.flockyou.data.model.ThreatLevel
 import com.flockyou.data.repository.DetectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -48,6 +50,58 @@ import com.flockyou.detection.profile.RecommendationUrgency
 import com.flockyou.detection.handler.DeviceTypeProfile as HandlerProfile
 
 /**
+ * Result type for progressive analysis pipeline.
+ * Allows UI to show immediate rule-based results while LLM analysis runs in background.
+ *
+ * Usage:
+ * ```
+ * detectionAnalyzer.analyzeProgressively(detection).collect { result ->
+ *     when (result) {
+ *         is ProgressiveAnalysisResult.RuleBasedResult -> showQuickResult(result.analysis)
+ *         is ProgressiveAnalysisResult.LlmResult -> showFinalResult(result.analysis)
+ *         is ProgressiveAnalysisResult.Error -> showError(result.error, result.fallbackAnalysis)
+ *     }
+ * }
+ * ```
+ */
+sealed class ProgressiveAnalysisResult {
+    /**
+     * Quick rule-based analysis result (< 10ms).
+     * Provides instant feedback while LLM analysis runs in background.
+     *
+     * @property analysis The quick analysis result
+     * @property isComplete False - indicates more detailed analysis is coming
+     */
+    data class RuleBasedResult(
+        val analysis: AiAnalysisResult,
+        val isComplete: Boolean = false
+    ) : ProgressiveAnalysisResult()
+
+    /**
+     * Full LLM analysis result.
+     * This is the final, detailed analysis from the on-device LLM.
+     *
+     * @property analysis The comprehensive LLM analysis result
+     * @property isComplete True - this is the final result
+     */
+    data class LlmResult(
+        val analysis: AiAnalysisResult,
+        val isComplete: Boolean = true
+    ) : ProgressiveAnalysisResult()
+
+    /**
+     * Error during analysis with optional fallback.
+     *
+     * @property error Description of what went wrong
+     * @property fallbackAnalysis Rule-based analysis to show if LLM fails
+     */
+    data class Error(
+        val error: String,
+        val fallbackAnalysis: AiAnalysisResult?
+    ) : ProgressiveAnalysisResult()
+}
+
+/**
  * AI-powered detection analyzer using LOCAL ON-DEVICE LLM inference only.
  * No data is ever sent to cloud services - all analysis happens on the device.
  *
@@ -59,6 +113,7 @@ import com.flockyou.detection.handler.DeviceTypeProfile as HandlerProfile
  * 5. Batch analysis for surveillance density mapping
  * 6. Structured output parsing for programmatic use
  * 7. Analysis feedback tracking for learning
+ * 8. Progressive analysis pipeline for instant user feedback
  */
 @Singleton
 class DetectionAnalyzer @Inject constructor(
@@ -69,7 +124,9 @@ class DetectionAnalyzer @Inject constructor(
     private val mediaPipeLlmClient: MediaPipeLlmClient,
     private val falsePositiveAnalyzer: FalsePositiveAnalyzer,
     private val llmEngineManager: LlmEngineManager,
-    private val detectionRegistry: DetectionRegistry
+    private val detectionRegistry: DetectionRegistry,
+    private val feedbackTracker: AnalysisFeedbackTracker,
+    private val ruleBasedAnalyzer: RuleBasedAnalyzer
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -715,8 +772,15 @@ class DetectionAnalyzer @Inject constructor(
                 falsePositiveAnalyzer.analyzeForFalsePositive(detection, contextInfo)
             } else null
 
+            // Apply feedback-based adjustments if enabled
+            val feedbackAdjustedResult = if (settings.trackAnalysisFeedback) {
+                adjustAnalysisWithFeedback(result, detection)
+            } else {
+                result
+            }
+
             val processingTime = System.currentTimeMillis() - startTime
-            val finalResult = result.copy(
+            val finalResult = feedbackAdjustedResult.copy(
                 processingTimeMs = processingTime,
                 isFalsePositive = fpResult?.isFalsePositive ?: false,
                 falsePositiveConfidence = fpResult?.confidence ?: 0f,
@@ -784,6 +848,266 @@ class DetectionAnalyzer @Inject constructor(
         // 2. The coroutine's finally block will handle proper unlock when cancelled
         Log.d(TAG, "Analysis cancellation requested")
     }
+
+    // ==================== PROGRESSIVE ANALYSIS ====================
+
+    /**
+     * Analyze a detection progressively, providing instant feedback while LLM analysis runs.
+     *
+     * This method implements a progressive analysis pipeline:
+     * 1. Check cache first - instant return if there's a valid cached result
+     * 2. Emit rule-based result immediately (< 10ms) for instant user feedback
+     * 3. Launch LLM analysis in background
+     * 4. Emit LLM result when complete (replaces rule-based result in UI)
+     *
+     * Usage:
+     * ```
+     * detectionAnalyzer.analyzeProgressively(detection).collect { result ->
+     *     when (result) {
+     *         is ProgressiveAnalysisResult.RuleBasedResult -> updateUI(result.analysis, isPartial = true)
+     *         is ProgressiveAnalysisResult.LlmResult -> updateUI(result.analysis, isPartial = false)
+     *         is ProgressiveAnalysisResult.Error -> showError(result.error)
+     *     }
+     * }
+     * ```
+     *
+     * @param detection The detection to analyze
+     * @return Flow of progressive analysis results
+     */
+    fun analyzeProgressively(detection: Detection): Flow<ProgressiveAnalysisResult> = flow {
+        val startTime = System.currentTimeMillis()
+        Log.i(TAG, "=== analyzeProgressively START for ${detection.id} (${detection.deviceType}) ===")
+
+        // Load settings once for the entire pipeline
+        val settings = aiSettingsRepository.settings.first()
+
+        // Step 1: Check cache first (instant return if hit)
+        val cachedResult = tryGetCachedResult(detection, settings)
+        if (cachedResult != null) {
+            Log.d(TAG, "Cache hit for progressive analysis - returning cached LLM result")
+            emit(ProgressiveAnalysisResult.LlmResult(
+                analysis = cachedResult.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime
+                ),
+                isComplete = true
+            ))
+            return@flow
+        }
+
+        // Step 2: Emit rule-based result immediately for instant user feedback
+        Log.d(TAG, "Emitting quick rule-based result...")
+        val ruleBasedStartTime = System.currentTimeMillis()
+        val quickResult = ruleBasedAnalyzer.analyzeQuick(detection)
+        val ruleBasedTime = System.currentTimeMillis() - ruleBasedStartTime
+        Log.d(TAG, "Rule-based analysis completed in ${ruleBasedTime}ms")
+
+        emit(ProgressiveAnalysisResult.RuleBasedResult(
+            analysis = quickResult.copy(
+                processingTimeMs = ruleBasedTime,
+                modelUsed = "rule-based-progressive"
+            ),
+            isComplete = false
+        ))
+
+        // Step 3: Check if AI analysis is enabled
+        if (!settings.enabled || !settings.analyzeDetections) {
+            Log.d(TAG, "AI analysis disabled - rule-based result is final")
+            // Re-emit as complete since no LLM analysis will follow
+            emit(ProgressiveAnalysisResult.RuleBasedResult(
+                analysis = quickResult.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime,
+                    modelUsed = "rule-based"
+                ),
+                isComplete = true
+            ))
+            return@flow
+        }
+
+        // Step 4: Check if we should use rule-based only model
+        val modelFromSettings = AiModel.fromId(settings.selectedModel)
+        if (modelFromSettings == AiModel.RULE_BASED) {
+            Log.d(TAG, "Rule-based model selected - rule-based result is final")
+            emit(ProgressiveAnalysisResult.RuleBasedResult(
+                analysis = quickResult.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime,
+                    modelUsed = "rule-based"
+                ),
+                isComplete = true
+            ))
+            return@flow
+        }
+
+        // Step 5: Launch LLM analysis
+        Log.d(TAG, "Starting LLM analysis in background...")
+        try {
+            val llmResult = withContext(Dispatchers.IO) {
+                analyzeDetection(detection)
+            }
+
+            if (llmResult.success) {
+                Log.i(TAG, "LLM analysis completed successfully in ${llmResult.processingTimeMs}ms")
+                emit(ProgressiveAnalysisResult.LlmResult(
+                    analysis = llmResult.copy(
+                        processingTimeMs = System.currentTimeMillis() - startTime
+                    ),
+                    isComplete = true
+                ))
+            } else {
+                // LLM failed - emit error with rule-based fallback
+                Log.w(TAG, "LLM analysis failed: ${llmResult.error}")
+                emit(ProgressiveAnalysisResult.Error(
+                    error = llmResult.error ?: "LLM analysis failed",
+                    fallbackAnalysis = quickResult.copy(
+                        processingTimeMs = System.currentTimeMillis() - startTime,
+                        modelUsed = "rule-based-fallback"
+                    )
+                ))
+            }
+        } catch (e: CancellationException) {
+            Log.d(TAG, "Progressive analysis cancelled")
+            emit(ProgressiveAnalysisResult.Error(
+                error = "Analysis cancelled",
+                fallbackAnalysis = quickResult
+            ))
+            throw e // Re-throw cancellation
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during LLM analysis", e)
+            emit(ProgressiveAnalysisResult.Error(
+                error = e.message ?: "Unknown error during analysis",
+                fallbackAnalysis = quickResult.copy(
+                    processingTimeMs = System.currentTimeMillis() - startTime,
+                    modelUsed = "rule-based-error-fallback"
+                )
+            ))
+        }
+    }
+
+    /**
+     * Try to get a cached result for the detection.
+     * Returns null if no valid cache entry exists.
+     */
+    private suspend fun tryGetCachedResult(detection: Detection, settings: AiSettings): AiAnalysisResult? {
+        // Try fast-path cache first
+        val fastPathResult = tryFastPathCache(detection)
+        if (fastPathResult != null) {
+            cacheStats.hits++
+            cacheStats.fastPathHits++
+            return fastPathResult
+        }
+
+        // Try semantic cache
+        val cacheKey = "${detection.id}_${detection.deviceType}_${detection.threatLevel}_ctx${settings.enableContextualAnalysis}_${currentModel.id}"
+        val cached = cacheMutex.withLock {
+            val entry = analysisCache[cacheKey]
+            if (entry != null && System.currentTimeMillis() - entry.timestamp < entry.expiryMs) {
+                entry.result
+            } else null
+        }
+
+        if (cached != null) {
+            cacheStats.hits++
+            return cached
+        }
+
+        // Try semantic similarity cache for similar detections
+        val similarCached = findSimilarCachedResult(detection)
+        if (similarCached != null) {
+            // Statistics already tracked in findSimilarCachedResult
+            return similarCached
+        }
+
+        cacheStats.misses++
+        return null
+    }
+
+    // ==================== FEEDBACK-BASED ANALYSIS ADJUSTMENT ====================
+
+    /**
+     * Adjust analysis results based on historical user feedback.
+     *
+     * This method applies confidence adjustments learned from user interactions:
+     * - Lowers confidence if users frequently dismiss/mark as FP for this device type
+     * - Raises confidence if users frequently investigate/confirm/report for this device type
+     * - Adds contextual notes about historical accuracy
+     *
+     * @param analysis The original analysis result
+     * @param detection The detection being analyzed
+     * @return Adjusted analysis result with feedback-based modifications
+     */
+    private suspend fun adjustAnalysisWithFeedback(
+        analysis: AiAnalysisResult,
+        detection: Detection
+    ): AiAnalysisResult {
+        return try {
+            // Delegate to the feedback tracker for the actual adjustment
+            val adjustedResult = feedbackTracker.adjustAnalysisWithFeedback(
+                analysis = analysis,
+                deviceType = detection.deviceType
+            )
+
+            Log.d(TAG, "Feedback adjustment applied for ${detection.deviceType}: " +
+                "confidence ${analysis.confidence} -> ${adjustedResult.confidence}")
+
+            adjustedResult
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying feedback adjustment", e)
+            // Return original analysis if adjustment fails
+            analysis
+        }
+    }
+
+    /**
+     * Record user feedback for a detection analysis.
+     * Call this when users take actions on detections to improve future analysis.
+     *
+     * @param detection The detection the user interacted with
+     * @param action The type of action taken (DISMISSED, INVESTIGATED, MARKED_FALSE_POSITIVE, etc.)
+     * @param analysis Optional analysis result if one was shown
+     */
+    suspend fun recordUserFeedback(
+        detection: Detection,
+        action: UserAction,
+        analysis: AiAnalysisResult? = null
+    ) {
+        try {
+            feedbackTracker.recordFeedback(detection, action, analysis)
+            Log.d(TAG, "Recorded user feedback: $action for ${detection.deviceType}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error recording user feedback", e)
+        }
+    }
+
+    /**
+     * Get the confidence adjustment factor for a device type based on feedback history.
+     * Returns a multiplier (0.5-1.2) to apply to confidence scores.
+     *
+     * @param deviceType The device type to check
+     * @return Confidence multiplier
+     */
+    suspend fun getConfidenceAdjustmentForDeviceType(deviceType: DeviceType): Float {
+        return feedbackTracker.getConfidenceAdjustment(deviceType)
+    }
+
+    /**
+     * Get aggregated feedback statistics for a device type.
+     * Useful for displaying historical accuracy in UI.
+     *
+     * @param deviceType The device type to get stats for
+     * @return Flow of FeedbackStats
+     */
+    fun getFeedbackStatsForDeviceType(deviceType: DeviceType) =
+        feedbackTracker.getFeedbackStats(deviceType)
+
+    /**
+     * Get overall accuracy statistics across all device types.
+     * Useful for displaying in settings/about screen.
+     */
+    suspend fun getOverallAccuracyStats() = feedbackTracker.getOverallAccuracyStats()
+
+    /**
+     * Get the feedback tracker for direct access if needed.
+     */
+    fun getFeedbackTracker(): AnalysisFeedbackTracker = feedbackTracker
 
     // ==================== FALSE POSITIVE ANALYSIS ====================
 

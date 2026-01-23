@@ -54,6 +54,9 @@ object FlipperProtocol {
     const val MSG_IR_CONFIG = 0x21            // Configure IR listener
     const val MSG_NRF24_CONFIG = 0x22         // Configure NRF24 scanner
 
+    // Scanner Status/Metadata Messages
+    const val MSG_SUBGHZ_SCAN_STATUS = 0x40   // Sub-GHz scanner status/metadata
+
     const val MSG_ERROR = 0xFF
 
     private const val HEADER_SIZE = 4
@@ -385,6 +388,7 @@ object FlipperProtocol {
             MSG_HEARTBEAT -> FlipperMessage.Heartbeat
             MSG_WIFI_SCAN_RESULT -> parseWifiScanResult(buffer, payloadLength)
             MSG_SUBGHZ_SCAN_RESULT -> parseSubGhzScanResult(buffer, payloadLength)
+            MSG_SUBGHZ_SCAN_STATUS -> parseSubGhzScanStatus(buffer)
             MSG_STATUS_RESPONSE -> parseStatusResponse(buffer)
             MSG_WIPS_ALERT -> parseWipsAlert(buffer)
             MSG_BLE_SCAN_RESULT -> parseBleScanResult(buffer, payloadLength)
@@ -478,6 +482,43 @@ object FlipperProtocol {
         }
 
         return FlipperMessage.SubGhzScanResult(FlipperSubGhzScanResult(timestamp * 1000, frequencyStart, frequencyEnd, detections))
+    }
+
+    private fun parseSubGhzScanStatus(buffer: ByteBuffer): FlipperMessage {
+        return try {
+            val timestamp = buffer.int.toLong() and 0xFFFFFFFFL
+            val currentFrequency = buffer.int.toLong() and 0xFFFFFFFFL
+            val currentPreset = buffer.get().toInt() and 0xFF
+            val frequencyIndex = buffer.get().toInt() and 0xFF
+            val totalFrequencies = buffer.get().toInt() and 0xFF
+            val scanActive = buffer.get() != 0.toByte()
+            val decodeInProgress = buffer.get() != 0.toByte()
+            val jammingDetected = buffer.get() != 0.toByte()
+            val currentRssi = buffer.get().toInt()
+            buffer.get() // reserved byte
+            val hopCount = buffer.int.toLong() and 0xFFFFFFFFL
+            val detectionCount = buffer.int.toLong() and 0xFFFFFFFFL
+            val dwellTimeMs = buffer.int.toLong() and 0xFFFFFFFFL
+
+            FlipperMessage.SubGhzScanStatus(
+                FlipperSubGhzScanStatus(
+                    timestamp = timestamp * 1000,
+                    currentFrequency = currentFrequency,
+                    currentPreset = currentPreset,
+                    frequencyIndex = frequencyIndex,
+                    totalFrequencies = totalFrequencies,
+                    scanActive = scanActive,
+                    decodeInProgress = decodeInProgress,
+                    jammingDetected = jammingDetected,
+                    currentRssi = currentRssi,
+                    hopCount = hopCount,
+                    detectionCount = detectionCount,
+                    dwellTimeMs = dwellTimeMs
+                )
+            )
+        } catch (e: Exception) {
+            FlipperMessage.Error(-11, "Failed to parse Sub-GHz scan status: ${e.message}")
+        }
     }
 
     private fun parseStatusResponse(buffer: ByteBuffer): FlipperMessage {

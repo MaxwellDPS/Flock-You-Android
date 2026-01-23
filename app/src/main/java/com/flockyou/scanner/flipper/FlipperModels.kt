@@ -60,6 +60,37 @@ data class FlipperSubGhzDetection(
     val protocolName: String
 )
 
+/**
+ * Real-time Sub-GHz scanner status/metadata.
+ * Sent periodically and on frequency hops to provide visibility into scanner state.
+ */
+data class FlipperSubGhzScanStatus(
+    val timestamp: Long,          // Uptime in milliseconds
+    val currentFrequency: Long,   // Current frequency in Hz
+    val currentPreset: Int,       // Modulation preset (0=OOK650, 1=OOK270, 2=2FSK238, 3=2FSK476)
+    val frequencyIndex: Int,      // Index in frequency hop list (0-9)
+    val totalFrequencies: Int,    // Total frequencies in hop list
+    val scanActive: Boolean,      // Scanner is actively running
+    val decodeInProgress: Boolean,// Actively decoding a signal
+    val jammingDetected: Boolean, // Jamming detected at current frequency
+    val currentRssi: Int,         // Current RSSI reading (dBm)
+    val hopCount: Long,           // Total frequency hops since start
+    val detectionCount: Long,     // Total protocol detections since start
+    val dwellTimeMs: Long         // Dwell time per frequency (ms)
+) {
+    val presetName: String
+        get() = when (currentPreset) {
+            0 -> "OOK 650kHz"
+            1 -> "OOK 270kHz"
+            2 -> "2-FSK 2.38kHz"
+            3 -> "2-FSK 4.76kHz"
+            else -> "Unknown"
+        }
+
+    val frequencyMhz: Double
+        get() = currentFrequency / 1_000_000.0
+}
+
 enum class SubGhzModulation {
     AM, FM, ASK, FSK, PSK, OOK, GFSK, UNKNOWN;
 
@@ -301,6 +332,7 @@ sealed class FlipperMessage {
     data object Heartbeat : FlipperMessage()
     data class WifiScanResult(val result: FlipperWifiScanResult) : FlipperMessage()
     data class SubGhzScanResult(val result: FlipperSubGhzScanResult) : FlipperMessage()
+    data class SubGhzScanStatus(val status: FlipperSubGhzScanStatus) : FlipperMessage()
     data class BleScanResult(val result: FlipperBleScanResult) : FlipperMessage()
     data class IrScanResult(val result: FlipperIrScanResult) : FlipperMessage()
     data class NfcScanResult(val result: FlipperNfcScanResult) : FlipperMessage()

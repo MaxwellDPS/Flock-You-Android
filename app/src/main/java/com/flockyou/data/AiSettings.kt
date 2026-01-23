@@ -30,6 +30,16 @@ enum class LlmEnginePreference(val id: String, val displayName: String, val desc
     RULE_BASED("rule-based", "Rule-Based Only", "No LLM, use built-in rules only")
 }
 
+/**
+ * Prompt compression mode for LLM analysis.
+ * Compact prompts reduce token count by 50-70% for faster inference.
+ */
+enum class PromptCompressionMode(val id: String, val displayName: String, val description: String) {
+    AUTO("auto", "Auto", "Automatically select based on model size and device capability"),
+    VERBOSE("verbose", "Verbose", "Full detailed prompts for maximum quality (~1500+ tokens)"),
+    COMPACT("compact", "Compact", "Compressed prompts for faster inference (~400 tokens)")
+}
+
 data class AiSettings(
     val enabled: Boolean = false,
     val modelDownloaded: Boolean = false,
@@ -49,7 +59,8 @@ data class AiSettings(
     val maxTokens: Int = 1024,
     val temperatureTenths: Int = 7, // 0.7 stored as int to avoid float precision issues
     val lastModelUpdate: Long = 0,
-    val huggingFaceToken: String = "" // HF token for authenticated model downloads
+    val huggingFaceToken: String = "", // HF token for authenticated model downloads
+    val promptCompressionMode: String = "auto" // Prompt compression: auto, verbose, compact
 )
 
 /**
@@ -433,6 +444,7 @@ class AiSettingsRepository @Inject constructor(
         val MAX_TOKENS = intPreferencesKey("ai_max_tokens")
         val TEMPERATURE_TENTHS = intPreferencesKey("ai_temperature_tenths")
         val LAST_MODEL_UPDATE = longPreferencesKey("ai_last_model_update")
+        val PROMPT_COMPRESSION_MODE = stringPreferencesKey("ai_prompt_compression_mode")
         // Note: HuggingFace token is stored in EncryptedSharedPreferences, not DataStore
     }
 
@@ -482,7 +494,8 @@ class AiSettingsRepository @Inject constructor(
             temperatureTenths = prefs[Keys.TEMPERATURE_TENTHS] ?: 7,
             lastModelUpdate = prefs[Keys.LAST_MODEL_UPDATE] ?: 0,
             // Read HuggingFace token from encrypted storage
-            huggingFaceToken = getHuggingFaceTokenInternal()
+            huggingFaceToken = getHuggingFaceTokenInternal(),
+            promptCompressionMode = prefs[Keys.PROMPT_COMPRESSION_MODE] ?: "auto"
         )
     }
 
@@ -581,7 +594,61 @@ class AiSettingsRepository @Inject constructor(
         context.aiSettingsDataStore.edit { it[Keys.TEMPERATURE_TENTHS] = tenths.coerceIn(0, 10) }
     }
 
+    suspend fun setPromptCompressionMode(mode: String) {
+        // Validate against known modes
+        val validModes = PromptCompressionMode.entries.map { it.id }
+        val safeMode = if (mode in validModes) mode else "auto"
+        context.aiSettingsDataStore.edit { it[Keys.PROMPT_COMPRESSION_MODE] = safeMode }
+    }
+
     suspend fun clearSettings() {
         context.aiSettingsDataStore.edit { it.clear() }
     }
+}
+
+/**
+ * Progressive analysis result for streaming analysis pipeline.
+ * Enables instant feedback with rule-based analysis while LLM runs in background.
+ *
+ * Flow:
+ * 1. RuleBasedResult emitted immediately (< 10ms) - provides instant feedback
+ * 2. LlmResult emitted when LLM completes (1-10s) - provides enhanced analysis
+ * 3. Error emitted if something fails - includes fallback analysis when available
+ */
+sealed class ProgressiveAnalysisResult {
+    /**
+     * Quick rule-based analysis result.
+     * Provides instant feedback based on pattern matching and device type profiles.
+     *
+     * @param analysis The rule-based analysis result
+     * @param isComplete True if this is the final result (no LLM analysis coming)
+     */
+    data class RuleBasedResult(
+        val analysis: AiAnalysisResult,
+        val isComplete: Boolean = false
+    ) : ProgressiveAnalysisResult()
+
+    /**
+     * Full LLM-enhanced analysis result.
+     * Provides comprehensive analysis with contextual understanding.
+     *
+     * @param analysis The LLM-enhanced analysis result
+     * @param isComplete Always true for LLM results
+     */
+    data class LlmResult(
+        val analysis: AiAnalysisResult,
+        val isComplete: Boolean = true
+    ) : ProgressiveAnalysisResult()
+
+    /**
+     * Error during analysis.
+     * May include a fallback analysis from rule-based system.
+     *
+     * @param error Error message describing what went wrong
+     * @param fallbackAnalysis Optional rule-based analysis as fallback
+     */
+    data class Error(
+        val error: String,
+        val fallbackAnalysis: AiAnalysisResult?
+    ) : ProgressiveAnalysisResult()
 }

@@ -78,6 +78,25 @@ class WifiDetectionHandler @Inject constructor(
 
         /** Rate limit between detections of the same device (milliseconds) */
         const val DETECTION_RATE_LIMIT_MS = 30000L
+
+        // ==================== CACHED DEVICE TYPE SETS ====================
+        // Pre-allocated sets for device type checks to avoid allocation on every call
+
+        /** Surveillance-related device types */
+        val SURVEILLANCE_DEVICE_TYPES = setOf(
+            DeviceType.FLOCK_SAFETY_CAMERA,
+            DeviceType.AXON_POLICE_TECH,
+            DeviceType.MOTOROLA_POLICE_TECH,
+            DeviceType.BODY_CAMERA,
+            DeviceType.POLICE_RADIO,
+            DeviceType.POLICE_VEHICLE,
+            DeviceType.L3HARRIS_SURVEILLANCE,
+            DeviceType.PENGUIN_SURVEILLANCE,
+            DeviceType.PIGVISION_SYSTEM,
+            DeviceType.RAVEN_GUNSHOT_DETECTOR,
+            DeviceType.SURVEILLANCE_VAN,
+            DeviceType.UNKNOWN_SURVEILLANCE
+        )
     }
 
     // ==================== Handler Properties ====================
@@ -132,7 +151,9 @@ class WifiDetectionHandler @Inject constructor(
     private val _detections = MutableSharedFlow<Detection>(replay = 100)
     val detections: Flow<Detection> = _detections.asSharedFlow()
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Use a supervisor job that can be cancelled to clean up resources
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.Default + supervisorJob)
 
     private var currentLatitude: Double? = null
     private var currentLongitude: Double? = null
@@ -185,6 +206,12 @@ class WifiDetectionHandler @Inject constructor(
         if (_isActive) return
         _isActive = true
 
+        // Recreate scope if it was cancelled (e.g., after destroy())
+        if (!supervisorJob.isActive) {
+            supervisorJob = SupervisorJob()
+            scope = CoroutineScope(Dispatchers.Default + supervisorJob)
+        }
+
         rogueWifiMonitor = RogueWifiMonitor(context).apply {
             startMonitoring()
         }
@@ -224,6 +251,8 @@ class WifiDetectionHandler @Inject constructor(
 
     fun destroy() {
         stopMonitoring()
+        // Cancel the supervisor job to clean up all coroutines
+        supervisorJob.cancel()
         rogueWifiMonitor?.destroy()
         rogueWifiMonitor = null
         clearHistory()
@@ -241,27 +270,43 @@ class WifiDetectionHandler @Inject constructor(
      * 2. MAC prefix matching (OUI-based manufacturer identification)
      * 3. RogueWifiMonitor analysis (evil twins, following networks, etc.)
      *
+     * Includes comprehensive error handling to prevent crashes during detection processing.
+     *
      * @param data List of WiFi scan results from WifiManager
      * @return List of detections found
      */
     suspend fun processData(data: List<ScanResult>): List<Detection> {
         val detections = mutableListOf<Detection>()
 
-        // Process each scan result through pattern matching
+        // Process each scan result through pattern matching with error handling
         for (result in data) {
-            val context = scanResultToContext(result) ?: continue
+            try {
+                val context = scanResultToContext(result) ?: continue
 
-            // Process through pattern matching
-            val detection = handlePatternMatching(context)
-            if (detection != null) {
-                detections.add(detection.detection)
-                _detections.emit(detection.detection)
+                // Process through pattern matching
+                val detection = handlePatternMatching(context)
+                if (detection != null) {
+                    detections.add(detection.detection)
+                    try {
+                        _detections.emit(detection.detection)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to emit WiFi detection: ${e.message}")
+                    }
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Security exception processing WiFi scan result: ${e.message}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing WiFi scan result: ${e.message}", e)
             }
         }
 
         // Also process through RogueWifiMonitor for advanced detection
         if (config.enableRogueApDetection) {
-            processWithRogueMonitor(data, detections)
+            try {
+                processWithRogueMonitor(data, detections)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing with RogueWifiMonitor: ${e.message}", e)
+            }
         }
 
         return detections
@@ -447,20 +492,7 @@ class WifiDetectionHandler @Inject constructor(
      * Check if device type is surveillance-related.
      */
     private fun isSurveillanceDeviceType(deviceType: DeviceType): Boolean {
-        return deviceType in listOf(
-            DeviceType.FLOCK_SAFETY_CAMERA,
-            DeviceType.AXON_POLICE_TECH,
-            DeviceType.MOTOROLA_POLICE_TECH,
-            DeviceType.BODY_CAMERA,
-            DeviceType.POLICE_RADIO,
-            DeviceType.POLICE_VEHICLE,
-            DeviceType.L3HARRIS_SURVEILLANCE,
-            DeviceType.PENGUIN_SURVEILLANCE,
-            DeviceType.PIGVISION_SYSTEM,
-            DeviceType.RAVEN_GUNSHOT_DETECTOR,
-            DeviceType.SURVEILLANCE_VAN,
-            DeviceType.UNKNOWN_SURVEILLANCE
-        )
+        return deviceType in SURVEILLANCE_DEVICE_TYPES
     }
 
     /**

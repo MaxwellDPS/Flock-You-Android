@@ -264,7 +264,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
                     .ble_source = (RadioSourceMode)app->radio_settings.ble_source,
                     .wifi_source = (RadioSourceMode)app->radio_settings.wifi_source,
                 },
-                .subghz_hop_interval_ms = 500,
+                .subghz_hop_interval_ms = 1000,  // 1s dwell for US key fobs
                 .subghz_continuous = true,
                 .ble_scan_duration_ms = 2000,
                 .ble_scan_interval_ms = 10000,
@@ -274,6 +274,7 @@ FlockBridgeApp* flock_bridge_app_alloc(void) {
                 .wifi_monitor_probes = true,
                 .wifi_detect_deauths = true,
                 .subghz_callback = on_subghz_detection,
+                .subghz_status_callback = on_subghz_scan_status,
                 .ble_callback = on_ble_detection,
                 .wifi_callback = on_wifi_detection,
                 .wifi_deauth_callback = on_wifi_deauth,
@@ -402,12 +403,10 @@ int32_t flock_bridge_app(void* p) {
         return -1;
     }
 
-    // Start USB CDC
+    // Start USB CDC (don't assume connected until we see actual communication)
     if (app->usb_cdc) {
         if (flock_usb_cdc_start(app->usb_cdc)) {
-            app->usb_connected = true;
-            app->connection_mode = FlockConnectionUsb;
-            FURI_LOG_I(TAG, "USB CDC started - connected");
+            FURI_LOG_I(TAG, "USB CDC started - waiting for host connection");
         }
     }
 

@@ -576,6 +576,210 @@ object LlmOutputParser {
             else -> UrgencyLevel.MEDIUM
         }
     }
+
+    // ==================== BATCH ANALYSIS PARSING ====================
+
+    /**
+     * Parse batch analysis results from LLM response.
+     * Maps individual detection results back to their IDs.
+     *
+     * @param response Raw LLM response from batch analysis prompt
+     * @param detectionIds List of detection IDs that were in the batch
+     * @return Map of detection ID to parsed result, plus optional batch-level insights
+     */
+    fun parseBatchAnalysis(
+        response: String,
+        detectionIds: List<String>
+    ): BatchAnalysisParseResult {
+        val cleaned = cleanLlmResponse(response)
+        val results = mutableMapOf<String, BatchDetectionResult>()
+
+        Log.d(TAG, "Parsing batch analysis for ${detectionIds.size} detections")
+
+        // Parse individual results using [RESULT_N] format
+        val resultPattern = Regex(
+            """\[RESULT_\d+\]\s*ID:\s*(\S+)\s*THREAT:\s*(\w+)\s*CONFIDENCE:\s*(\d+)\s*FP_LIKELIHOOD:\s*(\d+)\s*SUMMARY:\s*(.+?)\s*ACTION:\s*(.+?)(?=\[RESULT_|\[BATCH_|BATCH_PATTERN|$)""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        for (match in resultPattern.findAll(cleaned)) {
+            val detectionId = match.groupValues[1].trim()
+            val threatStr = match.groupValues[2].trim()
+            val confidence = match.groupValues[3].toIntOrNull() ?: 50
+            val fpLikelihood = match.groupValues[4].toIntOrNull() ?: 30
+            val summary = match.groupValues[5].trim().replace(Regex("""\s+"""), " ")
+            val action = match.groupValues[6].trim().replace(Regex("""\s+"""), " ")
+
+            // Match detection ID (exact match or partial match)
+            val matchedId = detectionIds.find { it == detectionId || it.contains(detectionId) || detectionId.contains(it) }
+            if (matchedId != null) {
+                results[matchedId] = BatchDetectionResult(
+                    detectionId = matchedId,
+                    threatLevel = parseThreatLevel(threatStr),
+                    confidence = confidence,
+                    falsePositiveLikelihood = fpLikelihood,
+                    summary = summary,
+                    recommendedAction = action,
+                    isFalsePositiveLikely = fpLikelihood > 50
+                )
+                Log.d(TAG, "Parsed result for $matchedId: threat=$threatStr, FP=$fpLikelihood%")
+            } else {
+                Log.w(TAG, "Could not match detection ID: $detectionId")
+            }
+        }
+
+        // Also try alternate format for simplified batch responses
+        if (results.isEmpty()) {
+            val sharedPattern = Regex(
+                """SHARED_ANALYSIS:\s*THREAT:\s*(\w+)\s*CONFIDENCE:\s*(\d+)\s*FP_LIKELIHOOD:\s*(\d+)\s*SUMMARY:\s*(.+?)\s*APPLIES_TO_IDS:\s*(.+?)\s*ACTION:\s*(.+?)(?=EXCEPTION|$)""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+            )
+
+            sharedPattern.find(cleaned)?.let { match ->
+                val threatStr = match.groupValues[1].trim()
+                val confidence = match.groupValues[2].toIntOrNull() ?: 50
+                val fpLikelihood = match.groupValues[3].toIntOrNull() ?: 30
+                val summary = match.groupValues[4].trim().replace(Regex("""\s+"""), " ")
+                val idsStr = match.groupValues[5].trim()
+                val action = match.groupValues[6].trim().replace(Regex("""\s+"""), " ")
+
+                // Apply to all listed IDs
+                val appliedIds = idsStr.split(",").map { it.trim() }
+                for (idStr in appliedIds) {
+                    val matchedId = detectionIds.find { it == idStr || it.contains(idStr) || idStr.contains(it) }
+                    if (matchedId != null) {
+                        results[matchedId] = BatchDetectionResult(
+                            detectionId = matchedId,
+                            threatLevel = parseThreatLevel(threatStr),
+                            confidence = confidence,
+                            falsePositiveLikelihood = fpLikelihood,
+                            summary = summary,
+                            recommendedAction = action,
+                            isFalsePositiveLikely = fpLikelihood > 50
+                        )
+                    }
+                }
+                Log.d(TAG, "Parsed shared analysis for ${results.size} detections")
+            }
+        }
+
+        // Also try tracker-specific format
+        if (results.isEmpty()) {
+            val trackerPattern = Regex(
+                """\[TRACKER_RESULT_\d+\]\s*ID:\s*(\S+)\s*OWNERSHIP:\s*(\w+)\s*FOLLOWING_RISK:\s*(\w+)\s*DURATION:\s*(.+?)\s*ACTION:\s*(.+?)\s*REASON:\s*(.+?)(?=\[TRACKER_|COMBINED_|$)""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+            )
+
+            for (match in trackerPattern.findAll(cleaned)) {
+                val detectionId = match.groupValues[1].trim()
+                val ownership = match.groupValues[2].trim()
+                val followingRisk = match.groupValues[3].trim()
+                val duration = match.groupValues[4].trim()
+                val action = match.groupValues[5].trim().replace(Regex("""\s+"""), " ")
+                val reason = match.groupValues[6].trim().replace(Regex("""\s+"""), " ")
+
+                val matchedId = detectionIds.find { it == detectionId || it.contains(detectionId) || detectionId.contains(it) }
+                if (matchedId != null) {
+                    // Convert ownership to threat level
+                    val threatLevel = when {
+                        followingRisk == "HIGH" -> ThreatLevel.HIGH
+                        followingRisk == "MEDIUM" -> ThreatLevel.MEDIUM
+                        ownership == "LIKELY_OTHERS" -> ThreatLevel.MEDIUM
+                        else -> ThreatLevel.LOW
+                    }
+
+                    val fpLikelihood = when (ownership) {
+                        "LIKELY_YOURS" -> 80
+                        "UNKNOWN" -> 50
+                        "LIKELY_OTHERS" -> 20
+                        else -> 40
+                    }
+
+                    results[matchedId] = BatchDetectionResult(
+                        detectionId = matchedId,
+                        threatLevel = threatLevel,
+                        confidence = 70,
+                        falsePositiveLikelihood = fpLikelihood,
+                        summary = "Ownership: $ownership, Following Risk: $followingRisk. $reason",
+                        recommendedAction = action,
+                        isFalsePositiveLikely = fpLikelihood > 50
+                    )
+                }
+            }
+        }
+
+        // Parse batch-level insights
+        val batchPattern = extractSection(cleaned, "BATCH_PATTERN")
+        val batchRisk = extractSection(cleaned, "BATCH_RISK")
+        val batchAction = extractSection(cleaned, "BATCH_ACTION")
+
+        val batchInsight = if (batchPattern != null || batchRisk != null) {
+            BatchInsight(
+                pattern = batchPattern ?: "",
+                overallRisk = batchRisk ?: "",
+                coordinatedAction = batchAction ?: ""
+            )
+        } else null
+
+        // Fill in missing detections with defaults
+        for (id in detectionIds) {
+            if (id !in results) {
+                Log.w(TAG, "Detection $id not found in parsed results, using default")
+                results[id] = BatchDetectionResult(
+                    detectionId = id,
+                    threatLevel = ThreatLevel.INFO,
+                    confidence = 30,
+                    falsePositiveLikelihood = 50,
+                    summary = "Analysis could not be parsed from batch response",
+                    recommendedAction = "Review manually",
+                    isFalsePositiveLikely = false
+                )
+            }
+        }
+
+        Log.i(TAG, "Batch parsing complete: ${results.size}/${detectionIds.size} detections parsed")
+
+        return BatchAnalysisParseResult(
+            results = results,
+            batchInsight = batchInsight,
+            parseSuccessRate = results.count { it.value.confidence > 30 }.toFloat() / detectionIds.size,
+            rawResponse = cleaned
+        )
+    }
+
+    /**
+     * Parse threat level string to ThreatLevel enum.
+     */
+    private fun parseThreatLevel(level: String): ThreatLevel {
+        return when (level.uppercase()) {
+            "CRITICAL", "IMMEDIATE" -> ThreatLevel.CRITICAL
+            "HIGH", "SEVERE" -> ThreatLevel.HIGH
+            "MEDIUM", "MODERATE" -> ThreatLevel.MEDIUM
+            "LOW", "MINIMAL" -> ThreatLevel.LOW
+            "INFO", "NONE" -> ThreatLevel.INFO
+            else -> ThreatLevel.INFO
+        }
+    }
+
+    /**
+     * Verify batch parsing quality and determine if individual fallback is needed.
+     */
+    fun shouldFallbackToIndividual(parseResult: BatchAnalysisParseResult): Boolean {
+        // Fallback if less than 50% parsed successfully
+        if (parseResult.parseSuccessRate < 0.5f) {
+            Log.w(TAG, "Low batch parse success rate: ${parseResult.parseSuccessRate}")
+            return true
+        }
+
+        // Fallback if too many results have default confidence
+        val lowConfidenceCount = parseResult.results.count { it.value.confidence <= 30 }
+        if (lowConfidenceCount > parseResult.results.size / 2) {
+            Log.w(TAG, "Too many low-confidence results: $lowConfidenceCount/${parseResult.results.size}")
+            return true
+        }
+
+        return false
+    }
 }
 
 // ==================== DATA CLASSES ====================
@@ -657,3 +861,37 @@ enum class UrgencyLevel(val displayName: String) {
     MEDIUM("Be Aware"),
     LOW("For Your Information")
 }
+
+// ==================== BATCH ANALYSIS DATA CLASSES ====================
+
+/**
+ * Result of parsing a batch analysis LLM response.
+ */
+data class BatchAnalysisParseResult(
+    val results: Map<String, BatchDetectionResult>,
+    val batchInsight: BatchInsight?,
+    val parseSuccessRate: Float, // 0.0-1.0, percentage of detections successfully parsed
+    val rawResponse: String
+)
+
+/**
+ * Parsed result for a single detection in a batch.
+ */
+data class BatchDetectionResult(
+    val detectionId: String,
+    val threatLevel: ThreatLevel,
+    val confidence: Int, // 0-100
+    val falsePositiveLikelihood: Int, // 0-100
+    val summary: String,
+    val recommendedAction: String,
+    val isFalsePositiveLikely: Boolean
+)
+
+/**
+ * Batch-level insight from analyzing multiple detections together.
+ */
+data class BatchInsight(
+    val pattern: String, // Cross-detection pattern observed
+    val overallRisk: String, // Combined risk assessment
+    val coordinatedAction: String // Action that addresses all detections
+)

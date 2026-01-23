@@ -129,6 +129,10 @@ typedef void (*WifiDeauthCallback)(
     uint32_t count,
     void* context);
 
+typedef void (*SubGhzScanStatusCallback)(
+    const FlockSubGhzScanStatus* status,
+    void* context);
+
 // ============================================================================
 // Scheduler Configuration
 // ============================================================================
@@ -161,6 +165,7 @@ typedef struct {
 
     // Callbacks
     SubGhzDetectionCallback subghz_callback;
+    SubGhzScanStatusCallback subghz_status_callback;  // Scanner status updates
     BleDetectionCallback ble_callback;
     WifiDetectionCallback wifi_callback;
     WifiDeauthCallback wifi_deauth_callback;

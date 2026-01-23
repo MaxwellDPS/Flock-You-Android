@@ -83,6 +83,9 @@ object ScanningServiceIpc {
     /** Message sent from service with battery-adaptive mode state */
     const val MSG_BATTERY_STATE = 134
 
+    /** Message sent from service with cross-domain correlation analysis results */
+    const val MSG_CORRELATION_RESULTS = 135
+
     // Bundle keys for state data
     const val KEY_IS_SCANNING = "is_scanning"
     const val KEY_DETECTION_COUNT = "detection_count"

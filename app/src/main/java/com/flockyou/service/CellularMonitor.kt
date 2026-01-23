@@ -201,15 +201,17 @@ class CellularMonitor(
     private var minAnomalyIntervalMs: Long = DEFAULT_MIN_ANOMALY_INTERVAL_MS
     private var globalAnomalyCooldownMs: Long = DEFAULT_GLOBAL_ANOMALY_COOLDOWN_MS
 
-    // Monitoring state
-    private var isMonitoring = false
-    private var currentLatitude: Double? = null
-    private var currentLongitude: Double? = null
-    
-    // Cell history for pattern detection
+    // Monitoring state - use volatile for thread visibility
+    @Volatile private var isMonitoring = false
+    @Volatile private var currentLatitude: Double? = null
+    @Volatile private var currentLongitude: Double? = null
+
+    // Cell history for pattern detection - synchronized access required
     private val cellHistory = mutableListOf<CellSnapshot>()
-    private var lastKnownCell: CellSnapshot? = null
-    private var lastAnomalyTimes = mutableMapOf<AnomalyType, Long>()
+    private val cellHistoryLock = Any()
+    @Volatile private var lastKnownCell: CellSnapshot? = null
+    private val lastAnomalyTimes = mutableMapOf<AnomalyType, Long>()
+    private val anomalyTimesLock = Any()
     
     // Anomalies flow
     private val _anomalies = MutableStateFlow<List<CellularAnomaly>>(emptyList())
@@ -552,7 +554,9 @@ class CellularMonitor(
         // Take initial snapshot
         try {
             takeCellSnapshot()?.let { snapshot ->
-                cellHistory.add(snapshot)
+                synchronized(cellHistoryLock) {
+                    cellHistory.add(snapshot)
+                }
                 lastKnownCell = snapshot
                 updateCellStatus(snapshot)
 
@@ -642,7 +646,9 @@ class CellularMonitor(
     }
     
     fun clearHistory() {
-        cellHistory.clear()
+        synchronized(cellHistoryLock) {
+            cellHistory.clear()
+        }
         seenCellTowerMap.clear()
         _seenCellTowers.value = emptyList()
         eventHistory.clear()
@@ -673,7 +679,9 @@ class CellularMonitor(
         _anomalies.value = emptyList()
 
         // Clear cell history
-        cellHistory.clear()
+        synchronized(cellHistoryLock) {
+            cellHistory.clear()
+        }
         lastKnownCell = null
 
         // Clear event history
@@ -780,14 +788,16 @@ class CellularMonitor(
     
     private fun processCellInfoChange(cellInfoList: List<CellInfo>) {
         if (!isMonitoring) return
-        
+
         val snapshot = extractCellSnapshot(cellInfoList) ?: return
         val previous = lastKnownCell
-        
-        // Always update history
-        cellHistory.add(snapshot)
-        if (cellHistory.size > CELL_HISTORY_SIZE) {
-            cellHistory.removeAt(0)
+
+        // Always update history - synchronized for thread safety
+        synchronized(cellHistoryLock) {
+            cellHistory.add(snapshot)
+            while (cellHistory.size > CELL_HISTORY_SIZE) {
+                cellHistory.removeAt(0)
+            }
         }
         
         // Update seen cell towers
@@ -1182,13 +1192,15 @@ class CellularMonitor(
         analysis: CellularAnomalyAnalysis? = null
     ) {
         val now = System.currentTimeMillis()
-        val lastTime = lastAnomalyTimes[type] ?: 0
 
-        // Rate limit same anomaly type
+        // Rate limit same anomaly type - thread-safe access
+        val lastTime = synchronized(anomalyTimesLock) { lastAnomalyTimes[type] ?: 0 }
         if (now - lastTime < minAnomalyIntervalMs) {
             return
         }
-        lastAnomalyTimes[type] = now
+        synchronized(anomalyTimesLock) {
+            lastAnomalyTimes[type] = now
+        }
         lastAnyAnomalyTime = now // Update global cooldown
 
         val imsiScore = analysis?.imsiCatcherScore ?: 0
@@ -1399,10 +1411,12 @@ class CellularMonitor(
 
     private fun countRecentCellChanges(withinMs: Long): Int {
         val cutoff = System.currentTimeMillis() - withinMs
-        val recentSnapshots = cellHistory.filter { it.timestamp > cutoff }
-        
+        // Take a thread-safe snapshot of cell history
+        val historySnapshot = synchronized(cellHistoryLock) { cellHistory.toList() }
+        val recentSnapshots = historySnapshot.filter { it.timestamp > cutoff }
+
         if (recentSnapshots.size < 2) return 0
-        
+
         var changes = 0
         for (i in 1 until recentSnapshots.size) {
             if (recentSnapshots[i].cellId != recentSnapshots[i - 1].cellId) {

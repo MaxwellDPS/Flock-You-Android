@@ -36,13 +36,17 @@ class BleAddressTracker {
     // Track devices by MAC address for quick lookup
     private val devicesByMac = ConcurrentHashMap<String, TrackedDevice>()
 
-    // State flows
+    // State flows with lock objects for thread-safe updates
+    // Using separate lock objects to avoid contention between different StateFlow updates
     private val _suspiciousDevices = MutableStateFlow<List<SuspiciousDevice>>(emptyList())
     val suspiciousDevices: StateFlow<List<SuspiciousDevice>> = _suspiciousDevices.asStateFlow()
+    private val suspiciousDevicesLock = Any()
 
     private val _followingDevices = MutableStateFlow<List<FollowingDevice>>(emptyList())
     val followingDevices: StateFlow<List<FollowingDevice>> = _followingDevices.asStateFlow()
+    private val followingDevicesLock = Any()
 
+    @Volatile
     private var lastCleanupTime = System.currentTimeMillis()
 
     /**
@@ -361,7 +365,8 @@ class BleAddressTracker {
     }
 
     /**
-     * Update suspicious devices state flow
+     * Update suspicious devices state flow.
+     * Thread-safe: Uses synchronized block to prevent race conditions during read-modify-write.
      */
     private fun updateSuspiciousDevices(
         device: TrackedDevice,
@@ -381,25 +386,28 @@ class BleAddressTracker {
             sightingCount = device.sightings.size
         )
 
-        val currentList = _suspiciousDevices.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { it.id == suspicious.id }
+        synchronized(suspiciousDevicesLock) {
+            val currentList = _suspiciousDevices.value.toMutableList()
+            val existingIndex = currentList.indexOfFirst { it.id == suspicious.id }
 
-        if (existingIndex >= 0) {
-            currentList[existingIndex] = suspicious
-        } else {
-            currentList.add(0, suspicious)
+            if (existingIndex >= 0) {
+                currentList[existingIndex] = suspicious
+            } else {
+                currentList.add(0, suspicious)
+            }
+
+            // Keep list manageable
+            if (currentList.size > 50) {
+                currentList.removeAt(currentList.size - 1)
+            }
+
+            _suspiciousDevices.value = currentList
         }
-
-        // Keep list manageable
-        if (currentList.size > 50) {
-            currentList.removeAt(currentList.size - 1)
-        }
-
-        _suspiciousDevices.value = currentList
     }
 
     /**
-     * Update following devices state flow
+     * Update following devices state flow.
+     * Thread-safe: Uses synchronized block to prevent race conditions during read-modify-write.
      */
     private fun updateFollowingDevices(
         device: TrackedDevice,
@@ -417,21 +425,23 @@ class BleAddressTracker {
             locations = device.getLocationHistory()
         )
 
-        val currentList = _followingDevices.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { it.id == following.id }
+        synchronized(followingDevicesLock) {
+            val currentList = _followingDevices.value.toMutableList()
+            val existingIndex = currentList.indexOfFirst { it.id == following.id }
 
-        if (existingIndex >= 0) {
-            currentList[existingIndex] = following
-        } else {
-            currentList.add(0, following)
+            if (existingIndex >= 0) {
+                currentList[existingIndex] = following
+            } else {
+                currentList.add(0, following)
+            }
+
+            // Keep list manageable
+            if (currentList.size > 20) {
+                currentList.removeAt(currentList.size - 1)
+            }
+
+            _followingDevices.value = currentList
         }
-
-        // Keep list manageable
-        if (currentList.size > 20) {
-            currentList.removeAt(currentList.size - 1)
-        }
-
-        _followingDevices.value = currentList
     }
 
     /**
@@ -471,13 +481,18 @@ class BleAddressTracker {
     }
 
     /**
-     * Clear all tracking data
+     * Clear all tracking data.
+     * Thread-safe: Uses synchronized blocks for StateFlow updates.
      */
     fun clear() {
         devicesByPayloadHash.clear()
         devicesByMac.clear()
-        _suspiciousDevices.value = emptyList()
-        _followingDevices.value = emptyList()
+        synchronized(suspiciousDevicesLock) {
+            _suspiciousDevices.value = emptyList()
+        }
+        synchronized(followingDevicesLock) {
+            _followingDevices.value = emptyList()
+        }
     }
 
     // ============================================================================

@@ -1000,7 +1000,7 @@ object ManufacturerIds {
     const val AMAZON = 0x0171
 
     // Tracker manufacturers
-    const val TILE = 0x0157
+    const val TILE = 0x00C7
     const val CHIPOLO = 0x01DA
     const val PEBBLEBEE = 0x0822
     const val EUFY = 0x038F

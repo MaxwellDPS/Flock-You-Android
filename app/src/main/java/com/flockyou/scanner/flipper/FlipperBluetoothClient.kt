@@ -49,7 +49,9 @@ class FlipperBluetoothClient(private val context: Context) {
         // FAP path
         private const val FAP_PATH = "/ext/apps/Tools/flock_bridge.fap"
         private const val FAP_LAUNCH_COMMAND = "loader open $FAP_PATH\r\n"
-        private const val FAP_LAUNCH_DELAY_MS = 3000L
+        private const val FAP_LAUNCH_INITIAL_DELAY_MS = 3000L  // Initial wait for FAP to start
+        private const val FAP_SERVICE_SCAN_TIMEOUT_MS = 15000L  // How long to scan for NUS service
+        private const val FAP_SERVICE_SCAN_INTERVAL_MS = 2000L  // How often to check during scan
 
         private const val MAX_MTU = 244
         private const val CONNECTION_TIMEOUT_MS = 15_000L
@@ -70,6 +72,7 @@ class FlipperBluetoothClient(private val context: Context) {
     private var cliTxCharacteristic: BluetoothGattCharacteristic? = null
     private var cliRxCharacteristic: BluetoothGattCharacteristic? = null
     private var isLaunchingFap = false
+    private var fapLaunchAttempts = 0
     private var pendingDeviceAddress: String? = null
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -113,6 +116,7 @@ class FlipperBluetoothClient(private val context: Context) {
     private var bleScanner: android.bluetooth.le.BluetoothLeScanner? = null
     private var scanCallback: android.bluetooth.le.ScanCallback? = null
     private var rssiReadJob: Job? = null
+    private var servicesDiscoveryStarted = false  // Guard against duplicate discoverServices calls
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -134,8 +138,14 @@ class FlipperBluetoothClient(private val context: Context) {
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             Log.i(TAG, "MTU changed to $mtu (status: $status)")
-            _connectionState.value = FlipperConnectionState.DISCOVERING_SERVICES
-            gatt.discoverServices()
+            // Guard against duplicate discoverServices calls (onMtuChanged can fire multiple times)
+            if (!servicesDiscoveryStarted) {
+                servicesDiscoveryStarted = true
+                _connectionState.value = FlipperConnectionState.DISCOVERING_SERVICES
+                gatt.discoverServices()
+            } else {
+                Log.d(TAG, "Service discovery already started, skipping duplicate call")
+            }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -173,6 +183,21 @@ class FlipperBluetoothClient(private val context: Context) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 _currentRssi.value = rssi
                 Log.d(TAG, "RSSI read: $rssi dBm")
+            }
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (descriptor.uuid == CCCD_UUID) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.i(TAG, "Notifications enabled successfully - connection ready")
+                    isLaunchingFap = false
+                    fapLaunchAttempts = 0
+                    _connectionState.value = FlipperConnectionState.READY
+                } else {
+                    Log.e(TAG, "Failed to enable notifications: status $status")
+                    _lastError.value = "Failed to enable notifications"
+                    _connectionState.value = FlipperConnectionState.ERROR
+                }
             }
         }
     }
@@ -259,7 +284,9 @@ class FlipperBluetoothClient(private val context: Context) {
         cliTxCharacteristic = null
         cliRxCharacteristic = null
         isLaunchingFap = false
+        fapLaunchAttempts = 0
         pendingDeviceAddress = null
+        servicesDiscoveryStarted = false
         receiveBuffer.clear()
     }
 
@@ -279,29 +306,52 @@ class FlipperBluetoothClient(private val context: Context) {
             }
 
             // Enable notifications on RX characteristic
+            // State will be set to READY in onDescriptorWrite callback
             gatt.setCharacteristicNotification(rxCharacteristic, true)
             val descriptor = rxCharacteristic?.getDescriptor(CCCD_UUID)
-            descriptor?.let {
+            if (descriptor != null) {
+                Log.i(TAG, "Enabling notifications on RX characteristic...")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    gatt.writeDescriptor(it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                    gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                 } else {
                     @Suppress("DEPRECATION")
-                    it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     @Suppress("DEPRECATION")
-                    gatt.writeDescriptor(it)
+                    gatt.writeDescriptor(descriptor)
                 }
+            } else {
+                // No CCCD descriptor - mark ready anyway (some devices don't require it)
+                Log.w(TAG, "No CCCD descriptor found, marking ready anyway")
+                isLaunchingFap = false
+                fapLaunchAttempts = 0
+                _connectionState.value = FlipperConnectionState.READY
             }
-
-            Log.i(TAG, "Flipper BLE connection ready")
-            isLaunchingFap = false
-            _connectionState.value = FlipperConnectionState.READY
             return
         }
 
         // NUS service not found - try Flipper CLI service to launch FAP
         val cliService = gatt.getService(FLIPPER_SERIAL_SERVICE_UUID)
         if (cliService != null) {
-            Log.i(TAG, "Found CLI service - FAP not running, will launch it")
+            // If we were launching FAP and still see CLI, the FAP didn't start properly
+            if (isLaunchingFap) {
+                Log.e(TAG, "Still found CLI service after FAP launch - FAP did not start properly")
+                _lastError.value = "FAP did not start. Check if flock_bridge.fap exists on Flipper."
+                _connectionState.value = FlipperConnectionState.ERROR
+                isLaunchingFap = false
+                fapLaunchAttempts = 0
+                return
+            }
+
+            // Check if we already tried to launch FAP and it didn't work
+            if (fapLaunchAttempts >= 2) {
+                Log.e(TAG, "FAP failed to start after $fapLaunchAttempts attempts - FAP may not be installed")
+                _lastError.value = "Flock Bridge FAP not installed on Flipper. Use 'Install FAP' button or copy flock_bridge.fap to /ext/apps/Tools/"
+                _connectionState.value = FlipperConnectionState.ERROR
+                fapLaunchAttempts = 0
+                return
+            }
+
+            Log.i(TAG, "Found CLI service - FAP not running, will launch it (attempt ${fapLaunchAttempts + 1})")
             cliTxCharacteristic = cliService.getCharacteristic(FLIPPER_SERIAL_TX_UUID)
             cliRxCharacteristic = cliService.getCharacteristic(FLIPPER_SERIAL_RX_UUID)
 
@@ -313,6 +363,7 @@ class FlipperBluetoothClient(private val context: Context) {
             }
 
             // Launch the FAP
+            fapLaunchAttempts++
             launchFapViaCli(gatt)
             return
         }
@@ -324,6 +375,11 @@ class FlipperBluetoothClient(private val context: Context) {
     }
 
     private fun launchFapViaCli(gatt: BluetoothGatt) {
+        // Prevent multiple concurrent FAP launch attempts
+        if (isLaunchingFap) {
+            Log.d(TAG, "FAP launch already in progress, skipping")
+            return
+        }
         isLaunchingFap = true
         _connectionState.value = FlipperConnectionState.LAUNCHING_FAP
         Log.i(TAG, "Launching FAP via CLI: $FAP_LAUNCH_COMMAND")
@@ -333,6 +389,7 @@ class FlipperBluetoothClient(private val context: Context) {
                 // Send the loader command
                 val data = FAP_LAUNCH_COMMAND.toByteArray(Charsets.UTF_8)
                 val tx = cliTxCharacteristic ?: return@launch
+                val deviceAddress = pendingDeviceAddress
 
                 val success = sendCliCommand(gatt, tx, data)
 
@@ -340,39 +397,123 @@ class FlipperBluetoothClient(private val context: Context) {
                     Log.i(TAG, "FAP launch command sent, waiting for FAP to start...")
                 } else {
                     Log.e(TAG, "Failed to send FAP launch command")
+                    _lastError.value = "Failed to send FAP launch command"
+                    _connectionState.value = FlipperConnectionState.ERROR
+                    return@launch
                 }
 
-                // Wait for FAP to start and initialize its BLE serial profile
-                delay(FAP_LAUNCH_DELAY_MS)
-
-                // Disconnect and reconnect to pick up the NUS service
-                val deviceAddress = pendingDeviceAddress
-                Log.i(TAG, "Reconnecting to device to connect to FAP...")
+                // Disconnect immediately so Flipper can restart BLE stack
+                Log.i(TAG, "Disconnecting to allow Flipper to restart BLE stack...")
                 gatt.disconnect()
+                gatt.close()
 
-                // Small delay before reconnecting
-                delay(500)
+                // Wait for FAP to start and initialize its BLE serial profile
+                delay(FAP_LAUNCH_INITIAL_DELAY_MS)
 
-                // Reconnect
-                if (deviceAddress != null) {
-                    connect(deviceAddress)
-                } else {
+                if (deviceAddress == null) {
                     _lastError.value = "Lost device address"
                     _connectionState.value = FlipperConnectionState.ERROR
+                    return@launch
+                }
+
+                // Now scan for the device until we see NUS service (FAP running)
+                Log.i(TAG, "Scanning for NUS service on $deviceAddress...")
+                val foundNusService = waitForNusService(deviceAddress)
+
+                if (foundNusService) {
+                    Log.i(TAG, "NUS service found! FAP is running. Connecting...")
+                    connect(deviceAddress)
+                } else {
+                    Log.e(TAG, "Timeout waiting for NUS service - FAP may not have started")
+                    _lastError.value = "FAP did not start. Check Flipper screen or try 'Install FAP' button."
+                    _connectionState.value = FlipperConnectionState.ERROR
+                    isLaunchingFap = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error launching FAP", e)
                 _lastError.value = "Failed to launch FAP: ${e.message}"
                 _connectionState.value = FlipperConnectionState.ERROR
+                isLaunchingFap = false
             }
+        }
+    }
+
+    /**
+     * Scans for the device until NUS service is found or timeout.
+     * Returns true if NUS service was detected in advertisement.
+     */
+    private suspend fun waitForNusService(deviceAddress: String): Boolean {
+        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return false
+
+        val nusFoundFlow = MutableStateFlow(false)
+        val startTime = System.currentTimeMillis()
+
+        val scanCallback = object : android.bluetooth.le.ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+                if (result.device.address == deviceAddress) {
+                    val hasNus = hasNusService(result)
+                    val hasCli = hasFlipperCliService(result)
+                    val deviceName = result.device.name ?: "unknown"
+                    Log.i(TAG, "FAP launch scan: '$deviceName' ($deviceAddress) hasNUS=$hasNus hasCLI=$hasCli")
+
+                    if (hasNus) {
+                        Log.i(TAG, "NUS service detected in advertisement!")
+                        nusFoundFlow.value = true
+                    } else if (hasCli) {
+                        Log.d(TAG, "Still seeing CLI service, FAP BLE stack not ready yet...")
+                    }
+                }
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                Log.e(TAG, "FAP launch scan failed: $errorCode")
+            }
+        }
+
+        val scanSettings = android.bluetooth.le.ScanSettings.Builder()
+            .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+            .build()
+
+        try {
+            Log.i(TAG, "Starting scan for NUS service (timeout: ${FAP_SERVICE_SCAN_TIMEOUT_MS}ms)")
+            scanner.startScan(null, scanSettings, scanCallback)
+
+            // Wait until NUS found or timeout
+            val result = withTimeoutOrNull(FAP_SERVICE_SCAN_TIMEOUT_MS) {
+                nusFoundFlow.first { it }
+            }
+
+            scanner.stopScan(scanCallback)
+
+            val elapsed = System.currentTimeMillis() - startTime
+            if (result == true) {
+                Log.i(TAG, "NUS service found after ${elapsed}ms")
+                return true
+            } else {
+                Log.w(TAG, "Timeout after ${elapsed}ms waiting for NUS service")
+                return false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during NUS service scan", e)
+            try { scanner.stopScan(scanCallback) } catch (_: Exception) {}
+            return false
         }
     }
 
     private fun sendCliCommand(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, data: ByteArray): Boolean {
         return try {
+            Log.d(TAG, "Sending CLI command: ${String(data).trim()}, char properties: ${characteristic.properties}")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 sendCliCommandApi33(gatt, characteristic, data)
             } else {
+                // For older APIs, set write type based on characteristic properties
+                val writeType = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                } else {
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                }
+                characteristic.writeType = writeType
                 @Suppress("DEPRECATION")
                 characteristic.value = data
                 @Suppress("DEPRECATION")
@@ -386,7 +527,15 @@ class FlipperBluetoothClient(private val context: Context) {
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun sendCliCommandApi33(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, data: ByteArray): Boolean {
-        return gatt.writeCharacteristic(characteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
+        // Try WRITE_TYPE_NO_RESPONSE first (Flipper CLI serial typically uses this)
+        var result = gatt.writeCharacteristic(characteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+        if (result == BluetoothStatusCodes.SUCCESS) {
+            return true
+        }
+        Log.d(TAG, "WRITE_TYPE_NO_RESPONSE failed ($result), trying WRITE_TYPE_DEFAULT")
+        // Fallback to default write type
+        result = gatt.writeCharacteristic(characteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        return result == BluetoothStatusCodes.SUCCESS
     }
 
     private fun handleReceivedData(data: ByteArray) {
@@ -507,14 +656,34 @@ class FlipperBluetoothClient(private val context: Context) {
         scanCallback = object : android.bluetooth.le.ScanCallback() {
             override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
                 val device = result.device
-                val name = device.name ?: return // Skip devices without names
+                val name = device.name
+                val hasNus = hasNusService(result)
+                val hasCli = hasFlipperCliService(result)
 
-                // Filter for Flipper devices
-                if (!isFlipperDevice(name)) return
+                // Debug: log devices with names or Flipper services
+                if (name != null || hasNus || hasCli) {
+                    Log.d(TAG, "BLE scan found: '$name' (${device.address}) RSSI: ${result.rssi} hasNUS: $hasNus hasCLI: $hasCli")
+                }
+
+                // Accept device if: has Flipper name pattern OR has NUS service (FAP running) OR has CLI service (FAP not running)
+                val isFlipperByName = isFlipperDevice(name)
+                val isFlipperByNus = hasNus && name != null
+                val isFlipperByCli = hasCli && name != null  // CLI service means it's a Flipper even without FAP
+                val isLikelyFlipper = isFlipperByName || isFlipperByNus || isFlipperByCli
+
+                // Always show devices with names (user may have custom Flipper name like "Ruciro")
+                if (name == null) return
+
+                val displayName = if (isLikelyFlipper) {
+                    name
+                } else {
+                    "$name (select if Flipper)"
+                }
+                Log.i(TAG, "Found BLE device: $displayName (${device.address}) isFlipper=$isLikelyFlipper")
 
                 val discovered = DiscoveredFlipperDevice(
                     address = device.address,
-                    name = name,
+                    name = displayName,
                     rssi = result.rssi,
                     lastSeen = System.currentTimeMillis()
                 )
@@ -584,6 +753,23 @@ class FlipperBluetoothClient(private val context: Context) {
     private fun isFlipperDevice(name: String?): Boolean {
         if (name == null) return false
         return FLIPPER_NAME_PATTERNS.any { pattern -> name.contains(pattern, ignoreCase = true) }
+    }
+
+    /**
+     * Check if a device has the Nordic UART Service UUID (indicates Flipper FAP serial profile).
+     */
+    private fun hasNusService(result: android.bluetooth.le.ScanResult): Boolean {
+        val serviceUuids = result.scanRecord?.serviceUuids ?: return false
+        return serviceUuids.any { it.uuid == SERVICE_UUID }
+    }
+
+    /**
+     * Check if a device has the Flipper CLI Service UUID (indicates Flipper without FAP running).
+     * This allows detecting Flipper even when Flock Bridge FAP is not running.
+     */
+    private fun hasFlipperCliService(result: android.bluetooth.le.ScanResult): Boolean {
+        val serviceUuids = result.scanRecord?.serviceUuids ?: return false
+        return serviceUuids.any { it.uuid == FLIPPER_SERIAL_SERVICE_UUID }
     }
 
     /**

@@ -117,6 +117,28 @@ size_t flock_protocol_serialize_subghz_result(
 }
 
 // ============================================================================
+// Sub-GHz Scan Status Serialization
+// ============================================================================
+
+size_t flock_protocol_serialize_subghz_status(
+    const FlockSubGhzScanStatus* status,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!status || !buffer) return 0;
+
+    size_t payload_size = sizeof(FlockSubGhzScanStatus);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeSubGhzScanStatus, payload_size);
+    memcpy(buffer + HEADER_SIZE, status, payload_size);
+
+    return total_size;
+}
+
+// ============================================================================
 // Status Serialization
 // ============================================================================
 

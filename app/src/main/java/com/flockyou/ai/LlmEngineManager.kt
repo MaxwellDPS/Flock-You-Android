@@ -11,12 +11,14 @@ import com.flockyou.data.ModelFormat
 import com.flockyou.data.model.Detection
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -48,6 +50,10 @@ class LlmEngineManager @Inject constructor(
         // Engine health thresholds
         private const val MAX_CONSECUTIVE_FAILURES = 3
         private const val FAILURE_RESET_INTERVAL_MS = 300000L // 5 minutes
+
+        // Timeout constants for AI operations
+        private const val ANALYSIS_TIMEOUT_MS = 60_000L     // 60 seconds for detection analysis
+        private const val GENERATION_TIMEOUT_MS = 45_000L   // 45 seconds for text generation
     }
 
     // Current engine status
@@ -347,6 +353,8 @@ class LlmEngineManager @Inject constructor(
 
     /**
      * Analyze a detection using the best available engine with automatic fallback.
+     *
+     * Includes timeout protection to prevent indefinite hangs during AI analysis.
      */
     suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -370,37 +378,59 @@ class LlmEngineManager @Inject constructor(
         Log.d(TAG, "  geminiNanoClient.isReady() = ${geminiNanoClient.isReady()}")
         Log.d(TAG, "  mediaPipeLlmClient.isReady() = ${mediaPipeLlmClient.isReady()}")
 
-        // Try current active engine first
-        var result = tryAnalyzeWithEngine(currentEngine, detection)
-        Log.d(TAG, "  tryAnalyzeWithEngine($currentEngine) returned: success=${result?.success}, error=${result?.error}")
+        try {
+            // Wrap entire analysis in timeout to prevent indefinite hangs
+            val result = withTimeoutOrNull(ANALYSIS_TIMEOUT_MS) {
+                // Try current active engine first
+                var analysisResult = tryAnalyzeWithEngine(currentEngine, detection)
+                Log.d(TAG, "  tryAnalyzeWithEngine($currentEngine) returned: success=${analysisResult?.success}, error=${analysisResult?.error}")
 
-        // If failed, try fallback chain
-        if (result == null || !result.success) {
-            Log.w(TAG, "Primary engine $currentEngine failed, trying fallback chain")
+                // If failed, try fallback chain
+                if (analysisResult == null || !analysisResult.success) {
+                    Log.w(TAG, "Primary engine $currentEngine failed, trying fallback chain")
 
-            for (engine in getFallbackOrder(currentEngine)) {
-                Log.d(TAG, "  Trying fallback engine: $engine")
-                result = tryAnalyzeWithEngine(engine, detection)
-                Log.d(TAG, "    Result: success=${result?.success}, error=${result?.error}")
-                if (result != null && result.success) {
-                    Log.i(TAG, "Fallback to $engine succeeded!")
-                    // Update active engine if fallback succeeded with a better engine
-                    if (engine != LlmEngine.RULE_BASED && engine != currentEngine) {
-                        Log.i(TAG, "Updating active engine to $engine after successful fallback")
-                        _activeEngine.value = engine
+                    for (engine in getFallbackOrder(currentEngine)) {
+                        Log.d(TAG, "  Trying fallback engine: $engine")
+                        analysisResult = tryAnalyzeWithEngine(engine, detection)
+                        Log.d(TAG, "    Result: success=${analysisResult?.success}, error=${analysisResult?.error}")
+                        if (analysisResult != null && analysisResult.success) {
+                            Log.i(TAG, "Fallback to $engine succeeded!")
+                            // Update active engine if fallback succeeded with a better engine
+                            if (engine != LlmEngine.RULE_BASED && engine != currentEngine) {
+                                Log.i(TAG, "Updating active engine to $engine after successful fallback")
+                                _activeEngine.value = engine
+                            }
+                            break
+                        }
                     }
-                    break
                 }
+                analysisResult
             }
-        }
 
-        // Return result or error
-        result ?: AiAnalysisResult(
-            success = false,
-            error = "All engines failed",
-            processingTimeMs = System.currentTimeMillis() - startTime,
-            modelUsed = "none"
-        )
+            // Return result or timeout error
+            result ?: AiAnalysisResult(
+                success = false,
+                error = "Analysis timed out after ${ANALYSIS_TIMEOUT_MS / 1000} seconds",
+                processingTimeMs = System.currentTimeMillis() - startTime,
+                modelUsed = "none"
+            )
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Detection analysis timed out after ${ANALYSIS_TIMEOUT_MS}ms")
+            AiAnalysisResult(
+                success = false,
+                error = "Analysis timed out",
+                processingTimeMs = System.currentTimeMillis() - startTime,
+                modelUsed = "none"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Detection analysis failed with exception: ${e.message}", e)
+            AiAnalysisResult(
+                success = false,
+                error = "Analysis failed: ${e.message}",
+                processingTimeMs = System.currentTimeMillis() - startTime,
+                modelUsed = "none"
+            )
+        }
     }
 
     /**
@@ -474,82 +504,97 @@ class LlmEngineManager @Inject constructor(
     /**
      * Generate text response using the best available engine.
      * Used for custom prompts (pattern analysis, user explanations, etc.)
+     *
+     * Includes timeout protection to prevent indefinite hangs during generation.
      */
     suspend fun generateResponse(prompt: String): String? = withContext(Dispatchers.IO) {
-        // Try with the active engine first
-        val activeEng = _activeEngine.value
+        try {
+            withTimeoutOrNull(GENERATION_TIMEOUT_MS) {
+                // Try with the active engine first
+                val activeEng = _activeEngine.value
 
-        when (activeEng) {
-            LlmEngine.GEMINI_NANO -> {
-                if (geminiNanoClient.isReady()) {
-                    try {
-                        val response = geminiNanoClient.generateResponse(prompt)
-                        if (response != null) {
-                            recordSuccess(LlmEngine.GEMINI_NANO)
-                            return@withContext response
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Gemini Nano generation failed", e)
-                        recordFailure(LlmEngine.GEMINI_NANO, e.message ?: "Generation failed")
-                    }
-                }
-            }
-            LlmEngine.MEDIAPIPE -> {
-                if (mediaPipeLlmClient.isReady()) {
-                    try {
-                        val response = mediaPipeLlmClient.generateResponse(prompt)
-                        if (response != null) {
-                            recordSuccess(LlmEngine.MEDIAPIPE)
-                            return@withContext response
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "MediaPipe generation failed", e)
-                        recordFailure(LlmEngine.MEDIAPIPE, e.message ?: "Generation failed")
-                    }
-                }
-            }
-            LlmEngine.RULE_BASED -> {
-                // Rule-based doesn't support free-form generation
-                Log.d(TAG, "Rule-based engine doesn't support generateResponse")
-            }
-        }
-
-        // Try fallback engines
-        for (engine in getFallbackOrder(activeEng)) {
-            when (engine) {
-                LlmEngine.GEMINI_NANO -> {
-                    if (geminiNanoClient.isReady()) {
-                        try {
-                            val response = geminiNanoClient.generateResponse(prompt)
-                            if (response != null) {
-                                recordSuccess(LlmEngine.GEMINI_NANO)
-                                return@withContext response
+                when (activeEng) {
+                    LlmEngine.GEMINI_NANO -> {
+                        if (geminiNanoClient.isReady()) {
+                            try {
+                                val response = geminiNanoClient.generateResponse(prompt)
+                                if (response != null) {
+                                    recordSuccess(LlmEngine.GEMINI_NANO)
+                                    return@withTimeoutOrNull response
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Gemini Nano generation failed", e)
+                                recordFailure(LlmEngine.GEMINI_NANO, e.message ?: "Generation failed")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Gemini Nano fallback generation failed", e)
                         }
                     }
-                }
-                LlmEngine.MEDIAPIPE -> {
-                    if (mediaPipeLlmClient.isReady()) {
-                        try {
-                            val response = mediaPipeLlmClient.generateResponse(prompt)
-                            if (response != null) {
-                                recordSuccess(LlmEngine.MEDIAPIPE)
-                                return@withContext response
+                    LlmEngine.MEDIAPIPE -> {
+                        if (mediaPipeLlmClient.isReady()) {
+                            try {
+                                val response = mediaPipeLlmClient.generateResponse(prompt)
+                                if (response != null) {
+                                    recordSuccess(LlmEngine.MEDIAPIPE)
+                                    return@withTimeoutOrNull response
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "MediaPipe generation failed", e)
+                                recordFailure(LlmEngine.MEDIAPIPE, e.message ?: "Generation failed")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "MediaPipe fallback generation failed", e)
+                        }
+                    }
+                    LlmEngine.RULE_BASED -> {
+                        // Rule-based doesn't support free-form generation
+                        Log.d(TAG, "Rule-based engine doesn't support generateResponse")
+                    }
+                }
+
+                // Try fallback engines
+                for (engine in getFallbackOrder(activeEng)) {
+                    when (engine) {
+                        LlmEngine.GEMINI_NANO -> {
+                            if (geminiNanoClient.isReady()) {
+                                try {
+                                    val response = geminiNanoClient.generateResponse(prompt)
+                                    if (response != null) {
+                                        recordSuccess(LlmEngine.GEMINI_NANO)
+                                        return@withTimeoutOrNull response
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Gemini Nano fallback generation failed", e)
+                                }
+                            }
+                        }
+                        LlmEngine.MEDIAPIPE -> {
+                            if (mediaPipeLlmClient.isReady()) {
+                                try {
+                                    val response = mediaPipeLlmClient.generateResponse(prompt)
+                                    if (response != null) {
+                                        recordSuccess(LlmEngine.MEDIAPIPE)
+                                        return@withTimeoutOrNull response
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "MediaPipe fallback generation failed", e)
+                                }
+                            }
+                        }
+                        LlmEngine.RULE_BASED -> {
+                            // Skip - doesn't support generation
                         }
                     }
                 }
-                LlmEngine.RULE_BASED -> {
-                    // Skip - doesn't support generation
-                }
-            }
-        }
 
-        null
+                null
+            } ?: run {
+                Log.w(TAG, "Text generation timed out after ${GENERATION_TIMEOUT_MS}ms")
+                null
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "Text generation timed out: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Text generation failed with exception: ${e.message}", e)
+            null
+        }
     }
 
     /**

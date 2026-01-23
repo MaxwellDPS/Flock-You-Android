@@ -67,7 +67,9 @@ class SystemBluetoothScanner(
         bluetoothAdapter?.bluetoothLeScanner
     }
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Use a lazy-init supervisor job that can be recreated if cancelled
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.Default + supervisorJob)
 
     private val _isActive = MutableStateFlow(false)
     override val isActive: StateFlow<Boolean> = _isActive
@@ -138,6 +140,12 @@ class SystemBluetoothScanner(
             return false
         }
 
+        // Recreate scope if it was cancelled (e.g., after stop())
+        if (!supervisorJob.isActive) {
+            supervisorJob = SupervisorJob()
+            scope = CoroutineScope(Dispatchers.Default + supervisorJob)
+        }
+
         _isActive.value = true
         _lastError.value = null
 
@@ -154,6 +162,8 @@ class SystemBluetoothScanner(
         scanCycleJob = null
         stopScan()
         _isActive.value = false
+        // Cancel the supervisor job to clean up all coroutines
+        supervisorJob.cancel()
         Log.d(TAG, "System Bluetooth scanner stopped")
     }
 

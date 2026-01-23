@@ -1,4 +1,5 @@
 #include "scenes.h"
+#include "../helpers/bt_serial.h"
 #include <furi_hal_power.h>
 
 #define TAG "SceneMain"
@@ -108,10 +109,11 @@ void flock_bridge_scene_main_on_enter(void* context) {
     snprintf(buf, sizeof(buf), "WIPS Monitor (%lu alerts)", app->wips_alert_count);
     submenu_add_item(app->submenu_main, buf, MainMenuItemWips, flock_bridge_main_menu_callback, app);
 
-    // Connection status
+    // Connection status - show BT advertising status too
     const char* conn_mode = "None";
-    if (app->bt_connected) conn_mode = "Bluetooth";
+    if (app->bt_connected) conn_mode = "BT Connected";
     else if (app->usb_connected) conn_mode = "USB";
+    else if (app->bt_serial && flock_bt_serial_is_advertising(app->bt_serial)) conn_mode = "BT Ready";
     snprintf(buf, sizeof(buf), "Connection [%s]", conn_mode);
     submenu_add_item(app->submenu_main, buf, MainMenuItemConnection, flock_bridge_main_menu_callback, app);
 

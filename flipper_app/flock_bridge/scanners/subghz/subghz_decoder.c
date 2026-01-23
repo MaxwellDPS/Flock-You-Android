@@ -311,6 +311,18 @@ static uint32_t pulse_log_count = 0;
 
 void subghz_decoder_capture_callback(bool level, uint32_t duration, void* context) {
     SubGhzScanner* scanner = context;
+
+    // Debug: Log first few calls to verify callback is working
+    static uint32_t debug_call_count = 0;
+    debug_call_count++;
+    if (debug_call_count <= 5 || debug_call_count % 10000 == 0) {
+        FURI_LOG_I(TAG, "Capture callback #%lu: scanner=%p running=%d receiver=%p dur=%lu",
+            debug_call_count, (void*)scanner,
+            scanner ? scanner->running : -1,
+            scanner ? (void*)scanner->receiver : NULL,
+            duration);
+    }
+
     if (!scanner || !scanner->running || !scanner->receiver) return;
 
     uint32_t now = furi_get_tick();
@@ -322,20 +334,10 @@ void subghz_decoder_capture_callback(bool level, uint32_t duration, void* contex
             pulse_log_count, duration, scanner->current_frequency);
     }
 
-    // Track pulse activity for decode protection
-    // Only track meaningful pulses (not noise - typically 100-10000us for real signals)
-    // Shorter pulses are often noise, very long pulses are often dead air
+    // Track pulse activity - but don't set decode_in_progress here
+    // (RF noise was causing permanent "decode in progress" blocking frequency hops)
     if (duration > 100 && duration < 10000) {
         scanner->last_pulse_time = now;
-
-        // Mark decode as starting if not already in progress
-        if (!scanner->decode_in_progress) {
-            scanner->decode_in_progress = true;
-            scanner->decode_start_time = now;
-            // Use INFO level so this shows in normal logs
-            FURI_LOG_I(TAG, "Signal activity @ %lu Hz (pulse: %lu us, level: %d)",
-                scanner->current_frequency, duration, level);
-        }
     }
 
     // Feed raw pulse data to the receiver for decoding

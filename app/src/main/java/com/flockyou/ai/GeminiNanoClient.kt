@@ -652,29 +652,12 @@ class GeminiNanoClient @Inject constructor(
     }
 
     /**
-     * Build a prompt for surveillance device analysis
+     * Build a prompt for surveillance device analysis.
+     * Gemini Nano is powerful enough for verbose prompts, but uses structured output for consistency.
      */
     private fun buildAnalysisPrompt(detection: Detection): String {
-        return """
-Analyze this surveillance device detection and provide a privacy-focused assessment.
-
-Device Information:
-- Type: ${detection.deviceType.displayName}
-- Protocol: ${detection.protocol.displayName}
-- Signal Strength: ${detection.signalStrength.displayName} (${detection.rssi} dBm)
-- Threat Level: ${detection.threatLevel.displayName}
-${detection.manufacturer?.let { "- Manufacturer: $it" } ?: ""}
-${detection.ssid?.let { "- Network Name: $it" } ?: ""}
-${detection.deviceName?.let { "- Device Name: $it" } ?: ""}
-
-Please provide:
-1. A brief explanation of what this device does and its surveillance capabilities
-2. What data it can collect about you
-3. The privacy implications
-4. Recommended actions to protect your privacy
-
-Keep the response concise and actionable.
-        """.trimIndent()
+        // Use structured output prompt for consistent, parseable results
+        return PromptTemplates.buildStructuredOutputPrompt(detection, null)
     }
 
     /**

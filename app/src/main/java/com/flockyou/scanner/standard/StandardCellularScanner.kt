@@ -51,7 +51,9 @@ class StandardCellularScanner(
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     }
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // Use a lazy-init supervisor job that can be recreated if cancelled
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.Default + supervisorJob)
     private val mainExecutor: Executor by lazy {
         ContextCompat.getMainExecutor(context)
     }
@@ -92,6 +94,12 @@ class StandardCellularScanner(
             return false
         }
 
+        // Recreate scope if it was cancelled (e.g., after stop())
+        if (!supervisorJob.isActive) {
+            supervisorJob = SupervisorJob()
+            scope = CoroutineScope(Dispatchers.Default + supervisorJob)
+        }
+
         try {
             registerCellInfoListener()
             _isActive.value = true
@@ -112,6 +120,8 @@ class StandardCellularScanner(
     override fun stop() {
         unregisterCellInfoListener()
         _isActive.value = false
+        // Cancel the supervisor job to clean up all coroutines
+        supervisorJob.cancel()
         Log.d(TAG, "Standard Cellular scanner stopped")
     }
 

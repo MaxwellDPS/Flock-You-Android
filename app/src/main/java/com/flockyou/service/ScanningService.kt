@@ -557,6 +557,9 @@ class ScanningService : Service() {
     @Inject
     lateinit var deduplicator: com.flockyou.detection.DetectionDeduplicator
 
+    @Inject
+    lateinit var crossDomainAnalyzer: com.flockyou.ai.correlation.CrossDomainAnalyzer
+
     private var currentBroadcastSettings: com.flockyou.data.BroadcastSettings = com.flockyou.data.BroadcastSettings()
 
     private var currentPrivacySettings: com.flockyou.data.PrivacySettings = com.flockyou.data.PrivacySettings()
@@ -637,6 +640,10 @@ class ScanningService : Service() {
 
     // Throttle cleanup job for periodic deduplicator cache cleanup
     private var throttleCleanupJob: Job? = null
+
+    // Cross-domain correlation analysis job
+    private var correlationAnalysisJob: Job? = null
+    private val CORRELATION_ANALYSIS_INTERVAL_MS = 60_000L  // Run correlation analysis every 60 seconds
 
     // Periodic IPC refresh job - ensures UI stays updated even when no events occur
     private var ipcRefreshJob: Job? = null
@@ -1672,6 +1679,9 @@ class ScanningService : Service() {
         // Start periodic IPC refresh to keep UI updated
         startIpcRefreshJob()
 
+        // Start cross-domain correlation analysis job
+        startCorrelationAnalysisJob()
+
         // Start threading monitor for scanner performance tracking
         threadingMonitor.startMonitoring()
         threadingMonitor.updateIpcClientCount(ipcClients.size)
@@ -1971,6 +1981,9 @@ class ScanningService : Service() {
 
         // Stop IPC refresh job
         stopIpcRefreshJob()
+
+        // Stop correlation analysis job
+        stopCorrelationAnalysisJob()
 
         // Stop threading monitor
         threadingMonitor.stopMonitoring()
@@ -3557,6 +3570,13 @@ class ScanningService : Service() {
                 broadcastLastDetection()
                 broadcastStateToClients()
 
+                // Register with cross-domain analyzer for correlation analysis
+                try {
+                    crossDomainAnalyzer.registerDetection(detectionWithFp)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to register detection with correlation analyzer: ${e.message}")
+                }
+
                 Log.d(TAG, "New detection: ${detectionWithFp.deviceType} - ${detectionWithFp.macAddress ?: detectionWithFp.ssid} (FP score: ${detectionWithFp.fpScore ?: "N/A"})")
 
                 // Queue for enhanced LLM analysis if not in ephemeral mode
@@ -4201,6 +4221,156 @@ class ScanningService : Service() {
         ipcRefreshJob?.cancel()
         ipcRefreshJob = null
         Log.d(TAG, "IPC refresh job stopped")
+    }
+
+    /**
+     * Start the periodic cross-domain correlation analysis job.
+     * This runs every 60 seconds to analyze recent detections for coordinated surveillance patterns.
+     */
+    private fun startCorrelationAnalysisJob() {
+        correlationAnalysisJob?.cancel()
+        correlationAnalysisJob = serviceScope.launch {
+            // Wait a bit before first analysis to allow detections to accumulate
+            delay(CORRELATION_ANALYSIS_INTERVAL_MS)
+
+            while (isActive && isScanning.value) {
+                try {
+                    // Get recent detections from repository
+                    val sinceTimestamp = System.currentTimeMillis() - 10 * 60 * 1000L // Last 10 minutes
+                    val recentDetections = if (currentPrivacySettings.ephemeralModeEnabled) {
+                        ephemeralRepository.getRecentDetections(sinceTimestamp).first()
+                    } else {
+                        repository.getRecentDetections(sinceTimestamp).first()
+                    }
+
+                    if (recentDetections.size >= 2) {
+                        Log.d(TAG, "Running cross-domain correlation analysis on ${recentDetections.size} detections")
+
+                        val result = crossDomainAnalyzer.analyzeCorrelations(
+                            recentDetections = recentDetections,
+                            timeWindowMs = 10 * 60 * 1000L // 10 minute window
+                        )
+
+                        if (result.correlatedThreats.isNotEmpty()) {
+                            Log.i(TAG, "Correlation analysis found ${result.correlatedThreats.size} correlated threats")
+
+                            // Alert user for critical correlations
+                            result.mostCriticalCorrelation?.let { critical ->
+                                if (critical.combinedThreatLevel == ThreatLevel.CRITICAL) {
+                                    alertUserOfCorrelation(critical)
+                                }
+                            }
+
+                            // Broadcast correlation results to UI
+                            broadcastCorrelationResults(result)
+                        } else {
+                            Log.d(TAG, "No cross-domain correlations detected")
+                        }
+                    }
+
+                    // Cleanup old data in correlation analyzer
+                    crossDomainAnalyzer.cleanup()
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in correlation analysis: ${e.message}", e)
+                }
+
+                delay(CORRELATION_ANALYSIS_INTERVAL_MS)
+            }
+        }
+        Log.d(TAG, "Correlation analysis job started (interval: ${CORRELATION_ANALYSIS_INTERVAL_MS}ms)")
+    }
+
+    /**
+     * Stop the correlation analysis job.
+     */
+    private fun stopCorrelationAnalysisJob() {
+        correlationAnalysisJob?.cancel()
+        correlationAnalysisJob = null
+        Log.d(TAG, "Correlation analysis job stopped")
+    }
+
+    /**
+     * Alert user of a critical correlated threat.
+     */
+    private fun alertUserOfCorrelation(correlation: com.flockyou.ai.correlation.CorrelatedThreat) {
+        // Create an alert notification for critical correlations
+        if (!currentNotificationSettings.enabled || !currentNotificationSettings.criticalAlertsEnabled) return
+
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+
+            // Create high-priority alert channel if needed
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val alertChannel = NotificationChannel(
+                    "flockyou_correlation_alert",
+                    "Correlation Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Critical cross-domain surveillance correlation alerts"
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 500, 200, 500)
+                }
+                notificationManager.createNotificationChannel(alertChannel)
+            }
+
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("correlation_id", correlation.id)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this, correlation.hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(this, "flockyou_correlation_alert")
+                .setSmallIcon(R.drawable.ic_warning)
+                .setContentTitle("CRITICAL: ${correlation.correlationType.displayName}")
+                .setContentText(correlation.primaryThreatIndicator)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(
+                    "${correlation.primaryThreatIndicator}\n\n" +
+                    "Domains: ${correlation.involvedDomains.joinToString(", ")}\n" +
+                    "Confidence: ${(correlation.correlationScore * 100).toInt()}%\n\n" +
+                    "Tap for details and recommendations."
+                ))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setVibrate(longArrayOf(0, 500, 200, 500))
+                .build()
+
+            notificationManager.notify(correlation.id.hashCode(), notification)
+            Log.i(TAG, "Sent correlation alert notification: ${correlation.correlationType.displayName}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send correlation alert: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Broadcast correlation analysis results to connected IPC clients.
+     */
+    private fun broadcastCorrelationResults(result: com.flockyou.ai.correlation.CorrelationAnalysisResult) {
+        if (ipcClients.isEmpty()) return
+
+        try {
+            broadcastToClients {
+                android.os.Message.obtain(null, ScanningServiceIpc.MSG_CORRELATION_RESULTS).apply {
+                    data = android.os.Bundle().apply {
+                        putInt("correlation_count", result.correlatedThreats.size)
+                        putString("summary", result.summary)
+                        putBoolean("has_critical", result.hasCriticalCorrelations)
+                        putString("highest_threat", result.highestThreatLevel?.displayName)
+                        putLong("timestamp", result.analysisTimestamp)
+                        // Serialize correlation types found
+                        val types = result.correlationsByType.entries.map { "${it.key.name}:${it.value}" }
+                        putStringArrayList("correlation_types", ArrayList(types))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to broadcast correlation results: ${e.message}", e)
+        }
     }
 
     /**

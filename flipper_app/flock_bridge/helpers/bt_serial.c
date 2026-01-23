@@ -17,6 +17,7 @@ struct FlockBtSerial {
     bool connected;
     bool running;
     bool paused;  // True when temporarily stopped for BLE scanning
+    bool advertising;  // True when advertising and waiting for connection
 
     FuriStreamBuffer* rx_stream;
     FuriMutex* mutex;
@@ -74,20 +75,24 @@ static void bt_status_callback(BtStatus status, void* context) {
 
     switch (status) {
     case BtStatusAdvertising:
-        FURI_LOG_I(TAG, "Bluetooth advertising");
+        FURI_LOG_I(TAG, "Bluetooth advertising - ready for Android connection");
         bt->connected = false;
+        bt->advertising = true;
         break;
     case BtStatusConnected:
-        FURI_LOG_I(TAG, "Bluetooth connected");
+        FURI_LOG_I(TAG, "Bluetooth connected to Android app");
         bt->connected = true;
+        bt->advertising = false;
         break;
     case BtStatusOff:
-        FURI_LOG_I(TAG, "Bluetooth off");
+        FURI_LOG_I(TAG, "Bluetooth off - enable BT in Flipper settings");
         bt->connected = false;
+        bt->advertising = false;
         break;
     case BtStatusUnavailable:
-        FURI_LOG_I(TAG, "Bluetooth unavailable");
+        FURI_LOG_I(TAG, "Bluetooth unavailable - check Flipper BT settings");
         bt->connected = false;
+        bt->advertising = false;
         break;
     default:
         break;
@@ -155,6 +160,12 @@ bool flock_bt_serial_start(FlockBtSerial* bt) {
 
     FURI_LOG_I(TAG, "Starting Bluetooth Serial");
 
+    // Check if BLE is supported
+    if (!furi_hal_bt_is_gatt_gap_supported()) {
+        FURI_LOG_E(TAG, "BLE GATT/GAP not supported - is Bluetooth enabled on Flipper?");
+        return false;
+    }
+
     // Open Bluetooth service
     bt->bt = furi_record_open(RECORD_BT);
     if (!bt->bt) {
@@ -162,18 +173,25 @@ bool flock_bt_serial_start(FlockBtSerial* bt) {
         return false;
     }
 
+    FURI_LOG_I(TAG, "BT record opened, setting status callback");
+
     // Set status callback
     bt_set_status_changed_callback(bt->bt, bt_status_callback, bt);
 
+    FURI_LOG_I(TAG, "Starting BLE serial profile (this restarts core2)...");
+
     // Start the serial profile
+    // Note: bt_profile_start will restart the 2nd core
     bt->profile = bt_profile_start(bt->bt, ble_profile_serial, NULL);
     if (!bt->profile) {
-        FURI_LOG_E(TAG, "Failed to start BT serial profile");
+        FURI_LOG_E(TAG, "Failed to start BT serial profile - check Flipper BT settings");
         bt_set_status_changed_callback(bt->bt, NULL, NULL);
         furi_record_close(RECORD_BT);
         bt->bt = NULL;
         return false;
     }
+
+    FURI_LOG_I(TAG, "BLE serial profile started, setting event callback");
 
     // Set the serial event callback
     ble_profile_serial_set_event_callback(
@@ -183,7 +201,7 @@ bool flock_bt_serial_start(FlockBtSerial* bt) {
         bt);
 
     bt->running = true;
-    FURI_LOG_I(TAG, "Bluetooth Serial started");
+    FURI_LOG_I(TAG, "Bluetooth Serial started - device should be advertising as 'Flipper <name>'");
     return true;
 }
 
@@ -389,4 +407,14 @@ bool flock_bt_serial_is_running(FlockBtSerial* bt) {
     furi_mutex_release(bt->mutex);
 
     return running;
+}
+
+bool flock_bt_serial_is_advertising(FlockBtSerial* bt) {
+    if (!bt) return false;
+
+    furi_mutex_acquire(bt->mutex, FuriWaitForever);
+    bool advertising = bt->advertising;
+    furi_mutex_release(bt->mutex);
+
+    return advertising;
 }

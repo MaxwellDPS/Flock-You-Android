@@ -972,7 +972,7 @@ object DetectionPatterns {
         DetectionPattern(
             type = PatternType.BLE_NAME_REGEX,
             pattern = "(?i)^graykey[_-]?.*",
-            deviceType = DeviceType.CELLEBRITE_FORENSICS,
+            deviceType = DeviceType.GRAYKEY_DEVICE,
             manufacturer = "Grayshift",
             threatScore = 95,
             description = "GrayKey forensics device"
@@ -1006,7 +1006,7 @@ object DetectionPatterns {
         ),
         DetectionPattern(
             type = PatternType.BLE_NAME_REGEX,
-            pattern = "(?i)^core[_-]?.*",
+            pattern = "(?i)^whelen[_-]?core[_-]?.*",
             deviceType = DeviceType.POLICE_VEHICLE,
             manufacturer = "Whelen Engineering",
             threatScore = 80,
@@ -1014,7 +1014,7 @@ object DetectionPatterns {
         ),
         DetectionPattern(
             type = PatternType.BLE_NAME_REGEX,
-            pattern = "(?i)^(ion|legacy|liberty|freedom)[_-]?.*",
+            pattern = "(?i)^whelen[_-]?(ion|legacy|liberty|freedom)[_-]?.*",
             deviceType = DeviceType.POLICE_VEHICLE,
             manufacturer = "Whelen Engineering",
             threatScore = 75,
@@ -1457,7 +1457,54 @@ object DetectionPatterns {
     )
     
     val ravenServiceUuidSet: Set<UUID> = ravenServiceUuids.map { it.uuid }.toSet()
-    
+
+    // ==================== CACHED REGEX PATTERNS ====================
+    // Pre-compile all regex patterns for performance - avoids recompilation on every match
+
+    /**
+     * Cache of compiled Regex objects for SSID patterns.
+     * Lazy-initialized on first access to avoid startup overhead.
+     */
+    private val ssidPatternRegexCache: Map<String, Regex> by lazy {
+        ssidPatterns.mapNotNull { pattern ->
+            try {
+                pattern.pattern to Regex(pattern.pattern)
+            } catch (e: Exception) {
+                null // Skip invalid patterns
+            }
+        }.toMap()
+    }
+
+    /**
+     * Cache of compiled Regex objects for BLE name patterns.
+     * Lazy-initialized on first access to avoid startup overhead.
+     */
+    private val bleNamePatternRegexCache: Map<String, Regex> by lazy {
+        bleNamePatterns.mapNotNull { pattern ->
+            try {
+                pattern.pattern to Regex(pattern.pattern)
+            } catch (e: Exception) {
+                null // Skip invalid patterns
+            }
+        }.toMap()
+    }
+
+    /**
+     * Get a cached compiled Regex for the given pattern string.
+     * Returns null if the pattern is invalid.
+     */
+    private fun getCachedSsidRegex(patternString: String): Regex? {
+        return ssidPatternRegexCache[patternString]
+    }
+
+    /**
+     * Get a cached compiled Regex for the given BLE name pattern string.
+     * Returns null if the pattern is invalid.
+     */
+    private fun getCachedBleNameRegex(patternString: String): Regex? {
+        return bleNamePatternRegexCache[patternString]
+    }
+
     /**
      * Estimate Raven firmware version based on advertised services
      */
@@ -1538,7 +1585,8 @@ object DetectionPatterns {
 
         // ==================== Axon / Body Camera Manufacturer OUIs ====================
         // Nordic Semiconductor - used in Axon body cameras and Signal devices
-        MacPrefix("00:59", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 75,
+        // Note: Nordic's IEEE OUI is F4:CE:36 (not 00:59 which is their BLE Company ID)
+        MacPrefix("F4:CE:36", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 75,
             "Nordic Semiconductor - common in Axon body cameras/Signal triggers"),
         MacPrefix("C0:A5:3E", DeviceType.AXON_POLICE_TECH, "Nordic Semiconductor", 75,
             "Nordic Semiconductor BLE - Axon equipment"),
@@ -1572,28 +1620,22 @@ object DetectionPatterns {
     }
     
     /**
-     * Check if SSID matches any known pattern
+     * Check if SSID matches any known pattern.
+     * Uses pre-compiled cached Regex objects for performance.
      */
     fun matchSsidPattern(ssid: String): DetectionPattern? {
         return ssidPatterns.find { pattern ->
-            try {
-                Regex(pattern.pattern).matches(ssid)
-            } catch (e: Exception) {
-                false
-            }
+            getCachedSsidRegex(pattern.pattern)?.matches(ssid) ?: false
         }
     }
-    
+
     /**
-     * Check if BLE device name matches any known pattern
+     * Check if BLE device name matches any known pattern.
+     * Uses pre-compiled cached Regex objects for performance.
      */
     fun matchBleNamePattern(deviceName: String): DetectionPattern? {
         return bleNamePatterns.find { pattern ->
-            try {
-                Regex(pattern.pattern).matches(deviceName)
-            } catch (e: Exception) {
-                false
-            }
+            getCachedBleNameRegex(pattern.pattern)?.matches(deviceName) ?: false
         }
     }
     

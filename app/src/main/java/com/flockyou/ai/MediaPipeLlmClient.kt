@@ -543,28 +543,11 @@ class MediaPipeLlmClient @Inject constructor(
 
     /**
      * Build the analysis prompt for a detection.
-     * Uses a format suitable for Gemma instruction-tuned models.
+     * Uses compact prompts by default for MediaPipe models (typically smaller).
      */
     private fun buildAnalysisPrompt(detection: Detection): String {
-        // Use Gemma's instruction format
-        return """<start_of_turn>user
-I detected a surveillance device nearby. Please analyze it and tell me:
-1. What this device does and its surveillance capabilities
-2. What data it can collect about me
-3. The privacy risk level and implications
-4. What actions I should take
-
-Device Details:
-- Type: ${detection.deviceType.displayName}
-- Protocol: ${detection.protocol.displayName}
-- Signal: ${detection.signalStrength.displayName} (${detection.rssi} dBm)
-- Threat Level: ${detection.threatLevel.displayName}
-${detection.manufacturer?.let { "- Manufacturer: $it" } ?: ""}
-${detection.deviceName?.let { "- Device Name: $it" } ?: ""}
-${detection.ssid?.let { "- Network: $it" } ?: ""}
-<end_of_turn>
-<start_of_turn>model
-"""
+        // Use compact prompt format for MediaPipe models (better performance on smaller models)
+        return CompactPromptTemplates.compactAnalysisPrompt(detection, null)
     }
 
     /**

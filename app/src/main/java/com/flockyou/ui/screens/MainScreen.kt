@@ -191,21 +191,13 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    // Only show filter button on history tab
-                    if (uiState.selectedTab == 1) {
-                        IconButton(onClick = { showFilterSheet = true }) {
-                            Badge(
-                                containerColor = if (uiState.filterThreatLevel != null || uiState.filterDeviceTypes.isNotEmpty())
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.surface
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FilterList,
-                                    contentDescription = "Filter"
-                                )
-                            }
-                        }
+                    // Show filter button on history and home tabs with badge showing active filter count
+                    if (uiState.selectedTab == 0 || uiState.selectedTab == 1) {
+                        val filterCount = viewModel.getActiveFilterCount()
+                        FilterButton(
+                            filterCount = filterCount,
+                            onClick = { showFilterSheet = true }
+                        )
                     }
                     // Service health shortcut on home tab
                     if (uiState.selectedTab == 0) {
@@ -817,9 +809,20 @@ fun MainScreen(
             currentThreatFilter = uiState.filterThreatLevel,
             currentTypeFilters = uiState.filterDeviceTypes,
             filterMatchAll = uiState.filterMatchAll,
+            filterProtocols = uiState.filterProtocols,
+            filterTimeRange = uiState.filterTimeRange,
+            filterCustomStartTime = uiState.filterCustomStartTime,
+            filterCustomEndTime = uiState.filterCustomEndTime,
+            filterSignalStrength = uiState.filterSignalStrength,
+            filterActiveOnly = uiState.filterActiveOnly,
             onThreatFilterChange = { viewModel.setThreatFilter(it) },
             onTypeFilterToggle = { viewModel.toggleDeviceTypeFilter(it) },
             onMatchAllChange = { viewModel.setFilterMatchAll(it) },
+            onProtocolToggle = { viewModel.toggleProtocolFilter(it) },
+            onTimeRangeChange = { viewModel.setTimeRange(it) },
+            onCustomTimeRangeChange = { start, end -> viewModel.setCustomTimeRange(start, end) },
+            onSignalStrengthToggle = { viewModel.toggleSignalStrengthFilter(it) },
+            onActiveOnlyChange = { viewModel.setActiveOnly(it) },
             onClearFilters = { viewModel.clearFilters() },
             onDismiss = { showFilterSheet = false }
         )
@@ -1111,46 +1114,218 @@ fun LastDetectionAlert(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FilterBottomSheet(
     currentThreatFilter: ThreatLevel?,
     currentTypeFilters: Set<DeviceType>,
     filterMatchAll: Boolean,
+    filterProtocols: Set<DetectionProtocol>,
+    filterTimeRange: TimeRange,
+    filterCustomStartTime: Long?,
+    filterCustomEndTime: Long?,
+    filterSignalStrength: Set<SignalStrength>,
+    filterActiveOnly: Boolean,
     onThreatFilterChange: (ThreatLevel?) -> Unit,
     onTypeFilterToggle: (DeviceType) -> Unit,
     onMatchAllChange: (Boolean) -> Unit,
+    onProtocolToggle: (DetectionProtocol) -> Unit,
+    onTimeRangeChange: (TimeRange) -> Unit,
+    onCustomTimeRangeChange: (Long, Long) -> Unit,
+    onSignalStrengthToggle: (SignalStrength) -> Unit,
+    onActiveOnlyChange: (Boolean) -> Unit,
     onClearFilters: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Section expansion states
+    var timeRangeExpanded by remember { mutableStateOf(filterTimeRange != TimeRange.ALL_TIME) }
+    var protocolExpanded by remember { mutableStateOf(filterProtocols.isNotEmpty()) }
+    var threatExpanded by remember { mutableStateOf(currentThreatFilter != null) }
+    var signalExpanded by remember { mutableStateOf(filterSignalStrength.isNotEmpty()) }
+    var deviceTypeExpanded by remember { mutableStateOf(currentTypeFilters.isNotEmpty()) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
                 .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
         ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Filters",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = onClearFilters) {
+                    Text("Clear")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Quick Filters Row
             Text(
-                text = "Filter Detections",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+                text = "Quick Filters",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            QuickFiltersRow(
+                activeOnly = filterActiveOnly,
+                timeRange = filterTimeRange,
+                onActiveOnlyChange = onActiveOnlyChange,
+                onTimeRangeChange = onTimeRangeChange
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // AND/OR toggle
+            // Time Range Section
+            CollapsibleFilterSection(
+                title = "Time Range",
+                selectedCount = if (filterTimeRange != TimeRange.ALL_TIME) 1 else 0,
+                expanded = timeRangeExpanded,
+                onExpandedChange = { timeRangeExpanded = it }
+            ) {
+                TimeRangeFilterSection(
+                    selected = filterTimeRange,
+                    customStart = filterCustomStartTime,
+                    customEnd = filterCustomEndTime,
+                    onSelectPreset = onTimeRangeChange,
+                    onSelectCustom = onCustomTimeRangeChange
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Protocol Section
+            CollapsibleFilterSection(
+                title = "Protocol",
+                selectedCount = filterProtocols.size,
+                expanded = protocolExpanded,
+                onExpandedChange = { protocolExpanded = it }
+            ) {
+                ProtocolFilterSection(
+                    selected = filterProtocols,
+                    onToggle = onProtocolToggle
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Threat Level Section
+            CollapsibleFilterSection(
+                title = "Threat Level",
+                selectedCount = if (currentThreatFilter != null) 1 else 0,
+                expanded = threatExpanded,
+                onExpandedChange = { threatExpanded = it }
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ThreatLevel.entries.forEach { level ->
+                        FilterChip(
+                            selected = currentThreatFilter == level,
+                            onClick = {
+                                onThreatFilterChange(if (currentThreatFilter == level) null else level)
+                            },
+                            label = { Text(level.name) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = level.toColor().copy(alpha = 0.2f),
+                                selectedLabelColor = level.toColor()
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Signal Strength Section
+            CollapsibleFilterSection(
+                title = "Signal Strength",
+                selectedCount = filterSignalStrength.size,
+                expanded = signalExpanded,
+                onExpandedChange = { signalExpanded = it }
+            ) {
+                SignalStrengthFilterSection(
+                    selected = filterSignalStrength,
+                    onToggle = onSignalStrengthToggle
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Device Type Section
+            CollapsibleFilterSection(
+                title = "Device Type",
+                selectedCount = currentTypeFilters.size,
+                expanded = deviceTypeExpanded,
+                onExpandedChange = { deviceTypeExpanded = it }
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DeviceType.entries.forEach { type ->
+                        FilterChip(
+                            selected = type in currentTypeFilters,
+                            onClick = { onTypeFilterToggle(type) },
+                            label = { Text(type.name.replace("_", " ")) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = type.toIcon(),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // AND/OR Logic Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "Filter Logic",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column {
+                    Text(
+                        text = "Filter Logic",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (filterMatchAll) "Match ALL selected filters"
+                               else "Match ANY selected filter",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1158,125 +1333,24 @@ fun FilterBottomSheet(
                     FilterChip(
                         selected = filterMatchAll,
                         onClick = { onMatchAllChange(true) },
-                        label = { Text("AND") },
-                        leadingIcon = if (filterMatchAll) {
-                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                        } else null
+                        label = { Text("AND") }
                     )
                     FilterChip(
                         selected = !filterMatchAll,
                         onClick = { onMatchAllChange(false) },
-                        label = { Text("OR") },
-                        leadingIcon = if (!filterMatchAll) {
-                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                        } else null
+                        label = { Text("OR") }
                     )
-                }
-            }
-
-            Text(
-                text = if (filterMatchAll) "Show detections matching ALL selected filters"
-                       else "Show detections matching ANY selected filter",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Threat Level",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                ThreatLevel.entries.forEach { level ->
-                    FilterChip(
-                        selected = currentThreatFilter == level,
-                        onClick = {
-                            onThreatFilterChange(if (currentThreatFilter == level) null else level)
-                        },
-                        label = { Text(level.name) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = level.toColor().copy(alpha = 0.2f),
-                            selectedLabelColor = level.toColor()
-                        )
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Device Type",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (currentTypeFilters.isNotEmpty()) {
-                    Text(
-                        text = "${currentTypeFilters.size} selected",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                DeviceType.entries.chunked(2).forEach { row ->
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        row.forEach { type ->
-                            FilterChip(
-                                selected = type in currentTypeFilters,
-                                onClick = { onTypeFilterToggle(type) },
-                                label = { Text(type.name.replace("_", " ")) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = type.toIcon(),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            )
-                        }
-                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // Apply Button
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                OutlinedButton(
-                    onClick = {
-                        onClearFilters()
-                        onDismiss()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Clear All")
-                }
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Apply")
-                }
+                Text("Apply Filters")
             }
 
             Spacer(modifier = Modifier.height(32.dp))

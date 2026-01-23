@@ -371,18 +371,18 @@ class RogueWifiMonitor(
     private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
     // Monitoring state
-    private var isMonitoring = false
-    private var currentLatitude: Double? = null
-    private var currentLongitude: Double? = null
+    @Volatile private var isMonitoring = false
+    @Volatile private var currentLatitude: Double? = null
+    @Volatile private var currentLongitude: Double? = null
 
-    // Network history for pattern detection
-    private val networkHistory = mutableMapOf<String, NetworkHistory>() // BSSID -> history
-    private val ssidToBssids = mutableMapOf<String, MutableSet<String>>() // SSID -> set of BSSIDs
-    private val disconnectHistory = mutableListOf<Long>() // Timestamps of disconnects
-    private var lastAnomalyTimes = mutableMapOf<WifiAnomalyType, Long>()
+    // Network history for pattern detection - use concurrent collections for thread safety
+    private val networkHistory = java.util.concurrent.ConcurrentHashMap<String, NetworkHistory>() // BSSID -> history
+    private val ssidToBssids = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>() // SSID -> set of BSSIDs
+    private val disconnectHistory = java.util.concurrent.CopyOnWriteArrayList<Long>() // Timestamps of disconnects
+    private val lastAnomalyTimes = java.util.concurrent.ConcurrentHashMap<WifiAnomalyType, Long>()
 
-    // Tracking networks that appear to be following
-    private val followingNetworks = mutableMapOf<String, MutableList<NetworkSighting>>()
+    // Tracking networks that appear to be following - use concurrent map
+    private val followingNetworks = java.util.concurrent.ConcurrentHashMap<String, MutableList<NetworkSighting>>()
 
     // State flows
     private val _anomalies = MutableStateFlow<List<WifiAnomaly>>(emptyList())
@@ -397,8 +397,8 @@ class RogueWifiMonitor(
     private val _suspiciousNetworks = MutableStateFlow<List<SuspiciousNetwork>>(emptyList())
     val suspiciousNetworks: StateFlow<List<SuspiciousNetwork>> = _suspiciousNetworks.asStateFlow()
 
-    private val detectedAnomalies = mutableListOf<WifiAnomaly>()
-    private val eventHistory = mutableListOf<WifiEvent>()
+    private val detectedAnomalies = java.util.concurrent.CopyOnWriteArrayList<WifiAnomaly>()
+    private val eventHistory = java.util.concurrent.CopyOnWriteArrayList<WifiEvent>()
     private val maxEventHistory = 200
 
     private var wifiReceiver: BroadcastReceiver? = null
@@ -940,6 +940,19 @@ class RogueWifiMonitor(
                 val uniqueOuis = apDetails.map { it.bssid.take(8) }.toSet()
                 val ouiDiversity = uniqueOuis.size.toFloat() / apDetails.size
 
+                // ==================== SAME OUI = SAME HOUSEHOLD ====================
+                // If ALL APs have the EXACT same OUI prefix, this is almost certainly:
+                // - A mesh network (e.g., Google WiFi, Eero, Orbi)
+                // - A multi-AP setup from the same router (dual/tri-band)
+                // - Multiple routers from the same manufacturer in one household
+                //
+                // Real evil twin attacks use DIFFERENT hardware than the target!
+                // An attacker wouldn't use the exact same manufacturer OUI.
+                if (uniqueOuis.size == 1 && apDetails.size >= 2) {
+                    Log.d(TAG, "SSID '$ssid' has ${apDetails.size} APs all with same OUI (${uniqueOuis.first()}) - clearly same household, not evil twin")
+                    continue
+                }
+
                 // High OUI diversity (many different manufacturers) = neighborhood, not attack
                 // A real evil twin would use the same or similar OUI to avoid detection
                 if (ouiDiversity > 0.7f && uniqueOuis.size >= 3) {
@@ -955,6 +968,27 @@ class RogueWifiMonitor(
                 if (deviceGroups.size <= 1) {
                     Log.d(TAG, "SSID '$ssid' has ${apDetails.size} BSSIDs but they appear to be from same dual/tri-band device")
                     continue
+                }
+
+                // ==================== SAME OUI CHECK FOR 2 APs ====================
+                // For exactly 2 APs with the same OUI prefix, this is almost certainly:
+                // 1. A dual-band router (2.4GHz + 5GHz) that wasn't grouped by device
+                // 2. A 2-node mesh network (e.g., main router + satellite)
+                // 3. Two APs from the same manufacturer in the same household
+                //
+                // Evil twins typically use DIFFERENT hardware than the target network.
+                // Same OUI with only 2 APs is very unlikely to be an attack.
+                if (apDetails.size == 2 && uniqueOuis.size == 1) {
+                    // Both APs have the same OUI - likely same manufacturer/household
+                    // Check if they've both been seen consistently (not new/suspicious)
+                    val bothEstablished = apDetails.all { ap ->
+                        val history = networkHistory[ap.bssid]
+                        (history?.seenCount ?: 0) >= 2
+                    }
+                    if (bothEstablished) {
+                        Log.d(TAG, "SSID '$ssid' has 2 APs with same OUI (${uniqueOuis.first()}) - likely dual-band or small mesh, not evil twin")
+                        continue
+                    }
                 }
 
                 // Check if this looks like a mesh network (multiple nodes from same ecosystem)
@@ -1224,11 +1258,18 @@ class RogueWifiMonitor(
     private fun checkForFollowingNetworks() {
         val now = System.currentTimeMillis()
 
-        for ((bssid, sightings) in followingNetworks) {
-            if (sightings.size < 3) continue
+        // Take a defensive copy of entries to avoid concurrent modification
+        // ConcurrentHashMap iteration is weakly consistent, but modifying values during
+        // iteration can cause issues, so we collect BSSIDs to clear afterwards
+        val bssidsToClear = mutableListOf<String>()
 
-            // Build enriched following analysis
-            val analysis = buildFollowingAnalysis(bssid, sightings)
+        for ((bssid, sightings) in followingNetworks) {
+            // Take a defensive copy of sightings for analysis
+            val sightingsSnapshot = synchronized(sightings) { sightings.toList() }
+            if (sightingsSnapshot.size < 3) continue
+
+            // Build enriched following analysis using the snapshot
+            val analysis = buildFollowingAnalysis(bssid, sightingsSnapshot)
 
             // ==================== REPORTING THRESHOLDS ====================
             // TUNED: More conservative thresholds to reduce false positives
@@ -1297,13 +1338,13 @@ class RogueWifiMonitor(
                     technicalDetails = buildFollowingTechnicalDetails(analysis),
                     ssid = history?.ssid,
                     bssid = bssid,
-                    rssi = sightings.lastOrNull()?.rssi,
+                    rssi = sightingsSnapshot.lastOrNull()?.rssi,
                     confidence = confidence,
                     contributingFactors = buildFollowingContributingFactors(analysis)
                 )
 
-                // Clear to avoid repeated alerts
-                sightings.clear()
+                // Mark for clearing after iteration
+                bssidsToClear.add(bssid)
             } else if (analysis.falsePositiveLikelihood > 50f) {
                 // Log suppressed detection for debugging
                 Log.d(TAG, "FOLLOWING_NETWORK suppressed for $bssid: " +
@@ -1311,8 +1352,17 @@ class RogueWifiMonitor(
                     "fpLikelihood=${analysis.falsePositiveLikelihood}%, " +
                     "indicators=${analysis.fpIndicators.joinToString()}")
 
-                // Clear sightings to avoid repeated analysis
-                sightings.clear()
+                // Mark for clearing after iteration
+                bssidsToClear.add(bssid)
+            }
+        }
+
+        // Clear sightings after iteration to avoid ConcurrentModificationException
+        for (bssid in bssidsToClear) {
+            followingNetworks[bssid]?.let { sightings ->
+                synchronized(sightings) {
+                    sightings.clear()
+                }
             }
         }
     }
@@ -1450,9 +1500,13 @@ class RogueWifiMonitor(
             longitude = currentLongitude
         )
 
-        eventHistory.add(0, event)
-        if (eventHistory.size > maxEventHistory) {
-            eventHistory.removeAt(eventHistory.size - 1)
+        // CopyOnWriteArrayList operations are thread-safe individually but not atomic together
+        // Use synchronized block for the compound operation
+        synchronized(eventHistory) {
+            eventHistory.add(0, event)
+            while (eventHistory.size > maxEventHistory) {
+                eventHistory.removeAt(eventHistory.size - 1)
+            }
         }
         _wifiEvents.value = eventHistory.toList()
     }

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.scanner.flipper.FlipperConnectionPreference
 import com.flockyou.scanner.flipper.FlipperSettings
+import com.flockyou.scanner.flipper.FlipperSubGhzScanStatus
 import com.flockyou.ui.components.SectionHeader
 import com.flockyou.ui.screens.FlipperSettingsViewModel.ConnectionState
 import kotlinx.coroutines.launch
@@ -41,6 +42,7 @@ fun FlipperSettingsScreen(
     val showDevicePicker by viewModel.showDevicePicker.collectAsState()
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val subGhzScanStatus by viewModel.subGhzScanStatus.collectAsState()
 
     // Bluetooth device picker dialog
     if (showDevicePicker) {
@@ -137,6 +139,18 @@ fun FlipperSettingsScreen(
                     onIrChange = { scope.launch { viewModel.setEnableIrScanning(it) } },
                     onNfcChange = { scope.launch { viewModel.setEnableNfcScanning(it) } }
                 )
+            }
+
+            // Live Sub-GHz Scan Status Section (only show when connected)
+            if (connectionState is ConnectionState.Connected && subGhzScanStatus != null) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SectionHeader(title = "Live Sub-GHz Scan Status")
+                }
+
+                item {
+                    SubGhzScanStatusCard(status = subGhzScanStatus!!)
+                }
             }
 
             // WIPS Settings Section
@@ -624,6 +638,170 @@ private fun ScanToggle(
             checked = checked,
             onCheckedChange = onCheckedChange
         )
+    }
+}
+
+@Composable
+private fun SubGhzScanStatusCard(status: FlipperSubGhzScanStatus) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header with frequency and preset
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Radio,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = String.format("%.3f MHz", status.frequencyMhz),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = status.presetName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // Status indicators
+                Column(horizontalAlignment = Alignment.End) {
+                    if (status.scanActive) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = "SCANNING",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (status.decodeInProgress) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.tertiary
+                        ) {
+                            Text(
+                                text = "DECODING",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (status.jammingDetected) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.error
+                        ) {
+                            Text(
+                                text = "JAMMING",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Stats grid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StatItem(
+                    label = "RSSI",
+                    value = "${status.currentRssi} dBm",
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    label = "Freq Index",
+                    value = "${status.frequencyIndex + 1}/${status.totalFrequencies}",
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    label = "Dwell",
+                    value = "${status.dwellTimeMs}ms",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StatItem(
+                    label = "Hops",
+                    value = status.hopCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    label = "Detections",
+                    value = status.detectionCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    label = "Uptime",
+                    value = formatUptime(status.timestamp),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatItem(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun formatUptime(seconds: Long): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return when {
+        hours > 0 -> String.format("%dh %dm", hours, minutes)
+        minutes > 0 -> String.format("%dm %ds", minutes, secs)
+        else -> String.format("%ds", secs)
     }
 }
 

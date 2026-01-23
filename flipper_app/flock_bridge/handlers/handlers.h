@@ -20,6 +20,7 @@
 // are defined in protocol/flock_protocol.h which is included above.
 
 void on_subghz_detection(const FlockSubGhzDetection* detection, void* context);
+void on_subghz_scan_status(const FlockSubGhzScanStatus* status, void* context);
 void on_ble_detection(const FlockBleDevice* device, void* context);
 void on_wifi_detection(const FlockWifiNetwork* network, void* context);
 void on_wifi_deauth(const uint8_t* bssid, const uint8_t* target, uint8_t reason, uint32_t count, void* context);

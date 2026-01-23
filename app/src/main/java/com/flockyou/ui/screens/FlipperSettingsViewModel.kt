@@ -5,8 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.ParcelUuid
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
@@ -33,6 +35,10 @@ class FlipperSettingsViewModel @Inject constructor(
         private const val TAG = "FlipperSettingsVM"
         private const val FAP_ASSET_PATH = "flipper/flock_bridge.fap"
         private const val FAP_DEST_PATH = "/ext/apps/Tools/flock_bridge.fap"
+        // Nordic UART Service UUID - used by Flipper's BLE serial profile when FAP is running
+        private const val NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+        // Flipper CLI Service UUID - advertised when FAP is NOT running (base Flipper serial)
+        private const val FLIPPER_CLI_SERVICE_UUID = "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000"
     }
 
     private val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -40,6 +46,9 @@ class FlipperSettingsViewModel @Inject constructor(
 
     val settings: StateFlow<FlipperSettings> = settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, FlipperSettings())
+
+    // Live Sub-GHz scan status from Flipper
+    val subGhzScanStatus = flipperScannerManager.subGhzScanStatus
 
     // BLE scanning state
     private val _isScanning = MutableStateFlow(false)
@@ -61,13 +70,43 @@ class FlipperSettingsViewModel @Inject constructor(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
-            val name = device.name ?: return
+            val name = device.name
+            val scanRecord = result.scanRecord
 
-            // Only include Flipper devices
-            if (!name.startsWith("Flipper", ignoreCase = true)) return
+            // Check if device has the NUS service UUID (Flipper with FAP running)
+            val hasNusService = scanRecord?.serviceUuids?.any {
+                it.uuid.toString().equals(NUS_SERVICE_UUID, ignoreCase = true)
+            } == true
+
+            // Check if device has the Flipper CLI service UUID (Flipper without FAP running)
+            val hasCliService = scanRecord?.serviceUuids?.any {
+                it.uuid.toString().equals(FLIPPER_CLI_SERVICE_UUID, ignoreCase = true)
+            } == true
+
+            // Debug: Log interesting devices
+            if (name != null || hasNusService || hasCliService) {
+                Log.d(TAG, "BLE device: name='$name' address=${device.address} rssi=${result.rssi} hasNUS=$hasNusService hasCLI=$hasCliService")
+            }
+
+            // Include device if: name starts with "Flipper" OR has NUS service OR has CLI service
+            // Also include ALL named devices so user can select non-standard Flipper names
+            val isFlipperByName = name?.startsWith("Flipper", ignoreCase = true) == true
+            val isFlipperByNus = hasNusService && name != null
+            val isFlipperByCli = hasCliService && name != null
+            val isLikelyFlipper = isFlipperByName || isFlipperByNus || isFlipperByCli
+
+            // Always show devices with names (user may have custom Flipper name like "Ruciro")
+            if (name == null) return
+
+            val displayName = if (isLikelyFlipper) {
+                name
+            } else {
+                "$name (may be Flipper)"
+            }
+            Log.i(TAG, "Found BLE device: $displayName (${device.address}) isFlipper=$isLikelyFlipper")
 
             val newDevice = DiscoveredFlipperDevice(
-                name = name,
+                name = displayName,
                 address = device.address,
                 rssi = result.rssi
             )
@@ -167,6 +206,23 @@ class FlipperSettingsViewModel @Inject constructor(
         _discoveredDevices.value = emptyList()
         _isScanning.value = true
 
+        // First, check for already bonded Flipper devices
+        val bondedDevices = adapter.bondedDevices ?: emptySet()
+        Log.i(TAG, "Checking ${bondedDevices.size} bonded devices")
+        for (device in bondedDevices) {
+            val name = device.name
+            Log.d(TAG, "Bonded device: name='$name' address=${device.address}")
+            if (name?.startsWith("Flipper", ignoreCase = true) == true) {
+                Log.i(TAG, "Found bonded Flipper: $name (${device.address})")
+                val newDevice = DiscoveredFlipperDevice(
+                    name = name,
+                    address = device.address,
+                    rssi = 0  // RSSI not available for bonded devices
+                )
+                _discoveredDevices.update { it + newDevice }
+            }
+        }
+
         val scanSettings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
@@ -174,7 +230,7 @@ class FlipperSettingsViewModel @Inject constructor(
 
         // Scan for all BLE devices, filter by name in callback
         scanner.startScan(null, scanSettings, scanCallback)
-        Log.i(TAG, "Started BLE scan for Flipper devices")
+        Log.i(TAG, "Started BLE scan for Flipper devices (also checking for NUS service UUID)")
 
         // Auto-stop after 30 seconds
         viewModelScope.launch {

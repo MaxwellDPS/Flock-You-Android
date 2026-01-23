@@ -81,3 +81,8 @@ bool flock_bt_serial_is_paused(FlockBtSerial* bt);
  * Check if Bluetooth Serial is running (started and not paused).
  */
 bool flock_bt_serial_is_running(FlockBtSerial* bt);
+
+/**
+ * Check if Bluetooth Serial is advertising and waiting for connection.
+ */
+bool flock_bt_serial_is_advertising(FlockBtSerial* bt);

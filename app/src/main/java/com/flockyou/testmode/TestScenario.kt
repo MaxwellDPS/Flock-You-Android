@@ -140,7 +140,7 @@ data class MockBleDevice(
 ) {
     companion object {
         const val MANUFACTURER_APPLE = 0x004C
-        const val MANUFACTURER_TILE = 0x0109
+        const val MANUFACTURER_TILE = 0x00C7
         const val MANUFACTURER_SAMSUNG = 0x0075
     }
 

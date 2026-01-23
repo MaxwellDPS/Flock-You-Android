@@ -260,13 +260,13 @@ class GnssSatelliteMonitor(
     private var gnssStatusCallback: GnssStatus.Callback? = null
     private var gnssMeasurementsCallback: GnssMeasurementsEvent.Callback? = null
 
-    // History for anomaly detection
+    // History for anomaly detection - use synchronized access for thread safety
     private val cn0History = mutableListOf<Double>()
     private val satelliteCountHistory = mutableListOf<Int>()
-    private var lastClockBiasNs: Long? = null
-    private var lastDiscontinuityCount: Int? = null  // Track hardware clock discontinuities
+    @Volatile private var lastClockBiasNs: Long? = null
+    @Volatile private var lastDiscontinuityCount: Int? = null  // Track hardware clock discontinuities
 
-    // Enhanced tracking for enrichments
+    // Enhanced tracking for enrichments - use synchronized access
     private val clockDriftHistory = mutableListOf<Long>()     // Accumulated drift values
     private var cumulativeClockDriftNs: Long = 0L
     private val constellationHistory = mutableListOf<Set<ConstellationType>>()
@@ -730,11 +730,15 @@ class GnssSatelliteMonitor(
 
         val avgCn0 = if (satelliteList.isNotEmpty()) totalCn0 / satelliteList.size else 0.0
 
-        // Update history for anomaly detection
-        cn0History.add(avgCn0)
-        if (cn0History.size > HISTORY_SIZE) cn0History.removeAt(0)
-        satelliteCountHistory.add(status.satelliteCount)
-        if (satelliteCountHistory.size > HISTORY_SIZE) satelliteCountHistory.removeAt(0)
+        // Update history for anomaly detection - synchronized to prevent concurrent modification
+        synchronized(cn0History) {
+            cn0History.add(avgCn0)
+            while (cn0History.size > HISTORY_SIZE) cn0History.removeAt(0)
+        }
+        synchronized(satelliteCountHistory) {
+            satelliteCountHistory.add(status.satelliteCount)
+            while (satelliteCountHistory.size > HISTORY_SIZE) satelliteCountHistory.removeAt(0)
+        }
 
         // Analyze for anomalies
         val spoofingRisk = analyzeSpoofingRisk(satelliteList, avgCn0)
@@ -1002,7 +1006,11 @@ class GnssSatelliteMonitor(
      * - Minor signal fluctuations
      */
     private fun analyzeJamming(satellites: List<SatelliteInfo>, avgCn0: Double): Boolean {
-        if (cn0History.size < 5) return false
+        // Thread-safe access to history
+        val cn0HistorySnapshot = synchronized(cn0History) { cn0History.toList() }
+        val satCountHistorySnapshot = synchronized(satelliteCountHistory) { satelliteCountHistory.toList() }
+
+        if (cn0HistorySnapshot.size < 5) return false
 
         // CRITICAL CHECK: Cannot claim jamming if we have many satellites
         // True jamming would prevent satellite acquisition entirely
@@ -1020,8 +1028,16 @@ class GnssSatelliteMonitor(
         }
 
         // Check for sudden SIGNIFICANT drop in signal strength (not minor fluctuation)
-        val recentAvg = cn0History.takeLast(3).average()
-        val previousList = cn0History.dropLast(3).takeLast(5)
+        // Safe bounds checking before accessing history
+        val recentCn0 = cn0HistorySnapshot.takeLast(3)
+        if (recentCn0.isEmpty()) return false
+        val recentAvg = recentCn0.average()
+
+        val previousList = if (cn0HistorySnapshot.size > 3) {
+            cn0HistorySnapshot.dropLast(3).takeLast(5)
+        } else {
+            emptyList()
+        }
 
         if (previousList.isEmpty()) return false
         val previousAvg = previousList.average()
@@ -1031,9 +1047,13 @@ class GnssSatelliteMonitor(
 
         // Check for sudden DRAMATIC loss of satellites (not just a few)
         var hasDramaticSatelliteLoss = false
-        if (satelliteCountHistory.size >= 8) {
-            val recentCount = satelliteCountHistory.takeLast(3).average()
-            val previousCountList = satelliteCountHistory.dropLast(3).takeLast(5)
+        if (satCountHistorySnapshot.size >= 8) {
+            val recentCount = satCountHistorySnapshot.takeLast(3).average()
+            val previousCountList = if (satCountHistorySnapshot.size > 3) {
+                satCountHistorySnapshot.dropLast(3).takeLast(5)
+            } else {
+                emptyList()
+            }
 
             if (previousCountList.isNotEmpty()) {
                 val previousCount = previousCountList.average()
@@ -1242,13 +1262,23 @@ class GnssSatelliteMonitor(
 
         // Elevation anomaly (low elevation + high signal = spoofing)
         if (analysis.lowElevHighSignalCount > 2) {
+            // Log which satellites triggered this for debugging
+            val triggeringSats = satellites.filter {
+                it.elevationDegrees < SPOOFING_ELEVATION_THRESHOLD && it.cn0DbHz > 40
+            }
+            Log.w(TAG, "ELEVATION_ANOMALY: ${analysis.lowElevHighSignalCount} satellites with low elev (<${SPOOFING_ELEVATION_THRESHOLD}°) + high signal (>40 dB-Hz)")
+            triggeringSats.forEach { sat ->
+                Log.w(TAG, "  - ${sat.constellation.code} PRN ${sat.svid}: elev=${String.format("%.1f", sat.elevationDegrees)}°, signal=${String.format("%.1f", sat.cn0DbHz)} dB-Hz")
+            }
+
             reportAnomaly(
                 type = GnssAnomalyType.ELEVATION_ANOMALY,
                 description = "${analysis.lowElevHighSignalCount} low-elevation satellites with suspiciously high signal",
                 technicalDetails = buildGnssTechnicalDetails(analysis),
                 confidence = AnomalyConfidence.HIGH,
                 contributingFactors = listOf(
-                    "Low elevation (<5°) satellites with C/N0 > 40 dB-Hz",
+                    "Low elevation (<${SPOOFING_ELEVATION_THRESHOLD}°) satellites with C/N0 > 40 dB-Hz",
+                    "Triggering: ${triggeringSats.take(3).joinToString { "${it.constellation.code}${it.svid}" }}",
                     "This pattern is physically implausible without spoofing",
                     "Geometry score: ${String.format("%.0f", analysis.geometryScore * 100)}%"
                 )
@@ -1425,17 +1455,26 @@ class GnssSatelliteMonitor(
      * Update C/N0 baseline from history - creates adaptive thresholds
      */
     private fun updateCn0Baseline() {
-        if (cn0History.size < 20) return
+        // Thread-safe snapshot of cn0 history
+        val historySnapshot = synchronized(cn0History) { cn0History.toList() }
+
+        if (historySnapshot.size < 20) return
 
         // Use the middle 80% of samples to exclude outliers
-        val sorted = cn0History.sorted()
+        val sorted = historySnapshot.sorted()
         val trimStart = (sorted.size * 0.1).toInt()
         val trimEnd = (sorted.size * 0.9).toInt()
 
         // Ensure we have a valid range (at least 2 elements for variance calculation)
         if (trimEnd <= trimStart + 1) return
 
-        val trimmed = sorted.subList(trimStart, trimEnd)
+        // Safe subList access with bounds checking
+        val safeStart = trimStart.coerceIn(0, sorted.size)
+        val safeEnd = trimEnd.coerceIn(safeStart, sorted.size)
+
+        if (safeEnd <= safeStart + 1) return
+
+        val trimmed = sorted.subList(safeStart, safeEnd)
 
         if (trimmed.size >= 2) {
             cn0BaselineMean = trimmed.average()
@@ -1462,7 +1501,9 @@ class GnssSatelliteMonitor(
                     Log.d(TAG, "Clock discontinuity detected ($lastCount -> $currentCount), resetting drift tracking")
                     lastClockBiasNs = null
                     cumulativeClockDriftNs = 0L
-                    clockDriftHistory.clear()
+                    synchronized(clockDriftHistory) {
+                        clockDriftHistory.clear()
+                    }
                 }
             }
             lastDiscontinuityCount = currentCount
@@ -1472,9 +1513,11 @@ class GnssSatelliteMonitor(
             val drift = biasNs - prevBias
             cumulativeClockDriftNs += drift
 
-            clockDriftHistory.add(drift)
-            if (clockDriftHistory.size > maxDriftHistorySize) {
-                clockDriftHistory.removeAt(0)
+            synchronized(clockDriftHistory) {
+                clockDriftHistory.add(drift)
+                while (clockDriftHistory.size > maxDriftHistorySize) {
+                    clockDriftHistory.removeAt(0)
+                }
             }
         }
         lastClockBiasNs = biasNs
@@ -1484,10 +1527,17 @@ class GnssSatelliteMonitor(
      * Analyze clock drift trend
      */
     private fun analyzeDriftTrend(): DriftTrend {
-        if (clockDriftHistory.size < 5) return DriftTrend.STABLE
+        // Thread-safe snapshot of drift history
+        val driftSnapshot = synchronized(clockDriftHistory) { clockDriftHistory.toList() }
 
-        val recent = clockDriftHistory.takeLast(5)
-        val older = clockDriftHistory.dropLast(5).takeLast(5)
+        if (driftSnapshot.size < 5) return DriftTrend.STABLE
+
+        val recent = driftSnapshot.takeLast(5)
+        val older = if (driftSnapshot.size > 5) {
+            driftSnapshot.dropLast(5).takeLast(5)
+        } else {
+            emptyList()
+        }
 
         if (older.isEmpty()) return DriftTrend.STABLE
 
@@ -1501,8 +1551,8 @@ class GnssSatelliteMonitor(
         }
 
         return when {
-            recentAvg > olderAvg * 1.5 -> DriftTrend.INCREASING
-            recentAvg < olderAvg * 0.5 -> DriftTrend.DECREASING
+            olderAvg != 0.0 && recentAvg > olderAvg * 1.5 -> DriftTrend.INCREASING
+            olderAvg != 0.0 && recentAvg < olderAvg * 0.5 -> DriftTrend.DECREASING
             else -> DriftTrend.STABLE
         }
     }
@@ -1511,7 +1561,8 @@ class GnssSatelliteMonitor(
      * Count significant drift jumps
      */
     private fun countDriftJumps(): Int {
-        return clockDriftHistory.count { abs(it) > driftJumpThresholdNs }
+        val driftSnapshot = synchronized(clockDriftHistory) { clockDriftHistory.toList() }
+        return driftSnapshot.count { abs(it) > driftJumpThresholdNs }
     }
 
     /**
@@ -2259,8 +2310,16 @@ class GnssSatelliteMonitor(
         val (geometryScore, elevDistribution, azimuthCoverage) = analyzeGeometry(satellites)
 
         // Count low elevation with high signal (spoofing indicator)
-        val lowElevHighSignal = satellites.count {
+        // DEBUG: Log the actual satellites that match criteria
+        val lowElevHighSignalSats = satellites.filter {
             it.elevationDegrees < SPOOFING_ELEVATION_THRESHOLD && it.cn0DbHz > 40
+        }
+        val lowElevHighSignal = lowElevHighSignalSats.size
+        if (lowElevHighSignal > 0) {
+            Log.d(TAG, "Low elev + high signal count: $lowElevHighSignal (threshold: elev<$SPOOFING_ELEVATION_THRESHOLD°, signal>40dB-Hz)")
+            lowElevHighSignalSats.forEach { sat ->
+                Log.d(TAG, "  Matching sat: ${sat.constellation.code} PRN ${sat.svid}: elev=${sat.elevationDegrees}°, signal=${sat.cn0DbHz}dB-Hz")
+            }
         }
 
         // Signal spike/drop counts from history

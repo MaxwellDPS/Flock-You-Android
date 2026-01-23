@@ -69,6 +69,19 @@ class UltrasonicDetectionHandler @Inject constructor() {
         private const val FOLLOWING_LOCATION_THRESHOLD = 2
         private const val HIGH_SNR_THRESHOLD_DB = 20.0
         private const val STRONG_AMPLITUDE_THRESHOLD_DB = -35.0
+
+        // Cached sets for enum comparisons to avoid allocation on every call
+        private val SOPHISTICATED_MODULATION_TYPES = setOf(
+            UltrasonicModulation.FSK,
+            UltrasonicModulation.PSK,
+            UltrasonicModulation.CHIRP
+        )
+
+        private val HIGH_THREAT_BEACON_CATEGORIES = setOf(
+            BeaconCategory.ADVERTISING,
+            BeaconCategory.TV_ATTRIBUTION,
+            BeaconCategory.CROSS_DEVICE_LINKING
+        )
     }
 
     /**
@@ -318,11 +331,7 @@ class UltrasonicDetectionHandler @Inject constructor() {
         }
 
         // Modulation type can indicate sophistication
-        if (context.modulationType in listOf(
-                UltrasonicModulation.FSK,
-                UltrasonicModulation.PSK,
-                UltrasonicModulation.CHIRP
-            )) {
+        if (context.modulationType in SOPHISTICATED_MODULATION_TYPES) {
             likelihood += 5f
         }
 
@@ -491,11 +500,7 @@ class UltrasonicDetectionHandler @Inject constructor() {
         }
 
         // Known ad/TV tracking beacons are high threat
-        if (attribution.category in listOf(
-                BeaconCategory.ADVERTISING,
-                BeaconCategory.TV_ATTRIBUTION,
-                BeaconCategory.CROSS_DEVICE_LINKING
-            ) && attribution.confidence >= 70f) {
+        if (attribution.category in HIGH_THREAT_BEACON_CATEGORIES && attribution.confidence >= 70f) {
             return ThreatLevel.HIGH
         }
 
@@ -629,11 +634,7 @@ class UltrasonicDetectionHandler @Inject constructor() {
             else -> {}
         }
 
-        if (context.modulationType in listOf(
-                UltrasonicModulation.FSK,
-                UltrasonicModulation.PSK,
-                UltrasonicModulation.CHIRP
-            )) {
+        if (context.modulationType in SOPHISTICATED_MODULATION_TYPES) {
             indicators.add("Sophisticated modulation (${context.modulationType.name}) - indicates data encoding")
         }
 

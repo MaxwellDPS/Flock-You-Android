@@ -641,9 +641,18 @@ tasks.register("prepareFlipperFap") {
     }
 }
 
-// Automatically bundle FAP for release builds
-tasks.matching { it.name.contains("Release") && it.name.startsWith("assemble") }.configureEach {
-    dependsOn("bundleFlipperFap")
+// Automatically bundle FAP for release builds (must run before any task that reads assets)
+afterEvaluate {
+    tasks.matching { task ->
+        task.name.contains("Release") && (
+            task.name.startsWith("merge") && task.name.endsWith("Assets") ||
+            task.name.contains("Lint") ||
+            task.name.contains("Assets") ||
+            task.name.startsWith("process") && task.name.endsWith("Resources")
+        )
+    }.configureEach {
+        dependsOn("bundleFlipperFap")
+    }
 }
 
 // ================================================================

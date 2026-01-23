@@ -220,8 +220,8 @@ bool flock_usb_cdc_start(FlockUsbCdc* usb) {
     usb->rx_thread = furi_thread_alloc_ex("FlockUsbCdcRx", 1024, usb_cdc_rx_thread, usb);
     furi_thread_start(usb->rx_thread);
 
-    // Assume connected - the host should see us now
-    usb->connected = true;
+    // Don't assume connected - wait for actual communication or DTR signal
+    usb->connected = false;
 
     // Give the USB stack a moment to settle
     furi_delay_ms(100);
@@ -492,8 +492,7 @@ bool flock_usb_cdc_resume(FlockUsbCdc* usb) {
     usb->rx_thread = furi_thread_alloc_ex("FlockUsbCdcRx", 1024, usb_cdc_rx_thread, usb);
     furi_thread_start(usb->rx_thread);
 
-    // Assume connected
-    usb->connected = true;
+    // Keep previous connected state (will be set true when DTR received or data comes in)
 
     furi_mutex_release(usb->mutex);
 

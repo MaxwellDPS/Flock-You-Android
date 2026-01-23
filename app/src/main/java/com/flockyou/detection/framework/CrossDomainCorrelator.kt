@@ -43,9 +43,10 @@ class CrossDomainCorrelator {
     // Correlation results
     private val correlatedThreats = ConcurrentHashMap<String, CorrelatedThreat>()
 
-    // State flows
+    // State flows with lock for thread-safe updates
     private val _threats = MutableStateFlow<List<CorrelatedThreat>>(emptyList())
     val threats: StateFlow<List<CorrelatedThreat>> = _threats.asStateFlow()
+    private val threatsLock = Any()
 
     // ============================================================================
     // Detection Registration
@@ -473,11 +474,17 @@ class CrossDomainCorrelator {
         }
     }
 
+    /**
+     * Update the threats StateFlow.
+     * Thread-safe: Uses synchronized block for StateFlow updates.
+     */
     private fun updateThreatsFlow() {
-        val sortedThreats = correlatedThreats.values
-            .sortedByDescending { it.timestamp }
-            .take(50)
-        _threats.value = sortedThreats
+        synchronized(threatsLock) {
+            val sortedThreats = correlatedThreats.values
+                .sortedByDescending { it.timestamp }
+                .take(50)
+            _threats.value = sortedThreats
+        }
     }
 
     private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -515,7 +522,8 @@ class CrossDomainCorrelator {
     }
 
     /**
-     * Clear all correlation data
+     * Clear all correlation data.
+     * Thread-safe: Uses synchronized block for StateFlow updates.
      */
     fun clear() {
         bleDetections.clear()
@@ -523,7 +531,9 @@ class CrossDomainCorrelator {
         rfDetections.clear()
         ultrasonicDetections.clear()
         correlatedThreats.clear()
-        _threats.value = emptyList()
+        synchronized(threatsLock) {
+            _threats.value = emptyList()
+        }
     }
 
     /**

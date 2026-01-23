@@ -1,12 +1,15 @@
 package com.flockyou.ai
 
 import android.util.Log
+import com.flockyou.data.AiModel
+import com.flockyou.data.AiSettingsRepository
 import com.flockyou.data.SurveillanceHotspot
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.DeviceType
 import com.flockyou.data.model.ThreatLevel
 import com.flockyou.data.repository.DetectionRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
@@ -22,7 +25,8 @@ import javax.inject.Singleton
 @Singleton
 class SurveillanceSummarizer @Inject constructor(
     private val detectionRepository: DetectionRepository,
-    private val mediaPipeLlmClient: MediaPipeLlmClient
+    private val mediaPipeLlmClient: MediaPipeLlmClient,
+    private val aiSettingsRepository: AiSettingsRepository
 ) {
     companion object {
         private const val TAG = "SurveillanceSummarizer"
@@ -133,7 +137,10 @@ class SurveillanceSummarizer @Inject constructor(
                 }
             } else null
 
-            val prompt = PromptTemplates.buildSummaryPrompt(detections, periodDescription, comparisonNote)
+            // Use PromptSelector to choose between verbose and compact prompts
+            val settings = aiSettingsRepository.settings.first()
+            val model = AiModel.fromId(settings.selectedModel)
+            val prompt = PromptSelector.getSummaryPrompt(detections, periodDescription, comparisonNote, settings, model)
             val response = mediaPipeLlmClient.generateResponse(prompt)
 
             if (response != null) {

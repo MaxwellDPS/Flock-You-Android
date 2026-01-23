@@ -30,9 +30,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.flockyou.config.NetworkConfig
 import com.flockyou.data.model.*
 import com.flockyou.service.ScanningService
-import com.flockyou.ui.components.ThreatBadge
-import com.flockyou.ui.components.toIcon
+import com.flockyou.ui.components.*
 import com.flockyou.ui.theme.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -67,7 +70,7 @@ private enum class GpsStatus {
     ACTIVE, SEARCHING, DISABLED
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MapScreen(
     viewModel: MapViewModel = hiltViewModel(),
@@ -76,10 +79,12 @@ fun MapScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val filteredDetections by viewModel.detectionsWithLocation.collectAsState()
     var selectedDetection by remember { mutableStateOf<Detection?>(null) }
     var selectedCluster by remember { mutableStateOf<DetectionCluster?>(null) }
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var currentZoom by remember { mutableStateOf(4.0) }
+    var showFilterSheet by remember { mutableStateOf(false) }
 
     // GPS status state
     var gpsStatus by remember { mutableStateOf(GpsStatus.SEARCHING) }
@@ -117,18 +122,18 @@ fun MapScreen(
     }
 
     // Update GPS status based on detections with location
-    LaunchedEffect(uiState.detectionsWithLocation) {
-        val hasLocationData = uiState.detectionsWithLocation.any {
+    LaunchedEffect(filteredDetections) {
+        val hasLocationData = filteredDetections.any {
             it.latitude != null && it.longitude != null
         }
         gpsStatus = when {
             hasLocationData -> GpsStatus.ACTIVE
-            uiState.detectionsWithLocation.isEmpty() -> GpsStatus.SEARCHING
+            filteredDetections.isEmpty() -> GpsStatus.SEARCHING
             else -> GpsStatus.DISABLED
         }
 
         // Get user location from most recent detection
-        uiState.detectionsWithLocation
+        filteredDetections
             .filter { it.latitude != null && it.longitude != null }
             .maxByOrNull { it.timestamp }
             ?.let { latest ->
@@ -154,12 +159,12 @@ fun MapScreen(
     }
     
     // Update markers when detections change - with clustering support
-    LaunchedEffect(uiState.detectionsWithLocation, mapView, currentZoom) {
+    LaunchedEffect(filteredDetections, mapView, currentZoom) {
         mapView?.let { map ->
             // Clear existing markers and overlays
             map.overlays.removeAll { it is Marker || it is Polygon }
 
-            val detectionsWithCoords = uiState.detectionsWithLocation.filter {
+            val detectionsWithCoords = filteredDetections.filter {
                 it.latitude != null && it.longitude != null
             }
 
@@ -286,10 +291,16 @@ fun MapScreen(
                     }
                 },
                 actions = {
+                    // Filter button
+                    FilterButton(
+                        filterCount = viewModel.getActiveFilterCount(),
+                        onClick = { showFilterSheet = true }
+                    )
+
                     // Reset View / Zoom to fit all markers - always works
                     IconButton(onClick = {
                         mapView?.let { map ->
-                            val points = uiState.detectionsWithLocation
+                            val points = filteredDetections
                                 .filter { it.latitude != null && it.longitude != null }
                                 .map { GeoPoint(it.latitude!!, it.longitude!!) }
 
@@ -311,7 +322,7 @@ fun MapScreen(
                     // Center on user location (if available from detections)
                     IconButton(onClick = {
                         mapView?.let { map ->
-                            val latest = uiState.detectionsWithLocation
+                            val latest = filteredDetections
                                 .filter { it.latitude != null && it.longitude != null }
                                 .maxByOrNull { it.timestamp }
 
@@ -336,17 +347,17 @@ fun MapScreen(
                 .padding(paddingValues)
         ) {
             // Check if we have location data
-            val hasLocationData = uiState.detectionsWithLocation.any {
+            val hasLocationData = filteredDetections.any {
                 it.latitude != null && it.longitude != null
             }
 
-            if (!hasLocationData && uiState.detectionsWithLocation.isNotEmpty()) {
+            if (!hasLocationData && filteredDetections.isNotEmpty()) {
                 // Empty state - detections exist but no location data
                 MapEmptyState(
                     hasDetections = true,
                     onRequestPermissions = requestLocationPermissions
                 )
-            } else if (uiState.detectionsWithLocation.isEmpty()) {
+            } else if (filteredDetections.isEmpty()) {
                 // Empty state - no detections at all
                 MapEmptyState(
                     hasDetections = false,
@@ -402,7 +413,7 @@ fun MapScreen(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "${uiState.detectionsWithLocation.filter { it.latitude != null }.size} locations",
+                        text = "${filteredDetections.filter { it.latitude != null }.size} locations",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
@@ -461,7 +472,16 @@ fun MapScreen(
             onViewFullDetails = onNavigateToDetectionDetail?.let { { id -> it(id) } }
         )
     }
-    
+
+    // Filter bottom sheet
+    if (showFilterSheet) {
+        MapFilterBottomSheet(
+            uiState = uiState,
+            viewModel = viewModel,
+            onDismiss = { showFilterSheet = false }
+        )
+    }
+
     // Cleanup
     DisposableEffect(Unit) {
         onDispose {
@@ -1124,6 +1144,199 @@ private fun MapEmptyState(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Filter bottom sheet for the map screen
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun MapFilterBottomSheet(
+    uiState: MapUiState,
+    viewModel: MapViewModel,
+    onDismiss: () -> Unit
+) {
+    // Section expansion states
+    var timeRangeExpanded by remember { mutableStateOf(uiState.filterTimeRange != TimeRange.ALL_TIME) }
+    var protocolExpanded by remember { mutableStateOf(uiState.filterProtocols.isNotEmpty()) }
+    var threatExpanded by remember { mutableStateOf(uiState.filterThreatLevel != null) }
+    var signalExpanded by remember { mutableStateOf(uiState.filterSignalStrength.isNotEmpty()) }
+    var deviceTypeExpanded by remember { mutableStateOf(uiState.filterDeviceTypes.isNotEmpty()) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Map Filters",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = { viewModel.clearFilters() }) {
+                    Text("Clear")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Quick Filters Row
+            Text(
+                text = "Quick Filters",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            QuickFiltersRow(
+                activeOnly = uiState.filterActiveOnly,
+                timeRange = uiState.filterTimeRange,
+                onActiveOnlyChange = { viewModel.setActiveOnly(it) },
+                onTimeRangeChange = { viewModel.setTimeRange(it) }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Time Range Section
+            CollapsibleFilterSection(
+                title = "Time Range",
+                selectedCount = if (uiState.filterTimeRange != TimeRange.ALL_TIME) 1 else 0,
+                expanded = timeRangeExpanded,
+                onExpandedChange = { timeRangeExpanded = it }
+            ) {
+                TimeRangeFilterSection(
+                    selected = uiState.filterTimeRange,
+                    customStart = uiState.filterCustomStartTime,
+                    customEnd = uiState.filterCustomEndTime,
+                    onSelectPreset = { viewModel.setTimeRange(it) },
+                    onSelectCustom = { start, end -> viewModel.setCustomTimeRange(start, end) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Protocol Section
+            CollapsibleFilterSection(
+                title = "Protocol",
+                selectedCount = uiState.filterProtocols.size,
+                expanded = protocolExpanded,
+                onExpandedChange = { protocolExpanded = it }
+            ) {
+                ProtocolFilterSection(
+                    selected = uiState.filterProtocols,
+                    onToggle = { viewModel.toggleProtocolFilter(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Threat Level Section
+            CollapsibleFilterSection(
+                title = "Threat Level",
+                selectedCount = if (uiState.filterThreatLevel != null) 1 else 0,
+                expanded = threatExpanded,
+                onExpandedChange = { threatExpanded = it }
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ThreatLevel.entries.forEach { level ->
+                        FilterChip(
+                            selected = uiState.filterThreatLevel == level,
+                            onClick = {
+                                viewModel.setThreatFilter(
+                                    if (uiState.filterThreatLevel == level) null else level
+                                )
+                            },
+                            label = { Text(level.name) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = level.toColor().copy(alpha = 0.2f),
+                                selectedLabelColor = level.toColor()
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Signal Strength Section
+            CollapsibleFilterSection(
+                title = "Signal Strength",
+                selectedCount = uiState.filterSignalStrength.size,
+                expanded = signalExpanded,
+                onExpandedChange = { signalExpanded = it }
+            ) {
+                SignalStrengthFilterSection(
+                    selected = uiState.filterSignalStrength,
+                    onToggle = { viewModel.toggleSignalStrengthFilter(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Device Type Section
+            CollapsibleFilterSection(
+                title = "Device Type",
+                selectedCount = uiState.filterDeviceTypes.size,
+                expanded = deviceTypeExpanded,
+                onExpandedChange = { deviceTypeExpanded = it }
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DeviceType.entries.forEach { type ->
+                        FilterChip(
+                            selected = type in uiState.filterDeviceTypes,
+                            onClick = { viewModel.toggleDeviceTypeFilter(type) },
+                            label = { Text(type.name.replace("_", " ")) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = type.toIcon(),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Apply Button
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Apply Filters")
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
