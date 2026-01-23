@@ -85,6 +85,7 @@ fun FlipperSettingsScreen(
                     settings = settings,
                     onToggleEnabled = { scope.launch { viewModel.setFlipperEnabled(it) } },
                     onConnect = { viewModel.connect() },
+                    onConnectUsb = { viewModel.connectViaUsb() },
                     onDisconnect = { viewModel.disconnect() },
                     onScanBluetooth = { viewModel.showBluetoothDevicePicker() }
                 )
@@ -205,6 +206,7 @@ private fun FlipperConnectionCard(
     settings: FlipperSettings,
     onToggleEnabled: (Boolean) -> Unit,
     onConnect: () -> Unit,
+    onConnectUsb: () -> Unit,
     onDisconnect: () -> Unit,
     onScanBluetooth: () -> Unit
 ) {
@@ -307,13 +309,12 @@ private fun FlipperConnectionCard(
                             }
                         }
                         else -> {
-                            Button(
-                                onClick = onConnect,
-                                modifier = Modifier.weight(1f)
+                            OutlinedButton(
+                                onClick = onConnectUsb
                             ) {
-                                Icon(Icons.Default.Link, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Connect")
+                                Icon(Icons.Default.Usb, contentDescription = null)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("USB")
                             }
                             OutlinedButton(
                                 onClick = onScanBluetooth

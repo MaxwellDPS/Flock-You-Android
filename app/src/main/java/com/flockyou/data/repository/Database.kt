@@ -605,11 +605,22 @@ object DatabaseKeyManager {
  * Room database for storing detections.
  * Uses SQLCipher for encryption to protect sensitive detection data.
  */
-@Database(entities = [Detection::class, OuiEntry::class], version = 9, exportSchema = false)
+@Database(
+    entities = [
+        Detection::class,
+        OuiEntry::class,
+        SeenCellTowerEntity::class,
+        TrustedCellEntity::class,
+        CellularEventEntity::class
+    ],
+    version = 10,
+    exportSchema = false
+)
 @TypeConverters(Converters::class)
 abstract class FlockYouDatabase : RoomDatabase() {
     abstract fun detectionDao(): DetectionDao
     abstract fun ouiDao(): OuiDao
+    abstract fun cellularDao(): CellularDao
 
     companion object {
         private const val TAG = "FlockYouDatabase"
@@ -681,6 +692,68 @@ abstract class FlockYouDatabase : RoomDatabase() {
             }
         }
 
+        // Migration from version 9 to 10 - adds cellular persistence tables
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Create seen_cell_towers table
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS seen_cell_towers (
+                        cellId TEXT NOT NULL PRIMARY KEY,
+                        lac INTEGER,
+                        tac INTEGER,
+                        mcc TEXT,
+                        mnc TEXT,
+                        operator TEXT,
+                        networkType TEXT NOT NULL,
+                        networkGeneration TEXT NOT NULL,
+                        firstSeen INTEGER NOT NULL,
+                        lastSeen INTEGER NOT NULL,
+                        seenCount INTEGER NOT NULL,
+                        minSignal INTEGER NOT NULL,
+                        maxSignal INTEGER NOT NULL,
+                        lastSignal INTEGER NOT NULL,
+                        latitude REAL,
+                        longitude REAL,
+                        isTrusted INTEGER NOT NULL
+                    )
+                """)
+
+                // Create trusted_cells table
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS trusted_cells (
+                        cellId TEXT NOT NULL PRIMARY KEY,
+                        seenCount INTEGER NOT NULL,
+                        firstSeen INTEGER NOT NULL,
+                        lastSeen INTEGER NOT NULL,
+                        locationsJson TEXT NOT NULL,
+                        operator TEXT,
+                        networkType TEXT
+                    )
+                """)
+
+                // Create cellular_events table
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS cellular_events (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        timestamp INTEGER NOT NULL,
+                        eventType TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        cellId TEXT,
+                        networkType TEXT,
+                        signalStrength INTEGER,
+                        isAnomaly INTEGER NOT NULL,
+                        threatLevel TEXT NOT NULL,
+                        latitude REAL,
+                        longitude REAL
+                    )
+                """)
+
+                // Create index for cellular events timestamp
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cellular_events_timestamp ON cellular_events(timestamp)")
+            }
+        }
+
         fun getDatabase(context: Context): FlockYouDatabase {
             return INSTANCE ?: synchronized(this) {
                 // Load SQLCipher native library
@@ -702,7 +775,7 @@ abstract class FlockYouDatabase : RoomDatabase() {
                     "flockyou_database_encrypted"  // New name to avoid conflicts with old unencrypted DB
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .fallbackToDestructiveMigration() // Only as last resort
                     .build()
                 INSTANCE = instance

@@ -473,6 +473,61 @@ size_t flock_protocol_serialize_nfc_result(
  */
 size_t flock_protocol_create_heartbeat(uint8_t* buffer, size_t buffer_size);
 
+// ============================================================================
+// Lightweight Single-Detection Serializers (stack-friendly)
+// These avoid allocating large result structs on the stack.
+// ============================================================================
+
+/**
+ * Serialize a single Sub-GHz detection directly to buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_single_subghz(
+    uint32_t timestamp,
+    const FlockSubGhzDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a single BLE device directly to buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_single_ble(
+    uint32_t timestamp,
+    const FlockBleDevice* device,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a single WiFi network directly to buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_single_wifi(
+    uint32_t timestamp,
+    const FlockWifiNetwork* network,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a single IR detection directly to buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_single_ir(
+    uint32_t timestamp,
+    const FlockIrDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size);
+
+/**
+ * Serialize a single NFC detection directly to buffer.
+ * Returns the number of bytes written, or 0 on error.
+ */
+size_t flock_protocol_serialize_single_nfc(
+    uint32_t timestamp,
+    const FlockNfcDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size);
+
 /**
  * Create an error response.
  * Returns the number of bytes written.

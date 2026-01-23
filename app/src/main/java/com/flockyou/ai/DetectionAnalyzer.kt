@@ -126,7 +126,8 @@ class DetectionAnalyzer @Inject constructor(
     private val llmEngineManager: LlmEngineManager,
     private val detectionRegistry: DetectionRegistry,
     private val feedbackTracker: AnalysisFeedbackTracker,
-    private val ruleBasedAnalyzer: RuleBasedAnalyzer
+    private val ruleBasedAnalyzer: RuleBasedAnalyzer,
+    private val enrichedDataCache: EnrichedDataCache
 ) {
     companion object {
         private const val TAG = "DetectionAnalyzer"
@@ -1282,8 +1283,10 @@ class DetectionAnalyzer @Inject constructor(
         val shouldTryLlm = (activeEngine != LlmEngine.RULE_BASED) || anyLlmReady
 
         if (shouldTryLlm) {
-            Log.d(TAG, "Attempting LLM analysis (activeEngine=$activeEngine, anyLlmReady=$anyLlmReady)")
-            val llmResult = llmEngineManager.analyzeDetection(detection)
+            // Retrieve enriched heuristics data for this detection if available
+            val enrichedData = enrichedDataCache.get(detection.id)
+            Log.d(TAG, "Attempting LLM analysis (activeEngine=$activeEngine, anyLlmReady=$anyLlmReady, hasEnrichedData=${enrichedData != null})")
+            val llmResult = llmEngineManager.analyzeDetection(detection, enrichedData)
 
             if (llmResult.success) {
                 Log.i(TAG, "LLM analysis succeeded! Model: ${llmResult.modelUsed}, Response length: ${llmResult.analysis?.length ?: 0}")

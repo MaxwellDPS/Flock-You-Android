@@ -347,3 +347,184 @@ size_t flock_protocol_create_error(
 
     return total_size;
 }
+
+// ============================================================================
+// Lightweight Single-Detection Serializers (stack-friendly)
+// ============================================================================
+
+size_t flock_protocol_serialize_single_subghz(
+    uint32_t timestamp,
+    const FlockSubGhzDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!detection || !buffer) return 0;
+
+    // Payload: timestamp(4) + freq_start(4) + freq_end(4) + count(1) + detection
+    size_t payload_size = 13 + sizeof(FlockSubGhzDetection);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeSubGhzScanResult, payload_size);
+
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp
+    *p++ = (uint8_t)(timestamp & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 24) & 0xFF);
+
+    // frequency_start = detection->frequency
+    *p++ = (uint8_t)(detection->frequency & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 8) & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 16) & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 24) & 0xFF);
+
+    // frequency_end = detection->frequency
+    *p++ = (uint8_t)(detection->frequency & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 8) & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 16) & 0xFF);
+    *p++ = (uint8_t)((detection->frequency >> 24) & 0xFF);
+
+    // detection_count = 1
+    *p++ = 1;
+
+    // Copy the single detection
+    memcpy(p, detection, sizeof(FlockSubGhzDetection));
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_single_ble(
+    uint32_t timestamp,
+    const FlockBleDevice* device,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!device || !buffer) return 0;
+
+    // Payload: timestamp(4) + count(1) + device
+    size_t payload_size = 5 + sizeof(FlockBleDevice);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeBleScanResult, payload_size);
+
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp
+    *p++ = (uint8_t)(timestamp & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 24) & 0xFF);
+
+    // device_count = 1
+    *p++ = 1;
+
+    // Copy the single device
+    memcpy(p, device, sizeof(FlockBleDevice));
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_single_wifi(
+    uint32_t timestamp,
+    const FlockWifiNetwork* network,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!network || !buffer) return 0;
+
+    // Payload: timestamp(4) + count(1) + network
+    size_t payload_size = 5 + sizeof(FlockWifiNetwork);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeWifiScanResult, payload_size);
+
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp
+    *p++ = (uint8_t)(timestamp & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 24) & 0xFF);
+
+    // network_count = 1
+    *p++ = 1;
+
+    // Copy the single network
+    memcpy(p, network, sizeof(FlockWifiNetwork));
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_single_ir(
+    uint32_t timestamp,
+    const FlockIrDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!detection || !buffer) return 0;
+
+    // Payload: timestamp(4) + count(1) + detection
+    size_t payload_size = 5 + sizeof(FlockIrDetection);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeIrScanResult, payload_size);
+
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp
+    *p++ = (uint8_t)(timestamp & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 24) & 0xFF);
+
+    // detection_count = 1
+    *p++ = 1;
+
+    // Copy the single detection
+    memcpy(p, detection, sizeof(FlockIrDetection));
+
+    return total_size;
+}
+
+size_t flock_protocol_serialize_single_nfc(
+    uint32_t timestamp,
+    const FlockNfcDetection* detection,
+    uint8_t* buffer,
+    size_t buffer_size) {
+
+    if (!detection || !buffer) return 0;
+
+    // Payload: timestamp(4) + count(1) + detection
+    size_t payload_size = 5 + sizeof(FlockNfcDetection);
+    size_t total_size = HEADER_SIZE + payload_size;
+
+    if (buffer_size < total_size) return 0;
+
+    write_header(buffer, FlockMsgTypeNfcScanResult, payload_size);
+
+    uint8_t* p = buffer + HEADER_SIZE;
+
+    // Timestamp
+    *p++ = (uint8_t)(timestamp & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 8) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 16) & 0xFF);
+    *p++ = (uint8_t)((timestamp >> 24) & 0xFF);
+
+    // detection_count = 1
+    *p++ = 1;
+
+    // Copy the single detection
+    memcpy(p, detection, sizeof(FlockNfcDetection));
+
+    return total_size;
+}

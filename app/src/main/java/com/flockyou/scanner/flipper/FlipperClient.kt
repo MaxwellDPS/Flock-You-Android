@@ -98,7 +98,10 @@ class FlipperClient(private val context: Context) {
         _messages.emit(message)
 
         when (message) {
-            is FlipperMessage.StatusResponse -> _status.value = message.status
+            is FlipperMessage.StatusResponse -> {
+                Log.i(TAG, "StatusResponse received: battery=${message.status.batteryPercent}%, updating _status")
+                _status.value = message.status
+            }
             is FlipperMessage.WipsAlert -> {
                 val event = FlipperWipsEvent(
                     type = when (message.alert.alertType) {

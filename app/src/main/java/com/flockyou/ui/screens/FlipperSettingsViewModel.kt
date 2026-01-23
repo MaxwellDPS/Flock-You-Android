@@ -172,6 +172,36 @@ class FlipperSettingsViewModel @Inject constructor(
         }
     }
 
+    fun connectViaUsb() {
+        viewModelScope.launch {
+            val success = flipperScannerManager.connectUsb()
+            if (!success) {
+                // Check if any USB devices are available
+                val usbDevices = flipperScannerManager.findUsbDevices()
+                if (usbDevices.isEmpty()) {
+                    Log.w(TAG, "No USB Flipper devices found")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            appContext,
+                            "No Flipper found via USB. Make sure it's connected and the Flock Bridge app is running.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } else {
+                    // Device found but couldn't connect - might need permissions
+                    Log.w(TAG, "USB device found but connection failed")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            appContext,
+                            "USB device found but couldn't connect. Check USB permissions.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+    }
+
     fun disconnect() {
         viewModelScope.launch {
             flipperScannerManager.disconnect()

@@ -343,7 +343,8 @@ fun AppNavigation(
                 onNavigateToUltrasonicDetection = { navController.navigate("ultrasonic_detection") },
                 onNavigateToSatelliteDetection = { navController.navigate("satellite_detection") },
                 onNavigateToWifiSecurity = { navController.navigate("wifi_security") },
-                onNavigateToServiceHealth = { navController.navigate("service_health") }
+                onNavigateToServiceHealth = { navController.navigate("service_health") },
+                onNavigateToActiveProbes = { navController.navigate("active_probes") }
             )
         }
         composable("map") {
@@ -362,7 +363,6 @@ fun AppNavigation(
                 onNavigateToAllDetections = { navController.navigate("all_detections") },
                 onNavigateToAiSettings = { navController.navigate("ai_settings") },
                 onNavigateToServiceHealth = { navController.navigate("service_health") },
-                onNavigateToFlipperSettings = { navController.navigate("flipper_settings") },
                 onNavigateToTestMode = { navController.navigate("test_mode") }
             )
         }

@@ -5,7 +5,9 @@ import android.hardware.usb.UsbDevice
 import android.util.Log
 import com.flockyou.data.model.Detection
 import com.flockyou.data.model.SurveillancePattern
+import com.flockyou.data.patterns.PatternUpdateService
 import com.flockyou.data.repository.DetectionRepository
+import com.flockyou.data.repository.EphemeralDetectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -20,8 +22,10 @@ import javax.inject.Singleton
 class FlipperScannerManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val detectionRepository: DetectionRepository,
+    private val ephemeralRepository: EphemeralDetectionRepository,
     private val settingsRepository: FlipperSettingsRepository,
-    private val alertManager: FlipperAlertManager
+    private val alertManager: FlipperAlertManager,
+    private val patternUpdateService: PatternUpdateService
 ) {
     companion object {
         private const val TAG = "FlipperScannerManager"
@@ -94,6 +98,9 @@ class FlipperScannerManager @Inject constructor(
     private var currentLatitude: Double? = null
     private var currentLongitude: Double? = null
 
+    // Ephemeral mode - when enabled, detections are stored in RAM only
+    @Volatile private var ephemeralModeEnabled = false
+
     // Scan jobs
     private var wifiScanJob: Job? = null
     private var subGhzScanJob: Job? = null
@@ -147,8 +154,27 @@ class FlipperScannerManager @Inject constructor(
                 when (state) {
                     FlipperConnectionState.READY -> {
                         // Request status to populate Flipper info (battery, uptime, etc.)
+                        // Use a small delay to ensure all collectors are ready, then retry if needed
                         Log.i(TAG, "Connection ready, requesting Flipper status")
-                        flipperClient?.requestStatus()
+                        scope.launch {
+                            // Small delay to ensure message collectors are active
+                            delay(100)
+                            flipperClient?.requestStatus()
+
+                            // Retry if status is still null after 2 seconds
+                            delay(2000)
+                            if (_flipperStatus.value == null) {
+                                Log.w(TAG, "Status still null after initial request, retrying...")
+                                flipperClient?.requestStatus()
+                            }
+
+                            // Final retry after another 2 seconds
+                            delay(2000)
+                            if (_flipperStatus.value == null) {
+                                Log.w(TAG, "Status still null after retry, making final attempt...")
+                                flipperClient?.requestStatus()
+                            }
+                        }
 
                         // Cancel any pending auto-reconnect
                         cancelAutoReconnect()
@@ -158,8 +184,10 @@ class FlipperScannerManager @Inject constructor(
 
                         // Auto-start scanning if not already running
                         if (!_isRunning.value) {
-                            Log.i(TAG, "Auto-starting Flipper scanning")
-                            startScanning(surveillancePatterns)
+                            // Load surveillance patterns from PatternUpdateService
+                            val patterns = patternUpdateService.getAllPatterns()
+                            Log.i(TAG, "Auto-starting Flipper scanning with ${patterns.size} patterns")
+                            startScanning(patterns)
                         }
 
                         // Start RSSI monitoring for Bluetooth connections
@@ -243,6 +271,7 @@ class FlipperScannerManager @Inject constructor(
             // Observe status
             scope.launch {
                 client.status.collect { status ->
+                    Log.d(TAG, "Received status from FlipperClient: ${status != null}")
                     _flipperStatus.update { status }
                 }
             }
@@ -682,6 +711,7 @@ class FlipperScannerManager @Inject constructor(
             }
 
             is FlipperMessage.StatusResponse -> {
+                Log.i(TAG, "Received StatusResponse via messages flow: battery=${message.status.batteryPercent}%")
                 _flipperStatus.update { message.status }
             }
 
@@ -726,7 +756,14 @@ class FlipperScannerManager @Inject constructor(
 
     private suspend fun saveDetection(detection: Detection) {
         try {
-            val isNew = detectionRepository.upsertDetection(detection)
+            // Choose storage based on ephemeral mode
+            val isNew = if (ephemeralModeEnabled) {
+                // Ephemeral mode: store in RAM only
+                ephemeralRepository.upsertDetection(detection)
+            } else {
+                // Normal mode: persist to database
+                detectionRepository.upsertDetection(detection)
+            }
             if (isNew) {
                 _detectionCount.update { it + 1 }
                 // Trigger alert for new detections (haptic, sound, notification)
@@ -735,6 +772,14 @@ class FlipperScannerManager @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save detection", e)
         }
+    }
+
+    /**
+     * Set ephemeral mode state. When enabled, Flipper detections are stored in RAM only.
+     */
+    fun setEphemeralMode(enabled: Boolean) {
+        ephemeralModeEnabled = enabled
+        Log.d(TAG, "Ephemeral mode ${if (enabled) "enabled" else "disabled"} for Flipper detections")
     }
 
     /**

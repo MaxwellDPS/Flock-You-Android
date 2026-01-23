@@ -493,8 +493,16 @@ class MediaPipeLlmClient @Inject constructor(
 
     /**
      * Analyze a detection using the LLM.
+     *
+     * @param detection The detection to analyze
+     * @param model The AI model being used
+     * @param enrichedData Optional enriched heuristics data for more accurate and contextual analysis
      */
-    suspend fun analyzeDetection(detection: Detection, model: AiModel): AiAnalysisResult = withContext(Dispatchers.IO) {
+    suspend fun analyzeDetection(
+        detection: Detection,
+        model: AiModel,
+        enrichedData: EnrichedDetectorData? = null
+    ): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
         if (!isInitialized) {
@@ -507,8 +515,8 @@ class MediaPipeLlmClient @Inject constructor(
         }
 
         try {
-            val prompt = buildAnalysisPrompt(detection)
-            Log.d(TAG, "Analyzing detection with prompt length: ${prompt.length}")
+            val prompt = buildAnalysisPrompt(detection, enrichedData)
+            Log.d(TAG, "Analyzing detection with prompt length: ${prompt.length}, hasEnrichedData=${enrichedData != null}")
             val response = generateResponse(prompt)
 
             if (response != null) {
@@ -544,10 +552,14 @@ class MediaPipeLlmClient @Inject constructor(
     /**
      * Build the analysis prompt for a detection.
      * Uses compact prompts by default for MediaPipe models (typically smaller).
+     *
+     * @param detection The detection to analyze
+     * @param enrichedData Optional enriched heuristics data to include in the prompt
      */
-    private fun buildAnalysisPrompt(detection: Detection): String {
+    private fun buildAnalysisPrompt(detection: Detection, enrichedData: EnrichedDetectorData? = null): String {
         // Use compact prompt format for MediaPipe models (better performance on smaller models)
-        return CompactPromptTemplates.compactAnalysisPrompt(detection, null)
+        // Include enriched heuristics data when available for more accurate analysis
+        return CompactPromptTemplates.compactAnalysisPrompt(detection, enrichedData)
     }
 
     /**

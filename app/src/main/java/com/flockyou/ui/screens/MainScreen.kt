@@ -48,8 +48,10 @@ import com.flockyou.data.model.*
 import com.flockyou.data.FlipperUiSettings
 import com.flockyou.data.FlipperViewMode
 import com.flockyou.scanner.flipper.FlipperClient
+import com.flockyou.scanner.flipper.FlipperConnectionPreference
 import com.flockyou.scanner.flipper.FlipperConnectionState
 import com.flockyou.scanner.flipper.FlipperOnboardingSettings
+import com.flockyou.scanner.flipper.FlipperSettings
 import com.flockyou.service.CellularMonitor
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.res.stringResource
@@ -94,11 +96,15 @@ fun MainScreen(
     onNavigateToUltrasonicDetection: () -> Unit = {},
     onNavigateToSatelliteDetection: () -> Unit = {},
     onNavigateToWifiSecurity: () -> Unit = {},
-    onNavigateToServiceHealth: () -> Unit = {}
+    onNavigateToServiceHealth: () -> Unit = {},
+    onNavigateToActiveProbes: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val prioritizedEnrichmentIds by viewModel.prioritizedEnrichmentIds.collectAsState()
     val flipperUiSettings by viewModel.flipperUiSettings.collectAsState()
+    val flipperSettings by viewModel.flipperSettings.collectAsState()
+    val flipperIsInstalling by viewModel.flipperIsInstalling.collectAsState()
+    val flipperInstallProgress by viewModel.flipperInstallProgress.collectAsState()
     val relatedDetections by viewModel.relatedDetections.collectAsState()
 
     // Filtered anomalies (excludes FP-marked detections)
@@ -199,15 +205,6 @@ fun MainScreen(
                             onClick = { showFilterSheet = true }
                         )
                     }
-                    // Service health shortcut on home tab
-                    if (uiState.selectedTab == 0) {
-                        IconButton(onClick = onNavigateToServiceHealth) {
-                            Icon(
-                                imageVector = Icons.Default.MonitorHeart,
-                                contentDescription = "Service Health"
-                            )
-                        }
-                    }
                     IconButton(onClick = onNavigateToNearby) {
                         Icon(
                             imageVector = Icons.Default.Radar,
@@ -218,13 +215,6 @@ fun MainScreen(
                         Icon(
                             imageVector = Icons.Default.Map,
                             contentDescription = "Map"
-                        )
-                    }
-                    // Simple/Advanced mode toggle - visible on home and history tabs
-                    if (uiState.selectedTab == 0 || uiState.selectedTab == 1) {
-                        AdvancedModeToggle(
-                            advancedMode = uiState.advancedMode,
-                            onToggle = { viewModel.setAdvancedMode(!uiState.advancedMode) }
                         )
                     }
                     // Export debug info button - only shown in advanced mode
@@ -744,6 +734,10 @@ fun MainScreen(
                             isScanningForDevices = uiState.flipperIsScanningForDevices,
                             connectionRssi = uiState.flipperConnectionRssi,
                             showDevicePicker = uiState.flipperShowDevicePicker,
+                            // Settings parameters
+                            flipperSettings = flipperSettings,
+                            isInstalling = flipperIsInstalling,
+                            installProgress = flipperInstallProgress,
                             // Callbacks
                             flipperUiSettings = flipperUiSettings,
                             onConnect = { viewModel.showFlipperDevicePicker() },
@@ -764,7 +758,24 @@ fun MainScreen(
                             onSelectDiscoveredDevice = { viewModel.connectToDiscoveredFlipper(it) },
                             onSelectRecentDevice = { viewModel.connectToRecentFlipper(it) },
                             onRemoveRecentDevice = { viewModel.removeFlipperFromHistory(it) },
-                            onCancelAutoReconnect = { viewModel.cancelFlipperAutoReconnect() }
+                            onCancelAutoReconnect = { viewModel.cancelFlipperAutoReconnect() },
+                            onConnectUsb = { viewModel.connectFlipperViaUsb() },
+                            // Settings callbacks
+                            onInstallFap = { viewModel.installFapToFlipper() },
+                            onPreferredConnectionChange = { viewModel.setFlipperPreferredConnection(it) },
+                            onAutoConnectUsbChange = { viewModel.setFlipperAutoConnectUsb(it) },
+                            onAutoConnectBluetoothChange = { viewModel.setFlipperAutoConnectBluetooth(it) },
+                            onEnableWifiScanningChange = { viewModel.setFlipperEnableWifiScanning(it) },
+                            onEnableSubGhzScanningChange = { viewModel.setFlipperEnableSubGhzScanning(it) },
+                            onEnableBleScanningChange = { viewModel.setFlipperEnableBleScanning(it) },
+                            onEnableIrScanningChange = { viewModel.setFlipperEnableIrScanning(it) },
+                            onEnableNfcScanningChange = { viewModel.setFlipperEnableNfcScanning(it) },
+                            onWipsEnabledChange = { viewModel.setFlipperWipsEnabled(it) },
+                            onWipsEvilTwinChange = { viewModel.setFlipperWipsEvilTwinDetection(it) },
+                            onWipsDeauthChange = { viewModel.setFlipperWipsDeauthDetection(it) },
+                            onWipsKarmaChange = { viewModel.setFlipperWipsKarmaDetection(it) },
+                            onWipsRogueApChange = { viewModel.setFlipperWipsRogueApDetection(it) },
+                            onNavigateToActiveProbes = onNavigateToActiveProbes
                         )
                     }
                 }
@@ -3383,6 +3394,10 @@ fun FlipperTabContent(
     isScanningForDevices: Boolean = false,
     connectionRssi: Int? = null,
     showDevicePicker: Boolean = false,
+    // Settings parameters
+    flipperSettings: FlipperSettings = FlipperSettings(),
+    isInstalling: Boolean = false,
+    installProgress: String? = null,
     // Callbacks
     onConnect: () -> Unit = {},
     onDisconnect: () -> Unit = {},
@@ -3402,6 +3417,23 @@ fun FlipperTabContent(
     onSelectRecentDevice: (com.flockyou.scanner.flipper.RecentFlipperDevice) -> Unit = {},
     onRemoveRecentDevice: (String) -> Unit = {},
     onCancelAutoReconnect: () -> Unit = {},
+    onConnectUsb: () -> Unit = {},
+    // Settings callbacks
+    onInstallFap: () -> Unit = {},
+    onPreferredConnectionChange: (FlipperConnectionPreference) -> Unit = {},
+    onAutoConnectUsbChange: (Boolean) -> Unit = {},
+    onAutoConnectBluetoothChange: (Boolean) -> Unit = {},
+    onEnableWifiScanningChange: (Boolean) -> Unit = {},
+    onEnableSubGhzScanningChange: (Boolean) -> Unit = {},
+    onEnableBleScanningChange: (Boolean) -> Unit = {},
+    onEnableIrScanningChange: (Boolean) -> Unit = {},
+    onEnableNfcScanningChange: (Boolean) -> Unit = {},
+    onWipsEnabledChange: (Boolean) -> Unit = {},
+    onWipsEvilTwinChange: (Boolean) -> Unit = {},
+    onWipsDeauthChange: (Boolean) -> Unit = {},
+    onWipsKarmaChange: (Boolean) -> Unit = {},
+    onWipsRogueApChange: (Boolean) -> Unit = {},
+    onNavigateToActiveProbes: () -> Unit = {},
     // Additional UI settings parameters (for compatibility)
     flipperUiSettings: com.flockyou.data.FlipperUiSettings = com.flockyou.data.FlipperUiSettings(),
     onViewModeChange: (com.flockyou.data.FlipperViewMode) -> Unit = {},
@@ -3433,7 +3465,8 @@ fun FlipperTabContent(
             onStopScan = onStopDeviceScan,
             onSelectDiscovered = onSelectDiscoveredDevice,
             onSelectRecent = onSelectRecentDevice,
-            onRemoveRecent = onRemoveRecentDevice
+            onRemoveRecent = onRemoveRecentDevice,
+            onConnectUsb = onConnectUsb
         )
     }
 
@@ -3487,6 +3520,76 @@ fun FlipperTabContent(
                 item(key = "flipper_capabilities") {
                     FlipperCapabilitiesCard(
                         flipperStatus = flipperStatus
+                    )
+                }
+
+                // Flock Bridge FAP Install Card (when connected)
+                item(key = "flipper_fap_install") {
+                    FlipperFapInstallCard(
+                        isInstalling = isInstalling,
+                        installProgress = installProgress,
+                        onInstall = onInstallFap
+                    )
+                }
+
+                // Configuration Section Header
+                item(key = "flipper_config_header") {
+                    Text(
+                        text = "CONFIGURATION",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                // Connection Preferences Card
+                item(key = "flipper_connection_prefs") {
+                    FlipperConnectionPreferencesCard(
+                        preferredConnection = flipperSettings.preferredConnection,
+                        autoConnectUsb = flipperSettings.autoConnectUsb,
+                        autoConnectBluetooth = flipperSettings.autoConnectBluetooth,
+                        onPreferredConnectionChange = onPreferredConnectionChange,
+                        onAutoConnectUsbChange = onAutoConnectUsbChange,
+                        onAutoConnectBluetoothChange = onAutoConnectBluetoothChange
+                    )
+                }
+
+                // Scan Modules Card
+                item(key = "flipper_scan_modules") {
+                    FlipperScanModulesCard(
+                        enableWifi = flipperSettings.enableWifiScanning,
+                        enableSubGhz = flipperSettings.enableSubGhzScanning,
+                        enableBle = flipperSettings.enableBleScanning,
+                        enableIr = flipperSettings.enableIrScanning,
+                        enableNfc = flipperSettings.enableNfcScanning,
+                        onWifiChange = onEnableWifiScanningChange,
+                        onSubGhzChange = onEnableSubGhzScanningChange,
+                        onBleChange = onEnableBleScanningChange,
+                        onIrChange = onEnableIrScanningChange,
+                        onNfcChange = onEnableNfcScanningChange
+                    )
+                }
+
+                // WIPS Settings Card
+                item(key = "flipper_wips_settings") {
+                    FlipperWipsSettingsCard(
+                        wipsEnabled = flipperSettings.wipsEnabled,
+                        evilTwinDetection = flipperSettings.wipsEvilTwinDetection,
+                        deauthDetection = flipperSettings.wipsDeauthDetection,
+                        karmaDetection = flipperSettings.wipsKarmaDetection,
+                        rogueApDetection = flipperSettings.wipsRogueApDetection,
+                        onWipsEnabledChange = onWipsEnabledChange,
+                        onEvilTwinChange = onWipsEvilTwinChange,
+                        onDeauthChange = onWipsDeauthChange,
+                        onKarmaChange = onWipsKarmaChange,
+                        onRogueApChange = onWipsRogueApChange
+                    )
+                }
+
+                // Active Probes Card (navigation entry)
+                item(key = "flipper_active_probes") {
+                    FlipperActiveProbesCard(
+                        onNavigate = onNavigateToActiveProbes
                     )
                 }
 
@@ -4618,6 +4721,514 @@ private fun FlipperErrorCard(
     }
 }
 
+// ============================================================================
+// Flipper Settings Cards
+// ============================================================================
+
+@Composable
+private fun FlipperFapInstallCard(
+    isInstalling: Boolean,
+    installProgress: String?,
+    onInstall: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "FLOCK BRIDGE APP",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(
+                        text = "Install or update the Flock Bridge FAP on your Flipper Zero to enable communication.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (isInstalling) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = installProgress ?: "Installing...",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = onInstall,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Install FAP to Flipper")
+                        }
+                    }
+
+                    if (installProgress != null && !isInstalling) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = installProgress,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (installProgress.contains("complete", ignoreCase = true))
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlipperConnectionPreferencesCard(
+    preferredConnection: FlipperConnectionPreference,
+    autoConnectUsb: Boolean,
+    autoConnectBluetooth: Boolean,
+    onPreferredConnectionChange: (FlipperConnectionPreference) -> Unit,
+    onAutoConnectUsbChange: (Boolean) -> Unit,
+    onAutoConnectBluetoothChange: (Boolean) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Link,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "CONNECTION PREFERENCES",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = when (preferredConnection) {
+                        FlipperConnectionPreference.USB_PREFERRED -> "USB"
+                        FlipperConnectionPreference.BLUETOOTH_PREFERRED -> "Bluetooth"
+                        FlipperConnectionPreference.USB_ONLY -> "USB Only"
+                        FlipperConnectionPreference.BLUETOOTH_ONLY -> "BT Only"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(
+                        text = "Preferred Connection",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    FlipperConnectionPreference.values().forEach { pref ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPreferredConnectionChange(pref) }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = preferredConnection == pref,
+                                onClick = { onPreferredConnectionChange(pref) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = when (pref) {
+                                    FlipperConnectionPreference.USB_PREFERRED -> "USB Preferred"
+                                    FlipperConnectionPreference.BLUETOOTH_PREFERRED -> "Bluetooth Preferred"
+                                    FlipperConnectionPreference.USB_ONLY -> "USB Only"
+                                    FlipperConnectionPreference.BLUETOOTH_ONLY -> "Bluetooth Only"
+                                },
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Divider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Auto-connect toggles
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Auto-connect USB",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Switch(
+                            checked = autoConnectUsb,
+                            onCheckedChange = onAutoConnectUsbChange
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Auto-connect Bluetooth",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Switch(
+                            checked = autoConnectBluetooth,
+                            onCheckedChange = onAutoConnectBluetoothChange
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlipperScanModulesCard(
+    enableWifi: Boolean,
+    enableSubGhz: Boolean,
+    enableBle: Boolean,
+    enableIr: Boolean,
+    enableNfc: Boolean,
+    onWifiChange: (Boolean) -> Unit,
+    onSubGhzChange: (Boolean) -> Unit,
+    onBleChange: (Boolean) -> Unit,
+    onIrChange: (Boolean) -> Unit,
+    onNfcChange: (Boolean) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val enabledCount = listOf(enableWifi, enableSubGhz, enableBle, enableIr, enableNfc).count { it }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Radar,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "SCAN MODULES",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "$enabledCount/5 enabled",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    ScanModuleToggle("WiFi Scanning", "Scan for WiFi networks", enableWifi, onWifiChange)
+                    ScanModuleToggle("Sub-GHz Scanning", "Scan radio frequencies (300-928 MHz)", enableSubGhz, onSubGhzChange)
+                    ScanModuleToggle("BLE Scanning", "Scan Bluetooth Low Energy devices", enableBle, onBleChange)
+                    ScanModuleToggle("IR Scanning", "Detect infrared signals", enableIr, onIrChange)
+                    ScanModuleToggle("NFC Scanning", "Detect NFC devices", enableNfc, onNfcChange)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanModuleToggle(
+    title: String,
+    description: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun FlipperWipsSettingsCard(
+    wipsEnabled: Boolean,
+    evilTwinDetection: Boolean,
+    deauthDetection: Boolean,
+    karmaDetection: Boolean,
+    rogueApDetection: Boolean,
+    onWipsEnabledChange: (Boolean) -> Unit,
+    onEvilTwinChange: (Boolean) -> Unit,
+    onDeauthChange: (Boolean) -> Unit,
+    onKarmaChange: (Boolean) -> Unit,
+    onRogueApChange: (Boolean) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val enabledCount = if (wipsEnabled) {
+        listOf(evilTwinDetection, deauthDetection, karmaDetection, rogueApDetection).count { it }
+    } else 0
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Shield,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (wipsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "WIPS SETTINGS",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = if (wipsEnabled) "$enabledCount/4 active" else "Disabled",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (wipsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(
+                        text = "Wireless Intrusion Prevention System",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Master WIPS toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Enable WIPS",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Switch(
+                            checked = wipsEnabled,
+                            onCheckedChange = onWipsEnabledChange
+                        )
+                    }
+
+                    if (wipsEnabled) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider()
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        WipsToggle("Evil Twin Detection", "Detect AP impersonation attacks", evilTwinDetection, onEvilTwinChange)
+                        WipsToggle("Deauth Detection", "Detect deauthentication attacks", deauthDetection, onDeauthChange)
+                        WipsToggle("Karma Detection", "Detect Karma/WiFi Pineapple attacks", karmaDetection, onKarmaChange)
+                        WipsToggle("Rogue AP Detection", "Detect unauthorized access points", rogueApDetection, onRogueApChange)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WipsToggle(
+    title: String,
+    description: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun FlipperActiveProbesCard(
+    onNavigate: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onNavigate() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Wifi,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.tertiary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Active Probes",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "WiFi pentesting tools via Flipper",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = "Navigate",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FlipperAdvancedInfoCard(
@@ -5108,7 +5719,8 @@ private fun FlipperDevicePickerBottomSheet(
     onStopScan: () -> Unit,
     onSelectDiscovered: (com.flockyou.scanner.flipper.DiscoveredFlipperDevice) -> Unit,
     onSelectRecent: (com.flockyou.scanner.flipper.RecentFlipperDevice) -> Unit,
-    onRemoveRecent: (String) -> Unit
+    onRemoveRecent: (String) -> Unit,
+    onConnectUsb: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -5253,7 +5865,7 @@ private fun FlipperDevicePickerBottomSheet(
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = onDismiss, // USB connects automatically when plugged in
+                onClick = onConnectUsb,
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {

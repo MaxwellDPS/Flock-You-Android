@@ -414,7 +414,9 @@ class GnssSatelliteMonitor(
         val affectedConstellations: List<ConstellationType> = emptyList(),
         val contributingFactors: List<String> = emptyList(),
         val latitude: Double? = null,
-        val longitude: Double? = null
+        val longitude: Double? = null,
+        // Full heuristics analysis for LLM processing
+        val analysis: GnssAnomalyAnalysis? = null
     )
 
     enum class GnssAnomalyType(val displayName: String, val baseScore: Int, val emoji: String) {
@@ -1090,9 +1092,14 @@ class GnssSatelliteMonitor(
         val analysis = buildGnssAnalysis(satellites, status)
 
         // Spoofing detection with enriched analysis
-        if (status.spoofingRiskLevel == SpoofingRiskLevel.HIGH ||
+        // IMPORTANT: Do not report spoofing if indoor attenuation is detected
+        // Indoor environments cause uniform low signals which can look like spoofing,
+        // but real spoofing has uniform NORMAL/HIGH signals
+        val canReportSpoofing = !analysis.isLikelyIndoorSignalLoss
+
+        if (canReportSpoofing && (status.spoofingRiskLevel == SpoofingRiskLevel.HIGH ||
             status.spoofingRiskLevel == SpoofingRiskLevel.CRITICAL ||
-            analysis.spoofingLikelihood >= 50) {
+            analysis.spoofingLikelihood >= 50)) {
 
             val enrichedFactors = buildGnssContributingFactors(analysis)
 
@@ -1111,7 +1118,8 @@ class GnssSatelliteMonitor(
                 technicalDetails = buildGnssTechnicalDetails(analysis),
                 confidence = confidence,
                 contributingFactors = enrichedFactors,
-                affectedConstellations = satellites.map { it.constellation }.distinct()
+                affectedConstellations = satellites.map { it.constellation }.distinct(),
+                analysis = analysis  // Include full heuristics for LLM
             )
         }
 
@@ -1167,7 +1175,8 @@ class GnssSatelliteMonitor(
                     if (!status.hasFix) "Position fix lost" else null,
                     if (status.totalSatellites < MIN_SATELLITES_FOR_FIX) "Very few satellites visible (${status.totalSatellites})" else null,
                     "Recommendation: Move to open sky area if possible"
-                )
+                ),
+                analysis = analysis  // Include full heuristics for LLM
             )
         }
 
@@ -1203,7 +1212,9 @@ class GnssSatelliteMonitor(
         // - Extremely uniform (< 0.15) AND good fix -> Only report if other strong indicators
         // - Somewhat uniform (< 0.5) -> Only report if multiple other strong spoofing indicators
         // - Normal variance (>= 0.5) -> NEVER report (this is the debug data case: 0.53)
+        // - Indoor attenuation detected -> NEVER report (low variance + low signal = building, not spoofing)
         val shouldReportUniformity = when {
+            analysis.isLikelyIndoorSignalLoss -> false  // Indoor attenuation - uniform low signals are normal
             !isExtremelyUniform && !isSomewhatUniform -> false  // Normal variance - don't report
             hasStrongFix -> false  // 30+ satellites - don't report uniformity at all
             isExtremelyUniform && !hasGoodFix -> true  // Very suspicious
@@ -1308,7 +1319,8 @@ class GnssSatelliteMonitor(
         technicalDetails: String,
         confidence: AnomalyConfidence,
         contributingFactors: List<String>,
-        affectedConstellations: List<ConstellationType> = emptyList()
+        affectedConstellations: List<ConstellationType> = emptyList(),
+        analysis: GnssAnomalyAnalysis? = null
     ) {
         // Rate limiting
         val now = System.currentTimeMillis()
@@ -1332,7 +1344,8 @@ class GnssSatelliteMonitor(
             affectedConstellations = affectedConstellations,
             contributingFactors = contributingFactors,
             latitude = currentLatitude,
-            longitude = currentLongitude
+            longitude = currentLongitude,
+            analysis = analysis
         )
 
         detectedAnomalies.add(0, anomaly)
@@ -2290,10 +2303,20 @@ class GnssSatelliteMonitor(
         } else 0.0
 
         val cn0Anomalous = cn0DeviationSigmas > 3.0
-        // Only flag as "too uniform" if variance is EXTREMELY low (< 0.15)
-        // Normal GNSS signals have variance of 0.5-5.0 due to different elevation angles, etc.
-        val cn0TooUniform = cn0Variance < SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD &&  // < 0.15
+
+        // Detect indoor attenuation: low variance + low average signal = building attenuating all signals equally
+        // This is NOT spoofing - it's normal indoor behavior where walls uniformly reduce all signal strengths
+        val isLikelyIndoorAttenuation = cn0Variance < SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD &&
+            currentMean < INDOOR_SIGNAL_THRESHOLD &&  // Average signal below 25 dB-Hz suggests indoor
             satellites.size >= MIN_SATELLITES_FOR_FIX
+
+        // Only flag as "too uniform" if variance is EXTREMELY low (< 0.15) AND signal is NOT attenuated
+        // Normal GNSS signals have variance of 0.5-5.0 due to different elevation angles, etc.
+        // KEY INSIGHT: Spoofed signals have low variance but NORMAL/HIGH average signal (25-45 dB-Hz)
+        //              Indoor signals have low variance AND LOW average signal (< 25 dB-Hz)
+        val cn0TooUniform = cn0Variance < SUSPICIOUS_CN0_UNIFORMITY_THRESHOLD &&  // < 0.15
+            satellites.size >= MIN_SATELLITES_FOR_FIX &&
+            !isLikelyIndoorAttenuation  // Don't flag if this looks like indoor attenuation
 
         // Uniformity score (lower = more uniform = more suspicious)
         val uniformityScore = if (cn0Variance > 0) {
@@ -2333,6 +2356,12 @@ class GnssSatelliteMonitor(
         // Build spoofing indicators list
         // Be careful not to flag normal conditions as suspicious
         val spoofingIndicators = mutableListOf<String>()
+
+        // Log indoor attenuation detection for debugging
+        if (isLikelyIndoorAttenuation) {
+            Log.d(TAG, "Indoor attenuation detected: variance=${String.format("%.3f", cn0Variance)}, " +
+                "avgSignal=${String.format("%.1f", currentMean)} dB-Hz - NOT flagging as spoofing")
+        }
 
         // Only flag uniformity if EXTREMELY low (< 0.15) - normal variance is 0.5-5.0
         if (cn0TooUniform) {
@@ -2387,11 +2416,13 @@ class GnssSatelliteMonitor(
         )
 
         // Determine if this is likely normal operation (strong evidence against threats)
-        val isLikelyNormalOperation = status.satellitesUsedInFix >= EXCELLENT_FIX_SATELLITES &&
+        // Indoor attenuation with good satellite count is also normal operation
+        val isLikelyNormalOperation = (status.satellitesUsedInFix >= EXCELLENT_FIX_SATELLITES &&
             crossConstellation.constellationCount >= 3 &&
             crossConstellation.constellationsConsistent &&
             !cn0TooUniform &&
-            lowElevHighSignal == 0
+            lowElevHighSignal == 0) ||
+            (isLikelyIndoorAttenuation && status.satellitesUsedInFix >= GOOD_FIX_SATELLITES)
 
         return GnssAnomalyAnalysis(
             expectedConstellations = expected,
@@ -2428,7 +2459,8 @@ class GnssSatelliteMonitor(
             allConstellationsIdenticalSignals = crossConstellation.allConstellationsIdenticalSignals,
             crossConstellationSpoofingAdjustment = crossConstellation.spoofingLikelihoodAdjustment,
             // False positive heuristics
-            isLikelyNormalOperation = isLikelyNormalOperation
+            isLikelyNormalOperation = isLikelyNormalOperation,
+            isLikelyIndoorSignalLoss = isLikelyIndoorAttenuation
         )
     }
 

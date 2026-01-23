@@ -489,8 +489,14 @@ class GeminiNanoClient @Inject constructor(
     /**
      * Generate analysis for a detection using Gemini Nano.
      * All processing happens on-device via the NPU.
+     *
+     * @param detection The detection to analyze
+     * @param enrichedData Optional enriched heuristics data for more accurate and contextual analysis
      */
-    suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
+    suspend fun analyzeDetection(
+        detection: Detection,
+        enrichedData: EnrichedDetectorData? = null
+    ): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
         val model = generativeModel
@@ -505,9 +511,9 @@ class GeminiNanoClient @Inject constructor(
 
         try {
             withTimeout(INFERENCE_TIMEOUT_MS) {
-                // Build the prompt for surveillance device analysis
-                val prompt = buildAnalysisPrompt(detection)
-                Log.d(TAG, "Generating analysis with Gemini Nano (prompt length: ${prompt.length})")
+                // Build the prompt for surveillance device analysis with enriched heuristics data
+                val prompt = buildAnalysisPrompt(detection, enrichedData)
+                Log.d(TAG, "Generating analysis with Gemini Nano (prompt length: ${prompt.length}, hasEnrichedData=${enrichedData != null})")
 
                 // Generate content using ML Kit GenAI
                 val response = model.generateContent(prompt)
@@ -655,9 +661,10 @@ class GeminiNanoClient @Inject constructor(
      * Build a prompt for surveillance device analysis.
      * Gemini Nano is powerful enough for verbose prompts, but uses structured output for consistency.
      */
-    private fun buildAnalysisPrompt(detection: Detection): String {
+    private fun buildAnalysisPrompt(detection: Detection, enrichedData: EnrichedDetectorData? = null): String {
         // Use structured output prompt for consistent, parseable results
-        return PromptTemplates.buildStructuredOutputPrompt(detection, null)
+        // Include enriched heuristics data when available for more accurate analysis
+        return PromptTemplates.buildStructuredOutputPrompt(detection, enrichedData)
     }
 
     /**

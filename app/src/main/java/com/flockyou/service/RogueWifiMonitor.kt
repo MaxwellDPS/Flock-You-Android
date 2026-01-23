@@ -509,7 +509,9 @@ class RogueWifiMonitor(
         val latitude: Double?,
         val longitude: Double?,
         val contributingFactors: List<String> = emptyList(),
-        val relatedNetworks: List<String> = emptyList() // Related BSSIDs
+        val relatedNetworks: List<String> = emptyList(), // Related BSSIDs
+        // Full heuristics analysis for LLM processing (for following network anomalies)
+        val followingAnalysis: FollowingNetworkAnalysis? = null
     )
 
     enum class AnomalyConfidence(val displayName: String) {
@@ -1428,7 +1430,8 @@ class RogueWifiMonitor(
         rssi: Int?,
         confidence: AnomalyConfidence,
         contributingFactors: List<String>,
-        relatedNetworks: List<String> = emptyList()
+        relatedNetworks: List<String> = emptyList(),
+        followingAnalysis: FollowingNetworkAnalysis? = null
     ) {
         val now = System.currentTimeMillis()
         val lastTime = lastAnomalyTimes[type] ?: 0
@@ -1457,7 +1460,8 @@ class RogueWifiMonitor(
             latitude = currentLatitude,
             longitude = currentLongitude,
             contributingFactors = contributingFactors,
-            relatedNetworks = relatedNetworks
+            relatedNetworks = relatedNetworks,
+            followingAnalysis = followingAnalysis
         )
 
         detectedAnomalies.add(anomaly)

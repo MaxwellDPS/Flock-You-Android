@@ -355,8 +355,15 @@ class LlmEngineManager @Inject constructor(
      * Analyze a detection using the best available engine with automatic fallback.
      *
      * Includes timeout protection to prevent indefinite hangs during AI analysis.
+     *
+     * @param detection The detection to analyze
+     * @param enrichedData Optional enriched heuristics data from the detector that created this detection.
+     *                     When provided, enables more accurate and contextual LLM analysis.
      */
-    suspend fun analyzeDetection(detection: Detection): AiAnalysisResult = withContext(Dispatchers.IO) {
+    suspend fun analyzeDetection(
+        detection: Detection,
+        enrichedData: EnrichedDetectorData? = null
+    ): AiAnalysisResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
 
         // Ensure initialized
@@ -382,7 +389,7 @@ class LlmEngineManager @Inject constructor(
             // Wrap entire analysis in timeout to prevent indefinite hangs
             val result = withTimeoutOrNull(ANALYSIS_TIMEOUT_MS) {
                 // Try current active engine first
-                var analysisResult = tryAnalyzeWithEngine(currentEngine, detection)
+                var analysisResult = tryAnalyzeWithEngine(currentEngine, detection, enrichedData)
                 Log.d(TAG, "  tryAnalyzeWithEngine($currentEngine) returned: success=${analysisResult?.success}, error=${analysisResult?.error}")
 
                 // If failed, try fallback chain
@@ -391,7 +398,7 @@ class LlmEngineManager @Inject constructor(
 
                     for (engine in getFallbackOrder(currentEngine)) {
                         Log.d(TAG, "  Trying fallback engine: $engine")
-                        analysisResult = tryAnalyzeWithEngine(engine, detection)
+                        analysisResult = tryAnalyzeWithEngine(engine, detection, enrichedData)
                         Log.d(TAG, "    Result: success=${analysisResult?.success}, error=${analysisResult?.error}")
                         if (analysisResult != null && analysisResult.success) {
                             Log.i(TAG, "Fallback to $engine succeeded!")
@@ -435,19 +442,24 @@ class LlmEngineManager @Inject constructor(
 
     /**
      * Try to analyze with a specific engine.
+     *
+     * @param engine The LLM engine to use
+     * @param detection The detection to analyze
+     * @param enrichedData Optional enriched heuristics data for more accurate analysis
      */
     private suspend fun tryAnalyzeWithEngine(
         engine: LlmEngine,
-        detection: Detection
+        detection: Detection,
+        enrichedData: EnrichedDetectorData? = null
     ): AiAnalysisResult? {
         return try {
             when (engine) {
                 LlmEngine.GEMINI_NANO -> {
                     val isReady = geminiNanoClient.isReady()
-                    Log.d(TAG, "tryAnalyzeWithEngine(GEMINI_NANO): isReady=$isReady")
+                    Log.d(TAG, "tryAnalyzeWithEngine(GEMINI_NANO): isReady=$isReady, hasEnrichedData=${enrichedData != null}")
                     if (isReady) {
-                        Log.d(TAG, "Calling geminiNanoClient.analyzeDetection()...")
-                        val result = geminiNanoClient.analyzeDetection(detection)
+                        Log.d(TAG, "Calling geminiNanoClient.analyzeDetection() with enrichedData=${enrichedData?.javaClass?.simpleName}")
+                        val result = geminiNanoClient.analyzeDetection(detection, enrichedData)
                         Log.d(TAG, "geminiNanoClient.analyzeDetection() returned: success=${result.success}, modelUsed=${result.modelUsed}, error=${result.error}")
                         if (result.success) {
                             recordSuccess(LlmEngine.GEMINI_NANO)
@@ -464,7 +476,8 @@ class LlmEngineManager @Inject constructor(
                 }
                 LlmEngine.MEDIAPIPE -> {
                     if (mediaPipeLlmClient.isReady()) {
-                        val result = mediaPipeLlmClient.analyzeDetection(detection, _currentModel)
+                        Log.d(TAG, "Calling mediaPipeLlmClient.analyzeDetection() with enrichedData=${enrichedData?.javaClass?.simpleName}")
+                        val result = mediaPipeLlmClient.analyzeDetection(detection, _currentModel, enrichedData)
                         if (result.success) {
                             recordSuccess(LlmEngine.MEDIAPIPE)
                         } else {

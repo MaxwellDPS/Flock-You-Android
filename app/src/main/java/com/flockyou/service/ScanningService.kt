@@ -552,6 +552,9 @@ class ScanningService : Service() {
     lateinit var falsePositiveAnalyzer: com.flockyou.ai.FalsePositiveAnalyzer
 
     @Inject
+    lateinit var enrichedDataCache: com.flockyou.ai.EnrichedDataCache
+
+    @Inject
     lateinit var llmEngineManager: com.flockyou.ai.LlmEngineManager
 
     @Inject
@@ -1308,7 +1311,10 @@ class ScanningService : Service() {
         }
         
         // Initialize Cellular Monitor
-        cellularMonitor = CellularMonitor(applicationContext, detectorCallbackImpl)
+        cellularMonitor = CellularMonitor(applicationContext, detectorCallbackImpl).also {
+            // Set ephemeral mode from current privacy settings (will be updated by settings collector)
+            it.setEphemeralMode(currentPrivacySettings.ephemeralModeEnabled)
+        }
 
         // Initialize Satellite Monitor with error callback
         satelliteMonitor = com.flockyou.monitoring.SatelliteMonitor(applicationContext, detectorCallbackImpl)
@@ -1519,8 +1525,12 @@ class ScanningService : Service() {
                 // Clear ephemeral data when ephemeral mode is enabled (on service restart)
                 if (settings.ephemeralModeEnabled) {
                     ephemeralRepository.clearAll()
+                    enrichedDataCache.clear() // Also clear enriched data for privacy
                     Log.d(TAG, "Ephemeral mode active - in-memory storage only")
                 }
+
+                // Update cellular monitor ephemeral mode
+                cellularMonitor?.setEphemeralMode(settings.ephemeralModeEnabled)
 
                 // Handle ultrasonic detection opt-in/opt-out changes
                 // On first emission, start if enabled (handles service restart with ultrasonic already enabled)
@@ -2088,6 +2098,12 @@ class ScanningService : Service() {
                         val existing = repository.getDetectionByMacAddress(anomaly.id)
                         if (existing == null) {
                             try {
+                                // Store enriched heuristics data for LLM analysis
+                                anomaly.analysis?.let { analysis ->
+                                    enrichedDataCache.putCellular(detWithId.id, analysis)
+                                    Log.d(TAG, "Stored cellular heuristics for detection ${detWithId.id} (IMSI score: ${analysis.imsiCatcherScore})")
+                                }
+
                                 insertDetectionWithAnalysis(detWithId)
                                 processedCellularAnomalyIds.add(anomaly.id)
 
@@ -2346,6 +2362,12 @@ class ScanningService : Service() {
 
                         if (existing == null) {
                             try {
+                                // Store enriched heuristics data for LLM analysis
+                                anomaly.followingAnalysis?.let { analysis ->
+                                    enrichedDataCache.putWifiFollowing(det.id, analysis)
+                                    Log.d(TAG, "Stored WiFi following heuristics for detection ${det.id} (confidence: ${analysis.followingConfidence}%)")
+                                }
+
                                 insertDetectionWithAnalysis(det)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
@@ -2585,6 +2607,12 @@ class ScanningService : Service() {
                         val existing = det.ssid?.let { repository.getDetectionBySsid(it) }
                         if (existing == null) {
                             try {
+                                // Store enriched heuristics data for LLM analysis
+                                anomaly.analysis?.let { analysis ->
+                                    enrichedDataCache.putUltrasonic(det.id, analysis)
+                                    Log.d(TAG, "Stored ultrasonic heuristics for detection ${det.id} (tracking likelihood: ${analysis.trackingLikelihood}%)")
+                                }
+
                                 insertDetectionWithAnalysis(det)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||
@@ -2707,10 +2735,17 @@ class ScanningService : Service() {
                     val detection = gnssSatelliteMonitor?.anomalyToDetection(anomaly)
                     detection?.let { det ->
                         // Use anomaly ID as unique identifier
+                        val detWithId = det.copy(macAddress = anomaly.id)
                         val existing = repository.getDetectionByMacAddress(anomaly.id)
                         if (existing == null) {
                             try {
-                                insertDetectionWithAnalysis(det.copy(macAddress = anomaly.id))
+                                // Store enriched heuristics data for LLM analysis
+                                anomaly.analysis?.let { analysis ->
+                                    enrichedDataCache.putGnss(detWithId.id, analysis)
+                                    Log.d(TAG, "Stored GNSS heuristics for detection ${detWithId.id} (spoofing: ${analysis.spoofingLikelihood}%, jamming: ${analysis.jammingLikelihood}%)")
+                                }
+
+                                insertDetectionWithAnalysis(detWithId)
                                 processedGnssAnomalyIds.add(anomaly.id)
 
                                 if (anomaly.severity == ThreatLevel.CRITICAL ||

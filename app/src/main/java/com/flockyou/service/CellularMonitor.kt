@@ -8,9 +8,12 @@ import android.telephony.*
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.flockyou.data.model.*
+import com.flockyou.data.repository.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import java.util.UUID
 
 /**
@@ -196,6 +199,66 @@ class CellularMonitor(
     }
     
     private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+    // Database for persistence
+    private val database by lazy { FlockYouDatabase.getDatabase(context) }
+    private val cellularDao by lazy { database.cellularDao() }
+    private val persistenceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var isDataLoaded = false
+
+    // Ephemeral mode - when enabled, no data is persisted to database
+    @Volatile private var ephemeralModeEnabled = false
+
+    /**
+     * Set ephemeral mode state. When enabled, cellular data is stored in RAM only
+     * and NOT persisted to the database for maximum privacy.
+     */
+    fun setEphemeralMode(enabled: Boolean) {
+        val wasEnabled = ephemeralModeEnabled
+        ephemeralModeEnabled = enabled
+
+        if (enabled && !wasEnabled) {
+            // Transitioning to ephemeral mode - clear any persisted data
+            Log.d(TAG, "Ephemeral mode enabled - clearing persisted cellular data")
+            clearPersistedData()
+        } else if (!enabled && wasEnabled && isMonitoring) {
+            // Transitioning from ephemeral to normal mode while monitoring
+            // Persist current in-memory data
+            Log.d(TAG, "Ephemeral mode disabled - persisting current cellular data")
+            persistAllCurrentData()
+        }
+    }
+
+    /**
+     * Persist all current in-memory data to the database.
+     * Called when transitioning from ephemeral to normal mode.
+     */
+    private fun persistAllCurrentData() {
+        if (ephemeralModeEnabled) return
+
+        persistenceScope.launch {
+            try {
+                // Persist all seen cell towers
+                seenCellTowerMap.values.forEach { tower ->
+                    cellularDao.insertSeenCellTower(seenCellTowerToEntity(tower))
+                }
+
+                // Persist all trusted cells
+                trustedCells.forEach { (cellId, info) ->
+                    cellularDao.insertTrustedCell(trustedCellInfoToEntity(cellId, info))
+                }
+
+                // Persist recent events
+                eventHistory.forEach { event ->
+                    cellularDao.insertCellularEvent(cellularEventToEntity(event))
+                }
+
+                Log.d(TAG, "Persisted ${seenCellTowerMap.size} towers, ${trustedCells.size} trusted cells, ${eventHistory.size} events")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist current cellular data", e)
+            }
+        }
+    }
 
     // Configurable timing
     private var minAnomalyIntervalMs: Long = DEFAULT_MIN_ANOMALY_INTERVAL_MS
@@ -416,7 +479,9 @@ class CellularMonitor(
         val mccMnc: String?,
         val latitude: Double?,
         val longitude: Double?,
-        val contributingFactors: List<String> = emptyList()
+        val contributingFactors: List<String> = emptyList(),
+        // Full heuristics analysis for LLM processing
+        val analysis: CellularAnomalyAnalysis? = null
     )
     
     /**
@@ -528,6 +593,9 @@ class CellularMonitor(
             )
             return
         }
+
+        // Load persisted data before starting
+        loadPersistedData()
 
         isMonitoring = true
         Log.d(TAG, "Starting cellular monitoring")
@@ -660,6 +728,7 @@ class CellularMonitor(
     
     fun destroy() {
         stopMonitoring()
+        cancelPersistence()
         clearSensitiveData()
     }
 
@@ -674,6 +743,9 @@ class CellularMonitor(
      * memory-based attacks.
      */
     fun clearSensitiveData() {
+        // Clear persisted data from database
+        clearPersistedData()
+
         // Clear anomaly data
         detectedAnomalies.clear()
         _anomalies.value = emptyList()
@@ -805,7 +877,8 @@ class CellularMonitor(
         
         // Update trusted cell info
         snapshot.cellId?.let { cellId ->
-            val trusted = getOrCreateTrustedCellInfo(cellId.toString())
+            val cellIdStr = cellId.toString()
+            val trusted = getOrCreateTrustedCellInfo(cellIdStr)
             trusted.seenCount++
             trusted.lastSeen = System.currentTimeMillis()
             trusted.operator = telephonyManager.networkOperatorName
@@ -817,8 +890,10 @@ class CellularMonitor(
                     }
                 }
             }
+            // Persist trusted cell update
+            persistTrustedCell(cellIdStr, trusted)
         }
-        
+
         // Update current status
         updateCellStatus(snapshot)
         
@@ -1237,7 +1312,8 @@ class CellularMonitor(
             mccMnc = "${current.mcc}-${current.mnc}",
             latitude = currentLatitude,
             longitude = currentLongitude,
-            contributingFactors = contributingFactors
+            contributingFactors = contributingFactors,
+            analysis = analysis  // Include full heuristics analysis for LLM
         )
 
         detectedAnomalies.add(anomaly)
@@ -1294,8 +1370,11 @@ class CellularMonitor(
             eventHistory.removeAt(eventHistory.size - 1)
         }
         _cellularEvents.value = eventHistory.toList()
+
+        // Persist the event
+        persistCellularEvent(event)
     }
-    
+
     private fun getOrCreateTrustedCellInfo(cellId: String): TrustedCellInfo {
         return trustedCells.getOrPut(cellId) {
             TrustedCellInfo(cellId = cellId)
@@ -1626,7 +1705,7 @@ class CellularMonitor(
         val trusted = trustedCells[cellId]
         
         if (existing != null) {
-            seenCellTowerMap[cellId] = existing.copy(
+            val updatedTower = existing.copy(
                 lastSeen = System.currentTimeMillis(),
                 seenCount = existing.seenCount + 1,
                 minSignal = minOf(existing.minSignal, snapshot.signalStrength),
@@ -1636,6 +1715,8 @@ class CellularMonitor(
                 longitude = snapshot.longitude ?: existing.longitude,
                 isTrusted = trusted?.seenCount ?: 0 >= TRUSTED_CELL_THRESHOLD
             )
+            seenCellTowerMap[cellId] = updatedTower
+            persistSeenCellTower(updatedTower)
         } else {
             // New cell discovered - add to timeline
             addTimelineEvent(
@@ -1647,7 +1728,7 @@ class CellularMonitor(
                 signalStrength = snapshot.signalStrength
             )
 
-            seenCellTowerMap[cellId] = SeenCellTower(
+            val newTower = SeenCellTower(
                 cellId = cellId,
                 lac = snapshot.lac,
                 tac = snapshot.tac,
@@ -1666,8 +1747,10 @@ class CellularMonitor(
                 longitude = snapshot.longitude,
                 isTrusted = false
             )
+            seenCellTowerMap[cellId] = newTower
+            persistSeenCellTower(newTower)
         }
-        
+
         _seenCellTowers.value = seenCellTowerMap.values
             .sortedByDescending { it.lastSeen }
             .toList()
@@ -2446,5 +2529,266 @@ class CellularMonitor(
             serviceUuids = null,
             matchedPatterns = anomaly.contributingFactors.joinToString(", ")
         )
+    }
+
+    // ==================== Persistence ====================
+
+    /**
+     * Load persisted cellular data from the database.
+     * Called on initialization to restore state.
+     */
+    fun loadPersistedData() {
+        if (isDataLoaded) return
+
+        // Don't load persisted data in ephemeral mode
+        if (ephemeralModeEnabled) {
+            Log.d(TAG, "Ephemeral mode enabled - skipping load of persisted cellular data")
+            isDataLoaded = true
+            return
+        }
+
+        persistenceScope.launch {
+            try {
+                Log.d(TAG, "Loading persisted cellular data...")
+
+                // Load seen cell towers
+                val seenTowers = cellularDao.getAllSeenCellTowersSnapshot()
+                seenTowers.forEach { entity ->
+                    val tower = entityToSeenCellTower(entity)
+                    seenCellTowerMap[entity.cellId] = tower
+                }
+                _seenCellTowers.value = seenCellTowerMap.values.toList()
+                    .sortedByDescending { it.lastSeen }
+
+                // Load trusted cells
+                val trustedEntities = cellularDao.getAllTrustedCellsSnapshot()
+                trustedEntities.forEach { entity ->
+                    trustedCells[entity.cellId] = entityToTrustedCellInfo(entity)
+                }
+
+                // Load cellular events (most recent 200)
+                val events = cellularDao.getRecentCellularEventsSnapshot(maxEventHistory)
+                eventHistory.clear()
+                eventHistory.addAll(events.map { entityToCellularEvent(it) })
+                _cellularEvents.value = eventHistory.toList()
+
+                isDataLoaded = true
+                Log.d(TAG, "Loaded ${seenTowers.size} seen towers, ${trustedEntities.size} trusted cells, ${events.size} events")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load persisted cellular data", e)
+            }
+        }
+    }
+
+    /**
+     * Save a seen cell tower to the database.
+     */
+    private fun persistSeenCellTower(tower: SeenCellTower) {
+        // Skip persistence in ephemeral mode
+        if (ephemeralModeEnabled) return
+
+        persistenceScope.launch {
+            try {
+                cellularDao.insertSeenCellTower(seenCellTowerToEntity(tower))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist seen cell tower", e)
+            }
+        }
+    }
+
+    /**
+     * Save a trusted cell to the database.
+     */
+    private fun persistTrustedCell(cellId: String, info: TrustedCellInfo) {
+        // Skip persistence in ephemeral mode
+        if (ephemeralModeEnabled) return
+
+        persistenceScope.launch {
+            try {
+                cellularDao.insertTrustedCell(trustedCellInfoToEntity(cellId, info))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist trusted cell", e)
+            }
+        }
+    }
+
+    /**
+     * Save a cellular event to the database.
+     */
+    private fun persistCellularEvent(event: CellularEvent) {
+        // Skip persistence in ephemeral mode
+        if (ephemeralModeEnabled) return
+
+        persistenceScope.launch {
+            try {
+                cellularDao.insertCellularEvent(cellularEventToEntity(event))
+                // Trim old events to keep database size manageable
+                val count = cellularDao.getCellularEventCount()
+                if (count > maxEventHistory * 2) {
+                    cellularDao.trimCellularEvents(maxEventHistory)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist cellular event", e)
+            }
+        }
+    }
+
+    /**
+     * Clear all persisted cellular data.
+     */
+    fun clearPersistedData() {
+        persistenceScope.launch {
+            try {
+                cellularDao.deleteAllSeenCellTowers()
+                cellularDao.deleteAllTrustedCells()
+                cellularDao.deleteAllCellularEvents()
+                Log.d(TAG, "Cleared all persisted cellular data")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to clear persisted cellular data", e)
+            }
+        }
+    }
+
+    // ==================== Entity Conversions ====================
+
+    private fun seenCellTowerToEntity(tower: SeenCellTower): SeenCellTowerEntity {
+        return SeenCellTowerEntity(
+            cellId = tower.cellId,
+            lac = tower.lac,
+            tac = tower.tac,
+            mcc = tower.mcc,
+            mnc = tower.mnc,
+            operator = tower.operator,
+            networkType = tower.networkType,
+            networkGeneration = tower.networkGeneration,
+            firstSeen = tower.firstSeen,
+            lastSeen = tower.lastSeen,
+            seenCount = tower.seenCount,
+            minSignal = tower.minSignal,
+            maxSignal = tower.maxSignal,
+            lastSignal = tower.lastSignal,
+            latitude = tower.latitude,
+            longitude = tower.longitude,
+            isTrusted = tower.isTrusted
+        )
+    }
+
+    private fun entityToSeenCellTower(entity: SeenCellTowerEntity): SeenCellTower {
+        return SeenCellTower(
+            cellId = entity.cellId,
+            lac = entity.lac,
+            tac = entity.tac,
+            mcc = entity.mcc,
+            mnc = entity.mnc,
+            operator = entity.operator,
+            networkType = entity.networkType,
+            networkGeneration = entity.networkGeneration,
+            firstSeen = entity.firstSeen,
+            lastSeen = entity.lastSeen,
+            seenCount = entity.seenCount,
+            minSignal = entity.minSignal,
+            maxSignal = entity.maxSignal,
+            lastSignal = entity.lastSignal,
+            latitude = entity.latitude,
+            longitude = entity.longitude,
+            isTrusted = entity.isTrusted
+        )
+    }
+
+    private fun trustedCellInfoToEntity(cellId: String, info: TrustedCellInfo): TrustedCellEntity {
+        val locationsJson = JSONArray().apply {
+            info.locations.forEach { (lat, lon) ->
+                put(JSONArray().apply {
+                    put(lat)
+                    put(lon)
+                })
+            }
+        }.toString()
+
+        return TrustedCellEntity(
+            cellId = cellId,
+            seenCount = info.seenCount,
+            firstSeen = info.firstSeen,
+            lastSeen = info.lastSeen,
+            locationsJson = locationsJson,
+            operator = info.operator,
+            networkType = info.networkType
+        )
+    }
+
+    private fun entityToTrustedCellInfo(entity: TrustedCellEntity): TrustedCellInfo {
+        val locations = mutableListOf<Pair<Double, Double>>()
+        try {
+            val jsonArray = JSONArray(entity.locationsJson)
+            for (i in 0 until jsonArray.length()) {
+                val locArray = jsonArray.getJSONArray(i)
+                locations.add(Pair(locArray.getDouble(0), locArray.getDouble(1)))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse locations JSON", e)
+        }
+
+        return TrustedCellInfo(
+            cellId = entity.cellId,
+            seenCount = entity.seenCount,
+            firstSeen = entity.firstSeen,
+            lastSeen = entity.lastSeen,
+            locations = locations,
+            operator = entity.operator,
+            networkType = entity.networkType
+        )
+    }
+
+    private fun cellularEventToEntity(event: CellularEvent): CellularEventEntity {
+        return CellularEventEntity(
+            id = event.id,
+            timestamp = event.timestamp,
+            eventType = event.type.name,
+            title = event.title,
+            description = event.description,
+            cellId = event.cellId,
+            networkType = event.networkType,
+            signalStrength = event.signalStrength,
+            isAnomaly = event.isAnomaly,
+            threatLevel = event.threatLevel.name,
+            latitude = event.latitude,
+            longitude = event.longitude
+        )
+    }
+
+    private fun entityToCellularEvent(entity: CellularEventEntity): CellularEvent {
+        val eventType = try {
+            CellularEventType.valueOf(entity.eventType)
+        } catch (e: IllegalArgumentException) {
+            CellularEventType.MONITORING_STARTED
+        }
+
+        val threatLevel = try {
+            ThreatLevel.valueOf(entity.threatLevel)
+        } catch (e: IllegalArgumentException) {
+            ThreatLevel.INFO
+        }
+
+        return CellularEvent(
+            id = entity.id,
+            timestamp = entity.timestamp,
+            type = eventType,
+            title = entity.title,
+            description = entity.description,
+            cellId = entity.cellId,
+            networkType = entity.networkType,
+            signalStrength = entity.signalStrength,
+            isAnomaly = entity.isAnomaly,
+            threatLevel = threatLevel,
+            latitude = entity.latitude,
+            longitude = entity.longitude
+        )
+    }
+
+    /**
+     * Cancel persistence operations on cleanup.
+     */
+    fun cancelPersistence() {
+        persistenceScope.cancel()
     }
 }

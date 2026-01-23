@@ -144,6 +144,7 @@ data class DetectionSettings(
 
     // UI settings
     val advancedMode: Boolean = false,
+    val showAdvancedSettings: Boolean = false,
 
     // Protection preset
     val currentPreset: ProtectionPreset = ProtectionPreset.BALANCED
@@ -198,6 +199,7 @@ class DetectionSettingsRepository @Inject constructor(
 
         // UI settings
         val ADVANCED_MODE = booleanPreferencesKey("ui_advanced_mode")
+        val SHOW_ADVANCED_SETTINGS = booleanPreferencesKey("ui_show_advanced_settings")
 
         // Protection preset
         val CURRENT_PRESET = stringPreferencesKey("current_protection_preset")
@@ -266,6 +268,7 @@ class DetectionSettingsRepository @Inject constructor(
             enableWifiDetection = prefs[Keys.ENABLE_WIFI] ?: true,
             enableHiddenNetworkRfAnomaly = prefs[Keys.ENABLE_HIDDEN_NETWORK_RF_ANOMALY] ?: false,
             advancedMode = prefs[Keys.ADVANCED_MODE] ?: false,
+            showAdvancedSettings = prefs[Keys.SHOW_ADVANCED_SETTINGS] ?: false,
 
             enabledCellularPatterns = CellularPattern.values().filter { it !in disabledCellular }.toSet(),
             enabledSatellitePatterns = SatellitePattern.values().filter { it !in disabledSatellite }.toSet(),
@@ -375,6 +378,13 @@ class DetectionSettingsRepository @Inject constructor(
     suspend fun setAdvancedMode(enabled: Boolean) {
         context.detectionDataStore.edit { prefs ->
             prefs[Keys.ADVANCED_MODE] = enabled
+        }
+    }
+
+    // Toggle show advanced settings section
+    suspend fun setShowAdvancedSettings(enabled: Boolean) {
+        context.detectionDataStore.edit { prefs ->
+            prefs[Keys.SHOW_ADVANCED_SETTINGS] = enabled
         }
     }
     

@@ -59,7 +59,6 @@ fun SettingsScreen(
     onNavigateToAllDetections: () -> Unit = {},
     onNavigateToAiSettings: () -> Unit = {},
     onNavigateToServiceHealth: () -> Unit = {},
-    onNavigateToFlipperSettings: () -> Unit = {},
     onNavigateToTestMode: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -111,7 +110,8 @@ fun SettingsScreen(
     var notificationsExpanded by remember { mutableStateOf(false) }
     var privacyExpanded by remember { mutableStateOf(false) }
     var securityExpanded by remember { mutableStateOf(false) }
-    var advancedVisible by remember { mutableStateOf(false) }
+    // advancedVisible is now persisted via detectionSettings
+    val advancedVisible by remember(detectionSettings) { mutableStateOf(detectionSettings.showAdvancedSettings) }
 
     // Category expansion states within detection section
     var cellularExpanded by remember { mutableStateOf(false) }
@@ -610,7 +610,7 @@ fun SettingsScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { advancedVisible = !advancedVisible }
+                        .clickable { viewModel.setShowAdvancedSettings(!advancedVisible) }
                 ) {
                     Row(
                         modifier = Modifier
@@ -643,7 +643,7 @@ fun SettingsScreen(
                         }
                         Switch(
                             checked = advancedVisible,
-                            onCheckedChange = { advancedVisible = it }
+                            onCheckedChange = { viewModel.setShowAdvancedSettings(it) }
                         )
                     }
                 }
@@ -739,16 +739,6 @@ fun SettingsScreen(
                         title = "Service Health",
                         subtitle = "View detector status, errors, and restart counts",
                         onClick = onNavigateToServiceHealth
-                    )
-                }
-
-                // Flipper Zero Integration
-                item {
-                    SettingsItem(
-                        icon = Icons.Default.DevicesOther,
-                        title = "Flipper Zero",
-                        subtitle = "Connect and install Flock Bridge app",
-                        onClick = onNavigateToFlipperSettings
                     )
                 }
 

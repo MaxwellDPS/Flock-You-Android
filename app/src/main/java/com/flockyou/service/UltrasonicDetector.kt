@@ -397,7 +397,9 @@ class UltrasonicDetector(
         val amplitudeDb: Double?,
         val latitude: Double?,
         val longitude: Double?,
-        val contributingFactors: List<String> = emptyList()
+        val contributingFactors: List<String> = emptyList(),
+        // Full heuristics analysis for LLM processing
+        val analysis: BeaconAnalysis? = null
     )
 
     enum class AnomalyConfidence(val displayName: String) {
@@ -994,7 +996,8 @@ class UltrasonicDetector(
         frequency: Int?,
         amplitudeDb: Double?,
         confidence: AnomalyConfidence,
-        contributingFactors: List<String>
+        contributingFactors: List<String>,
+        analysis: BeaconAnalysis? = null
     ) {
         val now = System.currentTimeMillis()
         val lastTime = lastAnomalyTimes[type] ?: 0
@@ -1021,7 +1024,8 @@ class UltrasonicDetector(
             amplitudeDb = amplitudeDb,
             latitude = currentLatitude,
             longitude = currentLongitude,
-            contributingFactors = contributingFactors
+            contributingFactors = contributingFactors,
+            analysis = analysis
         )
 
         detectedAnomalies.add(anomaly)
