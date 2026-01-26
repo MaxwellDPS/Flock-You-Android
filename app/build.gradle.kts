@@ -263,7 +263,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.1.0")
     
     // Maps - OpenStreetMap (no API key required)
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.0.0")
