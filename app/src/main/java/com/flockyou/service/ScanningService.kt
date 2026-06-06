@@ -26,7 +26,6 @@ import com.flockyou.detection.DetectionRegistry
 import com.flockyou.detection.handler.BleDetectionHandler
 import com.flockyou.detection.handler.CellularDetectionHandler
 import com.flockyou.detection.handler.SatelliteDetectionHandler
-import com.google.android.gms.location.*
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
@@ -270,7 +269,7 @@ class ScanningService : Service() {
     private var wifiScanReceiver: BroadcastReceiver? = null
 
     // Location
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
+
     internal var currentLocation: Location? = null
 
     // Vibration
@@ -543,8 +542,6 @@ class ScanningService : Service() {
         // Initialize WiFi
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
-        // Initialize Location
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         // Initialize Vibrator
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1874,7 +1871,6 @@ class ScanningService : Service() {
     }
 
     // ==================== Location ====================
-
     @SuppressLint("MissingPermission")
     private fun updateLocation() {
         if (!hasLocationPermissions()) {
@@ -1882,21 +1878,47 @@ class ScanningService : Service() {
             return
         }
 
-        fusedLocationClient.lastLocation
-            .addOnSuccessListener { location ->
-                currentLocation = location
-                locationStatus.value = if (location != null) {
-                    SubsystemStatus.Active
-                } else {
-                    SubsystemStatus.Error(-1, "No location available")
-                }
+        val locationManager = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+
+        // Try last known first
+        val lastKnown = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+            ?: locationManager.getLastKnownLocation(android.location.LocationManager.FUSED_PROVIDER)
+            ?: locationManager.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+
+        if (lastKnown != null) {
+            currentLocation = lastKnown
+            locationStatus.value = SubsystemStatus.Active
+            return
+        }
+
+        // No last known — request a single update
+        val providers = listOf(
+            android.location.LocationManager.GPS_PROVIDER,
+            android.location.LocationManager.NETWORK_PROVIDER
+        )
+
+        for (provider in providers) {
+            if (locationManager.isProviderEnabled(provider)) {
+                locationManager.requestSingleUpdate(
+                    provider,
+                    object : android.location.LocationListener {
+                        override fun onLocationChanged(location: android.location.Location) {
+                            currentLocation = location
+                            locationStatus.value = SubsystemStatus.Active
+                        }
+                        override fun onProviderDisabled(provider: String) {}
+                        override fun onProviderEnabled(provider: String) {}
+                    },
+                    android.os.Looper.getMainLooper()
+                )
+                locationStatus.value = SubsystemStatus.Active
+                return
             }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Failed to get location", e)
-                locationStatus.value = SubsystemStatus.Error(-1, e.message ?: "Location error")
-                logError("Location", -1, "Failed to get location: ${e.message}", recoverable = true)
-            }
+        }
+
+        locationStatus.value = SubsystemStatus.Error(-1, "No location available")
     }
+
 
     // ==================== Detector Health Management ====================
 
